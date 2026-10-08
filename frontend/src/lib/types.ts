@@ -180,7 +180,9 @@ export interface AIModel {
   id: string; provider: string; endpoint: string; family: string; maker: string; display_name: string; description: string;
   category: string; task: "video" | "avatar" | "lipsync" | "edit" | "image" | "tts" | "music" | "train" | "other";
   capabilities: { modes?: string[]; max_refs?: number; durations?: number[] | { min?: number; max?: number } | null;
-    resolutions?: string[] | null; aspects?: string[] | null; native_audio?: boolean; usable?: boolean };
+    resolutions?: string[] | null; aspects?: string[] | null; native_audio?: boolean; usable?: boolean;
+    // gateway flags (v3): what the engine can do for characters and dialogue
+    speech_in_video?: boolean; audio_driven?: boolean; lora_input?: boolean; lipsync_to_audio?: boolean };
   price_usd: number | null; price_unit: string; price_source: string; price_label: string; est_8s_usd: number | null;
   status: "new" | "enabled" | "disabled" | "retired"; tier: string; rating: number | null; wins: number; uses: number;
   failures: number; tags: string[]; thumbnail_url: string; released_at: string; builtin: boolean; notes: string;
