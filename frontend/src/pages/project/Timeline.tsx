@@ -10,28 +10,32 @@ import { toast } from "sonner";
 import { useGenerate } from "../../components/Generate";
 import { usePeaks, type WaveSeg } from "../../components/review/Waveform";
 import { clamp, lsGet, lsSet, shortcutAllowed } from "../../components/review/utils";
-import { Button, Card, Empty, IconButton, Kbd, Skeleton, Tooltip } from "../../components/ui";
+import { Button, Card, Empty, IconButton, Kbd, Segmented, Skeleton, Tooltip } from "../../components/ui";
 import { api } from "../../lib/api";
 import { secs } from "../../lib/format";
+import type { ShotFx } from "../../lib/fx";
 import { useT } from "../../lib/i18n";
 import { useEpisode, useSettings } from "../../lib/queries";
 import type { Episode, Shot, SubmitResult } from "../../lib/types";
 import { useProjectCtx } from "./context";
 import { LoadError } from "./production/LoadError";
+import { ClipMenu, type ClipMenuState } from "./production/timeline/ClipMenu";
+import type { MenuAnchor } from "./production/timeline/ContextMenu";
 import { AutoSfxDialog, ClipInspector, MixCard, MusicCard, SequencePlayer, ShortcutsDialog } from "./production/timeline/Panels";
 import {
-  FPS, LABEL_W, MAX_PPS, MIN_PPS, RULER_H, SNAP_PX, TRACK_H, VIDEO_H, layoutClips, mediaUrl, ppsToSlider, sliderToPps, spansOf, type Clip, type Overlay,
+  FPS, LABEL_W, MAX_PPS, MIN_PPS, RULER_H, SNAP_PX, TRACK_H, VIDEO_H, clipTail, layoutClips, mediaUrl, ppsToSlider, sliderToPps, spansOf,
+  type Clip, type Holds, type Overlay, type TrimDraft, type TrimMode,
 } from "./production/timeline/shared";
 import {
   LaneItem, OverlayLane, OverlayPopover, PlayheadLine, SnapGuide, TimeRuler, Track, WaveLane, type OverlayEdit,
 } from "./production/timeline/Tracks";
-import { CutButton, MainClip, TransitionBlock } from "./production/timeline/MainTrack";
+import { CutButton, HoldBlock, MainClip, RollHandle, TransitionBlock, type HoldPatch } from "./production/timeline/MainTrack";
 import { LayerInspector, LayerPlayback, LayerTrackRow, useLayersEditor, type LayerSel } from "./production/timeline/Layers";
 import { useTransport } from "./production/timeline/transport";
 
 /** `embedded`: inside a Studio panel — a smaller player on top and the tracks (all layers) filling the rest. */
 export default function TimelinePage({ embedded = false }: { embedded?: boolean } = {}) {
-  const { project, eid, lang, canEdit } = useProjectCtx();
+  const { project, eid, lang, canEdit, canReview } = useProjectCtx();
   const t = useT();
   const qc = useQueryClient();
   const navigate = useNavigate();
@@ -57,13 +61,25 @@ export default function TimelinePage({ embedded = false }: { embedded?: boolean 
   useEffect(() => setOrder(shots.map((s) => s.id)), [shots.map((s) => s.id).join(",")]);
   const byId = useMemo(() => Object.fromEntries(shots.map((s) => [s.id, s])) as Record<number, Shot>, [shots]);
 
-  // live edits while dragging (trim edges, transition length); saved on release
-  const [trimDraft, setTrimDraft] = useState<{ id: number; trim_in: number; trim_out: number } | null>(null);
+  // live edits while dragging (trim edges, a roll, transition length, freezes); saved on release
+  const [trimDrafts, setTrimDrafts] = useState<TrimDraft[]>([]);
+  const [holdDraft, setHoldDraft] = useState<Holds | null>(null);
   const [trDraft, setTrDraft] = useState<{ id: number; duration: number } | null>(null);
-  const clips: Clip[] = useMemo(() => layoutClips(order.map((id) => byId[id]).filter(Boolean), trimDraft, trDraft), [order, byId, trimDraft, trDraft]);
-  const total = clips.length ? clips[clips.length - 1].start + clips[clips.length - 1].duration : 0;
+  // "ripple": trimming closes the gap; "hold": the trimmed time becomes a freeze so the following clips stay put
+  const [trimMode, setTrimModeState] = useState<TrimMode>(() => (lsGet("veo-timeline-trim") === "hold" ? "hold" : "ripple"));
+  const setTrimMode = (m: TrimMode) => { setTrimModeState(m); lsSet("veo-timeline-trim", m); };
   const { layers, edit: editLayers, upload: uploadMedia, saving: layersSaving } = useLayersEditor(eid);
+  const clips: Clip[] = useMemo(() => layoutClips(order.map((id) => byId[id]).filter(Boolean), trimDrafts, trDraft, layers?.holds, holdDraft),
+    [order, byId, trimDrafts, trDraft, layers?.holds, holdDraft]);
+  const total = clips.length ? clipTail(clips[clips.length - 1]) : 0;
   const [layerSel, setLayerSel] = useState<LayerSel>(null);
+  const [menu, setMenu] = useState<ClipMenuState | null>(null);
+  const openMenu = (shotId: number) => (anchor: MenuAnchor, returnFocus: HTMLElement) => {
+    if (menu && menu.shotId === shotId && menu.anchor === anchor) { setMenu(null); return; }  // the "…" button toggles
+    setSel(shotId);
+    setLayerSel(null);
+    setMenu({ shotId, anchor, returnFocus });
+  };
   const addLayer = (kind: "video" | "audio") => {
     editLayers((d) => ({ ...d, [kind]: [...d[kind], { id: Math.random().toString(36).slice(2, 12),
       name: `${kind === "video" ? "Video" : "Audio"} ${d[kind].length + (kind === "video" ? 2 : 1)}`, muted: false, hidden: false, gain_db: 0, clips: [] }] }));
@@ -163,7 +179,7 @@ export default function TimelinePage({ embedded = false }: { embedded?: boolean 
   }, [tp.idx, tp.playing]);
 
   // snapping to shot boundaries and layer clips (and the playhead when dragging other things)
-  const boundaries = useMemo(() => [0, ...clips.flatMap((c) => [c.start, c.start + c.duration]),
+  const boundaries = useMemo(() => [0, ...clips.flatMap((c) => [c.start, c.start + c.duration, clipTail(c)]),
     ...[...(layers?.video ?? []), ...(layers?.audio ?? [])].flatMap((tk) => tk.clips.flatMap((c) => [c.start, c.start + c.dur]))], [clips, layers]);
   const snapTime = (x: number, withPlayhead = false): number => {
     if (!snap) return x;
@@ -182,13 +198,13 @@ export default function TimelinePage({ embedded = false }: { embedded?: boolean 
   const toggleSnap = () => setSnap((s) => { lsSet("veo-timeline-snap", s ? "0" : "1"); return !s; });
 
   // keyboard
-  const keyRef = useRef({ tp, zoomTo, fit, toggleSnap, total, setSel, ovEdit });
-  keyRef.current = { tp, zoomTo, fit, toggleSnap, total, setSel, ovEdit };
+  const keyRef = useRef({ tp, zoomTo, fit, toggleSnap, total, setSel, ovEdit, menu });
+  keyRef.current = { tp, zoomTo, fit, toggleSnap, total, setSel, ovEdit, menu };
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (!shortcutAllowed(e)) return;
       const k = keyRef.current;
-      if (k.ovEdit) return;
+      if (k.ovEdit || k.menu) return;  // a popover owns the keyboard
       const key = e.key;
       const map: Record<string, () => void> = {
         " ": () => { if (!e.repeat) k.tp.toggle(); },
@@ -284,13 +300,54 @@ export default function TimelinePage({ embedded = false }: { embedded?: boolean 
       </div>
     );
   }
-  const saveTrim = async (shot: Shot, trim_in: number, trim_out: number) => {
+  /** Freezes live in the layers document (autosaved, rev-checked like the layers). */
+  const setHold = (shotId: number, seconds: number) => editLayers((d) => {
+    const holds = { ...(d.holds ?? {}) };
+    if (seconds > 0) holds[shotId] = Math.round(seconds * 100) / 100;
+    else delete holds[shotId];
+    return { ...d, holds };
+  });
+  const holdPatch = (i: number, hp?: HoldPatch) => {
+    if (!hp) return;
+    if (hp.self !== undefined) setHold(clips[i].shot.id, hp.self);
+    if (hp.prev !== undefined && clips[i - 1]) setHold(clips[i - 1].shot.id, hp.prev);
+  };
+  const draftHolds = (i: number, hp?: HoldPatch): Holds | null => {
+    if (!hp) return null;
+    const h: Holds = {};
+    if (hp.self !== undefined) h[clips[i].shot.id] = hp.self;
+    if (hp.prev !== undefined && clips[i - 1]) h[clips[i - 1].shot.id] = hp.prev;
+    return h;
+  };
+  const saveTrim = async (i: number, trim_in: number, trim_out: number, hp?: HoldPatch) => {
+    const shot = clips[i].shot;
     try {
       await api.patch(`/api/shots/${shot.id}`, { trim_in, trim_out });
+      holdPatch(i, hp);
       toast.success(t("{code} trimmed", { code: shot.code }), { id: "trim" });
     } catch { /* api toasts */ }
     await qc.invalidateQueries({ queryKey: ["episode", eid] });
-    setTrimDraft(null);
+    setTrimDrafts([]);
+    setHoldDraft(null);
+  };
+  /** A roll edit: the end of one clip and the start of the next move together (two PATCHes; the cut's length stays). */
+  const saveRoll = async (l: TrimDraft, r: TrimDraft) => {
+    try {
+      await Promise.all([api.patch(`/api/shots/${l.id}`, { trim_in: l.trim_in, trim_out: l.trim_out }), api.patch(`/api/shots/${r.id}`, { trim_in: r.trim_in, trim_out: r.trim_out })]);
+      toast.success(t("Cut rolled"), { id: "trim" });
+    } catch { /* api toasts */ }
+    await qc.invalidateQueries({ queryKey: ["episode", eid] });
+    setTrimDrafts([]);
+  };
+  /** Writes effects merged with what the shot already has; an undefined value removes that effect. */
+  const saveFx = async (shot: Shot, patch: Partial<ShotFx>) => {
+    const fx: Record<string, unknown> = { ...(shot.fx ?? {}) };
+    for (const [k, v] of Object.entries(patch)) { if (v === undefined) delete fx[k]; else fx[k] = v; }
+    try {
+      await api.put(`/api/shots/${shot.id}/fx`, { fx });
+      toast.success(t("{code} updated", { code: shot.code }), { id: "fx" });
+    } catch { /* api toasts */ }
+    await qc.invalidateQueries({ queryKey: ["episode", eid] });
   };
   const saveTransition = async (shot: Shot, duration: number | null) => {
     const fx = { ...(shot.fx ?? {}) };
@@ -302,6 +359,7 @@ export default function TimelinePage({ embedded = false }: { embedded?: boolean 
   };
   const selShot = sel ? byId[sel] : null;
   const selClip = clips.find((c) => c.shot.id === sel) ?? null;
+  const menuClip = menu ? clips.find((c) => c.shot.id === menu.shotId) ?? null : null;
   const contentW = Math.max(total * pps + LABEL_W + 96, view.width);
   const lane = { view, pps };
   const dialogueCount = clips.reduce((a, c) => a + (spansOf(c.shot).length || (c.shot.dialogue?.[lang]?.length ? 1 : 0)), 0);
@@ -322,13 +380,14 @@ export default function TimelinePage({ embedded = false }: { embedded?: boolean 
             overlay={<LayerPlayback tp={tp} doc={layers} />} />
           <div className="flex min-h-0 flex-col gap-3 @3xl:overflow-y-auto @3xl:pr-0.5">
             {layerSel && layers && (
-              <LayerInspector doc={layers} sel={layerSel} canEdit={canEdit} edit={editLayers} onClose={() => setLayerSel(null)} onSeek={(s) => tp.seek(s)} />
+              <LayerInspector doc={layers} sel={layerSel} canEdit={canEdit} edit={editLayers} onClose={() => setLayerSel(null)} onSeek={(s) => tp.seek(s)} clock={tp.clock} />
             )}
             <AnimatePresence initial={false}>
               {!layerSel && selShot && selClip && (
                 <motion.div key={selShot.id} initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
                   transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }} className="-m-px shrink-0 overflow-hidden p-px">
-                  <ClipInspector shot={selShot} clip={selClip} canEdit={canEdit} onClose={() => setSel(null)} onSeek={() => tp.seek(selClip.start)} />
+                  <ClipInspector shot={selShot} clip={selClip} canEdit={canEdit} trimMode={trimMode} onClose={() => setSel(null)} onSeek={() => tp.seek(selClip.start)}
+                    onFx={(patch) => saveFx(selShot, patch)} onHold={(h) => setHold(selShot.id, h)} onMenu={openMenu(selShot.id)} />
                 </motion.div>
               )}
             </AnimatePresence>
@@ -369,6 +428,12 @@ export default function TimelinePage({ embedded = false }: { embedded?: boolean 
                 <Button size="sm" variant="outline" icon={<AudioWaveform className="size-3.5" />} onClick={autoSfx}>{t("Auto SFX")}</Button>
               </Tooltip>
             )}
+            {canEdit && (
+              <Tooltip content={trimMode === "ripple" ? t("Ripple: trimming a clip closes the gap — the rest of the cut slides up") : t("Hold: trimming keeps the rest of the cut in place by freezing the clip's last frame (preview only until the export supports it)")}>
+                <span className="inline-flex"><Segmented size="sm" value={trimMode} onChange={setTrimMode} aria-label={t("Trim mode")}
+                  options={[{ value: "ripple", label: t("Ripple") }, { value: "hold", label: t("Hold") }]} /></span>
+              </Tooltip>
+            )}
             <Tooltip content={snap ? t("Snapping on (S)") : t("Snapping off (S)")}>
               <button type="button" aria-pressed={snap} onClick={toggleSnap}
                 className={clsx("inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors",
@@ -403,11 +468,16 @@ export default function TimelinePage({ embedded = false }: { embedded?: boolean 
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
                   <SortableContext items={order} strategy={horizontalListSortingStrategy}>
                     <div className="group/track relative h-full">
-                      {clips.map((c) => (
-                        <MainClip key={c.shot.id} clip={c} pps={pps} selected={sel === c.shot.id} canEdit={canEdit}
-                          onClick={() => { setSel(c.shot.id); setLayerSel(null); }} onDoubleClick={() => tp.seek(c.start)}
-                          onTrim={(ti, to) => setTrimDraft({ id: c.shot.id, trim_in: ti, trim_out: to })}
-                          onTrimEnd={(ti, to) => void saveTrim(c.shot, ti, to)} />
+                      {clips.map((c, i) => (
+                        <MainClip key={c.shot.id} clip={c} pps={pps} selected={sel === c.shot.id} canEdit={canEdit} trimMode={trimMode}
+                          hasPrev={i > 0} holdBefore={clips[i - 1]?.hold ?? 0} menuOpen={menu?.shotId === c.shot.id}
+                          onClick={() => { setSel(c.shot.id); setLayerSel(null); }} onDoubleClick={() => tp.seek(c.start)} onMenu={openMenu(c.shot.id)}
+                          onTrim={(ti, to, hp) => { setTrimDrafts([{ id: c.shot.id, trim_in: ti, trim_out: to }]); setHoldDraft(draftHolds(i, hp)); }}
+                          onTrimEnd={(ti, to, hp) => void saveTrim(i, ti, to, hp)} />
+                      ))}
+                      {clips.map((c) => c.hold > 0 && (
+                        <HoldBlock key={`hold-${c.shot.id}`} clip={c} pps={pps} canEdit={canEdit} selected={sel === c.shot.id}
+                          onClick={() => { setSel(c.shot.id); setLayerSel(null); }} onClear={() => setHold(c.shot.id, 0)} />
                       ))}
                       {clips.map((c) => (
                         <TransitionBlock key={`tr-${c.shot.id}`} clip={c} pps={pps} canEdit={canEdit} onClick={() => { setSel(c.shot.id); setLayerSel(null); }}
@@ -415,6 +485,10 @@ export default function TimelinePage({ embedded = false }: { embedded?: boolean 
                       ))}
                       {canEdit && clips.slice(1).filter((c) => !c.shot.fx?.transition).map((c) => (
                         <CutButton key={`cut-${c.shot.id}`} clip={c} pps={pps} onAdd={() => void saveTransition(c.shot, 0.5)} />
+                      ))}
+                      {canEdit && clips.map((c, i) => i > 0 && c.kind !== "still" && clips[i - 1].kind !== "still" && clips[i - 1].hold === 0 && (
+                        <RollHandle key={`roll-${c.shot.id}`} left={clips[i - 1]} right={c} pps={pps}
+                          onRoll={(l, r) => setTrimDrafts([l, r])} onRollEnd={(l, r) => void saveRoll(l, r)} />
                       ))}
                     </div>
                   </SortableContext>
@@ -500,6 +574,9 @@ export default function TimelinePage({ embedded = false }: { embedded?: boolean 
       </AnimatePresence>
       <AutoSfxDialog open={sfxOpen} onClose={() => setSfxOpen(false)} clips={clips} selected={selShot} mode={elevenMode} run={runSfx} />
       <ShortcutsDialog open={keysOpen} onClose={() => setKeysOpen(false)} />
+      <ClipMenu state={menu} clip={menuClip} eid={eid} lang={lang} projectId={project.id} canEdit={canEdit} canReview={canReview} embedded={embedded}
+        onClose={() => setMenu(null)} onSpeed={(shot, s) => saveFx(shot, { speed: Math.abs(s - 1) < 1e-3 ? undefined : s })}
+        onInspect={(id) => { setSel(id); setLayerSel(null); }} />
     </div>
   );
 }

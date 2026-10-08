@@ -128,6 +128,39 @@ export function SliderRow({ label, hint, value, onChange, min, max, step, left, 
   );
 }
 
+/* ── toggle chips ───────────────────────────────────────────────────────────── */
+
+/** A row of on/off chips (multi-select): languages, kinds… Each chip is a toggle button, so it works with the keyboard. */
+export function ToggleChips({ options, value, onChange, disabled, ariaLabel, min = 0 }: {
+  options: { value: string; label: string; hint?: string }[]; value: string[]; onChange: (v: string[]) => void; disabled?: boolean; ariaLabel: string;
+  /** Keep at least this many chips on (the last one can't be switched off). */
+  min?: number;
+}) {
+  const toggle = (v: string) => {
+    const on = value.includes(v);
+    if (on && value.length <= min) return;
+    onChange(on ? value.filter((x) => x !== v) : [...value, v]);
+  };
+  return (
+    <div role="group" aria-label={ariaLabel} className="flex flex-wrap gap-1.5">
+      {options.map((o) => {
+        const on = value.includes(o.value);
+        const locked = on && value.length <= min;
+        return (
+          <button key={o.value} type="button" aria-pressed={on} disabled={disabled} title={o.hint} onClick={() => toggle(o.value)}
+            className={clsx("inline-flex h-8 items-center gap-1.5 rounded-full border px-3 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+              on ? "border-accent/50 bg-accent/10 text-ink" : "border-line text-mute hover:border-dim/50 hover:text-ink", locked && !disabled && "cursor-default")}>
+            <span className={clsx("grid size-3.5 place-items-center rounded-full border transition-colors", on ? "border-accent bg-accent text-black" : "border-dim")}>
+              {on && <Check className="size-2.5" strokeWidth={3.5} />}
+            </span>
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ── radio cards ────────────────────────────────────────────────────────────── */
 
 export function Choice({ options, value, onChange, disabled, ariaLabel }: {

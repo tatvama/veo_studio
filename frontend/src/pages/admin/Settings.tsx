@@ -19,7 +19,7 @@ import type { Role, SettingsPayload } from "../../lib/types";
 import { UnsavedBar } from "./shared/UnsavedBar";
 import { useFlash } from "./shared/useFlash";
 import { useUnsavedGuard } from "./shared/useUnsavedGuard";
-import { Choice, Dollar, NumberInput, Row, Rows, SettingsCard, SliderRow, SwitchRow } from "./settings/controls";
+import { Choice, Dollar, NumberInput, Row, Rows, SettingsCard, SliderRow, SwitchRow, ToggleChips } from "./settings/controls";
 import { SECTION_IDS, SETTING_SECTION, SettingsChips, SettingsNav, useScrollSpy } from "./settings/Nav";
 import { ProvidersCard } from "./settings/ProvidersCard";
 
@@ -30,7 +30,7 @@ const EDITABLE = [
   "max_auto_retakes", "qc_threshold", "lipsync_model", "tts_provider_by_language", "make_webhook_url", "models", "prices",
   "dialogue_method", "dub_method", "hub_auto_sync", "hub_sync_hours", "hub_auto_enable", "identity_trainer", "face_match_threshold",
   "lipsync_qc", "lipsync_qc_threshold", "critic_rounds", "critic_min_score", "caption_style", "auto_reframe", "sfx_auto",
-  "ui_default_language", "google_first",
+  "ui_default_language", "google_first", "native_dialogue_languages", "dialogue_words_qc", "dialogue_words_threshold", "outfit_qc",
 ] as const;
 
 type Draft = Record<string, any>;
@@ -61,12 +61,13 @@ const DIALOGUE_METHODS = [
   { value: "audio_first", label: "Audio first + lip-sync", desc: "Record each line in the character's voice, make the video, then match the lips. Most reliable for Indian languages." },
   { value: "audio_driven", label: "Audio-driven video", desc: "Talking-head engines animate the face straight from the recorded line. Best mouth shapes; fewer engines and camera moves." },
   { value: "voice_lock", label: "Native voice + voice lock", desc: "Veo speaks the line, then ElevenLabs swaps in the character's own voice. Natural acting, needs ElevenLabs." },
-  { value: "native_when_possible", label: "Native when possible", desc: "Let Veo speak English lines directly (cheapest, fastest); other languages use audio first." },
+  { value: "native", label: "Native — Veo speaks the line itself (Google route)", desc: "Speech and lips come out of the video model in one pass, in the languages ticked below. No TTS, no lip-sync step; the words check below guards the result." },
+  { value: "native_when_possible", label: "Native when possible", desc: "Let Veo speak the lines directly in its native languages (cheapest, fastest); other languages use audio first." },
 ];
 
 const DUB_METHODS = [
   { value: "redub", label: "Re-dub", desc: "Keep the original video and lip-sync it to the new language. Cheapest." },
-  { value: "regenerate", label: "Regenerate", desc: "For audio-driven shots, make a fresh video from each language's audio. Best lips, costs more." },
+  { value: "regenerate", label: "Regenerate per language", desc: "Make a fresh video for each language. On Veo's native languages Veo speaks the translated line itself; elsewhere the video is driven by that language's recorded audio. Best lips, costs more." },
 ];
 
 const MODEL_LABELS: Record<string, string> = {
@@ -160,6 +161,7 @@ export default function SettingsPage() {
     d.models = d.models && typeof d.models === "object" ? d.models : {};
     d.tts_provider_by_language = d.tts_provider_by_language && typeof d.tts_provider_by_language === "object" ? d.tts_provider_by_language : {};
     d.identity_trainer = d.identity_trainer && typeof d.identity_trainer === "object" ? d.identity_trainer : {};
+    d.native_dialogue_languages = Array.isArray(d.native_dialogue_languages) ? d.native_dialogue_languages.map(String) : ["en"];
     setDraft(d);
     setThresholdsText(Array.isArray(s.settings.alert_thresholds) ? s.settings.alert_thresholds.join(", ") : "");
     const p = s.settings.prices;
@@ -269,6 +271,11 @@ export default function SettingsPage() {
   const baseModelOverrides = (base.models ?? {}) as Record<string, string>;
   const modelOverrides = (draft.models ?? {}) as Record<string, string>;
   const langs = Object.keys(LANG_NAMES);
+  // every language the studio knows (catalog first, then any the voices table lists), for the native-dialogue chips
+  const catalogLangs = Object.entries(data.catalog?.languages ?? {});
+  const nativeOptions = (catalogLangs.length ? catalogLangs.map(([code, l]) => ({ value: code, label: t(l.name || LANG_NAMES[code] || code) }))
+    : langs.map((code) => ({ value: code, label: t(LANG_NAMES[code]) })));
+  const nativeLangs = (Array.isArray(draft.native_dialogue_languages) ? draft.native_dialogue_languages : []) as string[];
   const it = (draft.identity_trainer ?? {}) as Record<string, any>;
   const setIt = (k: string, v: unknown) => set("identity_trainer", { ...it, [k]: v });
   const num = (k: string, fallback: number) => {
@@ -416,9 +423,24 @@ export default function SettingsPage() {
                 <Choice ariaLabel={t("Dialogue method")} options={DIALOGUE_METHODS} value={String(draft.dialogue_method ?? "audio_first")} disabled={ro}
                   onChange={(v) => set("dialogue_method", v)} />
               </Row>
+              <Row stack label={t("Languages Veo may speak itself")}
+                hint={t("Native dialogue is only used in these languages (speech and lips in one pass). Every other language is recorded with TTS and lip-synced. Decide the list from your Phase 0 test.")}>
+                <ToggleChips ariaLabel={t("Languages Veo may speak itself")} options={nativeOptions} value={nativeLangs} disabled={ro}
+                  onChange={(v) => set("native_dialogue_languages", v)} />
+                {!nativeLangs.length && <p className="mt-2 text-xs text-amber-300">{t("With no language ticked, native dialogue is never used; shots fall back to audio first.")}</p>}
+              </Row>
               <Row stack label={t("Dubbing into other languages")}>
                 <Choice ariaLabel={t("Dubbing into other languages")} options={DUB_METHODS} value={String(draft.dub_method ?? "redub")} disabled={ro} onChange={(v) => set("dub_method", v)} />
               </Row>
+              <SwitchRow label={t("Check the spoken words")}
+                hint={t("After a spoken clip (native or lip-synced), AI listens and checks that it said the scripted words in the right language. Failing takes are flagged.")}
+                checked={draft.dialogue_words_qc !== false} disabled={ro} onChange={(v) => set("dialogue_words_qc", v)} />
+              <SliderRow label={t("Words match threshold")} hint={t("Share of the scripted words a take must get right to pass.")}
+                value={num("dialogue_words_threshold", 0.75)} min={0} max={1} step={0.05} disabled={ro || draft.dialogue_words_qc === false}
+                onChange={(v) => set("dialogue_words_threshold", v)} left={t("Lenient")} right={t("Exact")} />
+              <SwitchRow label={t("Outfit check")}
+                hint={t("Fail a take whose outfit does not match the scene's wardrobe, when the character lock asks for costume continuity.")}
+                checked={draft.outfit_qc !== false} disabled={ro} onChange={(v) => set("outfit_qc", v)} />
             </Rows>
           </SettingsCard>
 

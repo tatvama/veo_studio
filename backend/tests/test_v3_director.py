@@ -29,7 +29,7 @@ def test_director_v3_tools(client: TestClient):
         code = db.get(Shot, s["id"]).code
         out = T.run_tool(ctx, "next_shot", {"shot_code": code, "action": "He kneels at the lamp", "mode": "extend"})
         assert out["code"] and out["shot"]["action"].startswith("He kneels")
-        n = db.query(Shot).filter(Shot.code == out["code"]).first()
+        n = db.query(Shot).filter(Shot.episode_id == eid, Shot.code == out["code"]).first()
         assert n.continuity_from_shot_id == s["id"] and n.continuity_mode == "extend" and n.characters == [ch["id"]]
         lk = T.run_tool(ctx, "lock_character", {"character": "Bhairava", "lock": {"strictness": 0.8, "gestures": "strokes his beard", "nope": 1}})
         assert lk["lock"]["strictness"] == 0.8 and "nope" not in lk["lock"] and "strokes his beard" in lk["prompt_text"]

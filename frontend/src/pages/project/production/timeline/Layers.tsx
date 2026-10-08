@@ -1,13 +1,15 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { AudioLines, Copy, Eye, EyeOff, Film, ImageIcon, Layers as LayersIcon, Loader2, Music2, Plus, Trash2, Upload, Volume2, VolumeX } from "lucide-react";
+import { AudioLines, Copy, Diamond, Eye, EyeOff, Film, ImageIcon, Layers as LayersIcon, Loader2, Music2, Plus, Trash2, Upload, Volume2, VolumeX } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from "react";
 import { toast } from "sonner";
+import { formatTC, useClockThrottled, type Clock } from "../../../../components/review/utils";
 import { usePeaks, type WaveSeg } from "../../../../components/review/Waveform";
-import { Button, Field, Input, Popover, Toggle, Tooltip } from "../../../../components/ui";
+import { Button, Field, IconButton, Input, Popover, Toggle, Tooltip } from "../../../../components/ui";
 import { api, ApiError } from "../../../../lib/api";
 import { tr, useT } from "../../../../lib/i18n";
-import { LABEL_W, TRACK_H } from "./shared";
+import { KF_DEFAULT, KF_KEYS, MAX_KEYFRAMES, normalizeKf, stateAt, type KfKey, type Keyframe } from "./keyframes";
+import { FPS, LABEL_W, TRACK_H, type Holds } from "./shared";
 import type { Transport } from "./transport";
 import { WaveLane } from "./Tracks";
 
@@ -15,11 +17,14 @@ import { WaveLane } from "./Tracks";
 export type MediaKind = "video" | "audio" | "image";
 export interface LayerClip {
   id: string; src: string; url?: string; kind: MediaKind; name: string; start: number; in: number; dur: number;
-  x?: number; y?: number; scale?: number; opacity?: number; fade_in: number; fade_out: number; gain_db: number; muted?: boolean;
+  x?: number; y?: number; scale?: number; opacity?: number; rotation?: number; fade_in: number; fade_out: number; gain_db: number; muted?: boolean;
+  /** Animation: `t` seconds from the clip's start; linear between keyframes (see keyframes.ts). */
+  keyframes?: Keyframe[];
 }
 export interface LayerTrack { id: string; name: string; muted: boolean; hidden: boolean; gain_db: number; clips: LayerClip[] }
 export interface MediaItem { src: string; kind: MediaKind; name: string; duration: number; url: string; thumb_url: string }
-export interface LayersDoc { rev: number; video: LayerTrack[]; audio: LayerTrack[]; media: MediaItem[] }
+/** `holds`: freezes after main-track shots ({shot id: seconds}) — stored with the layers because they're timeline data. */
+export interface LayersDoc { rev: number; video: LayerTrack[]; audio: LayerTrack[]; media: MediaItem[]; holds?: Holds }
 export type LayerSel = { track: "video" | "audio"; trackId: string; clipId: string } | null;
 
 const uid = () => Math.random().toString(36).slice(2, 12);
@@ -40,7 +45,7 @@ export function useLayersEditor(eid: number) {
     if (!d) return;
     setSaving(true);
     try {
-      const r = await api.put<LayersDoc>(`/api/episodes/${eid}/layers`, { rev: d.rev, video: d.video, audio: d.audio });
+      const r = await api.put<LayersDoc>(`/api/episodes/${eid}/layers`, { rev: d.rev, video: d.video, audio: d.audio, holds: d.holds ?? {} });
       if (latest.current === d) { dirty.current = false; latest.current = r; setDraft(r); } else latest.current = { ...latest.current!, rev: r.rev };
       qc.setQueryData(["layers", eid], r);
     } catch (e: any) {
@@ -188,6 +193,10 @@ export function LayerTrackRow({ kind, track, index, doc, pps, view, canEdit, sel
               className={clsx("group overflow-hidden rounded-md border text-2xs", tone, canEdit && "cursor-grab", on ? "z-[3] ring-2 ring-accent" : "z-[1]")}>
               {c.fade_in > 0 && <span className="pointer-events-none absolute inset-y-0 left-0 bg-gradient-to-r from-black/60 to-transparent" style={{ width: c.fade_in * pps }} />}
               {c.fade_out > 0 && <span className="pointer-events-none absolute inset-y-0 right-0 bg-gradient-to-l from-black/60 to-transparent" style={{ width: c.fade_out * pps }} />}
+              {c.keyframes?.map((k, i) => (
+                <span key={i} aria-hidden title={t("Keyframe at {t}", { t: formatTC(k.t, FPS, true) })}
+                  className="pointer-events-none absolute bottom-0.5 size-1.5 -translate-x-1/2 rotate-45 border border-black/50 bg-accent-2" style={{ left: k.t * pps }} />
+              ))}
               <span className="relative flex items-center gap-1 truncate px-2 py-0.5 font-medium [text-shadow:0_1px_2px_rgb(0_0_0/0.8)]">
                 {c.kind === "image" ? <ImageIcon className="size-3 shrink-0" /> : c.kind === "video" ? <Film className="size-3 shrink-0" /> : <Music2 className="size-3 shrink-0" />}
                 {c.name}
@@ -241,10 +250,21 @@ export function AddLayerRow({ canEdit, edit, saving }: { canEdit: boolean; edit:
 }
 
 // ── inspector ────────────────────────────────────────────────────────────────
-export function LayerInspector({ doc, sel, canEdit, edit, onClose, onSeek }: {
+const KF_LABEL: Record<KfKey, string> = { x: "X", y: "Y", scale: "Size", opacity: "Opacity", rotation: "Angle" };
+/** Keyframe values are shown as percent (x, y, size, opacity) or degrees (angle). */
+const KF_UNIT: Record<KfKey, { to: (v: number) => number; from: (v: number) => number; step: number; suffix: string }> = {
+  x: { to: (v) => v * 100, from: (v) => v / 100, step: 1, suffix: "%" }, y: { to: (v) => v * 100, from: (v) => v / 100, step: 1, suffix: "%" },
+  scale: { to: (v) => v * 100, from: (v) => v / 100, step: 1, suffix: "%" }, opacity: { to: (v) => v * 100, from: (v) => v / 100, step: 1, suffix: "%" },
+  rotation: { to: (v) => v, from: (v) => v, step: 1, suffix: "°" },
+};
+const r2 = (v: number) => Math.round(v * 100) / 100;
+
+export function LayerInspector({ doc, sel, canEdit, edit, onClose, onSeek, clock }: {
   doc: LayersDoc; sel: NonNullable<LayerSel>; canEdit: boolean; edit: (fn: (d: LayersDoc) => LayersDoc) => void; onClose: () => void; onSeek: (t: number) => void;
+  /** The playhead (for "Add keyframe at playhead"). */ clock: Clock;
 }) {
   const t = useT();
+  const now = useClockThrottled(clock, 150);
   const track = doc[sel.track].find((x) => x.id === sel.trackId);
   const c = track?.clips.find((x) => x.id === sel.clipId);
   if (!track || !c) return null;
@@ -257,14 +277,35 @@ export function LayerInspector({ doc, sel, canEdit, edit, onClose, onSeek }: {
         onChange={(e) => set({ [k]: Math.max(min, Number(e.target.value)) } as Partial<LayerClip>)} />
     </Field>
   );
-  const slider = (label: string, k: keyof LayerClip, min: number, max: number, step: number, fmt: (v: number) => string) => (
+  const slider = (label: string, k: keyof LayerClip, min: number, max: number, step: number, fmt: (v: number) => string, fallback = 0) => (
     <div className="flex items-center gap-2">
       <span className="w-16 shrink-0 text-2xs text-mute">{label}</span>
-      <input type="range" min={min} max={max} step={step} value={Number(c[k] ?? 0)} disabled={!canEdit} onChange={(e) => set({ [k]: Number(e.target.value) } as Partial<LayerClip>)}
-        className="h-1.5 min-w-0 flex-1 accent-[var(--color-accent)]" />
-      <span className="w-12 shrink-0 text-right text-2xs tabular-nums text-dim">{fmt(Number(c[k] ?? 0))}</span>
+      <input type="range" min={min} max={max} step={step} value={Number(c[k] ?? fallback)} disabled={!canEdit} aria-label={label}
+        onChange={(e) => set({ [k]: Number(e.target.value) } as Partial<LayerClip>)} className="h-1.5 min-w-0 flex-1 accent-[var(--color-accent)]" />
+      <span className="w-12 shrink-0 text-right text-2xs tabular-nums text-dim">{fmt(Number(c[k] ?? fallback))}</span>
     </div>
   );
+  // keyframes (picture clips only)
+  const kfs = c.keyframes ?? [];
+  const setKfs = (list: Keyframe[]) => set({ keyframes: list.length ? normalizeKf(list, c.dur) : undefined });
+  const rel = now - c.start;
+  const atPlayhead = rel >= -1e-3 && rel <= c.dur + 1e-3;
+  const addAtPlayhead = () => {
+    const tt = Math.round(Math.max(0, Math.min(c.dur, rel)) * 1000) / 1000;
+    setKfs([...kfs.filter((k) => Math.abs(k.t - tt) > 1e-3), { t: tt, ...stateAt(c, tt) }]);  // captures the values shown right now
+  };
+  const editKf = (i: number, patch: Partial<Keyframe>) => setKfs(kfs.map((k, j) => (j === i ? { ...k, ...patch } : k)));
+  const kfField = (i: number, k: Keyframe, key: KfKey) => {
+    const u = KF_UNIT[key];
+    const v = k[key];
+    return (
+      <label key={key} className="flex min-w-0 flex-col gap-0.5">
+        <span className="text-2xs text-dim">{t(KF_LABEL[key])}</span>
+        <Input type="number" step={u.step} value={v === undefined ? "" : r2(u.to(v))} placeholder="–" disabled={!canEdit} aria-label={`${t(KF_LABEL[key])} ${u.suffix}`}
+          onChange={(e) => editKf(i, { [key]: e.target.value === "" ? undefined : u.from(Number(e.target.value)) })} className="!h-7 min-w-0 !px-1.5 text-center text-xs tabular-nums" />
+      </label>
+    );
+  };
   return (
     <div className="space-y-3 rounded-xl border border-line bg-panel p-3">
       <div className="flex items-center gap-2">
@@ -285,17 +326,53 @@ export function LayerInspector({ doc, sel, canEdit, edit, onClose, onSeek }: {
       </div>
       {sel.track === "video" && (
         <div className="space-y-1.5">
-          {slider(t("Left ↔ right"), "x", -0.2, 1.2, 0.005, (v) => `${Math.round(v * 100)}%`)}
-          {slider(t("Up ↕ down"), "y", -0.2, 1.2, 0.005, (v) => `${Math.round(v * 100)}%`)}
-          {slider(t("Size"), "scale", 0.05, 1.5, 0.01, (v) => `${Math.round(v * 100)}%`)}
-          {slider(t("Opacity"), "opacity", 0, 1, 0.01, (v) => `${Math.round(v * 100)}%`)}
+          {slider(t("Left ↔ right"), "x", -0.2, 1.2, 0.005, (v) => `${Math.round(v * 100)}%`, 0.5)}
+          {slider(t("Up ↕ down"), "y", -0.2, 1.2, 0.005, (v) => `${Math.round(v * 100)}%`, 0.5)}
+          {slider(t("Size"), "scale", 0.05, 1.5, 0.01, (v) => `${Math.round(v * 100)}%`, 0.35)}
+          {slider(t("Opacity"), "opacity", 0, 1, 0.01, (v) => `${Math.round(v * 100)}%`, 1)}
+          {slider(t("Angle"), "rotation", -180, 180, 1, (v) => `${Math.round(v)}°`)}
+          {kfs.length > 0 && <p className="text-2xs leading-snug text-dim">{t("With keyframes, these are the values used where no keyframe applies.")}</p>}
           <div className="flex flex-wrap gap-1.5">
             {[["↖", 0.15, 0.15], ["↗", 0.85, 0.15], ["↙", 0.15, 0.85], ["↘", 0.85, 0.85], ["Centre", 0.5, 0.5]].map(([l, x, y]) => (
               <Button key={String(l)} size="sm" variant="outline" disabled={!canEdit} onClick={() => set({ x: Number(x), y: Number(y) })}>{t(String(l))}</Button>
             ))}
-            <Button size="sm" variant="outline" disabled={!canEdit} onClick={() => set({ x: 0.5, y: 0.5, scale: 1 })}>{t("Full frame")}</Button>
+            <Button size="sm" variant="outline" disabled={!canEdit} onClick={() => set({ x: 0.5, y: 0.5, scale: 1, rotation: 0 })}>{t("Full frame")}</Button>
           </div>
         </div>
+      )}
+      {sel.track === "video" && (
+        <section className="space-y-2 rounded-lg border border-line bg-raised/40 p-2" aria-label={t("Keyframes")}>
+          <div className="flex items-center gap-2">
+            <Diamond className="size-3.5 text-accent-2" />
+            <span className="text-xs font-semibold">{t("Keyframes")}</span>
+            <span className="rounded-full bg-raised px-1.5 text-2xs tabular-nums text-dim">{kfs.length}/{MAX_KEYFRAMES}</span>
+            <Tooltip content={atPlayhead ? t("Capture the picture's position, size, opacity and angle at the playhead") : t("Move the playhead onto this clip first")}>
+              <Button size="sm" variant="outline" className="ml-auto" icon={<Plus className="size-3.5" />} disabled={!canEdit || !atPlayhead || kfs.length >= MAX_KEYFRAMES} onClick={addAtPlayhead}>
+                {t("Add at playhead")}
+              </Button>
+            </Tooltip>
+          </div>
+          {kfs.length ? (
+            <ul className="space-y-1.5">
+              {kfs.map((k, i) => (
+                <li key={i} className="rounded-lg border border-line bg-panel p-1.5">
+                  <div className="mb-1 flex items-center gap-1.5">
+                    <button type="button" onClick={() => onSeek(c.start + k.t)} title={t("Move the playhead here")}
+                      className="inline-flex h-6 items-center gap-1 rounded-md bg-raised px-1.5 font-mono text-2xs tabular-nums text-mute hover:bg-hover hover:text-ink">
+                      <Diamond className="size-2.5 text-accent-2" />{formatTC(k.t, FPS, true)}
+                    </button>
+                    <Input type="number" step={1 / FPS} min={0} max={c.dur} value={k.t} disabled={!canEdit} aria-label={t("Keyframe time (s)")}
+                      onChange={(e) => editKf(i, { t: Math.max(0, Math.min(c.dur, Number(e.target.value))) })} className="!h-6 w-20 !px-1.5 text-xs tabular-nums" />
+                    <span className="text-2xs text-dim">s</span>
+                    {canEdit && <IconButton title={t("Delete keyframe")} className="ml-auto !size-6" onClick={() => setKfs(kfs.filter((_, j) => j !== i))}><Trash2 className="size-3" /></IconButton>}
+                  </div>
+                  <div className="grid grid-cols-5 gap-1">{KF_KEYS.map((key) => kfField(i, k, key))}</div>
+                </li>
+              ))}
+            </ul>
+          ) : <p className="text-2xs leading-snug text-dim">{t("Move the playhead, set the picture, add a keyframe; repeat somewhere else — the picture moves between them in straight lines.")}</p>}
+          {kfs.length > 0 && <p className="text-2xs leading-snug text-dim">{t("Linear between keyframes, held before the first and after the last. The export animates the same values (opacity keyframes render more slowly on large pictures).")}</p>}
+        </section>
       )}
       <div className="space-y-1.5">
         {slider(t("Fade in"), "fade_in", 0, 3, 0.1, (v) => `${v.toFixed(1)}s`)}
@@ -330,16 +407,42 @@ export function LayerPlayback({ tp, doc }: { tp: Transport; doc: LayersDoc | nul
   return (
     <>
       {items.pics.filter(on).map((c) => (
-        <div key={c.id} className="pointer-events-none absolute" style={{
-          left: `${(c.x ?? 0.5) * 100}%`, top: `${(c.y ?? 0.5) * 100}%`, width: `${(c.scale ?? 0.35) * 100}%`,
-          transform: "translate(-50%, -50%)", opacity: c.opacity ?? 1, zIndex: 5 + c.z,
-        }}>
+        <AnimatedPic key={c.id} clip={c} tp={tp} z={5 + c.z}>
           {c.kind === "image" ? <img src={c.url} alt="" className="block w-full" />
             : <SyncedMedia kind="video" url={c.url} tp={tp} clip={c} muted={!!c.muted || c.trackMuted} volume={Math.min(1, Math.pow(10, c.gain_db / 20))} />}
-        </div>
+        </AnimatedPic>
       ))}
       {items.sounds.filter(on).map((c) => <SyncedMedia key={c.id} kind="audio" url={c.url} tp={tp} clip={c} volume={c.vol} />)}
     </>
+  );
+}
+
+/** The CSS for a picture clip's position / size / opacity / angle. */
+function picStyle(s: Record<KfKey, number>): Partial<CSSStyleDeclaration> {
+  return { left: `${s.x * 100}%`, top: `${s.y * 100}%`, width: `${s.scale * 100}%`, opacity: String(s.opacity),
+    transform: `translate(-50%, -50%)${s.rotation ? ` rotate(${s.rotation}deg)` : ""}` };
+}
+
+/** Positions a picture clip; with keyframes it follows the clock every frame (no re-render) so scrubbing shows the motion. */
+function AnimatedPic({ clip, tp, z, children }: { clip: LayerClip; tp: Transport; z: number; children: React.ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const animated = !!clip.keyframes?.length;
+  useEffect(() => {
+    if (!animated) return;
+    const apply = () => {
+      const el = ref.current;
+      if (!el) return;
+      Object.assign(el.style, picStyle(stateAt(clip, tp.clock.get() - clip.start)));
+    };
+    apply();
+    return tp.clock.subscribe(apply);
+  }, [animated, clip, tp.clock]);
+  const base = { x: clip.x ?? KF_DEFAULT.x, y: clip.y ?? KF_DEFAULT.y, scale: clip.scale ?? KF_DEFAULT.scale, opacity: clip.opacity ?? KF_DEFAULT.opacity, rotation: clip.rotation ?? 0 };
+  const s = picStyle(animated ? stateAt(clip, tp.clock.get() - clip.start) : base);
+  return (
+    <div ref={ref} className="pointer-events-none absolute" style={{ left: s.left, top: s.top, width: s.width, opacity: s.opacity, transform: s.transform, zIndex: z }}>
+      {children}
+    </div>
   );
 }
 

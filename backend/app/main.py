@@ -18,7 +18,7 @@ mimetypes.add_type("text/css", ".css")
 mimetypes.add_type("application/manifest+json", ".webmanifest")
 mimetypes.add_type("image/svg+xml", ".svg")
 
-from .api import admin, auth, bible, board, fx, generate, growth, hub, layers, production, projects, room, shots, work
+from .api import admin, auth, bible, board, campaign, fx, generate, growth, hub, layers, production, projects, room, shots, work
 from .config import ROOT, get_settings
 from .db import Base, engine
 from .providers.base import ProviderError
@@ -47,7 +47,7 @@ app.add_middleware(CORSMiddleware, allow_origins=[settings.frontend_origin], all
                    allow_methods=["*"], allow_headers=["*"])
 
 for r in (auth.router, admin.router, projects.router, bible.router, shots.router, generate.router, work.router, hub.router,
-          room.router, growth.router, board.router, fx.router, layers.router, production.router):
+          room.router, growth.router, board.router, fx.router, layers.router, production.router, campaign.router):
     app.include_router(r)
 
 

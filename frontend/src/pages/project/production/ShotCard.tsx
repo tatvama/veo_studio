@@ -1,18 +1,32 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { clsx } from "clsx";
-import { AudioLines, Check, Cpu, Film, Image as ImageIcon, MessageSquare, Mic, Play } from "lucide-react";
+import { AudioLines, Check, Cpu, Film, History, Image as ImageIcon, MessageSquare, Mic, Play } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { memo, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { QcMini } from "../../../components/hub/Qc";
 import { LockMark } from "../../../components/shell/PresenceBar";
 import { takeEngine } from "../../../components/hub/util";
-import { Progress, rise } from "../../../components/ui";
+import { Progress, Tooltip, rise } from "../../../components/ui";
 import { useLockHolder } from "../../../lib/collab";
 import { LANG_SHORT } from "../../../lib/format";
 import { useT } from "../../../lib/i18n";
 import type { Shot } from "../../../lib/types";
-import { displayMedia, shotStages, thumbRatio, type StageState } from "./shotMeta";
+import { displayMedia, isStale, shotStages, staleReason, thumbRatio, type StageState } from "./shotMeta";
+
+/** Amber "Stale" pill: the shot changed after this take was made. The tooltip says what changed. */
+export function StaleBadge({ reason, className }: { reason: string; className?: string }) {
+  const t = useT();
+  const tip = reason ? t("Stale — {reason}", { reason }) : t("Stale — the shot changed after this take was made");
+  return (
+    <Tooltip content={tip}>
+      <span role="img" aria-label={tip}
+        className={clsx("inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md border border-warn/30 bg-warn/12 px-1.5 text-2xs font-medium leading-none text-amber-300", className)}>
+        <History className="size-3" />{t("Stale")}
+      </span>
+    </Tooltip>
+  );
+}
 
 /** One production stage (keyframe, video, voice, lip-sync): filled + coloured when done, dashed when still to do. */
 function StageIcon({ icon, state, label }: { icon: ReactNode; state: StageState; label: string }) {
@@ -44,6 +58,7 @@ export const ShotCard = memo(function ShotCard({ shot, lang, aspect, index, sele
   const approved = shot.status === "approved";
   const madeBy = engineName || takeEngine(m.video);
   const pinned = !!engineName;
+  const stale = isStale(shot);
   const r = rise(index);
 
   useEffect(() => () => window.clearTimeout(timer.current), []);
@@ -184,6 +199,7 @@ export const ShotCard = memo(function ShotCard({ shot, lang, aspect, index, sele
                 {st.lip && <StageIcon icon={<AudioLines />} state={st.lip}
                   label={st.lip === "done" ? t("Lip-synced ({lang})", { lang: LANG_SHORT[lang] ?? lang }) : t("{n} line(s) in {lang}; voice mode {mode}", { n: st.lines, lang, mode: shot.effective_voice_mode })} />}
                 <QcMini take={shot.video} lipTake={shot.lipsync} threshold={threshold} />
+                {stale && <StaleBadge reason={staleReason(shot)} className="ml-auto" />}
               </div>
             </div>
           </div>

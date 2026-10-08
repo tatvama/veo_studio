@@ -117,7 +117,7 @@ def wardrobe_timeline(db: Session, project: Project, episode: Episode) -> dict[s
             per_shot = {(s.outfits or {}).get(str(cid)) for s in sc_shots if (s.outfits or {}).get(str(cid))}
             scene_outfit = (sc.wardrobe or {}).get(str(cid)) or ""
             end = ((sc.end_state or {}).get("characters") or {}).get(str(cid), {}).get("outfit") or ""
-            outfit = scene_outfit or (next(iter(per_shot)) if len(per_shit := per_shot) == 1 else "") or end
+            outfit = scene_outfit or (next(iter(per_shot)) if len(per_shot) == 1 else "") or end
             source = "scene" if scene_outfit else ("shot" if per_shot else ("bible" if end else "default"))
             scripted = bool(sc.continuity_notes and "outfit" in sc.continuity_notes.lower()) or sc.order == 0
             change = bool(last) and bool(outfit) and outfit != last

@@ -41,6 +41,7 @@ class ScenePatch(BaseModel):
     characters: list[int] | None = None
     props: list[str] | None = None
     wardrobe: dict[str, str] | None = None
+    prop_ids: list[int] | None = None
     continuity_notes: str | None = None
     coverage: list[str] | None = None
     blocking: str | None = None
@@ -50,8 +51,19 @@ class ScenePatch(BaseModel):
 @router.patch("/scenes/{scid}")
 def patch_scene(scid: int, body: ScenePatch, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
     sc = get_or_404(db, Scene, scid)
-    for k, v in body.model_dump(exclude_unset=True).items():
+    data = body.model_dump(exclude_unset=True)
+    old_wardrobe, old_props = dict(sc.wardrobe or {}), list(sc.prop_ids or [])
+    for k, v in data.items():
         setattr(sc, k, v)
+    # change impact: shots that inherit the scene wardrobe or props now need new keyframes and videos
+    if ("wardrobe" in data and (sc.wardrobe or {}) != old_wardrobe) or ("prop_ids" in data and list(sc.prop_ids or []) != old_props):
+        from ..core import dependencies
+        from ..models import Shot
+        changed_chars = {c for c in set(old_wardrobe) | set(sc.wardrobe or {}) if old_wardrobe.get(c) != (sc.wardrobe or {}).get(c)}
+        for s_ in db.query(Shot).filter(Shot.scene_id == sc.id, Shot.include.is_(True)).all():
+            inherits = any(str(c) in {str(x) for x in (s_.characters or [])} and not (s_.outfits or {}).get(str(c)) for c in changed_chars)
+            if inherits or ("prop_ids" in data and not s_.prop_ids):
+                dependencies.mark_stale(db, s_, {"outfits"} if inherits else {"prop_ids"}, note="scene wardrobe changed")
     db.commit()
     ep = db.get(Episode, sc.episode_id)
     emit(db, ep.project_id, "episode.updated", {"episode_id": ep.id, "what": "scenes"}, user_id=user.id)

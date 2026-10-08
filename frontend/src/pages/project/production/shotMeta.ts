@@ -1,4 +1,32 @@
 import type { Shot, Take } from "../../../lib/types";
+import type { TakeV3 } from "../../../lib/v3";
+
+/** The current takes of a shot that a later change made stale (the shot's text, cast, outfits, props… moved on). */
+export function staleTakes(s: Shot): { kind: "keyframe" | "video" | "lipsync" | "voicelock" | "voice"; take: TakeV3 }[] {
+  const out: { kind: "keyframe" | "video" | "lipsync" | "voicelock" | "voice"; take: TakeV3 }[] = [];
+  const check = (kind: "keyframe" | "video" | "lipsync" | "voicelock" | "voice", t: Take | null | undefined) => {
+    const v = t as TakeV3 | null | undefined;
+    if (v?.stale) out.push({ kind, take: v });
+  };
+  check("keyframe", s.keyframe);
+  check("video", s.video);
+  check("lipsync", s.lipsync);
+  check("voicelock", s.voicelock);
+  check("voice", s.voice);
+  return out;
+}
+
+/** True when any of the shot's current keyframe / video / lip-sync takes is stale. */
+export const isStale = (s: Shot): boolean => staleTakes(s).length > 0;
+
+/** One line that says why a shot is stale ("Keyframe: action changed; Video: outfit changed"). Empty when it is fresh. */
+export function staleReason(s: Shot): string {
+  const seen = new Set<string>();
+  return staleTakes(s)
+    .map(({ take }) => (take.stale_reason || "").trim())
+    .filter((r) => { if (!r || seen.has(r)) return false; seen.add(r); return true; })
+    .join("; ");
+}
 
 /** Where one production stage of a shot stands. */
 export type StageState = "done" | "todo" | "bad";
