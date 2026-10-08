@@ -21,7 +21,8 @@ class Settings(BaseSettings):
     media_root: Path = ROOT / "media"
     data_root: Path = ROOT / "data"
 
-    # Storage: "local" keeps files on disk; "s3" also mirrors them to an S3-compatible bucket (Cloudflare R2).
+    # Storage: "local" keeps files on disk; "s3" makes an S3-compatible bucket (Cloudflare R2) the shared store,
+    # with the local media folder as a download cache (see storage.py).
     storage_backend: str = "local"
     s3_endpoint_url: str = ""
     s3_bucket: str = ""
