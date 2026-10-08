@@ -7,7 +7,7 @@ export default function WorldPage() {
   const t = useT();
   return (
     <RoomPage>
-      <RoomHeader icon={Globe} title={t("World")} description={t("Props, wardrobe through the episode, and the state of every scene.")} />
+      <RoomHeader icon={<Globe size={18} />} title={t("World")} description={t("Props, wardrobe through the episode, and the state of every scene.")} />
     </RoomPage>
   );
 }

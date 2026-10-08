@@ -7,7 +7,7 @@ export default function DashboardPage() {
   const t = useT();
   return (
     <RoomPage>
-      <RoomHeader icon={Gauge} title={t("Dashboard")} description={t("Progress, footage, spend and what still needs doing.")} />
+      <RoomHeader icon={<Gauge size={18} />} title={t("Dashboard")} description={t("Progress, footage, spend and what still needs doing.")} />
     </RoomPage>
   );
 }

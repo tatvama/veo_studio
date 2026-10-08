@@ -7,7 +7,7 @@ export default function CampaignPage() {
   const t = useT();
   return (
     <RoomPage>
-      <RoomHeader icon={Megaphone} title={t("Ads & Reels")} description={t("One brief, every language and aspect ratio. Reels cut from what you already made.")} />
+      <RoomHeader icon={<Megaphone size={18} />} title={t("Ads & Reels")} description={t("One brief, every language and aspect ratio. Reels cut from what you already made.")} />
     </RoomPage>
   );
 }
