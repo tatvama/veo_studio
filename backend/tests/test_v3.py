@@ -13,12 +13,12 @@ from conftest import H, ok, wait_jobs
 
 MARKED_SCRIPT = """SCENE 1 - INT. TEMPLE COURTYARD - DUSK
 VISUAL: Rows of brass lamps on worn stone, a gopuram silhouette far away.
-RAVI: I saw him again last night.
-MEERA: Then it was not a dream.
+DEVADUTTA: I saw him again last night.
+SHYAMALA: Then it was not a dream.
 SCENE 2 - EXT. FOREST PATH - NIGHT
-VISUAL: Ravi walks alone under tall trees, lamp in hand.
+VISUAL: Devadutta walks alone under tall trees, lamp in hand.
 VO: The forest had kept its silence for a hundred years.
-RAVI: Who is there?
+DEVADUTTA: Who is there?
 """
 
 
@@ -33,22 +33,22 @@ def _project(c: TestClient, **extra) -> tuple[int, int]:
 def test_mentions_tokens_and_resolution(client: TestClient):
     c = client
     pid, eid = _project(c)
-    ch = ok(c.post("/api/characters", headers=H, json={"name": "Ravi Kumar", "dna_text": "Ravi: 28, lean, cream kurta"}))
+    ch = ok(c.post("/api/characters", headers=H, json={"name": "Vikramaditya", "dna_text": "Vikramaditya: 28, lean, cream kurta"}))
     ok(c.post(f"/api/projects/{pid}/cast/{ch['id']}", headers=H))
-    tok = mentions.token("character", ch["id"], "Ravi Kumar")
-    assert mentions.plain(f"{tok} lights the lamp") == "Ravi Kumar lights the lamp"
+    tok = mentions.token("character", ch["id"], "Vikramaditya")
+    assert mentions.plain(f"{tok} lights the lamp") == "Vikramaditya lights the lamp"
     assert mentions.ids(f"{tok} and {tok}", "character") == [ch["id"]]
-    cands = ok(c.get(f"/api/projects/{pid}/mentions?q=rav"))
+    cands = ok(c.get(f"/api/projects/{pid}/mentions?q=vikram"))
     assert any(x["id"] == ch["id"] and x["kind"] == "character" for x in cands)
     # bare @Ravi resolves to the cast member; an unknown @Meera becomes a new character in the cast
-    script = {"logline": "x", "beats": [], "scenes": [{"title": "S1", "location": "Temple", "summary": "", "action": "@Ravi meets @Meera",
-                                                      "lines": [{"character": "@Ravi", "line": "Hello", "emotion": ""}]}]}
+    script = {"logline": "x", "beats": [], "scenes": [{"title": "S1", "location": "Temple", "summary": "", "action": "@Vikramaditya meets @Padmavathi",
+                                                      "lines": [{"character": "@Vikramaditya", "line": "Hello", "emotion": ""}]}]}
     ok(c.patch(f"/api/episodes/{eid}", headers=H, json={"script": script}))
     out = ok(c.post(f"/api/episodes/{eid}/script/resolve", headers=H, json={"create_missing": True}))
-    assert any(x["name"] == "Meera" for x in out["created"])
+    assert any(x["name"] == "Padmavathi" for x in out["created"])
     ents = mentions.entities(out["script"])
     assert ch["id"] in ents["character"] and len(ents["character"]) == 2
-    assert mentions.plain(out["script"]["scenes"][0]["action"]) == "Ravi Kumar meets Meera"
+    assert mentions.plain(out["script"]["scenes"][0]["action"]) == "Vikramaditya meets Padmavathi"
     quick = ok(c.post("/api/mentions/create", headers=H, json={"kind": "prop", "name": "Oil lamp", "project_id": pid}))
     assert quick["token"].startswith("@[Oil lamp](prop:")
     props = ok(c.get(f"/api/props?project_id={pid}"))
@@ -61,15 +61,15 @@ def test_import_apply_creates_cast_board_and_script(client: TestClient):
     c = client
     pid, eid = _project(c, workflow="script")
     parsed = ok(c.post(f"/api/episodes/{eid}/import/parse", headers=H, data={"text": MARKED_SCRIPT, "method": "markers"}))
-    assert parsed["stats"]["scenes"] == 2 and {x["name"] for x in parsed["characters"]} >= {"Ravi", "Meera"}
+    assert parsed["stats"]["scenes"] == 2 and {x["name"] for x in parsed["characters"]} >= {"Devadutta", "Shyamala"}
     out = ok(c.post(f"/api/episodes/{eid}/import/apply", headers=H, json={"draft": parsed["draft"], "mapping": {}, "create_missing": True}))
-    assert "Meera" in {x["name"] for x in out["created"]} and set(out["characters"]) >= {"Ravi", "Meera"}  # Ravi matched the library
+    assert {x["name"] for x in out["created"]} >= {"Devadutta", "Shyamala"} and set(out["characters"]) >= {"Devadutta", "Shyamala"}
     board = ok(c.get(f"/api/episodes/{eid}/board"))
     shots = [s for sc in board["scenes"] for s in sc["shots"]]
     assert len(shots) >= 3 and any(l["speaker"] == "VO" for s in shots for l in s["lines"])
     ep = ok(c.get(f"/api/episodes/{eid}"))
     toks = mentions.entities(ep["script"])
-    assert len(toks["character"]) == 2 and ep["script"]["scenes"][0]["lines"][0]["character"].startswith("@[Ravi](character:")
+    assert len(toks["character"]) == 2 and ep["script"]["scenes"][0]["lines"][0]["character"].startswith("@[Devadutta](character:")
     assert "brass lamps" in ep["script"]["scenes"][0]["action"]
 
 

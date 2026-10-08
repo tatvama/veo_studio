@@ -1,7 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
-  Activity, BookOpen, BookUser, Boxes, Clapperboard, Coins, FileText, Film, Home, LayoutGrid, ListVideo, MessageSquareText, Palette, PanelsTopLeft, ScrollText,
-  Search, Settings, ShieldCheck, SquareKanban, Users,
+  Activity, BookOpen, BookUser, Boxes, Clapperboard, Coins, FileText, Film, Gauge, Globe, Home, LayoutGrid, ListVideo, Megaphone, MessageSquareText,
+  Palette, PanelsTopLeft, ScrollText, Search, Settings, ShieldCheck, SquareKanban, Users,
 } from "lucide-react";
 import { ROLE_RANK, type Role } from "../../lib/types";
 
@@ -29,14 +29,14 @@ export function getNav(t: T, role: Role): NavEntry[] {
   return items.filter((x): x is NavEntry => !!x);
 }
 
-export type ProjectPhase = "write" | "cast" | "shots" | "finish" | "log";
+export type ProjectPhase = "write" | "cast" | "shots" | "finish" | "track" | "log";
 export interface ProjectTab { to: string; label: string; icon: LucideIcon; keywords?: string; phase: ProjectPhase }
 
 /** The four phases of making a video, in order (tabs are grouped under them). */
 export function getProjectPhases(t: T): { id: ProjectPhase; label: string }[] {
   return [
     { id: "write", label: t("Write") }, { id: "cast", label: t("Cast") }, { id: "shots", label: t("Shots") },
-    { id: "finish", label: t("Finish") },
+    { id: "finish", label: t("Finish") }, { id: "track", label: t("Track") },
   ];
 }
 
@@ -46,13 +46,16 @@ export function getProjectTabs(t: T): ProjectTab[] {
     { to: "brief", phase: "write", label: t("Brief"), icon: FileText, keywords: "goal audience autopilot" },
     { to: "story", phase: "write", label: t("Story"), icon: BookOpen, keywords: "hooks script writers room" },
     { to: "scenes", phase: "write", label: t("Scenes"), icon: SquareKanban, keywords: "scene cards beats" },
-    { to: "bible", phase: "cast", label: t("Bible"), icon: Users, keywords: "characters cast locations style voices photos" },
+    { to: "bible", phase: "cast", label: t("Bible"), icon: Users, keywords: "characters cast locations style voices photos lock versions costumes" },
+    { to: "world", phase: "cast", label: t("World"), icon: Globe, keywords: "props costumes wardrobe continuity bible timeline" },
     { to: "studio", phase: "shots", label: t("Studio"), icon: PanelsTopLeft, keywords: "one screen workspace panels timeline viewer multi monitor drag drop" },
     { to: "shots", phase: "shots", label: t("Shot list"), icon: ListVideo, keywords: "import script word pdf manual builder dialogue voice-over produce" },
     { to: "storyboard", phase: "shots", label: t("Storyboard"), icon: LayoutGrid, keywords: "shots keyframes videos takes" },
     { to: "timeline", phase: "finish", label: t("Timeline"), icon: Film, keywords: "edit cut music audio" },
     { to: "export", phase: "finish", label: t("Export"), icon: Clapperboard, keywords: "render publish download" },
     { to: "review", phase: "finish", label: t("Review"), icon: MessageSquareText, keywords: "comments feedback client" },
-    { to: "activity", phase: "log", label: t("Activity"), icon: Activity, keywords: "log history events" },
+    { to: "campaign", phase: "finish", label: t("Ads & Reels"), icon: Megaphone, keywords: "advert campaign variants languages aspect reels shorts highlights" },
+    { to: "dashboard", phase: "track", label: t("Dashboard"), icon: Gauge, keywords: "progress cost per second spend stale impact seasons" },
+    { to: "activity", phase: "track", label: t("Activity"), icon: Activity, keywords: "log history events" },
   ];
 }
