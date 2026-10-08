@@ -18,6 +18,12 @@ class Settings(BaseSettings):
     # Signs login cookies and encrypts API keys saved from the Admin page. Set a long random value in production.
     app_secret: str = "dev-only-secret-change-me"
     database_url: str = ""
+    # Postgres connection pool, per process (API + in-process worker share one pool). Idle connections are
+    # recycled before a remote server or a NAT drops them.
+    db_pool_size: int = 5
+    db_max_overflow: int = 10
+    db_pool_recycle_s: int = 1800
+    db_connect_timeout_s: int = 10
     media_root: Path = ROOT / "media"
     data_root: Path = ROOT / "data"
 
