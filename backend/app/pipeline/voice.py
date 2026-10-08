@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +50,18 @@ def voice_for(db: Session, character_id: Any, lang: str, project: Project) -> di
     return {"provider": "gemini", "voice_id": _pick(pool, str(cid)), "style": "", "source": "default"}
 
 
+def say(db: Session, project: Project, text: str) -> str:
+    """Apply the pronunciation dictionary: project terms (names, Sanskrit words) and character name pronunciations,
+    whole words only, case-insensitive, longest term first so Sri Rama wins over Rama."""
+    table: dict[str, str] = {str(k).strip(): str(v).strip() for k, v in (project.pronunciations or {}).items() if k and v}
+    for ch in db.query(Character).filter(Character.name_pronunciation != "", Character.archived.is_(False)).all():
+        table.setdefault(ch.name.strip(), ch.name_pronunciation.strip())
+    out = text or ""
+    for term in sorted(table, key=len, reverse=True):
+        out = re.sub(r"(?<!\w)" + re.escape(term) + r"(?!\w)", table[term], out, flags=re.I | re.U)
+    return out
+
+
 def choose_duration(dialogue_seconds: float) -> int:
     for d in (4, 6, 8):
         if dialogue_seconds + 0.6 <= d:
@@ -67,7 +80,7 @@ def build_dialogue(ctx, db: Session, shot: Shot, project: Project, lang: str, ou
     for i, l in enumerate(lines):
         v = voice_for(db, l.get("character_id"), lang, project)
         style = l.get("emotion") or v["style"]
-        res = ctx.services.tts(v["provider"], l["line"], v["voice_id"], lang, style=style)
+        res = ctx.services.tts(v["provider"], say(db, project, l["line"]), v["voice_id"], lang, style=style)
         ctx.cost(res.usage)
         p = out_dir / f"line_{i}.{res.ext}"
         p.write_bytes(res.data)
@@ -86,7 +99,7 @@ def build_narration(ctx, db: Session, shot: Shot, project: Project, lang: str, o
     if not text:
         return None
     v = voice_for(db, "NARRATOR", lang, project)
-    res = ctx.services.tts(v["provider"], text, v["voice_id"], lang, style=v["style"])
+    res = ctx.services.tts(v["provider"], say(db, project, text), v["voice_id"], lang, style=v["style"])
     ctx.cost(res.usage)
     raw = out_dir / f"narr_raw.{res.ext}"
     raw.write_bytes(res.data)

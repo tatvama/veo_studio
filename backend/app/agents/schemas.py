@@ -155,6 +155,30 @@ class LocalizeOut(BaseModel):
     items: list[LocalizedItem]
 
 
+class EndStateCharacter(BaseModel):
+    name: str
+    outfit: str = ""
+    state: str = ""
+
+
+class EndStateOut(BaseModel):
+    characters: list[EndStateCharacter] = []
+    props: list[str] = []
+    time_of_day: str = ""
+    weather: str = ""
+    notes: str = ""
+
+
+class DialogueCheckOut(BaseModel):
+    heard: str = Field(default="", description="the words you hear, written in the script of the language spoken")
+    language: str = Field(default="", description="language actually spoken, e.g. Kannada, Hindi, English, none")
+    word_match: float = Field(default=0.0, description="0-1: how much of the expected line was spoken correctly")
+    pronunciation: float = Field(default=0.0, description="0-1: how natural a native speaker would find it")
+    sync_score: float = Field(default=0.0, description="0-1: mouth shapes and timing match the speech")
+    subtitles_burned: bool = Field(default=False, description="any on-screen text or captions in the picture")
+    notes: str = ""
+
+
 class QCOut(BaseModel):
     identity_match: float = Field(description="0–1, does the person look like the reference sheet")
     outfit_match: bool

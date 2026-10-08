@@ -223,8 +223,12 @@ def save_board(db: Session, user: User, project: Project, episode: Episode, boar
                 if changed:
                     collab.check(user, f"shot:{s.id}")  # someone has this shot open for editing
                     studio.save_revision(db, "shot", s, studio.SHOT_FIELDS, user)
+                    dlg_before = {k: list(v or []) for k, v in (s.dialogue or {}).items()}
+                    narr_before = dict(s.narration or {})
                     for k in changed:
                         setattr(s, k, new_vals[k])
+                    from . import dependencies
+                    dependencies.mark_stale(db, s, set(changed), dialogue_before=dlg_before, narration_before=narr_before)
                     if s.status == "approved" and set(changed) & {"action", "characters", "dialogue", "narration", "duration_s"}:
                         s.status = "video_ready"
                 s.order, s.include = order, True

@@ -1,8 +1,8 @@
 # Tatvam AI Studio: Build Plan v3
 
-*Date: 9 October 2026. This replaces the earlier VEO Studio plans as the team's working plan. The old `PLAN.md` stays only as a record of what was built before.*
+*Date: 9 October 2026. This replaces the earlier VEO Studio plans as the team's working plan. The old `PLAN.md` stays only as a record of what was built before. Updated the same day with the three-surface decision: web studio, desktop finishing room and mobile review app (sections 15 to 18).*
 
-Tatvam AI Studio is one in-house production system: start with a story idea, finish with a film, a series episode, a reel or an advertisement, without leaving the app. It is **Google-first**, **API-only** (no GPUs of our own), and built around **characters that stay the same person across hundreds of shots**.
+Tatvam AI Studio is one in-house production system: start with a story idea, finish with a film, a series episode, a reel or an advertisement, without leaving the app. It is **Google-first**, **API-only** (no GPU servers of our own; the editor's own PC renders the final cut), and built around **characters that stay the same person across hundreds of shots**.
 
 ---
 
@@ -12,8 +12,9 @@ Tatvam AI Studio is one in-house production system: start with a story idea, fin
 | --- | --- | --- |
 | Video, images, voices, QC | **Google by default**: Veo 3.1 for video, Nano Banana for images and keyframes, Gemini 3.8 Flash TTS for voices, Gemini vision and Gemini 3.5 Transcribe for QC | One billing account, best image-to-video fidelity, voices in 130+ languages including Hindi, Kannada, Telugu and Tamil |
 | Models Google doesn't have | **fal.ai** as the gateway (about 800 models), **Replicate** as an optional second gateway | Both expose per-model schemas, so one adapter maps them. They cover LoRA training, audio-driven video and lip-sync-to-audio |
-| Infrastructure | One Docker image on a small VPS, managed Postgres, Cloudflare R2. No Redis, no GPU workers, no desktop app | Nothing to operate. The job queue already runs in the database |
-| Code base | Keep FastAPI + React + the existing database queue. No rewrite to Next.js, Node or Tauri | 15k lines of backend and 42k of frontend already cover most of the vision |
+| Infrastructure | One Docker image on a small VPS, managed Postgres, Cloudflare R2. No Redis, no GPU servers | Nothing to operate. The job queue already runs in the database. The only GPU in the system is the editor's own PC, used for the final render (section 16) |
+| Code base | Keep FastAPI + React + the existing database queue. No rewrite to Next.js or Node | 15k lines of backend and 42k of frontend already cover most of the vision |
+| Surfaces | **Web is the studio.** The **desktop finishing room** is the same React code in a Tauri shell with local FFmpeg and a GPU render engine, for one or two editors. The **mobile review app** is the same web app installed as a PWA. One backend, one database, one login | All AI work is a cloud call, so a desktop app gains nothing there. It earns its place only for 4K editing, GPU effects, local footage and offline cutting. Phones are where approvals wait, not where edits happen |
 | Lip-sync | **Google route**: Veo speaks the line inside the video, in the language's own script. Dubbing means regenerating the shot per language | Google sells no lip-sync-to-audio API, and Gemini Omni cannot edit voices. The fallback (Gemini TTS voice + sync.so lips) stays available per language |
 | Character identity | The **reference pack** is the training: all angles, expressions, every outfit. LoRA is optional and only sharpens keyframes | Veo has no training. Identity comes from the keyframe plus up to 3 reference images |
 | Money and canon | AI proposes, people approve: spend over a limit, locking a character, replacing an approved take, publishing | Keeps costs and continuity under human control |
@@ -40,6 +41,8 @@ One left rail, twelve modules. Every module edits the same project database.
 | Render Center | Render & Export Studio, QC report | Exists. Add the QC report and a publish gate |
 
 The three production modes (Film & Series, Shorts & Reels, Ads) are **templates and wizards over the same modules**, not separate apps.
+
+The same modules appear on three surfaces (section 15). The web shows all twelve. The desktop finishing room adds the full editor and render on top of them. The mobile app shows Dashboard, review, approvals and capture only.
 
 ---
 
@@ -165,6 +168,40 @@ Built in stages on the existing layer model (video and audio tracks, position, s
 
 Three views of one project: Story view, Storyboard view, Timeline view. OpenTimelineIO export comes last, only if editors need to hand projects to outside tools.
 
+The stages above are the **web timeline**: everything FFmpeg can render on the server, which is enough for AI clips of 4 to 8 seconds at 1080p. Everyone uses it to cut, review and preview. The Filmora-level catalogue below needs a GPU render engine and lands in the **desktop finishing room** (section 16).
+
+### 8.1 Editing feature catalogue
+
+| Area | Exists today (FFmpeg) | To add | Renders on |
+| --- | --- | --- | --- |
+| Transitions | About 40 xfade transitions: dissolves, dips, wipes, barn doors, clock wipe, zoom, squeeze, with duration | Shader transitions: glitch, light leak, film burn, morph, cube, page curl, luma mattes (the gl-transitions set, 70+). Drag onto a cut point, easing, direction, animated thumbnails, favourites, matching audio crossfade, AI-suggested transition per cut | GPU engine |
+| Effects | Looks, uploaded LUTs, speed and reverse, flip, Ken Burns moves, fade to black | Keyframes on position, scale, rotation and opacity; speed ramps on a curve; masks (shape, pen, tracked); chroma key and AI background removal; stabilisation; motion blur, glow, vignette, grain, sharpen, denoise; face blur with tracking; freeze frame; picture in picture; split-screen templates | GPU engine (freeze, PiP, stabilise also in FFmpeg) |
+| Colour | Preset looks and LUTs | Colour wheels, curves, HSL qualifiers, scopes (waveform, vectorscope, histogram), shot-to-shot colour match, adjustment layers | GPU engine |
+| Multi-layer timeline | Video, image and audio tracks, blend modes, waveform, captions, J/K/L | Unlimited tracks with lock, solo, mute and hide; magnetic snapping; ripple, roll, slip and slide; razor; J and L cuts; markers; compound clips; nested sequences; track groups; linked audio; multicam; minimap | Both |
+| Titles and text | Caption generation, brand kits | Animated title presets, lower thirds, kinetic typography, word-highlight karaoke captions, stickers and shapes. Correct Indic shaping for Hindi, Kannada, Telugu and Tamil is the hard requirement | Both (libass on FFmpeg, HarfBuzz on GPU) |
+| Audio | Per-clip gain, fades, ducking, ElevenLabs clean-up | Beat detection for beat-synced cuts, EQ and compressor, audio keyframes, voice isolation, music auto-fit to length, SFX library, mixer with meters, loudness normalisation for YouTube | Both |
+
+### 8.2 Render engine decision
+
+Preview and final render must look identical. FFmpeg cannot draw shader transitions, keyframed masks or node composites, so there are two paths:
+
+1. Keep FFmpeg and limit the catalogue to what it can draw. This is the web timeline.
+2. Build **one GPU render engine** (WebGPU, with WebGL fallback) that previews in the browser and in the desktop app, and renders the final file headlessly in the desktop app. FFmpeg then only decodes and encodes.
+
+We take path 2 for the desktop finishing room and keep path 1 for the web. The engine is one code base in TypeScript or Rust, used in three places: browser preview at reduced resolution, desktop preview, desktop final render. The web timeline keeps working for anyone without the desktop app.
+
+### 8.3 Node connection
+
+The node graph library is already in the frontend for the Film Map. Three uses, in order of fit:
+
+1. **Generation recipe graph**: prompt, keyframe, video, lip-sync and QC as connected nodes, with the Bible wired in. Like ComfyUI, but every node knows the characters, outfits and cost gate. Recipes are saved and reused per production mode. This fits the product best and goes into Phase 7.
+2. **Effect stacking** per clip as a node chain. Small, once the GPU engine exists.
+3. **Full node compositing** (Fusion or Nuke style). The biggest build in the whole plan. Only if editors ask for it after the rest ships.
+
+### 8.4 Workspace and monitors
+
+Panels already dock. To add: workspace presets (Edit, Colour, Audio, Story), saved and shared layouts, pop-out panels into separate windows, a full-screen program monitor on a second display, source and program dual monitors, external clean-feed output. Pop-outs work in the browser with shared state between windows, but the desktop app does it natively and without pop-up limits.
+
 ---
 
 ## 9. Reels and Ads
@@ -207,6 +244,8 @@ Ten specialists share one structured record store rather than chat text: Story, 
 - **Postgres** holds metadata only. Add `seasons`, `character_versions`, `props`, `costumes`, `continuity_states`, `shot_links`, `dependencies` (stale tracking) and `voice_descriptions`. Connection pooling and worker limits from day one.
 - **No Redis.** The database queue handles jobs, locks and progress.
 - The **local cache** cleans only files that are safely in R2.
+- **Desktop project folder** (section 16.3): a mirror of the project's approved media on the editor's disk, plus a SQLite copy of the project metadata. R2 stays the source of truth. The folder cleans only files that are safely in R2.
+- **Checkout locks** on timelines live in Postgres, so the web and the desktop agree on who is editing.
 
 ---
 
@@ -219,10 +258,123 @@ Ten specialists share one structured record store rather than chat text: Story, 
 - Automatic timeline snapshots, database backups, restore drills.
 - Idempotent jobs, retries, timeouts, cancellation, rate limits. Exist.
 - Asset provenance: generated, original, licensed, stock, supplied.
+- Desktop and mobile use the same login, roles, cost gate and audit log. Client review on a phone goes through the existing links with watermark and expiry. Local media on a desktop is deleted on request when a project is closed.
 
 ---
 
-## 15. Roadmap
+## 15. Three surfaces: web, desktop, mobile
+
+One backend, one database, one login. Web is the studio, desktop is the finishing room, mobile is the approval and capture layer.
+
+| Surface | Who | Does | Does not | Built as |
+| --- | --- | --- | --- | --- |
+| **Web studio** | Everyone | All twelve modules, all AI generation, approvals, costs, the web timeline, reviews, publishing | Final 4K render, GPU effects | The current React and FastAPI app in Docker on the VPS |
+| **Desktop finishing room** | One or two editors | Full timeline, shader transitions and effects, colour, titles, mixer, 4K render, local footage, offline cutting | Any AI generation of its own; every AI button calls the server | Tauri shell around the same React code, a Rust side for FFmpeg, sync and the render engine |
+| **Mobile review app** | Producers, directors, writers, clients, actors, on-set team | Review, frame comments, approvals, spend approvals, notifications, capture | Editing | The web app installed as a PWA; a native Expo app later only if needed |
+
+Why not web only: a browser cannot run hardware decode and encode, long 4K timelines or a headless GPU render. Why not desktop only: the team, the Bible, approvals and costs need the server, every AI step is a cloud call, and anyone with a link must be able to work. Why mobile at all: decisions wait on phones, and an approval made from a phone unblocks a render the same minute.
+
+Order of value: web first, always. Mobile next, because it is two weeks of layout on existing pages. Desktop last, because it only pays off once the editing engine exists to justify it.
+
+---
+
+## 16. Desktop finishing room
+
+### 16.1 What lives where
+
+| | Web (server) | Desktop (local) |
+| --- | --- | --- |
+| Source of truth | Project, Bible, scripts, shots, approved takes, costs, roles | SQLite mirror, synced |
+| Media | Masters in R2 | Project folder on disk, pulled on demand |
+| Timeline | Web timeline, anyone can view and comment | Full editor, one person at a time |
+| Rendering | Previews and drafts | Final 4K masters on the editor's GPU, uploaded back |
+| AI generation | All of it | Same buttons, same server, same cost gate |
+
+### 16.2 Sync model
+
+- Opening a project on desktop downloads the **approved** takes, voices, music, captions and Bible into the local folder. Nothing unapproved is pulled.
+- The editor **checks out** the timeline. The web shows "being edited by X" and that cut goes read-only. No two people overwrite each other.
+- Edits save locally every few seconds and push to the server on each change when online. Offline edits queue and sync on reconnect.
+- Renders upload to R2 and appear in Render Center with a version number. Reviewers watch in the browser or on a phone, comment on frames, and the comments appear in the desktop timeline.
+- **Check-in** releases the lock. Every check-in is a version with rollback.
+
+### 16.3 Local project folder
+
+One folder per project: `Takes`, `Audio`, `Captions`, `Imports`, `Proxies`, `Renders`, `Cache`, plus a project file. Footage dropped into `Imports` is ingested automatically (a watch folder). The folder is readable by Premiere or DaVinci, so nothing is trapped. `Cache` and `Proxies` are disposable; `Renders` upload and are then safe to clean.
+
+### 16.4 4K pipeline
+
+- Veo gives 1080p, or 4K only on 8-second Standard shots. The desktop adds an **upscale step**, run locally or through fal.ai, so every clip reaches 3840 by 2160 before the final render. The cost of the upscale shows before it runs, like every paid step.
+- Editing uses **1080p proxies** for smooth scrubbing and switches to full 4K for render.
+- Render uses hardware encoding (NVENC on NVIDIA, QuickSync on Intel) to H.264, HEVC and ProRes, 10-bit, with presets for YouTube 4K, Shorts and Reels, and broadcast.
+- Hardware baseline: an RTX 3060 or better, 32 GB RAM, an NVMe SSD. Below that everything works but renders slowly.
+
+### 16.5 Transitions and effects
+
+Everything in section 8.1 marked "GPU engine" ships here first, on the engine from section 8.2: shader transitions plus the existing 40, keyframes, speed ramps, masks, chroma key, blur, glow, grain, vignette, colour wheels, curves, LUTs and scopes, titles with correct Indic shaping, caption templates, lower thirds, ducking, mixer and loudness normalisation.
+
+### 16.6 Build shape
+
+Tauri shell around the current React frontend. Rust side for FFmpeg, file sync, the watch folder and the render engine host. SQLite mirror of the project. Same login, roles and cost gate. Tauri over Electron: a 10 MB installer and far less memory. Needs an installer, code signing (to avoid SmartScreen warnings), auto-update and crash reporting. Windows first; the same shell builds for macOS if an editor needs it.
+
+### 16.7 Sizing
+
+| Piece | Effort |
+| --- | --- |
+| Tauri shell, local folder, SQLite mirror, sync with checkout locks | 3 to 4 weeks |
+| Proxies, upscale step, hardware-encoded 4K export with presets | 3 to 4 weeks |
+| GPU render engine with transitions, keyframes, masks, colour, titles, mixer | 3 to 5 months for one strong developer |
+| Pop-out monitors, workspace presets, installer, signing, auto-update | 2 to 3 weeks |
+
+The render engine is the long pole and the only reason the desktop exists. It is planned as its own phase, not squeezed into Phase 5.
+
+---
+
+## 17. Mobile review and capture app
+
+A review and approval app, not an editor. Its job is to unblock the pipeline from anywhere.
+
+**On mobile**
+
+- Watch any render or take, scrub frame by frame, compare two takes side by side.
+- Tap a frame, draw on it, type or speak a note. Comments land on the timeline the editor sees.
+- Approve or reject takes, keyframes, scripts and character locks, with the cost shown first.
+- Spend approvals: when a job crosses the limit, the producer gets a push notification and approves from the phone.
+- Notifications: render finished, QC failed, approval waiting, comment reply, publish done.
+- On-set capture: reference photos for the Bible, a voice sample with the consent script, location references. They upload straight into the project.
+- Voice notes to the Director that become tasks or change requests.
+- Dashboard: spend today, what is rendering, what waits on whom, publish schedule.
+- Publish controls: approve a thumbnail, pick a title variant, confirm or reschedule a post.
+
+**Off mobile**: timeline editing, effects, colour, anything that needs a GPU or a big screen.
+
+| Option | Verdict |
+| --- | --- |
+| **Installable web app (PWA)** from the existing React code | Start here. No new code base, works on Android and iPhone, supports push, camera and microphone. The review page already exists, so this is mostly phone layouts |
+| **Native app with Expo (React Native)** | Later, only for App Store presence, background uploads of large files or deeper camera control. Shares logic with the web code |
+| **Flutter, Swift and Kotlin** | No. Separate code base, separate team, no reuse |
+
+---
+
+## 18. Feature backlog beyond editing
+
+New items only, grouped by where they sit. The web studio owns all of them unless marked desktop.
+
+- **Pre-production**: Fountain and Final Draft import and export with automatic breakdown into scenes, props, locations and wardrobe; beat sheets and structure templates (three act, hero's journey, PAS and AIDA for ads); mood boards and reference boards; pitch deck and treatment generation; hook scoring and retention prediction on the script; trend research per language and region.
+- **Image and video generation**: inpainting, outpainting, background swap, relighting, upscaling and style transfer in Image Studio; camera-move presets for keyframes (dolly, crane, orbit) from depth maps; video-to-video restyle; frame interpolation to 60 fps, slow motion, seamless loops; batch variants with side-by-side A/B and a seed lock; prompt library with versions and a prompt coach that explains why a shot failed.
+- **Audio and localisation**: stem separation; foley and ambience generation from the script; emotion and pace control per line; dub timing fit so a translated line matches the shot length; auto-translated subtitles and on-screen text; per-language thumbnails and titles; recording booth with teleprompter and built-in consent capture.
+- **Capture (desktop)**: screen recording, webcam capture, phone import, watch folders, Stream Deck and Loupedeck support, shortcut profiles that mimic Premiere or Resolve, clean full-screen output to a second display or TV.
+- **Motion graphics**: reusable templates for intros, outros, lower thirds, logo stings, animated charts and maps; template packs per production mode; safe-area overlays per platform and captions that avoid platform UI.
+- **Quality control**: artefact detection for hands, text and flicker; audio sync check; caption QC; continuity checks for props and wardrobe with a bible that fills itself; broadcast-legal levels; C2PA provenance signing and invisible watermarking on every export.
+- **Distribution**: publish to Instagram, Facebook, TikTok and X beside YouTube, with scheduling and best time to post; auto-clipping of episodes into Shorts and Reels with reframing and hooks (extends Reels Studio); thumbnail A/B, title and description variants, chapters, end screens, hashtag sets; analytics pulled back into the project.
+- **Team and business**: side-by-side version compare and sign-off workflows on top of the existing frame comments; client portal with watermark, expiry and download control; notifications over email, Slack and WhatsApp; production schedule with deadlines, budget versus actual per episode and cost forecasting per season; per-user quotas, invoices and markup, white label and multi-tenant if the studio is sold; SSO; asset rights and licence tracking; model usage reports by retake rate.
+- **Library**: vision-based auto tagging, face search across clips, duplicate detection, stock footage and music integration, shareable packs of Bibles, templates, LUTs, transitions and prompt sets.
+
+**First picks** (cheap given what exists, large daily impact): Fountain and Final Draft import with breakdown; inpainting and outpainting in Image Studio; multi-platform publish with scheduling; artefact and continuity QC feeding the publish gate; C2PA signing on export.
+
+---
+
+## 19. Roadmap
 
 | Phase | Weeks | Deliverables | Done when |
 | --- | --- | --- | --- |
@@ -231,18 +383,21 @@ Ten specialists share one structured record store rather than chat text: Story, 
 | **2. Character Lab v2** | 4 | Back view, outfit turnarounds, lighting variants, versions with episode scope, Character Lock (face, body, voice, costume, gestures) fed into the prompt compiler and QC, training versions with evaluation and rollback, trained identities passed to video models that accept LoRA inputs and references to the rest, props and costumes as real entities, wardrobe timeline, outfit QC, Continuity Bible recording state at the end of each scene, voice descriptions, pronunciation dictionary | 10 shots of one character in 2 outfits pass face and outfit QC |
 | **3. Google voice route** | 2 | Native Veo dialogue per language, prompt shape, Transcribe QC, regenerate-per-language dubbing, fallback switch | One scene in 3 languages with synced lips and no manual fixes |
 | **4. Change impact and dashboard** | 3 | Dependency graph, stale flags, selective regeneration, episode dashboard, cost per approved second | Editing a line lists exactly what to redo |
-| **5. Timeline pro** | 6 | Clip AI actions, trims, speed, keyframe animation, nested sequences, masks, colour basics | A full episode finishes inside the app |
+| **5. Timeline pro (web)** | 6 | Clip AI actions, trims, speed, keyframe animation, nested sequences, masks, colour basics, everything FFmpeg can render. GPU-only effects wait for Phase 9 | A full episode finishes inside the app |
 | **6. Reels and Ads wizards** | 3 | Ads wizard with locked brand facts, batch variants, Reels highlight flow | One brief yields 3 languages in 3 aspect ratios |
-| **7. Polish** | ongoing | Replicate adapter, OTIO export, QC report and publish gate, analytics | Season-scale use |
+| **7. Polish** | ongoing | Replicate adapter, OTIO export, QC report and publish gate, analytics, generation recipe node graph (section 8.3) | Season-scale use |
+| **8. Mobile review PWA** | 2 | Installable web app: phone layouts for review, frame comments with drawing, approvals and spend approvals, push notifications, on-set capture of references and consent recordings (section 17). Can run beside Phase 5 | A producer approves a spend request and a take from a phone, and a reference photo shot on set appears in the Bible |
+| **9. Desktop finishing room** | 18 to 26 | Tauri shell, local project folder, SQLite mirror, sync with checkout locks, proxies, upscale step, hardware-encoded 4K export with presets, then the GPU render engine with shader transitions, keyframes, masks, chroma key, colour tools, Indic-shaped titles, ducking and mixer, pop-out monitors, workspace presets, installer and auto-update (section 16) | The 3-minute short is finished on the desktop in 4K with shader transitions, uploaded, reviewed and approved on a phone, and reopened on the web with every version intact |
 
-Estimates assume 2 to 3 engineers plus the existing code. The acceptance test for Phases 2 to 5 is the **3-minute short**: story, two recurring characters, one location, storyboard, generated shots with saved references, continuity kept, edited in the timeline, dialogue synced, a horizontal master, a vertical reel, and the project reopened on another machine with every version intact.
+Estimates assume 2 to 3 engineers plus the existing code. Phase 9 starts after Phase 5 and its render engine is one strong developer for three to five months; it must not be squeezed into Phase 5. The acceptance test for Phases 2 to 5 is the **3-minute short**: story, two recurring characters, one location, storyboard, generated shots with saved references, continuity kept, edited in the timeline, dialogue synced, a horizontal master, a vertical reel, and the project reopened on another machine with every version intact.
 
 ---
 
-## 16. What is reused and what is new
+## 20. What is reused and what is new
 
 | Reused as is | Extended | New |
 | --- | --- | --- |
 | Model Hub, routing chains, cost ledger, budgets, approvals | Script import, Film Map, prompt compiler, QC, dubbing, timeline layers, roles | @mentions, dependency graph, Character Lock, character versions, outfit turnarounds, back view, wardrobe timeline, props and costumes, continuity bible, seasons, episode dashboard, Ads wizard, Replicate adapter |
 | Writers' room, scene cards, continuity check, script versions | Character Lab pages, Audio Studio | Pronunciation dictionary, Transcribe QC, voice descriptions |
 | Review links, consents, audit, YouTube publish, brand kits | Export (QC report, publish gate) | Timeline pro tools |
+| Dockable panels, Film Map node graph, review page | Review page as the mobile PWA, Film Map as the generation recipe graph | Tauri shell, local project folder, SQLite mirror, sync and checkout locks, upscale step, hardware 4K export, GPU render engine, shader transitions, pop-out monitors, push notifications, on-set capture |

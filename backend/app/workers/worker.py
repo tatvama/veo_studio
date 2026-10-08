@@ -30,7 +30,7 @@ ORCHESTRATORS = {"dub", "autopilot", "produce"}
 GROUP_OF = {"video": "video", "omni_edit": "video", "lipsync": "lipsync", "voicelock": "audio", "voice": "audio",
             "voice_design": "audio", "voice_preview": "audio", "music": "audio", "sfx": "audio", "table_read": "audio",
             "export": "render", "animatic": "render", "keyframe": "image", "character_sheet": "image",
-            "character_outfit": "image", "character_expressions": "image", "location_images": "image", "marketing": "image",
+            "character_outfit": "image", "character_lighting": "image", "character_expressions": "image", "location_images": "image", "marketing": "image",
             "qc": "llm", "critic_loop": "llm", "search_index": "llm", "model_sync": "system", "fetch_metrics": "system",
             "publish_youtube": "system", "train_identity": "train", "identity_variations": "image"}
 GROUP_LIMITS = {"video": 3, "lipsync": 2, "audio": 4, "render": 2, "image": 4, "llm": 4, "system": 1, "train": 2}

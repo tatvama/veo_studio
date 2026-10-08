@@ -102,6 +102,13 @@ class Character(Base, Serializable):
     identity: Mapped[Any] = mapped_column(JSON, default=dict)
     # face embedding (ArcFace) of the approved front image, for objective face-match QC
     face_embedding: Mapped[Any] = mapped_column(JSON, default=list)
+    # Character Lock: structured constraints that steer prompts, reference picking and QC thresholds (core/lock.py)
+    # {face, body, skin_hair, voice, costume_continuity, gestures, age, lighting, strictness: 0..1}
+    lock: Mapped[Any] = mapped_column(JSON, default=dict)
+    # how the name is said, for voices and prompts, e.g. RAH-vee
+    name_pronunciation: Mapped[str] = mapped_column(String(120), default="")
+    # signature gestures, posture, speaking style (fed into prompts)
+    performance_notes: Mapped[str] = mapped_column(Text, default="")
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
@@ -114,6 +121,8 @@ class CharacterAsset(Base, Serializable):
     label: Mapped[str] = mapped_column(String(120), default="")
     outfit: Mapped[str] = mapped_column(String(120), default="")
     episode_scope: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    view: Mapped[str] = mapped_column(String(40), default="")  # front/three_quarter/profile/back/full_body (outfit + lighting sets)
+    lighting: Mapped[str] = mapped_column(String(40), default="")  # day/dusk/night_interior for lighting variants
     path: Mapped[str] = mapped_column(String(500))
     prompt: Mapped[str] = mapped_column(Text, default="")
     approved: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -121,6 +130,58 @@ class CharacterAsset(Base, Serializable):
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class CharacterVersion(Base, Serializable):
+    """A frozen look of a character (DNA, voice, lock, reference pack) for a range of episodes, so a character can
+    age, change hairstyle or grow a beard in season 2 while season 1 keeps the old look."""
+    __tablename__ = "character_versions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    character_id: Mapped[int] = mapped_column(ForeignKey("characters.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    label: Mapped[str] = mapped_column(String(160), default="")  # e.g. Season 2: older, grey beard
+    episode_from: Mapped[int | None] = mapped_column(Integer, nullable=True)  # inclusive episode numbers; None = open
+    episode_to: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    dna_text: Mapped[str] = mapped_column(Text, default="")
+    voice_description: Mapped[str] = mapped_column(Text, default="")
+    lock: Mapped[Any] = mapped_column(JSON, default=dict)
+    asset_ids: Mapped[Any] = mapped_column(JSON, default=list)  # the approved reference pack at that time
+    identity: Mapped[Any] = mapped_column(JSON, default=dict)  # trained identity snapshot (lora_url, trigger)
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class Costume(Base, Serializable):
+    """A named outfit of a character. Its reference images are CharacterAssets with kind=outfit and the same name."""
+    __tablename__ = "costumes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    character_id: Mapped[int] = mapped_column(ForeignKey("characters.id"), index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    description: Mapped[str] = mapped_column(Text, default="")
+    episode_from: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    episode_to: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class Prop(Base, Serializable):
+    """A reusable object (lamp, sword, phone) with an optional reference image, mentioned in scripts with @."""
+    __tablename__ = "props"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(160))
+    description: Mapped[str] = mapped_column(Text, default="")
+    path: Mapped[str] = mapped_column(String(500), default="")  # reference image
+    shared: Mapped[bool] = mapped_column(Boolean, default=True)
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class ProjectProp(Base):
+    __tablename__ = "project_props"
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), primary_key=True)
+    prop_id: Mapped[int] = mapped_column(ForeignKey("props.id"), primary_key=True)
 
 
 class VoiceProfile(Base, Serializable):
@@ -184,6 +245,7 @@ class Project(Base, Serializable):
     # the two own-material ways open on a short set of tabs
     workflow: Mapped[str] = mapped_column(String(20), default="director")
     luts: Mapped[Any] = mapped_column(JSON, default=list)  # the team's colour LUTs (.cube): [{id, name, path}]
+    pronunciations: Mapped[Any] = mapped_column(JSON, default=dict)  # {term: how to say it}, applied before every voice call
     budget_cap_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     brief: Mapped[Any] = mapped_column(JSON, default=dict)
     story: Mapped[Any] = mapped_column(JSON, default=dict)  # series: logline, arc, episode outlines
@@ -207,6 +269,18 @@ class ProjectLocation(Base):
     __tablename__ = "project_locations"
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), primary_key=True)
     location_id: Mapped[int] = mapped_column(ForeignKey("locations.id"), primary_key=True)
+
+
+class Season(Base, Serializable):
+    __tablename__ = "seasons"
+    __table_args__ = (UniqueConstraint("project_id", "number", name="uq_season_project_number"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
+    number: Mapped[int] = mapped_column(Integer, default=1)
+    title: Mapped[str] = mapped_column(String(200), default="")
+    arc: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(30), default="draft")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
 class Episode(Base, Serializable):
@@ -250,6 +324,10 @@ class Scene(Base, Serializable):
     props: Mapped[Any] = mapped_column(JSON, default=list)
     wardrobe: Mapped[Any] = mapped_column(JSON, default=dict)  # {character_id: outfit}
     continuity_notes: Mapped[str] = mapped_column(Text, default="")
+    prop_ids: Mapped[Any] = mapped_column(JSON, default=list)  # Prop ids mentioned with @ or picked by hand
+    # Continuity Bible: the state of the world at the END of this scene (core/continuity.py)
+    # {characters: {id: {outfit, state}}, props: [...], time_of_day, weather, notes, source: ai|manual}
+    end_state: Mapped[Any] = mapped_column(JSON, default=dict)
     coverage: Mapped[Any] = mapped_column(JSON, default=list)  # planned shots [{framing, purpose}]
     blocking: Mapped[str] = mapped_column(Text, default="")
     approved: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -284,6 +362,10 @@ class Shot(Base, Serializable):
     extend_to: Mapped[int] = mapped_column(Integer, default=0)  # target length in seconds via chained extensions (0 = none)
     extend_prompt: Mapped[str] = mapped_column(Text, default="")  # what happens in the extension (default: the action continues)
     continuity_from_prev: Mapped[bool] = mapped_column(Boolean, default=False)
+    # explicit shot-to-shot link (Film Map edge): take the last frame of that shot, or extend its video
+    continuity_from_shot_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    continuity_mode: Mapped[str] = mapped_column(String(20), default="last_frame")  # last_frame | extend
+    prop_ids: Mapped[Any] = mapped_column(JSON, default=list)
     include: Mapped[bool] = mapped_column(Boolean, default=True)
     trim_in: Mapped[float] = mapped_column(Float, default=0.0)
     trim_out: Mapped[float] = mapped_column(Float, default=0.0)
@@ -311,6 +393,9 @@ class Take(Base, Serializable):
     qc: Mapped[Any] = mapped_column(JSON, default=dict)
     selected: Mapped[bool] = mapped_column(Boolean, default=False)
     status: Mapped[str] = mapped_column(String(20), default="ready")
+    # change impact (core/dependencies.py): the shot changed after this take was made
+    stale: Mapped[bool] = mapped_column(Boolean, default=False)
+    stale_reason: Mapped[str] = mapped_column(String(200), default="")
     error: Mapped[str] = mapped_column(Text, default="")
     remote_ref: Mapped[str] = mapped_column(Text, default="")
     interaction_id: Mapped[str] = mapped_column(String(200), default="")

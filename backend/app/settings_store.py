@@ -38,6 +38,11 @@ DEFAULTS: dict[str, Any] = {
     # Dialogue & dubbing
     "dialogue_method": "audio_first",  # audio_first | audio_driven | voice_lock | native_when_possible
     "dub_method": "redub",  # redub (lip-sync existing video) | regenerate (audio-driven per language)
+    # Languages Veo may speak itself (speech + lips in one pass). Others use TTS + lip-sync. Phase 0 decides the list.
+    "native_dialogue_languages": ["en"],
+    "dialogue_words_qc": True,  # after a spoken clip: did it say the scripted words, in the right language?
+    "dialogue_words_threshold": 0.75,
+    "outfit_qc": True,  # fail a take whose outfit does not match the scene wardrobe (when the character lock asks for it)
     # Accuracy
     "identity_trainer": {"trainer": "fal-ai/qwen-image-2512-trainer", "inference": "fal-ai/qwen-image-2512/lora",
                          "steps": 1000, "scale": 1.0, "min_images": 12},

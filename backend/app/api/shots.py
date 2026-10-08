@@ -7,11 +7,11 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..core import collab, studio
+from ..core import collab, dependencies, generation, jobs, studio
 from ..db import get_db
 from ..events import emit
 from ..models import Episode, Project, Shot, Take, User
-from ..pipeline.prompting import compile_keyframe_prompt, compile_video_prompt, keyframe_refs, video_refs
+from ..pipeline.prompting import compile_keyframe_prompt, compile_video_prompt, dialogue_warnings, keyframe_refs, video_refs
 from ..pipeline.selection import select
 from ..security import current_user, require
 from ..storage import get_storage
@@ -38,7 +38,8 @@ def shot_prompt(sid: int, lang: str | None = None, user: User = Depends(current_
     p = _project(db, s)
     krefs = keyframe_refs(db, s, None)
     return {"video_prompt": compile_video_prompt(db, s, p, lang), "keyframe_prompt": compile_keyframe_prompt(db, s, p, [l for l, _ in krefs]),
-            "video_refs": [l for l, _ in video_refs(db, s)], "keyframe_refs": [l for l, _ in krefs]}
+            "video_refs": [l for l, _ in video_refs(db, s)], "keyframe_refs": [l for l, _ in krefs],
+            "warnings": dialogue_warnings(s, lang or p.primary_language)}
 
 
 class ShotIn(BaseModel):
@@ -94,6 +95,9 @@ class ShotPatch(BaseModel):
     scene_id: int | None = None
     extend_to: int | None = None
     extend_prompt: str | None = None
+    continuity_from_shot_id: int | None = None
+    continuity_mode: str | None = None  # last_frame | extend
+    prop_ids: list[int] | None = None
 
 
 @router.patch("/shots/{sid}")
@@ -114,15 +118,26 @@ def patch_shot(sid: int, body: ShotPatch, user: User = Depends(require("creator"
         if ti + to > length - 0.5:
             raise HTTPException(400, f"Trims leave less than half a second of this {length:.1f}s clip")
         data["trim_in"], data["trim_out"] = round(ti, 3), round(to, 3)
+    if "continuity_mode" in data and data["continuity_mode"] not in ("last_frame", "extend"):
+        raise HTTPException(400, "continuity_mode must be last_frame or extend")
+    if data.get("continuity_from_shot_id"):
+        src = db.get(Shot, data["continuity_from_shot_id"])
+        if not src or src.episode_id != s.episode_id or src.id == s.id:
+            raise HTTPException(400, "Link a different shot of the same episode")
     studio.save_revision(db, "shot", s, studio.SHOT_FIELDS, user)
+    before = {k: getattr(s, k) for k in data}
+    dlg_before = {k: list(v or []) for k, v in (s.dialogue or {}).items()}
+    narr_before = dict(s.narration or {})
     for k, v in data.items():
         setattr(s, k, v)
     if s.status == "approved" and any(k in data for k in ("action", "framing", "camera", "characters", "dialogue")):
         s.status = "video_ready"
+    stale = dependencies.mark_stale(db, s, dependencies.changed_fields(before, {k: getattr(s, k) for k in data}),
+                                   dialogue_before=dlg_before, narration_before=narr_before)
     db.commit()
     p = _project(db, s)
     emit(db, p.id, "shot.updated", {"shot_id": s.id}, user_id=user.id)
-    return shot_out(db, s, p)
+    return {**shot_out(db, s, p), "stale_takes": [t.id for t in stale]}
 
 
 @router.post("/shots/{sid}/undo")
@@ -286,3 +301,46 @@ def archive_take(tid: int, user: User = Depends(require("creator")), db: Session
     s = db.get(Shot, t.shot_id)
     emit(db, _project(db, s).id, "shot.updated", {"shot_id": s.id}, user_id=user.id)
     return {"ok": True}
+
+
+# ── next shot (Film Map): a new shot that continues this one ─────────────────
+
+class NextShotIn(BaseModel):
+    action: str = ""
+    framing: str = ""
+    camera: str = ""
+    duration_s: int = 8
+    mode: str = "last_frame"  # last_frame | extend
+    generate: bool = False  # also queue keyframe + video right away
+    quality: str | None = None
+
+
+@router.post("/shots/{sid}/next")
+def next_shot(sid: int, body: NextShotIn, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
+    """Create the shot after this one with the same cast, wardrobe, location and props, linked so its keyframe starts
+    from this shot's last frame (or its video extends this one)."""
+    s = get_or_404(db, Shot, sid)
+    if body.mode not in ("last_frame", "extend"):
+        raise HTTPException(400, "mode must be last_frame or extend")
+    if body.duration_s not in (4, 6, 8):
+        raise HTTPException(400, "duration must be 4, 6 or 8 seconds")
+    p = _project(db, s)
+    episode = db.get(Episode, s.episode_id)
+    for later in db.query(Shot).filter(Shot.episode_id == s.episode_id, Shot.order > s.order).all():
+        later.order += 1
+    n = Shot(episode_id=s.episode_id, scene_id=s.scene_id, order=s.order + 1, duration_s=body.duration_s,
+             framing=body.framing or s.framing, camera=body.camera or "static",
+             action=body.action or f"The action continues directly from {s.code}.",
+             characters=list(s.characters or []), outfits=dict(s.outfits or {}), location_id=s.location_id,
+             prop_ids=list(s.prop_ids or []), quality_mode=s.quality_mode, engine=s.engine or "auto",
+             continuity_from_shot_id=s.id, continuity_mode=body.mode, mode="auto")
+    db.add(n)
+    db.flush()
+    studio.renumber(db, episode)
+    db.commit()
+    emit(db, p.id, "episode.updated", {"episode_id": episode.id, "what": "shots"}, user_id=user.id)
+    out = {"shot": shot_out(db, n, p), "jobs": None}
+    if body.generate:
+        specs = generation.video_specs(db, p, [n], body.quality)  # the video job makes the keyframe first
+        out["jobs"] = jobs.submit(db, user, p, specs)
+    return out

@@ -4,7 +4,7 @@ An AI video studio for teams. You give it a concept, and it takes you from hook 
 It isn't tied to one AI provider: the **Model Hub** keeps a live catalog of about 800 models (Google Veo, Kling, Seedance, Wan, MiniMax, LTX, Luma, Grok, sync.so, HeyGen, ElevenLabs …) and routes every shot to the best engine for the job.
 The **Director** agent can do any step for you. Paid steps always show the cost first.
 
-The full design is in [PLAN.md](PLAN.md). This file covers running and using it.
+The working plan is [TATVAM_PLAN.md](TATVAM_PLAN.md): the full design, the three surfaces (web studio, desktop finishing room, mobile review app) and the roadmap. The older [PLAN.md](PLAN.md) is kept only as a record of what was built first. This file covers running and using it.
 
 ---
 

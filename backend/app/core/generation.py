@@ -42,7 +42,8 @@ def video_specs(db: Session, project: Project, shots: list[Shot], quality: str |
             continue
         q = quality or s.quality_mode or project.quality_mode
         cost = est.video(s, project, q)
-        if not current(db, s.id, "keyframe"):  # the video job makes the missing keyframe first
+        kf = current(db, s.id, "keyframe")
+        if not kf or kf.stale:  # the video job makes the missing (or stale) keyframe first
             cost += est.image(1)
         out.append(spec("video", payload={"quality": q, "mode": mode}, project_id=project.id, episode_id=s.episode_id,
                         shot_id=s.id, estimate=cost, label=f"Video {s.code} ({q})"))
@@ -118,15 +119,34 @@ def dub_spec(db: Session, project: Project, episode: Episode, lang: str, then_ex
 
 
 def character_sheet_spec(db: Session, project_id: int | None, ch: Character, kinds: list[str] | None = None) -> dict:
-    kinds = kinds or ["front", "three_quarter", "profile", "full_body"]
+    kinds = kinds or ["front", "three_quarter", "profile", "back", "full_body"]
     return spec("character_sheet", payload={"character_id": ch.id, "kinds": kinds, "project_id": project_id},
                 project_id=project_id, estimate=Estimator(db).image(len(kinds)), label=f"Sheet: {ch.name}")
 
 
-def outfit_spec(db: Session, project_id: int | None, ch: Character, name: str, description: str, episode_scope: int | None) -> dict:
+OUTFIT_VIEWS = ["front", "three_quarter", "full_body"]
+LIGHTING_VARIANTS = ["day", "dusk", "night_interior"]
+
+
+def outfit_spec(db: Session, project_id: int | None, ch: Character, name: str, description: str, episode_scope: int | None,
+                views: list[str] | None = None) -> dict:
+    views = [v for v in (views or OUTFIT_VIEWS) if v in ("front", "three_quarter", "profile", "back", "full_body")] or OUTFIT_VIEWS
     return spec("character_outfit", payload={"character_id": ch.id, "outfit": name, "description": description,
-                                             "episode_scope": episode_scope, "project_id": project_id},
-                project_id=project_id, estimate=Estimator(db).image(1), label=f"Outfit: {ch.name} – {name}")
+                                             "episode_scope": episode_scope, "project_id": project_id, "views": views},
+                project_id=project_id, estimate=Estimator(db).image(len(views)), label=f"Outfit: {ch.name} – {name} ({len(views)} views)")
+
+
+def lighting_spec(db: Session, project_id: int | None, ch: Character, variants: list[str] | None = None) -> dict:
+    variants = [v for v in (variants or LIGHTING_VARIANTS) if v in LIGHTING_VARIANTS] or LIGHTING_VARIANTS
+    return spec("character_lighting", payload={"character_id": ch.id, "project_id": project_id, "variants": variants},
+                project_id=project_id, estimate=Estimator(db).image(len(variants)), label=f"Lighting: {ch.name}")
+
+
+def native_video_specs(db: Session, project: Project, shots: list[Shot], lang: str) -> list[dict]:
+    """Regenerate spoken shots with the line in `lang`: Veo speaks it, lips included (Google dubbing route)."""
+    est = Estimator(db)
+    return [spec("video", payload={"language": lang, "native": True}, project_id=project.id, episode_id=s.episode_id,
+                 shot_id=s.id, estimate=est.video(s, project), label=f"Speak {s.code} [{lang}]") for s in shots if shot_lines(s, lang)]
 
 
 def expressions_spec(db: Session, project_id: int | None, ch: Character) -> dict:

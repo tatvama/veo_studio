@@ -102,6 +102,7 @@ class ProjectPatch(BaseModel):
     brand_kit_id: int | None = None
     archived: bool | None = None
     workflow: str | None = None
+    pronunciations: dict[str, str] | None = None  # {term: how to say it}
 
 
 @router.patch("/projects/{pid}")
@@ -190,6 +191,7 @@ def get_episode(eid: int, lang: str | None = None, user: User = Depends(current_
 class EpisodePatch(BaseModel):
     title: str | None = None
     outline: str | None = None
+    season: int | None = None
     script: dict[str, Any] | None = None
     settings: dict[str, Any] | None = None
     summary_for_next: str | None = None
@@ -201,14 +203,21 @@ def patch_episode(eid: int, body: EpisodePatch, user: User = Depends(require("cr
     data = body.model_dump(exclude_unset=True)
     if "settings" in data:
         e.settings = {**(e.settings or {}), **data.pop("settings")}
+    old_script = dict(e.script or {})
+    touched: list[dict] = []
     for k, v in data.items():
         setattr(e, k, v)
     if "script" in data:
+        from ..core import dependencies, mentions
+        p = db.get(Project, e.project_id)
+        e.script, _created = mentions.resolve_script(db, p, e.script, create_missing=False, user=user)
+        mentions.attach_entities(db, p, e.script)
         studio.save_script_version(db, e, "manual", user, note="Edited in Story")
+        touched = dependencies.apply_script_changes(db, p, e, old_script, e.script)
     db.commit()
     emit(db, e.project_id, "episode.updated", {"episode_id": e.id, "what": list(body.model_dump(exclude_unset=True))},
          user_id=user.id)
-    return e.to_dict()
+    return e.to_dict(script_changes=touched)
 
 
 class HooksIn(BaseModel):
