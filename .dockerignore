@@ -1,0 +1,13 @@
+.env
+.dev
+data
+media
+spike/results
+spike/.data
+spike/.media
+backend/.venv
+backend/**/__pycache__
+backend/.pytest_cache
+frontend/node_modules
+frontend/dist
+**/*.pyc

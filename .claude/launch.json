@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "veo-api-dev",
+      "runtimeExecutable": "D:\\vinay keshari\\VEO_STUDIO\\backend\\.venv\\Scripts\\python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "app.main:app", "--app-dir", "D:\\vinay keshari\\VEO_STUDIO\\backend", "--port", "8100"],
+      "port": 8100
+    },
+    {
+      "name": "veo-web-dev",
+      "runtimeExecutable": "C:\\Program Files\\nodejs\\node.exe",
+      "runtimeArgs": ["D:\\vinay keshari\\VEO_STUDIO\\frontend\\node_modules\\vite\\bin\\vite.js", "D:\\vinay keshari\\VEO_STUDIO\\frontend", "--port", "5173"],
+      "port": 5173
+    }
+  ]
+}

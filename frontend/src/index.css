@@ -1,0 +1,419 @@
+@import "tailwindcss";
+@import "@fontsource-variable/inter/wght.css";
+
+/* ════════════════════════════════════════════════════════════════════════════
+   VEO Studio design tokens
+   Dark is the default palette. Tailwind v4 emits these as :root vars and every utility reads var(--color-*),
+   so the light theme below simply overrides the same variables.
+
+   Text hierarchy (all AA on panel/raised):  ink  → primary,  mute → secondary (≈8:1),  dim → hints/meta (≈5:1)
+   Surfaces:  bg (page) < panel (cards, sidebars) < raised (inputs, chips) < hover
+   ════════════════════════════════════════════════════════════════════════════ */
+@theme {
+  --color-bg: #0a0b0f;
+  --color-panel: #111318;
+  --color-raised: #171a21;
+  --color-hover: #1e222b;
+  --color-line: #262b35;
+  --color-ink: #eceef3;
+  --color-mute: #a9afbe;
+  --color-dim: #838a9c;
+  --color-accent: #f97316;
+  --color-accent-ink: #fb923c; /* accent when used as TEXT / icons (darkened in the light theme for contrast) */
+  --color-accent-2: #fbbf24;
+  --color-ok: #22c55e;
+  --color-warn: #f59e0b;
+  --color-bad: #ef4444;
+  --color-info: #38bdf8;
+
+  --font-sans: "Inter Variable", "Inter", "Segoe UI", "Nirmala UI", "Noto Sans", "Noto Sans Devanagari", "Noto Sans Kannada",
+    "Noto Sans Telugu", "Noto Sans Tamil", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", ui-monospace, Consolas, monospace;
+
+  /* 11px is the smallest text in the product (hints, badges, kbd). */
+  --text-2xs: 0.6875rem;
+  --text-2xs--line-height: 1rem;
+
+  --shadow-card: 0 1px 0 rgb(255 255 255 / 0.035) inset, 0 1px 2px rgb(0 0 0 / 0.35);
+  --shadow-lift: 0 1px 0 rgb(255 255 255 / 0.05) inset, 0 10px 28px -10px rgb(0 0 0 / 0.65);
+  --shadow-pop: 0 1px 0 rgb(255 255 255 / 0.05) inset, 0 14px 36px -10px rgb(0 0 0 / 0.7), 0 0 0 1px rgb(0 0 0 / 0.25);
+  --shadow-modal: 0 1px 0 rgb(255 255 255 / 0.05) inset, 0 28px 70px -16px rgb(0 0 0 / 0.75);
+  --shadow-glow: 0 0 0 1px rgb(249 115 22 / 0.35), 0 8px 28px -8px rgb(249 115 22 / 0.45);
+
+  --ease-out-expo: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
+}
+
+/* Non-colour tokens used by the shell. */
+:root {
+  color-scheme: dark;
+  --scrollbar: #2b303b;
+  --scrollbar-hover: #3a404d;
+  --selection: rgb(249 115 22 / 0.35);
+  --shimmer: rgb(255 255 255 / 0.06);
+  --backdrop: rgb(2 3 6 / 0.66);
+  --spotlight: rgb(0 0 0 / 0.62);
+  --elev: var(--shadow-lift);
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a9afbe' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  --sheen: rgb(255 255 255 / 0.03);
+  --dur-fast: 120ms;
+  --dur: 200ms;
+  --dur-slow: 360ms;
+}
+
+/* ── Light theme ─────────────────────────────────────────────────────────── */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-bg: #f5f3ee;
+  --color-panel: #ffffff;
+  --color-raised: #f3f0ea;
+  --color-hover: #ebe7df;
+  --color-line: #e1dcd1;
+  --color-ink: #1a1c22;
+  --color-mute: #4b5160;
+  --color-dim: #656b7a;
+  --color-accent: #f97316;
+  --color-accent-ink: #b4390a;
+  --color-accent-2: #d97706;
+  --color-ok: #16a34a;
+  --color-warn: #d97706;
+  --color-bad: #dc2626;
+  --color-info: #0284c7;
+
+  /* Pastel text shades (text-red-300 etc.) are tuned for dark panels; on light panels use deep shades instead. */
+  --color-red-100: #b91c1c; --color-red-200: #b91c1c; --color-red-300: #b91c1c;
+  --color-orange-100: #b4390a; --color-orange-200: #b4390a; --color-orange-300: #b4390a;
+  --color-amber-100: #92400e; --color-amber-200: #92400e; --color-amber-300: #92400e;
+  --color-yellow-100: #854d0e; --color-yellow-200: #854d0e; --color-yellow-300: #854d0e;
+  --color-lime-200: #3f6212; --color-lime-300: #3f6212;
+  --color-green-100: #166534; --color-green-200: #166534; --color-green-300: #166534;
+  --color-emerald-200: #047857; --color-emerald-300: #047857;
+  --color-teal-200: #0f766e; --color-teal-300: #0f766e;
+  --color-cyan-200: #0e7490; --color-cyan-300: #0e7490;
+  --color-sky-100: #0369a1; --color-sky-200: #0369a1; --color-sky-300: #0369a1;
+  --color-blue-200: #1d4ed8; --color-blue-300: #1d4ed8;
+  --color-indigo-200: #4338ca; --color-indigo-300: #4338ca;
+  --color-violet-200: #6d28d9; --color-violet-300: #6d28d9;
+  --color-purple-200: #7e22ce; --color-purple-300: #7e22ce;
+  --color-fuchsia-200: #a21caf; --color-fuchsia-300: #a21caf;
+  --color-pink-200: #be185d; --color-pink-300: #be185d;
+  --color-rose-200: #be123c; --color-rose-300: #be123c;
+
+  --shadow-card: 0 1px 2px rgb(30 25 15 / 0.05), 0 0 0 0 transparent;
+  --shadow-lift: 0 1px 2px rgb(30 25 15 / 0.06), 0 12px 30px -14px rgb(30 25 15 / 0.24);
+  --shadow-pop: 0 1px 2px rgb(30 25 15 / 0.06), 0 14px 36px -12px rgb(30 25 15 / 0.28), 0 0 0 1px rgb(30 25 15 / 0.05);
+  --shadow-modal: 0 1px 2px rgb(30 25 15 / 0.08), 0 28px 70px -18px rgb(30 25 15 / 0.38);
+  --shadow-glow: 0 0 0 1px rgb(249 115 22 / 0.4), 0 8px 24px -8px rgb(249 115 22 / 0.35);
+
+  --scrollbar: #cfc8bc;
+  --scrollbar-hover: #b9b1a3;
+  --selection: rgb(249 115 22 / 0.22);
+  --shimmer: rgb(255 255 255 / 0.75);
+  --backdrop: rgb(28 25 20 / 0.4);
+  --spotlight: rgb(28 25 20 / 0.5);
+  --sheen: rgb(255 255 255 / 0.6);
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234b5160' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+}
+
+@layer base {
+  /* Translucent black chips/overlays sit on top of media: keep their text light in both themes.
+     Zero specificity, so any explicit text-* utility still wins. */
+  :where([data-theme="light"]) :where([class*="bg-black/"], .bg-black) {
+    color: #f4f4f5;
+  }
+  :where([data-theme="light"]) :where(.shadow-2xl, .shadow-xl) {
+    --tw-shadow-color: rgb(30 25 15 / 0.18);
+  }
+
+  /* Tailwind v4 leaves buttons with the default arrow; interactive things should feel clickable. */
+  button:not(:disabled), [role="button"]:not([aria-disabled="true"]), [role="tab"], [role="switch"]:not(:disabled), summary,
+  select:not(:disabled), label[for], input[type="checkbox"]:not(:disabled), input[type="radio"]:not(:disabled),
+  input[type="range"]:not(:disabled) {
+    cursor: pointer;
+  }
+  button:disabled, select:disabled, input:disabled, textarea:disabled { cursor: not-allowed; }
+
+  /* One consistent keyboard focus ring. Text fields draw their own (border + soft ring), so skip them here. */
+  :where(a, button, [role="button"], [role="tab"], [role="switch"], summary, [tabindex]):focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  :where(input, textarea, select):focus-visible { outline: none; }
+
+  input[type="checkbox"], input[type="radio"], input[type="range"], progress { accent-color: var(--color-accent); }
+  h1, h2, h3 { text-wrap: balance; }
+  p { text-wrap: pretty; }
+  ::placeholder { color: var(--color-dim); opacity: 1; }
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-optical-sizing: auto;
+  letter-spacing: -0.006em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* Indic scripts have taller glyphs and don't use Latin tracking. */
+:lang(hi), :lang(kn), :lang(te), :lang(ta) { letter-spacing: 0; }
+:root[lang="hi"] body, :root[lang="kn"] body, :root[lang="te"] body, :root[lang="ta"] body { letter-spacing: 0; line-height: 1.55; }
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar) transparent;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); background-clip: padding-box; border: 2px solid transparent; }
+
+::selection {
+  background: var(--selection);
+}
+
+.text-balance {
+  text-wrap: balance;
+}
+
+/* ── Form controls ───────────────────────────────────────────────────────── */
+select:not([multiple]):not([size]) {
+  appearance: none;
+  background-image: var(--chevron);
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+  background-size: 1rem;
+  padding-right: 2rem;
+  text-overflow: ellipsis;
+}
+select option { background: var(--color-panel); color: var(--color-ink); }
+
+/* ── Surfaces ────────────────────────────────────────────────────────────── */
+/* Bordered panels get a hairline highlight + soft shadow so cards read as layered rather than flat outlines. */
+:where(.border.bg-panel.rounded-xl, .border.bg-panel.rounded-2xl) {
+  box-shadow: var(--shadow-card);
+}
+
+.veo-backdrop {
+  background: var(--backdrop);
+}
+
+.elev {
+  box-shadow: var(--elev);
+}
+
+.glass {
+  background: color-mix(in oklab, var(--color-panel) 78%, transparent);
+  backdrop-filter: blur(14px) saturate(1.3);
+  -webkit-backdrop-filter: blur(14px) saturate(1.3);
+}
+
+/* Fades the ends of a horizontally scrolling strip (tab bars, chip rows). */
+.mask-fade-x {
+  mask-image: linear-gradient(to right, transparent 0, #000 14px, #000 calc(100% - 22px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 14px, #000 calc(100% - 22px), transparent 100%);
+}
+.mask-fade-y {
+  mask-image: linear-gradient(to bottom, transparent 0, #000 12px, #000 calc(100% - 18px), transparent 100%);
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 12px, #000 calc(100% - 18px), transparent 100%);
+}
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* Primary call-to-action: warm gradient with an inner highlight and a soft coloured shadow. */
+.btn-primary {
+  background-image: linear-gradient(180deg, #fb923c 0%, #f97316 100%);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.3) inset, 0 6px 16px -6px rgb(249 115 22 / 0.65);
+}
+.btn-primary:hover:not(:disabled) {
+  background-image: linear-gradient(180deg, #fdba74 0%, #fb923c 100%);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.35) inset, 0 8px 22px -6px rgb(249 115 22 / 0.75);
+}
+.btn-primary:disabled { box-shadow: none; }
+
+/* ── Motion ──────────────────────────────────────────────────────────────── */
+@keyframes shimmer {
+  0% { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+
+.shimmer {
+  background: linear-gradient(90deg, transparent, var(--shimmer), transparent);
+  background-size: 400px 100%;
+  animation: shimmer 1.6s infinite;
+}
+
+/* Skeleton block: raised surface with a shimmer sweep. */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background-color: var(--color-raised);
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, var(--shimmer), transparent);
+  background-size: 400px 100%;
+  animation: shimmer 1.6s infinite;
+}
+
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 rgb(249 115 22 / 0.55); }
+  100% { box-shadow: 0 0 0 10px rgb(249 115 22 / 0); }
+}
+
+.pulse-ring {
+  animation: pulse-ring 1.4s infinite;
+}
+
+@keyframes wiggle {
+  0%, 100% { transform: rotate(0deg); }
+  20% { transform: rotate(-12deg); }
+  40% { transform: rotate(10deg); }
+  60% { transform: rotate(-6deg); }
+  80% { transform: rotate(4deg); }
+}
+
+@keyframes rise-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pop-in { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: none; } }
+@keyframes slide-in-left { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: none; } }
+@keyframes slide-in-right { from { opacity: 0; transform: translateX(14px); } to { opacity: 1; transform: none; } }
+@keyframes float-y { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+@keyframes glow-pulse { 0%, 100% { opacity: 0.55; } 50% { opacity: 1; } }
+@keyframes bar-indeterminate { 0% { transform: translateX(-100%); } 100% { transform: translateX(260%); } }
+@keyframes check-draw { from { stroke-dashoffset: 24; } to { stroke-dashoffset: 0; } }
+
+/* Entrance helpers. Set style={{ "--i": index }} to stagger siblings (capped at 14 → ≈0.5 s). */
+.anim-rise, .anim-fade, .anim-pop, .anim-left, .anim-right {
+  animation-duration: 0.45s;
+  animation-timing-function: var(--ease-out-expo);
+  animation-fill-mode: backwards; /* "both" would pin the end keyframe and block :hover transforms on the same element */
+  animation-delay: calc(min(var(--i, 0), 14) * 38ms);
+}
+.anim-rise { animation-name: rise-in; }
+.anim-fade { animation-name: fade-in; animation-duration: 0.35s; }
+.anim-pop { animation-name: pop-in; animation-duration: 0.32s; }
+.anim-left { animation-name: slide-in-left; }
+.anim-right { animation-name: slide-in-right; }
+.anim-float { animation: float-y 4.5s ease-in-out infinite; }
+.anim-glow { animation: glow-pulse 2.2s ease-in-out infinite; }
+
+/* Hover lift for clickable cards. */
+.lift {
+  transition: transform var(--dur) var(--ease-out-expo), box-shadow var(--dur) ease, border-color var(--dur) ease;
+}
+.lift:hover { transform: translateY(-2px); box-shadow: var(--shadow-lift); }
+.lift:active { transform: translateY(0) scale(0.995); }
+
+/* Animated conic border for things that are generating right now. */
+@property --ring-angle { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+@keyframes ring-spin { to { --ring-angle: 360deg; } }
+.gen-ring { position: relative; }
+.gen-ring::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: conic-gradient(from var(--ring-angle), transparent 0 55%, var(--color-accent) 80%, var(--color-accent-2) 92%, transparent);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  animation: ring-spin 2.6s linear infinite;
+  pointer-events: none;
+}
+
+/* ── Login: slow, CSS-only drifting gradient ─────────────────────────────── */
+@keyframes aurora {
+  0% { background-position: 0% 0%, 100% 0%, 50% 100%; }
+  50% { background-position: 30% 20%, 70% 30%, 40% 70%; }
+  100% { background-position: 0% 0%, 100% 0%, 50% 100%; }
+}
+@keyframes float-slow {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(2%, -3%, 0) scale(1.06); }
+}
+
+.login-bg {
+  position: relative;
+  isolation: isolate;
+  overflow: clip;
+  background-color: var(--color-bg);
+  background-image:
+    radial-gradient(42rem 30rem at 15% 10%, rgb(249 115 22 / 0.20), transparent 60%),
+    radial-gradient(36rem 26rem at 85% 15%, rgb(251 191 36 / 0.12), transparent 60%),
+    radial-gradient(40rem 30rem at 50% 100%, rgb(239 68 68 / 0.10), transparent 60%);
+  background-size: 140% 140%, 140% 140%, 140% 140%;
+  background-repeat: no-repeat;
+  animation: aurora 22s ease-in-out infinite;
+}
+.login-bg::before {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  z-index: -1;
+  background: conic-gradient(from 180deg at 50% 50%, transparent 0deg, rgb(249 115 22 / 0.07) 90deg, transparent 180deg, rgb(251 191 36 / 0.06) 270deg, transparent 360deg);
+  filter: blur(60px);
+  animation: float-slow 18s ease-in-out infinite;
+}
+.login-bg::after {
+  /* faint film-grain grid */
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image: linear-gradient(var(--color-line) 1px, transparent 1px), linear-gradient(90deg, var(--color-line) 1px, transparent 1px);
+  background-size: 48px 48px;
+  opacity: 0.25;
+  mask-image: radial-gradient(ellipse at center, black 20%, transparent 70%);
+}
+:root[data-theme="light"] .login-bg {
+  background-image:
+    radial-gradient(42rem 30rem at 15% 10%, rgb(249 115 22 / 0.16), transparent 60%),
+    radial-gradient(36rem 26rem at 85% 15%, rgb(251 191 36 / 0.16), transparent 60%),
+    radial-gradient(40rem 30rem at 50% 100%, rgb(244 114 182 / 0.10), transparent 60%);
+}
+
+/* ── Reduced motion: OS setting or the in-app "Reduce motion" preference ───── */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *:not(.animate-spin),
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+:root[data-motion="reduced"] { scroll-behavior: auto; }
+:root[data-motion="reduced"] *:not(.animate-spin),
+:root[data-motion="reduced"] *::before,
+:root[data-motion="reduced"] *::after {
+  animation-duration: 0.01ms !important;
+  animation-delay: 0s !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+  scroll-behavior: auto !important;
+}
+
+/* Scroll strips fade the side that has more content (--fl / --fr are set by ScrollStrip). */
+.scroll-strip {
+  mask-image: linear-gradient(to right, transparent 0, #000 var(--fl, 0px), #000 calc(100% - var(--fr, 0px)), transparent 100%);
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 var(--fl, 0px), #000 calc(100% - var(--fr, 0px)), transparent 100%);
+}

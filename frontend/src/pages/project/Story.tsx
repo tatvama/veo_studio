@@ -1,0 +1,284 @@
+import { useQueryClient } from "@tanstack/react-query";
+import { clsx } from "clsx";
+import {
+  ArrowRight, BookOpen, Brain, Gauge, Headphones, History, Languages, LayoutGrid, ListChecks, MessagesSquare, Save, ScanSearch, ScrollText,
+  Sparkles, SquareKanban, Users, X,
+} from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { toast } from "sonner";
+import { ContinuityPanel } from "../../components/room/Continuity";
+import { CriticPanel } from "../../components/room/Critic";
+import { HookSection } from "../../components/room/Hooks";
+import { LanguagesPanel } from "../../components/room/Languages";
+import { ActionBar, LoadError, RoomHeader, RoomPage, SaveStatus, SectionCard, type SaveState } from "../../components/room/kit";
+import { useSaveShortcut } from "../../components/room/util";
+import { ScriptEditor } from "../../components/room/ScriptEditor";
+import { ScriptVersionsDrawer } from "../../components/room/ScriptVersions";
+import { TableReadPanel } from "../../components/room/TableRead";
+import { Button, Empty, IconButton, Modal, Skeleton, Tabs, rise } from "../../components/ui";
+import { api } from "../../lib/api";
+import { LANG_NAMES } from "../../lib/format";
+import { tr, useT } from "../../lib/i18n";
+import { useEpisode, useScriptVersions } from "../../lib/queries";
+import type { Script } from "../../lib/types";
+import { useProjectCtx } from "./context";
+
+type RoomTab = "critic" | "table" | "continuity" | "languages";
+
+export default function StoryPage() {
+  const t = useT();
+  const { project, eid, canEdit } = useProjectCtx();
+  const qc = useQueryClient();
+  const nav = useNavigate();
+  const location = useLocation();
+  const { data: ep, isLoading, isError, refetch } = useEpisode(eid);
+  const { data: versions } = useScriptVersions(eid);
+  const [busy, setBusy] = useState("");
+  const [confirmShots, setConfirmShots] = useState(false);
+  const [angle, setAngle] = useState<string>(() => (location.state as { angle?: string } | null)?.angle ?? "");
+  const [custom, setCustom] = useState("");
+  const [instructions, setInstructions] = useState("");
+  const [script, setScript] = useState<Script>({});
+  const [dirty, setDirty] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
+  const [versionsOpen, setVersionsOpen] = useState(false);
+  const [room, setRoom] = useState<RoomTab>("critic");
+  const [optSel, setOptSel] = useState<number | null>(null);
+  const instructionsRef = useRef<HTMLInputElement>(null);
+
+  const scriptKey = JSON.stringify(ep?.script);
+  useEffect(() => { if (ep) { setScript(ep.script || {}); setDirty(false); } }, [ep?.id, scriptKey]);
+  // New drafts / critic passes / restores create versions server-side — keep the history fresh.
+  useEffect(() => { qc.invalidateQueries({ queryKey: ["script-versions", eid] }); }, [eid, scriptKey, ep?.critic?.at, qc]);
+
+  // An angle handed over from the Brief's Trend scout arrives as navigation state; clear it so reloads don't re-apply it.
+  useEffect(() => {
+    if ((location.state as { angle?: string } | null)?.angle) {
+      toast.message(tr("Hook angle set from Trend scout"));
+      nav(location.pathname, { replace: true, state: null });
+    }
+  }, []);
+
+  // The hook you just clicked stays selected while the server round trip finishes.
+  useEffect(() => { if (optSel !== null && ep?.selected_hook === optSel) setOptSel(null); }, [optSel, ep?.selected_hook]);
+  useEffect(() => {
+    if (!justSaved) return;
+    const id = window.setTimeout(() => setJustSaved(false), 2200);
+    return () => window.clearTimeout(id);
+  }, [justSaved]);
+
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ["episode", eid] });
+    qc.invalidateQueries({ queryKey: ["project", project.id] });
+  };
+  const run = async (key: string, fn: () => Promise<any>, ok: string): Promise<boolean> => {
+    setBusy(key);
+    try { await fn(); refresh(); toast.success(ok); return true; } catch { return false; /* api toasts */ } finally { setBusy(""); }
+  };
+
+  const saveScript = async () => {
+    const ok = await run("save", () => api.patch(`/api/episodes/${eid}`, { script }), tr("Script saved"));
+    if (ok) { setDirty(false); setJustSaved(true); }
+  };
+  useSaveShortcut(canEdit && dirty && busy !== "save", saveScript);
+
+  if (isError && !ep) return <RoomPage width="default"><LoadError what={t("Couldn't load the story")} onRetry={() => refetch()} /></RoomPage>;
+  if (isLoading || !ep) return <StorySkeleton />;
+
+  const hooks = ep.hooks || [];
+  const critic = ep.critic;
+  const issues = ep.continuity?.issues?.length ?? 0;
+  const reads = Object.keys(ep.table_read ?? {}).length;
+  const hasScript = !!script.scenes?.length;
+  const selected = optSel ?? ep.selected_hook;
+  const state: SaveState = busy === "save" ? "saving" : dirty ? "dirty" : justSaved ? "saved" : "clean";
+
+  const onScript = (next: Script) => { setScript(next); setDirty(true); setJustSaved(false); };
+
+  const selectHook = async (i: number) => {
+    setOptSel(i);
+    const ok = await run("sel", () => api.post(`/api/episodes/${eid}/hooks/select`, { index: i }), tr("Hook selected"));
+    if (!ok) setOptSel(null);
+  };
+  const writeScript = () => run("script", () => api.post(`/api/episodes/${eid}/script/generate`, { instructions }), tr("Script written"));
+  const doPlanShots = async () => {
+    setConfirmShots(false);
+    if (await run("shots", () => api.post(`/api/episodes/${eid}/shots/breakdown`), tr("Shots planned"))) nav(`/p/${project.id}/shots`);
+  };
+  // re-planning replaces the shot list: ask first when there is one
+  const planShots = () => ((ep?.shots ?? []).some((s) => s.include) ? setConfirmShots(true) : void doPlanShots());
+  const buildBible = () => run("bible", () => api.post(`/api/projects/${project.id}/bible/propose`, { episode_id: eid }), tr("Bible updated"));
+
+  const applyNotes = (notes: string) => {
+    setInstructions(notes);
+    instructionsRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setTimeout(() => instructionsRef.current?.focus(), 350);
+    toast.message(tr("Critic notes added to the writer's instructions — press Rewrite when ready"));
+  };
+
+  const actionBar = canEdit ? (
+    <ActionBar width="default">
+      <div className="flex min-w-0 flex-1 basis-64 items-center gap-2 rounded-lg border border-line bg-panel pl-3 pr-1 transition-[border-color,box-shadow] hover:border-dim/40 focus-within:border-accent/60 focus-within:ring-[3px] focus-within:ring-accent/15">
+        <Sparkles aria-hidden className="size-4 shrink-0 text-accent-ink" />
+        <input ref={instructionsRef} value={instructions} onChange={(e) => setInstructions(e.target.value)} aria-label={t("Instructions for the writer")}
+          placeholder={t("Instructions for the writer (optional): make Meera braver, end on a cliffhanger…")}
+          className="h-9 min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-dim" />
+        {instructions && <IconButton title={t("Clear")} onClick={() => setInstructions("")} className="size-7"><X className="size-3.5" /></IconButton>}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <AnimatePresence initial={false}>
+          {dirty && (
+            <motion.div key="save" initial={{ opacity: 0, scale: 0.92 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.92 }} transition={{ duration: 0.16 }}>
+              <Button variant="primary" loading={busy === "save"} icon={<Save className="size-4" />} onClick={saveScript}>{t("Save edits")}</Button>
+            </motion.div>
+          )}
+        </AnimatePresence>
+        <Button variant={hasScript ? "secondary" : "primary"} loading={busy === "script"} icon={<Sparkles className="size-4" />} onClick={writeScript}>
+          {hasScript ? t("Rewrite") : t("Write script")}
+        </Button>
+        {hasScript && (
+          <Button variant={dirty ? "secondary" : "primary"} loading={busy === "shots"} icon={<LayoutGrid className="size-4" />} iconRight={<ArrowRight className="size-4" />} onClick={planShots}>
+            {t("Plan shots")}
+          </Button>
+        )}
+      </div>
+    </ActionBar>
+  ) : undefined;
+
+  return (
+    <RoomPage width="default" footer={actionBar}>
+      <RoomHeader icon={<BookOpen />} title={t("Story")} description={t("Pick a hook, write the script, then let the writers' room tighten it.")}
+        status={canEdit ? <SaveStatus state={state} /> : undefined} />
+
+      <div className="space-y-5">
+        <HookSection index={1} eid={eid} hooks={hooks} selected={selected} canEdit={canEdit} busy={busy}
+          angle={angle} onAngle={setAngle} custom={custom} onCustom={setCustom}
+          onWrite={() => run("hooks", () => api.post(`/api/episodes/${eid}/hooks/generate`, { n: 6, angle }), tr("Hooks written"))}
+          onSelect={selectHook}
+          onUseCustom={() => run("custom", () => api.post(`/api/episodes/${eid}/hooks/select`, { text: custom }).then(() => setCustom("")), tr("Hook added"))}
+          onInsight={(h) => { setAngle(tr("Similar to: “{hook}”", { hook: h.hook })); toast.message(tr("Angle set — write hooks to use it")); }} />
+
+        <SectionCard id="script" index={2} icon={<ScrollText />}
+          title={project.type === "series" ? t("Script — Episode {n}", { n: ep.number }) : t("Script")}
+          description={t("Dialogue in {lang}. Other languages are created later by dubbing.", { lang: LANG_NAMES[project.primary_language] ?? project.primary_language })}
+          actions={
+            <Button size="sm" variant="ghost" icon={<History className="size-3.5" />} onClick={() => setVersionsOpen(true)}>
+              {t("Versions")}{!!versions?.length && <span className="ml-0.5 rounded-full bg-raised px-1.5 py-px text-2xs font-semibold tabular-nums text-mute">{versions.length}</span>}
+            </Button>
+          }>
+          {!hasScript ? (
+            <Empty icon={<ScrollText className="size-7" />} title={t("No script yet")} sub={t("Pick a hook, then write the script.")}
+              action={canEdit ? <Button variant="primary" loading={busy === "script"} icon={<Sparkles className="size-4" />} onClick={writeScript}>{t("Write script")}</Button> : undefined} />
+          ) : (
+            <ScriptEditor script={script} onChange={onScript} canEdit={canEdit} pid={project.id} eid={eid} />
+          )}
+        </SectionCard>
+
+        {hasScript && canEdit && (
+          <SectionCard index={3} icon={<ListChecks />} title={t("What's next")} description={t("Next: create the cast & look from this script, plan scene cards, then break it into shots.")}>
+            <ol className="grid gap-3 @2xl:grid-cols-3">
+              <Step n={1} icon={<Users />} title={t("Cast & look")} text={t("Create the characters, locations and style this script needs.")}>
+                <Button loading={busy === "bible"} icon={<Users className="size-4" />} onClick={buildBible}>{t("Build bible")}</Button>
+              </Step>
+              <Step n={2} icon={<SquareKanban />} title={t("Scene cards")} text={t("Plan the goal, conflict and coverage of every scene.")}>
+                <Button icon={<SquareKanban className="size-4" />} onClick={() => nav(`/p/${project.id}/scenes`)}>{t("Scene cards")}</Button>
+              </Step>
+              <Step n={3} icon={<LayoutGrid />} title={t("Shots")} text={t("Break the script into a shot list for the storyboard.")}>
+                <Button loading={busy === "shots"} icon={<LayoutGrid className="size-4" />} iconRight={<ArrowRight className="size-4" />} onClick={planShots}>{t("Plan shots")}</Button>
+              </Step>
+            </ol>
+          </SectionCard>
+        )}
+
+        {/* Writers' room */}
+        <SectionCard id="room" index={4} icon={<MessagesSquare />} title={t("Writers' room")} description={t("A critic, a table read, a continuity check and localization for this script.")} flush>
+          <div className="px-3 pt-2 @md:px-4">
+            <Tabs value={room} onChange={setRoom} tabs={[
+              { value: "critic", label: <span className="flex items-center gap-1.5"><Gauge className="size-4" />{t("Critic")}</span>, count: typeof critic?.overall === "number" ? critic.overall.toFixed(1) : undefined },
+              { value: "table", label: <span className="flex items-center gap-1.5"><Headphones className="size-4" />{t("Table read")}</span>, count: reads > 0 ? reads : undefined },
+              { value: "continuity", label: <span className="flex items-center gap-1.5"><ScanSearch className="size-4" />{t("Continuity")}</span>, count: issues > 0 ? issues : undefined },
+              { value: "languages", label: <span className="flex items-center gap-1.5"><Languages className="size-4" />{t("Localization")}</span> },
+            ]} />
+          </div>
+          <div className="p-4 @md:p-5">
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.div key={room} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.16, ease: "easeOut" }}>
+                {room === "critic" && <CriticPanel ep={ep} onUseNotes={applyNotes} />}
+                {room === "table" && <TableReadPanel ep={ep} />}
+                {room === "continuity" && (
+                  <ContinuityPanel eid={eid} report={ep.continuity} canRun={canEdit} bare
+                    hint={(ep.shots ?? []).length ? undefined : t("Works best after scene cards or shots are planned — it compares props, wardrobe and time of day across them.")} />
+                )}
+                {room === "languages" && <LanguagesPanel ep={ep} />}
+              </motion.div>
+            </AnimatePresence>
+          </div>
+        </SectionCard>
+
+        {project.type === "series" && (
+          <SectionCard index={5} icon={<Brain />} title={t("Series memory")} description={t("The next episode's writer reads this summary to stay consistent.")}
+            actions={canEdit && <Button size="sm" loading={busy === "sum"} icon={<Sparkles className="size-3.5" />} onClick={() => run("sum", () => api.post(`/api/episodes/${eid}/summary/generate`), tr("Summary saved"))}>{t("Summarize for next episode")}</Button>}>
+            {ep.summary_for_next
+              ? <p className="whitespace-pre-wrap text-sm leading-relaxed text-mute">{ep.summary_for_next}</p>
+              : <p className="rounded-lg border border-dashed border-line px-4 py-5 text-center text-sm text-mute">{t("Not summarised yet. The next episode's writer reads this to stay consistent.")}</p>}
+          </SectionCard>
+        )}
+      </div>
+
+      <ScriptVersionsDrawer open={versionsOpen} onClose={() => setVersionsOpen(false)} eid={eid} current={ep.script} canEdit={canEdit} hasUnsaved={dirty} />
+      <Modal open={confirmShots} onClose={() => setConfirmShots(false)} size="sm" title={t("Replace the shot list?")}
+        footer={<>
+          <Button variant="ghost" onClick={() => setConfirmShots(false)}>{t("Cancel")}</Button>
+          <Button variant="danger" loading={busy === "shots"} onClick={() => void doPlanShots()}>{t("Re-plan shots")}</Button>
+        </>}>
+        <p className="text-sm text-mute">
+          {t("This episode already has {n} shots. Planning again replaces the shot list (shots with paid takes are kept out of the cut, not deleted). To change a few shots, edit them in the Shot list instead.",
+            { n: (ep.shots ?? []).filter((s) => s.include).length })}
+        </p>
+      </Modal>
+    </RoomPage>
+  );
+}
+
+function Step({ n, icon, title, text, children }: { n: number; icon: ReactNode; title: string; text: string; children: ReactNode }) {
+  const r = rise(n);
+  return (
+    <li className={clsx("flex flex-col rounded-xl border border-line bg-bg/40 p-3.5", r.className)} style={r.style}>
+      <div className="mb-2 flex items-center gap-2.5">
+        <span className="grid size-7 place-items-center rounded-lg bg-accent/12 text-accent-ink [&>svg]:size-4">{icon}</span>
+        <span className="min-w-0">
+          <span className="block text-2xs font-semibold uppercase tracking-wider text-dim">{`0${n}`}</span>
+          <span className="block truncate text-sm font-semibold leading-tight">{title}</span>
+        </span>
+      </div>
+      <p className="mb-3 flex-1 text-xs leading-relaxed text-mute">{text}</p>
+      <div className="flex">{children}</div>
+    </li>
+  );
+}
+
+/** Same silhouette as the loaded page: header, hook cards, script card, room card. */
+function StorySkeleton() {
+  return (
+    <RoomPage width="default">
+      <div className="mb-5 flex items-center gap-3">
+        <Skeleton className="size-10 !rounded-xl" />
+        <div className="space-y-2"><Skeleton className="h-5 w-24" /><Skeleton className="h-3 w-72 max-w-[60vw]" /></div>
+      </div>
+      <div className="space-y-5" aria-busy="true">
+        <div className="rounded-xl border border-line bg-panel p-5">
+          <Skeleton className="mb-1 h-4 w-56" /><Skeleton className="mb-4 h-3 w-64" />
+          <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,17rem),1fr))]">
+            {Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-44 !rounded-xl" />)}
+          </div>
+        </div>
+        <div className="rounded-xl border border-line bg-panel p-5">
+          <Skeleton className="mb-1 h-4 w-40" /><Skeleton className="mb-4 h-3 w-72" />
+          <Skeleton className="mb-3 h-16 !rounded-xl" /><Skeleton className="h-56 !rounded-xl" />
+        </div>
+      </div>
+    </RoomPage>
+  );
+}

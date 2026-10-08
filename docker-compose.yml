@@ -1,0 +1,56 @@
+# VEO Studio on Unraid / a VPS / Docker Desktop (Windows).
+#   1. Copy .env.example to .env and fill it in (keys, APP_SECRET, PUBLIC_BASE_URL, POSTGRES_PASSWORD).
+#   2. docker compose up -d --build
+#   3. Open http://<server-ip>:8100 and create the first admin.
+# For team access from anywhere without opening ports: docker compose --profile tunnel up -d (needs CLOUDFLARE_TUNNEL_TOKEN).
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: veo
+      POSTGRES_USER: veo
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - ./data/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U veo -d veo"]
+      interval: 10s
+      retries: 10
+
+  api:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://veo:${POSTGRES_PASSWORD}@db:5432/veo
+      RUN_WORKER_IN_PROCESS: "false"
+      FRONTEND_ORIGIN: ${PUBLIC_BASE_URL:-http://localhost:8100}
+    volumes:
+      - ./data/studio:/data
+    ports:
+      - "8100:8100"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  worker:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://veo:${POSTGRES_PASSWORD}@db:5432/veo
+    command: ["python", "-m", "app.workers.run"]
+    volumes:
+      - ./data/studio:/data
+    depends_on:
+      db:
+        condition: service_healthy
+
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on: [api]

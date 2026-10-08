@@ -1,0 +1,24 @@
+# secrets & local data
+.env
+.dev/
+data/
+media/
+spike/results/
+spike/.data/
+spike/.media/
+
+# python
+backend/.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# node
+frontend/node_modules/
+frontend/dist/
+
+# i18n translator scratch files
+scripts/i18n/work/
+
+# local claude settings
+.claude/settings.local.json
