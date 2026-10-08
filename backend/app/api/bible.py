@@ -44,6 +44,8 @@ class CharacterIn(BaseModel):
     dna_text: str = ""
     personality: str = ""
     voice_description: str = ""
+    name_pronunciation: str = ""
+    performance_notes: str = ""
     project_id: int | None = None
 
 
@@ -78,6 +80,9 @@ class CharacterPatch(BaseModel):
     voice_description: str | None = None
     shared: bool | None = None
     archived: bool | None = None
+    lock: dict | None = None
+    name_pronunciation: str | None = None
+    performance_notes: str | None = None
 
 
 @router.patch("/characters/{cid}")
@@ -144,13 +149,33 @@ class OutfitIn(BaseModel):
     description: str
     episode_scope: int | None = None
     project_id: int | None = None
+    views: list[str] | None = None  # default: front, three_quarter, full_body (a mini turnaround per outfit)
 
 
 @router.post("/characters/{cid}/outfits")
 def gen_outfit(cid: int, body: OutfitIn, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
     c = get_or_404(db, Character, cid)
     p = db.get(Project, body.project_id) if body.project_id else None
-    return jobs.submit(db, user, p, [generation.outfit_spec(db, body.project_id, c, body.name, body.description, body.episode_scope)])
+    from ..models import Costume
+    row = db.query(Costume).filter(Costume.character_id == c.id, Costume.name == body.name.strip(), Costume.archived.is_(False)).first()
+    if row is None:
+        db.add(Costume(character_id=c.id, name=body.name.strip(), description=body.description,
+                       episode_from=body.episode_scope, episode_to=body.episode_scope))
+        db.commit()
+    return jobs.submit(db, user, p, [generation.outfit_spec(db, body.project_id, c, body.name, body.description, body.episode_scope,
+                                                            body.views)])
+
+
+class LightingIn(BaseModel):
+    project_id: int | None = None
+    variants: list[str] | None = None  # day | dusk | night_interior
+
+
+@router.post("/characters/{cid}/lighting")
+def gen_lighting(cid: int, body: LightingIn, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
+    c = get_or_404(db, Character, cid)
+    p = db.get(Project, body.project_id) if body.project_id else None
+    return jobs.submit(db, user, p, [generation.lighting_spec(db, body.project_id, c, body.variants)])
 
 
 @router.post("/characters/{cid}/expressions")

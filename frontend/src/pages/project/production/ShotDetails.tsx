@@ -1,11 +1,16 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { Camera, Check, Clapperboard, Cpu, Lock, Plus, Settings2, Speech, Swords, Trash2, Volume2 } from "lucide-react";
+import { Camera, Check, Clapperboard, Cpu, Link2, Lock, Package, Plus, Settings2, Speech, Swords, Trash2, Volume2 } from "lucide-react";
+import { useState, type KeyboardEvent } from "react";
+import { toast } from "sonner";
 import EnginePicker from "../../../components/hub/EnginePicker";
-import { Avatar, Badge, Button, Field, Input, Segmented, Select, Textarea, Toggle, Tooltip } from "../../../components/ui";
+import { Avatar, Badge, Button, Field, Input, Segmented, Select, Skeleton, Textarea, Toggle, Tooltip } from "../../../components/ui";
+import { api } from "../../../lib/api";
 import { LANG_NAMES, QUALITY_INFO, SHOT_MODES, VOICE_MODES } from "../../../lib/format";
-import { useT } from "../../../lib/i18n";
-import { useCharacters, useLocations } from "../../../lib/queries";
-import type { DialogueLine, Shot } from "../../../lib/types";
+import { tr, useT } from "../../../lib/i18n";
+import { useCharacters, useEpisode, useLocations } from "../../../lib/queries";
+import type { Character, DialogueLine, Shot } from "../../../lib/types";
+import { createProp, useCostumes, useProps, type ShotV3Fields } from "../../../lib/v3";
 import { useProjectCtx } from "../context";
 import { Collapse } from "./Collapse";
 
@@ -18,13 +23,19 @@ export function Details({ shot, form, setForm, lang, lines, disabled, hasLines, 
   const { project } = useProjectCtx();
   const { data: cast } = useCharacters(project.id);
   const { data: locs } = useLocations(project.id);
+  const { data: ep } = useEpisode(shot.episode_id, lang);
   const set = (k: keyof Shot, v: any) => setForm({ ...form, [k]: v });
   const setLines = (ls: DialogueLine[]) => set("dialogue", { ...(form.dialogue || {}), [lang]: ls });
   const inShot = (cast ?? []).filter((c) => form.characters?.includes(c.id));
   const speakers = new Set(lines.map((l) => String(l.character_id)));
-  const outfitsFor = (cid: number) => Array.from(new Set((cast?.find((c) => c.id === cid)?.assets ?? []).filter((a) => a.kind === "outfit").map((a) => a.outfit)));
   const langName = LANG_NAMES[lang] ?? lang;
   const narration = form.narration?.[lang] || "";
+  const v3 = useShotV3(shot, form, setForm);
+  const propIds = v3.get("prop_ids") ?? [];
+  const contFrom = v3.get("continuity_from_shot_id") ?? null;
+  const contMode = v3.get("continuity_mode") ?? "last_frame";
+  const otherShots = (ep?.shots ?? []).filter((s) => s.id !== shot.id);
+  const contShot = otherShots.find((s) => s.id === contFrom);
 
   return (
     <div className="space-y-3">
@@ -63,19 +74,16 @@ export function Details({ shot, form, setForm, lang, lines, disabled, hasLines, 
               {!cast?.length && <p className="text-2xs text-dim">{t("No characters in the bible yet.")}</p>}
             </div>
           </Field>
-          {inShot.some((c) => outfitsFor(c.id).length) && (
-            <div className="grid gap-3 @md:grid-cols-2">
-              {inShot.filter((c) => outfitsFor(c.id).length).map((c) => (
-                <Field key={c.id} label={t("{name}'s outfit", { name: c.name })}>
-                  <Select value={form.outfits?.[String(c.id)] || ""} disabled={disabled}
-                    onChange={(e) => set("outfits", { ...(form.outfits || {}), [String(c.id)]: e.target.value })}>
-                    <option value="">{t("Default (from DNA)")}</option>
-                    {outfitsFor(c.id).map((o) => <option key={o} value={o}>{o}</option>)}
-                  </Select>
-                </Field>
+          {inShot.length > 0 && (
+            <div className="grid gap-3 empty:hidden @md:grid-cols-2">
+              {inShot.map((c) => (
+                <OutfitPicker key={c.id} c={c} value={form.outfits?.[String(c.id)] || ""} disabled={disabled}
+                  onChange={(v) => set("outfits", { ...(form.outfits || {}), [String(c.id)]: v })} />
               ))}
             </div>
           )}
+
+          <PropsPicker projectId={project.id} value={propIds} disabled={disabled} onChange={(ids) => void v3.set({ prop_ids: ids })} />
         </div>
       </Collapse>
 
@@ -143,7 +151,8 @@ export function Details({ shot, form, setForm, lang, lines, disabled, hasLines, 
         </div>
       </Collapse>
 
-      <Collapse memo="advanced" title={t("Advanced")} icon={<Settings2 />} defaultOpen={false} summary={t("Mode, quality, voice, trim, notes")}>
+      <Collapse memo="advanced" title={t("Advanced")} icon={<Settings2 />} defaultOpen={false}
+        summary={contShot ? t("Continues from {code} · mode, quality, voice, trim, notes", { code: contShot.code }) : t("Mode, quality, voice, trim, notes")}>
         <div className="space-y-3">
           <div className="grid gap-3 @md:grid-cols-3">
             <Field label={t("Generation mode")}>
@@ -168,6 +177,33 @@ export function Details({ shot, form, setForm, lang, lines, disabled, hasLines, 
             <Field label={t("Trim start (s)")}><Input type="number" step="0.1" min={0} value={form.trim_in ?? 0} disabled={disabled} onChange={(e) => set("trim_in", Number(e.target.value))} /></Field>
             <Field label={t("Trim end (s)")}><Input type="number" step="0.1" min={0} value={form.trim_out ?? 0} disabled={disabled} onChange={(e) => set("trim_out", Number(e.target.value))} /></Field>
           </div>
+
+          {/* continuity from a specific shot (v3) */}
+          <div className="rounded-lg border border-line bg-panel/60 p-2.5">
+            <div className="grid items-end gap-3 @md:grid-cols-[minmax(0,1fr)_auto]">
+              <Field label={t("Continues from")} hint={t("Start this shot where another one ends: its last frame becomes the first frame, or its video is extended.")}>
+                <Select value={contFrom ?? ""} disabled={disabled || !ep} aria-label={t("Continues from")}
+                  onChange={(e) => { const id = e.target.value ? Number(e.target.value) : null; void v3.set({ continuity_from_shot_id: id, ...(id ? { continuity_mode: contMode } : {}) }); }}>
+                  <option value="">{t("— fresh start")}</option>
+                  {otherShots.map((s) => <option key={s.id} value={s.id}>{s.code}{s.action ? ` · ${s.action.slice(0, 48)}` : ""}</option>)}
+                  {contFrom && !contShot && <option value={contFrom}>{t("Shot #{id}", { id: contFrom })}</option>}
+                </Select>
+              </Field>
+              {contFrom && (
+                <Field label={t("How")}>
+                  <Segmented size="sm" value={contMode} aria-label={t("Continuity mode")}
+                    onChange={(v) => !disabled && void v3.set({ continuity_mode: v })}
+                    options={[
+                      { value: "last_frame" as const, label: t("Last frame"), title: t("Its last frame becomes this shot's first frame") },
+                      { value: "extend" as const, label: t("Extend"), title: t("Extend its video instead of starting a new one") },
+                    ]} />
+                </Field>
+              )}
+            </div>
+            {!ep && <Skeleton className="mt-2 h-3 w-40" />}
+            {!v3.managed && !disabled && <p className="mt-1.5 flex items-center gap-1 text-2xs text-dim"><Link2 className="size-3" />{t("Saved as soon as you change it.")}</p>}
+          </div>
+
           <div className="flex flex-wrap gap-x-6 gap-y-2">
             <Toggle checked={!!form.continuity_from_prev} disabled={disabled} onChange={(v) => set("continuity_from_prev", v)} label={<span className="text-xs">{t("Continue from previous shot")}</span>} />
             <Toggle checked={form.include !== false} disabled={disabled} onChange={(v) => set("include", v)} label={<span className="text-xs">{t("Include in cut")}</span>} />
@@ -175,6 +211,116 @@ export function Details({ shot, form, setForm, lang, lines, disabled, hasLines, 
           <Field label={t("Notes")}><Input value={form.notes || ""} disabled={disabled} onChange={(e) => set("notes", e.target.value)} /></Field>
         </div>
       </Collapse>
+    </div>
+  );
+}
+
+/**
+ * The v3 shot fields (props, continuity source). The drawer seeds and saves its form from a fixed field list: when
+ * these keys are in that form they ride along with the Save button; otherwise they are saved the moment they change.
+ */
+function useShotV3(shot: Shot, form: Partial<Shot>, setForm: (f: Partial<Shot>) => void) {
+  const qc = useQueryClient();
+  const [local, setLocal] = useState<{ id: number; patch: ShotV3Fields }>({ id: shot.id, patch: {} });
+  const base = shot as Shot & ShotV3Fields;
+  const managed = "prop_ids" in form && "continuity_from_shot_id" in form;
+  const get = <K extends keyof ShotV3Fields>(k: K): ShotV3Fields[K] => {
+    if (k in form) return (form as Partial<Shot> & ShotV3Fields)[k];
+    if (local.id === shot.id && k in local.patch) return local.patch[k];
+    return base[k];
+  };
+  const set = async (patch: ShotV3Fields) => {
+    const keys = Object.keys(patch) as (keyof ShotV3Fields)[];
+    if (keys.every((k) => k in form)) { setForm({ ...form, ...patch }); return; }
+    const before = local;
+    setLocal((l) => ({ id: shot.id, patch: { ...(l.id === shot.id ? l.patch : {}), ...patch } }));
+    try {
+      await api.patch(`/api/shots/${shot.id}`, patch);
+      qc.invalidateQueries({ queryKey: ["shot", shot.id] });
+      qc.invalidateQueries({ queryKey: ["episode"] });
+      toast.success(tr("Shot saved"), { id: "shot-v3-saved" });
+    } catch { setLocal(before); }
+  };
+  return { get, set, managed };
+}
+
+/** One character's outfit for this shot: its named costumes, or (older characters) the outfit names found on its images. */
+function OutfitPicker({ c, value, disabled, onChange }: { c: Character; value: string; disabled: boolean; onChange: (v: string) => void }) {
+  const t = useT();
+  const { data: costumes } = useCostumes(c.id);
+  const fromAssets = Array.from(new Set((c.assets ?? []).filter((a) => a.kind === "outfit").map((a) => a.outfit).filter(Boolean)));
+  const names = costumes?.length ? costumes.map((x) => x.name) : fromAssets;
+  if (!names.length && !value) return null;
+  const def = costumes?.find((x) => x.is_default);
+  return (
+    <Field label={t("{name}'s outfit", { name: c.name })}>
+      <Select value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
+        <option value="">{def ? t("Default ({name})", { name: def.name }) : t("Default (from DNA)")}</option>
+        {names.map((o) => <option key={o} value={o}>{o}</option>)}
+        {value && !names.includes(value) && <option value={value}>{value}</option>}
+      </Select>
+    </Field>
+  );
+}
+
+/** Props in the shot: chips from the project's prop library, with quick-add by typing a name. */
+function PropsPicker({ projectId, value, disabled, onChange }: { projectId: number; value: number[]; disabled: boolean; onChange: (ids: number[]) => void }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const { data: props, isLoading } = useProps(projectId);
+  const [q, setQ] = useState("");
+  const [adding, setAdding] = useState(false);
+  const list = (props ?? []).filter((p) => !p.archived);
+  const query = q.trim().toLowerCase();
+  const shown = list.filter((p) => !query || p.name.toLowerCase().includes(query) || value.includes(p.id));
+  const exact = list.find((p) => p.name.toLowerCase() === query);
+  const toggle = (id: number) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id]);
+
+  const add = async () => {
+    const name = q.trim();
+    if (!name || disabled) return;
+    if (exact) { if (!value.includes(exact.id)) onChange([...value, exact.id]); setQ(""); return; }
+    setAdding(true);
+    try {
+      const p = await createProp({ name, project_id: projectId });
+      await qc.invalidateQueries({ queryKey: ["props", projectId] });
+      onChange([...value, p.id]);
+      setQ("");
+      toast.success(tr("Prop added: {name}", { name: p.name }));
+    } catch { /* api toasts */ } finally { setAdding(false); }
+  };
+  const onKey = (e: KeyboardEvent<HTMLInputElement>) => { if (e.key === "Enter") { e.preventDefault(); void add(); } };
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-xs font-medium text-mute">{t("Props in shot")}</span>
+        {value.length > 0 && <span className="text-2xs tabular-nums text-dim">{t("{n} selected", { n: value.length })}</span>}
+      </div>
+      {isLoading ? <div className="flex gap-1.5"><Skeleton className="h-7 w-20 !rounded-full" /><Skeleton className="h-7 w-24 !rounded-full" /></div> : (
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label={t("Props in shot")}>
+          {shown.map((p) => {
+            const on = value.includes(p.id);
+            return (
+              <button key={p.id} type="button" disabled={disabled} aria-pressed={on} onClick={() => toggle(p.id)} title={p.description || undefined}
+                className={clsx("inline-flex h-7 max-w-full items-center gap-1.5 rounded-full border pl-1 pr-2.5 text-xs transition-colors disabled:opacity-60",
+                  on ? "border-accent/60 bg-accent/10 text-ink" : "border-line text-mute hover:border-dim/60 hover:text-ink")}>
+                {p.url ? <img src={p.url} alt="" className="size-5 rounded-full object-cover" /> : <span className="grid size-5 place-items-center rounded-full bg-raised text-dim"><Package className="size-3" /></span>}
+                <span className="truncate">{p.name}</span>
+                {on && <Check className="size-3 text-accent-ink" strokeWidth={3} />}
+              </button>
+            );
+          })}
+          {!list.length && !query && <p className="text-2xs text-dim">{t("No props yet — type a name below to add one.")}</p>}
+          {query && !shown.length && !exact && <p className="text-2xs text-dim">{t("No prop called “{q}” — press Enter to add it.", { q: q.trim() })}</p>}
+        </div>
+      )}
+      {!disabled && (
+        <div className="flex items-center gap-1.5">
+          <Input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={onKey} placeholder={t("Find or add a prop (e.g. brass lamp)")} aria-label={t("Find or add a prop")} className="!h-8 text-xs" />
+          <Button size="sm" variant="outline" icon={<Plus className="size-3.5" />} loading={adding} disabled={!q.trim()} onClick={add}>{exact ? t("Select") : t("Add")}</Button>
+        </div>
+      )}
     </div>
   );
 }

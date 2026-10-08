@@ -27,6 +27,9 @@ import Storyboard from "./Storyboard";
 const SIMPLE_TABS = ["studio", "bible", "shots", "export"];
 
 const ActivityPage = lazy(() => import("./Activity"));
+const DashboardPage = lazy(() => import("./Dashboard"));
+const WorldPage = lazy(() => import("./World"));
+const CampaignPage = lazy(() => import("./Campaign"));
 const BiblePage = lazy(() => import("./Bible"));
 const BriefPage = lazy(() => import("./Brief"));
 const ExportPage = lazy(() => import("./Export"));
@@ -331,6 +334,9 @@ export default function ProjectLayout() {
                       <Route path="export" element={<ExportPage />} />
                       <Route path="review" element={<ReviewPage />} />
                       <Route path="activity" element={<ActivityPage />} />
+                      <Route path="dashboard" element={<DashboardPage />} />
+                      <Route path="world" element={<WorldPage />} />
+                      <Route path="campaign" element={<CampaignPage />} />
                       <Route path="*" element={<Navigate to={`/p/${pid}/storyboard`} replace />} />
                     </Routes>
                   </Suspense>

@@ -10,6 +10,7 @@ import { ago } from "../../lib/format";
 import { tr, useT } from "../../lib/i18n";
 import { useScriptVersions, useUsers } from "../../lib/queries";
 import type { Script, ScriptVersion } from "../../lib/types";
+import { plainText } from "../../lib/v3";
 import { useProjectCtx } from "../../pages/project/context";
 import { Badge, Button, IconButton, Modal, Segmented, Skeleton } from "../ui";
 import { diffLines, diffStats, foldUnchanged, markWords, type DiffRow } from "./diff";
@@ -211,7 +212,8 @@ function DrawerBody({ eid, current, canEdit, onClose, hasUnsaved }: {
 /** Line diff with word-level highlights on changed lines and long unchanged stretches folded away. */
 export function DiffView({ from, to, fromLabel, toLabel }: { from: Script | undefined; to: Script | undefined; fromLabel: string; toLabel: string }) {
   const t = useT();
-  const rows = useMemo(() => markWords(diffLines(scriptToLines(from), scriptToLines(to))), [from, to]);
+  // @mention tokens read as plain names in the diff (linking a name is not a text change worth highlighting)
+  const rows = useMemo(() => markWords(diffLines(scriptToLines(from).map(plainText), scriptToLines(to).map(plainText))), [from, to]);
   const stats = diffStats(rows);
   const items = useMemo(() => foldUnchanged(rows, 2), [rows]);
   const [openFolds, setOpenFolds] = useState<Set<number>>(new Set());

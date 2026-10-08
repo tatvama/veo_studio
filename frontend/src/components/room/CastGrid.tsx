@@ -1,11 +1,13 @@
 import { clsx } from "clsx";
-import { Images, Lock, Mic, PencilLine, Plus, ScanFace, ShieldCheck, Sparkles, UserRound, Loader2 } from "lucide-react";
+import { Images, Lock, LockKeyhole, Mic, PencilLine, Plus, ScanFace, ShieldCheck, Shirt, Sparkles, UserRound, Loader2 } from "lucide-react";
 import { useState, type FormEvent, type ReactNode } from "react";
 import { LANG_SHORT } from "../../lib/format";
 import { useT } from "../../lib/i18n";
 import type { Character, ConsentRow } from "../../lib/types";
+import type { CharacterV3 } from "../../lib/v3";
 import { Avatar, Button, Input, Skeleton, rise } from "../ui";
 import { LoadError, RoomEmpty } from "./kit";
+import { LOCKED_LOOK_AT } from "./look";
 
 const GRID = "grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(min(100%,10rem),1fr))]";
 
@@ -65,6 +67,11 @@ function CharacterCard({ c, index, languages, onOpen, consent }: { c: Character;
   const voiced = new Set(((c.voices ?? []) as any[]).map((v) => (typeof v === "string" ? v : v?.language)));
   const images = c.asset_count ?? c.assets?.length ?? 0;
   const st = c.identity?.status;
+  const v3 = c as CharacterV3;
+  const strictness = v3.lock_effective?.strictness ?? v3.lock?.strictness;
+  const lockedLook = typeof strictness === "number" && strictness >= LOCKED_LOOK_AT;
+  // the project cast payload carries costumes; the shared library list doesn't, so the count is hidden there
+  const costumes = v3.costumes?.length;
   return (
     <div {...r}>
       <button type="button" onClick={onOpen} aria-label={`${c.name}${c.role ? `, ${c.role}` : ""}`}
@@ -80,6 +87,7 @@ function CharacterCard({ c, index, languages, onOpen, consent }: { c: Character;
           <span aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-t from-black/85 via-black/35 to-transparent" />
           <div className="absolute left-2 top-2 flex flex-col items-start gap-1">
             {c.locked ? <Chip icon={<Lock />} tone="warn">{t("Locked")}</Chip> : <Chip icon={<PencilLine />}>{t("Draft")}</Chip>}
+            {lockedLook && <Chip icon={<LockKeyhole />} tone="ok">{t("Locked look")}</Chip>}
           </div>
           <div className="absolute right-2 top-2 flex flex-col items-end gap-1">
             {st === "ready" && <Chip icon={<ScanFace />} tone="ok">ID</Chip>}
@@ -97,7 +105,10 @@ function CharacterCard({ c, index, languages, onOpen, consent }: { c: Character;
             <Mic className="size-3 shrink-0 text-dim" />
             {languages.map((l) => <span key={l} className={clsx("font-semibold", voiced.has(l) ? "text-ink" : "text-dim")}>{LANG_SHORT[l] ?? l.toUpperCase()}</span>)}
           </span>
-          <span className="ml-auto flex items-center gap-1 tabular-nums" title={t("Reference images")}><Images className="size-3 shrink-0 text-dim" />{images}</span>
+          {costumes !== undefined && (
+            <span className="ml-auto flex items-center gap-1 tabular-nums" title={t("Outfits")}><Shirt className="size-3 shrink-0 text-dim" />{costumes}</span>
+          )}
+          <span className={clsx("flex items-center gap-1 tabular-nums", costumes === undefined && "ml-auto")} title={t("Reference images")}><Images className="size-3 shrink-0 text-dim" />{images}</span>
         </div>
       </button>
     </div>

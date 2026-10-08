@@ -289,6 +289,10 @@ function Overview({ m }: { m: AIModel }) {
             <Fact k={t("Aspect ratios")} v={(caps.aspects ?? []).join(", ")} />
             <Fact k={t("Reference images")} v={caps.max_refs ? String(caps.max_refs) : ""} />
             <Fact k={t("Native audio")} v={caps.native_audio ? t("Yes") : t("No")} />
+            <Fact k={t("Speaks lines")} v={caps.speech_in_video ? t("Yes: voice and lips in one pass") : t("No")} />
+            <Fact k={t("Audio-driven")} v={caps.audio_driven ? t("Yes: animates from a voice track") : t("No")} />
+            <Fact k={t("Trained identity")} v={caps.lora_input ? t("Yes: accepts LoRA weights") : t("No")} />
+            <Fact k={t("Lip-sync to audio")} v={caps.lipsync_to_audio ? t("Yes") : t("No")} />
           </dl>
         </div>
       </Section>

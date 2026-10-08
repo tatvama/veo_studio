@@ -13,14 +13,15 @@ import httpx
 from .. import catalog, settings_store
 from ..agents import prompts
 from ..agents import schemas as S
-from ..core import budget, generation, model_hub, ratelimit, studio
+from ..core import budget, dependencies, generation, lock as lock_core, model_hub, ratelimit, studio
 from ..db import SessionLocal, utcnow
 from ..events import emit
 from ..models import (AIModel, AudioAsset, Character, CharacterAsset, Episode, Export, Location, LocationAsset, Project, Shot,
                       Style, Take, User, VoiceProfile)
 from ..pipeline import assembler, faces, ffmpeg as ff
 from ..pipeline.prompting import (character_refs, compile_keyframe_prompt, compile_video_prompt, effective_quality,
-                                  effective_voice_mode, keyframe_refs, negative_prompt, shot_lines, video_refs)
+                                  effective_voice_mode, keyframe_refs, look_of, native_languages, negative_prompt, outfit_for,
+                                  shot_lines, video_refs)
 from ..pipeline.selection import current, select
 from ..pipeline.voice import build_dialogue, build_narration, choose_duration
 from ..providers.base import ProviderBlocked, ProviderError, ProviderNotConfigured, RetryableProviderError
@@ -70,6 +71,7 @@ def save_take(db, ctx: JobContext, shot: Shot, kind: str, data: bytes | None, ex
              remote_ref=remote_ref, interaction_id=interaction_id, parent_take_id=parent, created_by=ctx.user_id)
     db.add(t)
     db.flush()
+    dependencies.clear(db, shot.id, kind, language)
     others = [x for x in db.query(Take).filter(Take.shot_id == shot.id, Take.kind == kind, Take.archived.is_(False),
                                                Take.language == language if language else Take.language.is_(None)).all()
               if x.id != t.id]
@@ -182,9 +184,27 @@ def gen_image(ctx: JobContext, prompt: str, refs: list[Path], aspect: str, title
     return res, m.id
 
 
-def _identity(ch: Character) -> dict | None:
-    ident = ch.identity or {}
+def _identity(ch: Character, db=None, episode_no: int | None = None) -> dict | None:
+    ident = look_of(db, ch, episode_no)["identity"] if db is not None else (ch.identity or {})
     return ident if ident.get("status") == "ready" and ident.get("lora_url") else None
+
+
+def _continuity_source(db, shot: Shot) -> Shot | None:
+    """The shot this one continues from: an explicit Film Map link first, else the previous shot when asked."""
+    if shot.continuity_from_shot_id:
+        src = db.get(Shot, shot.continuity_from_shot_id)
+        if src and src.episode_id == shot.episode_id:
+            return src
+    return _prev_shot(db, shot) if shot.continuity_from_prev else None
+
+
+def _loras_for(db, shot: Shot, episode_no: int | None) -> list[dict]:
+    """A single trained character rides along to engines that accept LoRA weights (fal models with a loras input)."""
+    chars = [db.get(Character, int(c)) for c in (shot.characters or [])]
+    if len(chars) != 1 or not chars[0]:
+        return []
+    ident = _identity(chars[0], db, episode_no)
+    return [{"path": ident["lora_url"], "scale": float(ident.get("scale", 1.0))}] if ident else []
 
 
 # ── keyframe ─────────────────────────────────────────────────────────────────
@@ -197,23 +217,24 @@ def keyframe(ctx: JobContext) -> dict:
         shot = db.get(Shot, ctx.shot_id)
         project = _project_of(db, shot)
         cont = None
-        if shot.continuity_from_prev:
-            prev = _prev_shot(db, shot)
-            if prev:
-                pv = current(db, prev.id, "video")
-                if pv and st.exists(pv.path):
-                    cont = ff.extract_frame(st.abs(pv.path), tmp / "prev_last.png", "last")
-                else:
-                    pk = current(db, prev.id, "keyframe")
-                    cont = st.abs(pk.path) if pk and st.exists(pk.path) else None
+        src = _continuity_source(db, shot)
+        if src:
+            pv = current(db, src.id, "video")
+            if pv and st.exists(pv.path):
+                cont = ff.extract_frame(st.abs(pv.path), tmp / "prev_last.png", "last")
+            else:
+                pk = current(db, src.id, "keyframe")
+                cont = st.abs(pk.path) if pk and st.exists(pk.path) else None
         refs = keyframe_refs(db, shot, cont)
         prompt = compile_keyframe_prompt(db, shot, project, [l for l, _ in refs])
         aspect, code = project.aspect, shot.code
+        ep_row = db.get(Episode, shot.episode_id)
+        ep_no = ep_row.number if ep_row else None
         chars = [db.get(Character, int(c)) for c in (shot.characters or [])]
-        trained = [c for c in chars if c and _identity(c)]
+        trained = [c for c in chars if c and _identity(c, db, ep_no)]
         # "hero" keyframes use the Pro image model they were priced at
         explicit = ctx.payload.get("engine") or ("google:image_hero" if ctx.payload.get("hero") else None)
-        ident = _identity(trained[0]) if (len(chars) == 1 and trained and not ctx.payload.get("engine")) else None
+        ident = _identity(trained[0], db, ep_no) if (len(chars) == 1 and trained and not ctx.payload.get("engine")) else None
         trainer_cfg = settings_store.get_setting(db, "identity_trainer") or {}
         db.commit()
     ctx.progress(0.2, "Generating keyframe")
@@ -251,9 +272,13 @@ def video(ctx: JobContext) -> dict:
         project = _project_of(db, shot)
         q = p.get("quality") or effective_quality(shot, project)
         qm = catalog.QUALITY_MODES.get(q, catalog.QUALITY_MODES["saver"])
-        vm = effective_voice_mode(shot, project)
-        lang = project.primary_language
+        lang = p.get("language") or project.primary_language
+        native = bool(p.get("native"))  # dubbing route: Veo speaks this language itself
+        vm = "native" if native else effective_voice_mode(shot, project, lang)
         extend = bool(p.get("extend"))
+        ep_row = db.get(Episode, shot.episode_id)
+        ep_no = ep_row.number if ep_row else None
+        loras = _loras_for(db, shot, ep_no)
         audio_driven = vm == "audio_driven" and bool(shot_lines(shot, lang)) and not extend and not p.get("no_audio_driven")
         explicit = p.get("engine") or (shot.engine if shot.engine and shot.engine != "auto" else None)
         if explicit:
@@ -262,10 +287,11 @@ def video(ctx: JobContext) -> dict:
                 audio_driven = False
         chain = "extend" if extend else ("dialogue" if audio_driven else f"video.{q}")
         mode = p.get("mode") or shot.mode or "auto"
-        prompt = p.get("prompt_override") or compile_video_prompt(db, shot, project)
+        prompt = p.get("prompt_override") or compile_video_prompt(db, shot, project, lang, voice_mode="native" if native else None)
         negative = negative_prompt(project, db)
         kf = current(db, shot.id, "keyframe")
-        kf_path = st.abs(kf.path) if kf and st.exists(kf.path) else None
+        # a stale keyframe (the shot changed since) counts as missing: the video job remakes it first
+        kf_path = st.abs(kf.path) if kf and st.exists(kf.path) and not kf.stale else None
         vr = video_refs(db, shot)
         refs, ref_labels = [x for _, x in vr], [l for l, _ in vr]
         last_frame = extend_from = None
@@ -275,6 +301,7 @@ def video(ctx: JobContext) -> dict:
                    .order_by(Shot.order).first())
             nk = current(db, nxt.id, "keyframe") if nxt else None
             last_frame = st.abs(nk.path) if nk else None
+        link_parent = None
         if extend:
             vt = current(db, shot.id, "video")
             if not vt:
@@ -282,6 +309,14 @@ def video(ctx: JobContext) -> dict:
             extend_from = st.abs(vt.path)
             extend_uri = vt.remote_ref or ""
             prompt = (p.get("prompt") or shot.action) + "\n" + prompt
+        elif shot.continuity_from_shot_id and shot.continuity_mode == "extend" and mode in ("auto", "extend") and not native:
+            # Film Map link: this shot IS the continuation of the linked shot's clip
+            src = db.get(Shot, shot.continuity_from_shot_id)
+            lv = current(db, src.id, "video") if src else None
+            if lv and st.exists(lv.path):
+                extend, extend_from, extend_uri, link_parent = True, st.abs(lv.path), lv.remote_ref or "", lv.id
+                audio_driven, chain = False, "extend"
+                prompt = (shot.action or "the action continues") + "\n" + prompt
         # What the video must follow: the shot's keyframe (yours or generated) and its characters. Text-only video is
         # used only when there is nothing to follow, so a clip never quietly ignores the keyframe or the cast.
         guided = bool(kf_path or shot.characters or refs)
@@ -331,7 +366,8 @@ def video(ctx: JobContext) -> dict:
         return GenRequest(mode=mode_, prompt=prompt, negative=negative, first_frame=first,
                           last_frame=last_frame if mode_ == "flf" else None, refs=refs if mode_ == "ref2v" else [],
                           audio=audio, video=extend_from, video_uri=extend_uri, duration=duration, aspect=aspect,
-                          resolution="720p" if extend else qm["resolution"], generate_audio=not audio_driven)
+                          resolution="720p" if extend else qm["resolution"], generate_audio=not audio_driven,
+                          loras=loras if mode_ in ("i2v", "t2v", "ref2v", "flf") else [])
 
     try:
         m, used, res, attempts = run_chain(ctx, chain, modes_ok, build, explicit=explicit, skip=p.get("skip_engines"))
@@ -345,18 +381,25 @@ def video(ctx: JobContext) -> dict:
         prev = current(db, shot.id, "video")
         params = {"quality": q, "resolution": qm["resolution"], "mode": used, "refs": ref_labels if used == "ref2v" else [],
                   "engine": m.id, "engine_label": m.display_name, "attempts": attempts,
-                  "retake_count": p.get("retake_count", 0), "audio_driven": used == "a2v", "language": lang if used == "a2v" else None,
-                  "shootout": bool(p.get("shootout"))}
-        t = save_take(db, ctx, shot, "video", res.data, "mp4", provider=m.provider, model=m.endpoint, params=params,
+                  "retake_count": p.get("retake_count", 0), "audio_driven": used == "a2v",
+                  "language": lang if (used == "a2v" or vm == "native") else None,
+                  "native_language": lang if vm == "native" and bool(shot_lines(shot, lang)) else None,
+                  "loras": bool(loras), "shootout": bool(p.get("shootout"))}
+        # a dubbing clip (another language spoken by Veo) is a lip-synced take of that language, not the main video
+        as_kind = "lipsync" if (native and lang != project.primary_language) else "video"
+        t = save_take(db, ctx, shot, as_kind, res.data, "mp4", language=lang if as_kind == "lipsync" else None,
+                      provider=m.provider, model=m.endpoint, params={**params, "method": "native"} if as_kind == "lipsync" else params,
                       prompt=prompt, duration=res.duration_s if not extend else 0.0, cost=res.usage.usd,
-                      remote_ref=res.remote_ref, parent=prev.id if extend and prev else None,
+                      remote_ref=res.remote_ref, parent=(prev.id if extend and prev else None) or link_parent,
                       auto_select=not p.get("shootout"))
         lip_t = None
-        if used == "a2v":  # the clip already speaks the line: it is also this language's lip-synced take
+        if used == "a2v" and as_kind == "video":  # the clip already speaks the line: it is also this language's lip-synced take
             lip_t = save_take(db, ctx, shot, "lipsync", None, "mp4", src_file=st.abs(t.path), language=lang,
                               provider=m.provider, model=m.endpoint,
                               params={**params, "video_take_id": t.id, "method": "audio_driven"}, cost=0.0, parent=t.id,
                               auto_select=not p.get("shootout"))
+        if as_kind == "lipsync":
+            lip_t = t
         if shot.status != "approved":
             shot.status = "video_ready"
         ctx.cost(res.usage, db)
@@ -365,8 +408,9 @@ def video(ctx: JobContext) -> dict:
         has_chars = bool(shot.characters)
         code = shot.code
     ctx.save_result(ops={})
-    if has_chars or lip_t:
+    if has_chars or lip_t or vm == "native":
         ctx.enqueue_child("qc", {"take_id": (lip_t or t).id, "retake_count": p.get("retake_count", 0), "quality": q,
+                                 "language": lang, "native": native,
                                  "engine": m.id, "tried": [*(p.get("skip_engines") or []), m.id],
                                  "shootout": bool(p.get("shootout"))},
                           label=f"QC {code}")
@@ -403,11 +447,18 @@ def qc(ctx: JobContext) -> dict:
         ref_imgs: list[bytes] = []
         dna: list[str] = []
         embs: list[list[float]] = []
+        ep_row = db.get(Episode, shot.episode_id)
+        ep_no = ep_row.number if ep_row else None
+        locks: list[dict] = []
+        outfit_expected = False
         for cid in (shot.characters or [])[:3]:
             ch = db.get(Character, int(cid))
             if not ch:
                 continue
-            dna.append(ch.dna_text)
+            look = look_of(db, ch, ep_no)
+            locks.append(look["lock"])
+            outfit_expected = outfit_expected or bool(outfit_for(db, shot, ch))
+            dna.append(look["dna"] + lock_core.prompt_text(ch, look["lock"]))
             e = _char_embedding(db, ch)
             if e:
                 embs.append(e)
@@ -418,8 +469,12 @@ def qc(ctx: JobContext) -> dict:
         video_path = st.abs(take.path)
         action, code, has_chars = shot.action, shot.code, bool(shot.characters)
         is_lip = take.kind == "lipsync" or bool((take.params or {}).get("audio_driven"))
+        native_take = bool((take.params or {}).get("native_language")) or (take.params or {}).get("method") == "native"
         language = take.language or (take.params or {}).get("language") or project.primary_language
         lines = " / ".join(l.get("line", "") for l in shot_lines(shot, language))
+        lang_name = catalog.LANGUAGES.get(language, {}).get("name", language)
+        strict = max((float(L.get("strictness", 0.5)) for L in locks), default=0.5)
+        outfit_required = outfit_expected and any(lock_core.requires_outfit(L) for L in locks) and bool(settings.get("outfit_qc", True))
         db.commit()
     frames = ff.extract_frames(video_path, tmp, 4)
     report: dict[str, Any] = {"checked_at": utcnow().isoformat() + "Z"}
@@ -443,17 +498,32 @@ def qc(ctx: JobContext) -> dict:
                                         S.LipsyncQCOut, videos=[video_path.read_bytes()], mock_ctx={"take_id": take_id})
         usages.append(u2)
         report["lipsync"] = lip.model_dump()
-    thr = float(settings.get("qc_threshold") or 0.7)
-    fthr = float(settings.get("face_match_threshold") or 0.36)
+    # 4) spoken words: did the clip say the scripted line, in the right language? (native Veo speech or a dub)
+    words = None
+    if (is_lip or native_take) and lines and settings.get("dialogue_words_qc", True) and video_path.stat().st_size < 18_000_000:
+        wp = (f"Expected language: {lang_name}. Expected line(s): {lines}\nListen to the clip. Transcribe exactly what is "
+              "spoken, name the language actually spoken, score word accuracy, pronunciation and lip-sync, and say whether "
+              "any text is burned into the picture.")
+        words, u3 = ctx.services.llm_json("dialogue_check", "You are a strict native-speaker reviewer of AI-generated dialogue.",
+                                          wp, S.DialogueCheckOut, videos=[video_path.read_bytes()],
+                                          mock_ctx={"line": lines, "language_name": lang_name})
+        usages.append(u3)
+        report["words"] = words.model_dump()
+    thr = lock_core.qc_threshold({"strictness": strict}, float(settings.get("qc_threshold") or 0.7))
+    fthr = lock_core.face_threshold({"strictness": strict}, float(settings.get("face_match_threshold") or 0.36))
     lthr = float(settings.get("lipsync_qc_threshold") or 0.6)
+    wthr = float(settings.get("dialogue_words_threshold") or 0.75)
     if face.get("available") and face.get("similarity") is not None:
         identity_ok = face["similarity"] >= fthr
     else:
         identity_ok = obj.identity_match >= thr or not has_chars
     lip_ok = lip is None or (lip.sync_score >= lthr and not lip.artifacts)
-    passed = identity_ok and lip_ok and not obj.extra_people and not obj.text_artifacts
-    report.update({"passed": passed, "identity_ok": identity_ok, "lipsync_ok": lip_ok, "threshold": thr,
-                   "face_threshold": fthr, "lipsync_threshold": lthr})
+    words_ok = words is None or (words.word_match >= wthr and not words.subtitles_burned)
+    outfit_ok = (not outfit_required) or bool(obj.outfit_match)
+    passed = identity_ok and lip_ok and words_ok and outfit_ok and not obj.extra_people and not obj.text_artifacts
+    report.update({"passed": passed, "identity_ok": identity_ok, "lipsync_ok": lip_ok, "words_ok": words_ok,
+                   "outfit_ok": outfit_ok, "threshold": thr, "face_threshold": fthr, "lipsync_threshold": lthr,
+                   "words_threshold": wthr, "strictness": strict})
     with SessionLocal() as db:
         take = db.get(Take, take_id)
         take.qc = report
@@ -472,10 +542,13 @@ def qc(ctx: JobContext) -> dict:
         project = _project_of(db, shot)
         user = _user(db, ctx)
         est = budget.Estimator(db)
-        if not identity_ok or obj.extra_people or obj.text_artifacts or (take.params or {}).get("audio_driven"):
+        redo_video = (not identity_ok or obj.extra_people or obj.text_artifacts or not outfit_ok
+                      or (take.params or {}).get("audio_driven") or (native_take and not words_ok))
+        if redo_video:
             cost = est.video(shot, project, ctx.payload.get("quality"))
             kind, payload = "video", {"quality": ctx.payload.get("quality"), "retake_count": retakes + 1,
-                                      "skip_engines": tried if retakes >= 1 else []}
+                                      "skip_engines": tried if retakes >= 1 else [],
+                                      "language": ctx.payload.get("language"), "native": bool(ctx.payload.get("native"))}
         else:  # only the lips are off → re-dub with the next lip-sync engine
             cost = est.lipsync(shot)
             kind, payload = "lipsync", {"language": language, "retake_count": retakes + 1, "skip_engines": tried}
@@ -696,7 +769,11 @@ SHEET_VIEWS = {
     "three_quarter": ("Three-quarter view portrait, head turned about 45 degrees", "3:4"),
     "profile": ("Side profile portrait, facing left", "3:4"),
     "full_body": ("Full-body shot standing, head to toe visible, showing the complete outfit and shoes", "9:16"),
+    "back": ("Back view, standing, seen from behind, head to feet visible, showing the hair and the back of the outfit", "9:16"),
 }
+LIGHTING = {"day": "bright natural daylight outdoors, soft shadows",
+            "dusk": "warm golden-hour light at dusk, long soft shadows, dusk-blue sky",
+            "night_interior": "night interior lit by warm oil lamps and tungsten, deep shadows"}
 EXPRESSIONS = ["neutral", "happy, warm smile", "angry", "sad, teary eyes", "surprised"]
 
 
@@ -724,11 +801,12 @@ def _char_ref(db, ch: Character) -> Path | None:
 
 
 def _save_char_asset(db, ctx: JobContext, ch: Character, kind: str, res, prompt: str, label: str = "", outfit: str = "",
-                     episode_scope: int | None = None) -> CharacterAsset:
+                     episode_scope: int | None = None, view: str = "", lighting: str = "") -> CharacterAsset:
     st = get_storage()
     rel = st.save_bytes(st.new_path(f"characters/{ch.id}", res.ext), res.data)
     a = CharacterAsset(character_id=ch.id, kind=kind, label=label or kind.replace("_", " "), outfit=outfit,
-                       episode_scope=episode_scope, path=rel, prompt=prompt, cost_usd=res.usage.usd, version=ch.version)
+                       episode_scope=episode_scope, view=view, lighting=lighting, path=rel, prompt=prompt,
+                       cost_usd=res.usage.usd, version=ch.version)
     db.add(a)
     ctx.cost(res.usage, db)
     db.commit()
@@ -763,20 +841,61 @@ def character_sheet(ctx: JobContext) -> dict:
 
 @handler("character_outfit")
 def character_outfit(ctx: JobContext) -> dict:
+    """A mini turnaround per outfit (front, three-quarter, full body by default), so the clothes are known from
+    more than one side and the keyframe keeps them from any angle."""
     p = ctx.payload
+    views = [v for v in (p.get("views") or ["front", "three_quarter", "full_body"]) if v in SHEET_VIEWS] or ["full_body"]
     with SessionLocal() as db:
         ch = db.get(Character, p["character_id"])
         style = _style_of(db, p.get("project_id"))
         ref = _char_ref(db, ch)
         db.commit()
-    prompt = _sheet_prompt(ch, SHEET_VIEWS["full_body"][0], style, ref is not None,
-                           extra=f"Now wearing a different outfit. OUTFIT: {p['description']}")
-    res, _ = gen_image(ctx, prompt, [ref] if ref else [], "9:16", title=f"{ch.name} · outfit {p['outfit']}")
+    made = []
+    first: Path | None = None
+    for i, view in enumerate(views):
+        ctx.check_cancel()
+        ctx.progress(i / len(views), f"{ch.name}: {p['outfit']} ({view.replace('_', ' ')})")
+        desc, aspect = SHEET_VIEWS[view]
+        same_outfit = " Same outfit as in the second reference image." if first else ""
+        prompt = _sheet_prompt(ch, desc, style, ref is not None,
+                               extra=f"Now wearing a different outfit. OUTFIT: {p['description']}.{same_outfit}")
+        refs = [x for x in (ref, first) if x]
+        res, _ = gen_image(ctx, prompt, refs, aspect, title=f"{ch.name} · outfit {p['outfit']} {view}")
+        with SessionLocal() as db:
+            a = _save_char_asset(db, ctx, db.get(Character, p["character_id"]), "outfit", res, prompt,
+                                 label=f"outfit: {p['outfit']} ({view.replace('_', ' ')})", outfit=p["outfit"],
+                                 episode_scope=p.get("episode_scope"), view=view)
+            made.append(a.id)
+            if first is None:
+                first = get_storage().abs(a.path)
+    return {"asset_id": made[0] if made else None, "assets": made}
+
+
+@handler("character_lighting")
+def character_lighting(ctx: JobContext) -> dict:
+    """The same face under day, dusk and night-interior light: references for scenes in those conditions."""
+    p = ctx.payload
+    variants = [v for v in (p.get("variants") or list(LIGHTING)) if v in LIGHTING] or list(LIGHTING)
     with SessionLocal() as db:
         ch = db.get(Character, p["character_id"])
-        a = _save_char_asset(db, ctx, ch, "outfit", res, prompt, label=f"outfit: {p['outfit']}", outfit=p["outfit"],
-                             episode_scope=p.get("episode_scope"))
-    return {"asset_id": a.id}
+        style = _style_of(db, p.get("project_id"))
+        ref = _char_ref(db, ch)
+        db.commit()
+    look = style.look if style else "photorealistic cinematic"
+    made = []
+    for i, v in enumerate(variants):
+        ctx.check_cancel()
+        ctx.progress(i / len(variants), f"{ch.name}: {v.replace('_', ' ')} light")
+        same = "Same person as the reference image: identical face, hair, skin tone, age and outfit. " if ref else ""
+        prompt = (f"Character reference image for an AI film. Head-and-shoulders portrait, three-quarter view. {same}{ch.dna_text} "
+                  f"Lighting: {LIGHTING[v]}. Background: a simple real setting that matches this light, softly out of focus. "
+                  f"Rendering style: {look}. No text, no watermark, single person only.")
+        res, _ = gen_image(ctx, prompt, [ref] if ref else [], "3:4", title=f"{ch.name} · {v} light")
+        with SessionLocal() as db:
+            a = _save_char_asset(db, ctx, db.get(Character, p["character_id"]), "lighting", res, prompt,
+                                 label=f"{v.replace('_', ' ')} light", lighting=v)
+            made.append(a.id)
+    return {"assets": made}
 
 
 @handler("character_expressions")
@@ -1000,19 +1119,30 @@ def dub(ctx: JobContext) -> dict:
         if ctx.payload.get("native_polish", True):
             studio.native_polish(db, user, episode, lang)
         shots = generation.episode_shots(db, episode)
-        voice_ids = [s.id for s in shots if shot_lines(s, lang) or (s.narration or {}).get(lang)]
+        dub_method = settings_store.get_setting(db, "dub_method") or "redub"
+        # Google route: Veo speaks the translated line itself (voice + lips in one pass) when this language is allowed
+        native = ctx.payload.get("native")
+        if native is None:
+            native = lang in native_languages(project) and dub_method in ("regenerate", "regenerate_native", "native")
+        spoken = [s for s in shots if shot_lines(s, lang)]
+        voice_ids = [s.id for s in shots if (s.narration or {}).get(lang) or (shot_lines(s, lang) and not native)]
+        native_specs = [(s.id, est_v) for s, est_v in ((s, budget.Estimator(db).video(s, project)) for s in spoken)] if native else []
         if lang not in (project.languages or []):
             project.languages = [*(project.languages or []), lang]
         est = budget.Estimator(db)
         db.commit()
     children = [ctx.enqueue_child("voice", {"language": lang}, shot_id=sid, label=f"Voice [{lang}]") for sid in voice_ids]
-    st = ctx.wait_children(children, "Voices")
-    with SessionLocal() as db:
-        episode = db.get(Episode, ctx.episode_id)
-        lips = [s for s in generation.episode_shots(db, episode) if shot_lines(s, lang) and current(db, s.id, "video")]
-        lip_jobs = [ctx.enqueue_child("lipsync", {"language": lang}, shot_id=s.id, estimate=est.lipsync(s),
-                                      label=f"Lip-sync {s.code} [{lang}]") for s in lips]
-    st2 = ctx.wait_children(lip_jobs, "Lip-sync")
+    children += [ctx.enqueue_child("video", {"language": lang, "native": True}, shot_id=sid, estimate=est_v,
+                                   label=f"Speak [{lang}]") for sid, est_v in native_specs]
+    st = ctx.wait_children(children, "Voices" if not native else "Spoken clips")
+    lip_jobs: list[int] = []
+    if not native:
+        with SessionLocal() as db:
+            episode = db.get(Episode, ctx.episode_id)
+            lips = [s for s in generation.episode_shots(db, episode) if shot_lines(s, lang) and current(db, s.id, "video")]
+            lip_jobs = [ctx.enqueue_child("lipsync", {"language": lang}, shot_id=s.id, estimate=est.lipsync(s),
+                                          label=f"Lip-sync {s.code} [{lang}]") for s in lips]
+    st2 = ctx.wait_children(lip_jobs, "Lip-sync") if lip_jobs else {}
     failed = sum(1 for v in [*st.values(), *st2.values()] if v != "succeeded")
     if ctx.payload.get("then_export"):
         ex = ctx.enqueue_child("export", {"language": lang, "preset": ctx.payload["then_export"], "options": {"captions": True}})

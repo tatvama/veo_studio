@@ -1,5 +1,5 @@
 import { clsx } from "clsx";
-import { Archive, Columns2, Cpu, Crown, Eye, Film, Image as ImageIcon, Loader2, Maximize2, Mic, Play, ShieldCheck, Swords, Trophy, X } from "lucide-react";
+import { Archive, Columns2, Cpu, Crown, Eye, Film, History, Image as ImageIcon, Loader2, Maximize2, Mic, Play, ShieldCheck, Sparkles, Swords, Trophy, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -11,6 +11,7 @@ import { api } from "../../../lib/api";
 import { LANG_SHORT, QUALITY_INFO, ago, usd } from "../../../lib/format";
 import { tr, useT } from "../../../lib/i18n";
 import type { Shot, Take } from "../../../lib/types";
+import { markFresh, type TakeV3 } from "../../../lib/v3";
 import { ratioOf, thumbRatio } from "./shotMeta";
 
 const KIND_LABELS: Record<string, string> = {
@@ -32,8 +33,10 @@ export function Takes({ shot, canEdit, canReview, refresh, aspect, onShootout, o
   const [shootSel, setShootSel] = useState<number[] | null>(null);
   const [big, setBig] = useState(false);
   const [archiving, setArchiving] = useState<number | null>(null);
+  const [freshing, setFreshing] = useState<number | null>(null);
   const { pick, busy } = usePickWinner(shot.id);
   const takes = shot.takes ?? [];
+  const staleCount = useMemo(() => takes.filter((x) => (x as TakeV3).stale).length, [takes]);
   const groups = useMemo(() => KIND_ORDER.map((k) => ({ kind: k, items: takes.filter((x) => x.kind === k) })).filter((g) => g.items.length), [takes]);
   const r = ratioOf(aspect);
   const row = r.w / r.h < 1.2; // portrait / square clips get a thumbnail-left row, wide clips a thumbnail-on-top card
@@ -67,6 +70,14 @@ export function Takes({ shot, canEdit, canReview, refresh, aspect, onShootout, o
       toast.success(tr("Take #{id} archived", { id: x.id }));
     } catch { /* api() showed the error */ } finally { setArchiving(null); }
   };
+  const fresh = async (x: Take) => {
+    setFreshing(x.id);
+    try {
+      await markFresh(x.id);
+      refresh();
+      toast.success(tr("Take #{id} marked fresh", { id: x.id }));
+    } catch { /* api() showed the error */ } finally { setFreshing(null); }
+  };
   const pair = takes.filter((x) => compare.includes(x.id));
 
   if (!takes.length) {
@@ -75,6 +86,15 @@ export function Takes({ shot, canEdit, canReview, refresh, aspect, onShootout, o
 
   return (
     <div className="space-y-5">
+      {staleCount > 0 && (
+        <div role="status" className="flex flex-wrap items-center gap-2 rounded-lg border border-warn/30 bg-warn/8 px-3 py-2 text-xs text-amber-300">
+          <History className="size-4 shrink-0" />
+          <span className="min-w-0 flex-1">
+            {staleCount === 1 ? t("1 take is stale: the shot changed after it was made.") : t("{n} takes are stale: the shot changed after they were made.", { n: staleCount })}
+            {" "}{t("Regenerate from the Dashboard, or mark a take fresh if it still fits.")}
+          </span>
+        </div>
+      )}
       {shoot.length > 0 && (
         <section className="overflow-hidden rounded-xl border border-accent/30 bg-accent/5">
           <header className="flex flex-wrap items-center gap-2 px-3 py-2.5">
@@ -137,8 +157,8 @@ export function Takes({ shot, canEdit, canReview, refresh, aspect, onShootout, o
               {g.items.map((x) => (
                 <TakeCard key={x.id} x={x} aspect={aspect} row={row || isAudio(x.kind)} showing={viewing === x.id}
                   canEdit={canEdit} canReview={canReview} comparing={compare.includes(x.id)} qcOpen={qcOpen === x.id}
-                  busy={busy === x.id} archiving={archiving === x.id}
-                  onView={() => onView(x)} onPick={(mode) => pick(x, mode)} onArchive={() => arch(x)}
+                  busy={busy === x.id} archiving={archiving === x.id} freshing={freshing === x.id}
+                  onView={() => onView(x)} onPick={(mode) => pick(x, mode)} onArchive={() => arch(x)} onFresh={() => fresh(x)}
                   onCompare={() => setCompare((c) => (c.includes(x.id) ? c.filter((y) => y !== x.id) : [...c.slice(-3), x.id]))}
                   onToggleQc={() => setQcOpen((o) => (o === x.id ? null : x.id))} />
               ))}
@@ -157,12 +177,15 @@ export function Takes({ shot, canEdit, canReview, refresh, aspect, onShootout, o
 }
 
 /** One take: a poster that opens it in the viewer, what made it, its QC, and the actions that apply. */
-function TakeCard({ x, aspect, row, showing, canEdit, canReview, comparing, qcOpen, busy, archiving, onView, onPick, onArchive, onCompare, onToggleQc }: {
+function TakeCard({ x, aspect, row, showing, canEdit, canReview, comparing, qcOpen, busy, archiving, freshing, onView, onPick, onArchive, onCompare, onToggleQc, onFresh }: {
   x: Take; aspect: string; row: boolean; showing: boolean; canEdit: boolean; canReview: boolean; comparing: boolean; qcOpen: boolean;
-  busy: boolean; archiving: boolean; onView: () => void; onPick: (mode: "winner" | "select") => void; onArchive: () => void; onCompare: () => void; onToggleQc: () => void;
+  busy: boolean; archiving: boolean; freshing: boolean; onView: () => void; onPick: (mode: "winner" | "select") => void; onArchive: () => void; onCompare: () => void;
+  onToggleQc: () => void; onFresh: () => void;
 }) {
   const t = useT();
   const q = qcSummary(x);
+  const stale = !!(x as TakeV3).stale;
+  const staleReason = ((x as TakeV3).stale_reason || "").trim();
   const isShoot = !!x.params?.shootout;
   const visual = isVisual(x.kind);
   const src = x.thumb_url || (x.kind === "keyframe" ? x.url : "");
@@ -191,12 +214,13 @@ function TakeCard({ x, aspect, row, showing, canEdit, canReview, comparing, qcOp
   return (
     <motion.div layout="position" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.97 }} transition={{ duration: 0.18, ease: "easeOut" }}
       className={clsx("overflow-hidden rounded-xl border bg-panel transition-colors",
-        x.selected ? "border-accent/70" : q.passed === false ? "border-bad/40" : "border-line hover:border-dim/50", row ? "flex gap-3 p-2.5" : "")}>
+        x.selected ? "border-accent/70" : stale ? "border-warn/40" : q.passed === false ? "border-bad/40" : "border-line hover:border-dim/50", row ? "flex gap-3 p-2.5" : "")}>
       {poster}
       <div className={clsx("min-w-0 flex-1 space-y-1.5 text-2xs", !row && "p-2.5")}>
         <div className="flex flex-wrap items-center gap-1">
           {/* wide cards carry "in use" on the poster; rows and audio takes say it in words */}
           {x.selected && (row || !visual) && <Badge tone="accent"><Crown className="size-3" />{t("in use")}</Badge>}
+          {stale && <Badge tone="warn" title={staleReason || t("The shot changed after this take was made")}><History className="size-3" />{t("Stale")}</Badge>}
           {isShoot && <Badge tone="info" title={t("Made in a shootout")}><Swords className="size-3" />{t("shootout")}</Badge>}
           {x.language && <Badge>{LANG_SHORT[x.language] ?? x.language}</Badge>}
           {x.params?.quality && <Badge>{t(QUALITY_INFO[x.params.quality]?.label ?? x.params.quality)}</Badge>}
@@ -206,6 +230,12 @@ function TakeCard({ x, aspect, row, showing, canEdit, canReview, comparing, qcOp
         </div>
         {engine && <p className="flex items-center gap-1 truncate text-mute" title={x.params?.engine || x.model}><Cpu className="size-3 shrink-0" />{engine}</p>}
         <p className="truncate tabular-nums text-dim">#{x.id} · {usd(x.cost_usd)} · {ago(x.created_at)}</p>
+        {stale && (
+          <p className="flex items-start gap-1 text-amber-300" title={staleReason || undefined}>
+            <History className="mt-px size-3 shrink-0" />
+            <span className="line-clamp-2">{staleReason ? t("Stale: {reason}", { reason: staleReason }) : t("Stale: the shot changed after this take was made")}</span>
+          </p>
+        )}
         {x.params?.edit_instruction && <p className="truncate text-mute">✎ {x.params.edit_instruction}</p>}
         {isAudio(x.kind) && <audio src={x.url} controls preload="none" className="h-8 w-full" />}
         <div className="flex flex-wrap items-center gap-1 pt-1">
@@ -214,6 +244,10 @@ function TakeCard({ x, aspect, row, showing, canEdit, canReview, comparing, qcOp
           ) : (
             <Button size="sm" loading={busy} onClick={() => onPick("select")}>{t("Use this")}</Button>
           ))}
+          {stale && canReview && (
+            <Button size="sm" variant="outline" icon={<Sparkles className="size-3.5" />} loading={freshing} onClick={onFresh}
+              title={t("Keep this take: clear the stale flag")}>{t("Mark fresh")}</Button>
+          )}
           <span className="flex-1" />
           {visual && (
             <IconButton title={comparing ? t("Remove from compare") : t("Compare")} active={comparing} className="!size-7" onClick={onCompare}>

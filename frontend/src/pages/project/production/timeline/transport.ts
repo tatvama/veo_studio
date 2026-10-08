@@ -60,12 +60,15 @@ export function useTransport(clips: Clip[], total: number): Transport {
   }, [clips, total]);
   useEffect(() => { placeVideo(); }, [idx]);
 
+  // inside a clip's freeze (after its last frame) the video stays parked on that frame instead of playing
+  const inHold = (c: Clip | undefined, t: number) => !!c && c.hold > 0 && t >= c.start + c.duration - 0.02;
+
   // media follow play state
   const cur = clips[idx];
   useEffect(() => {
     const v = vref.current;
     if (v) {
-      if (playing && rate > 0 && cur?.src && !broken.has(cur.shot.id)) {
+      if (playing && rate > 0 && cur?.src && !broken.has(cur.shot.id) && !inHold(cur, clock.get())) {
         v.playbackRate = rate * (cur.speed || 1);
         v.play().catch(() => {});
       } else v.pause();
@@ -95,12 +98,16 @@ export function useTransport(clips: Clip[], total: number): Transport {
       let t = clock.get();
       const v = vref.current;
       const next = cs[s.idx + 1];
-      const end = next ? switchTime(next) : c.start + c.duration;  // hand over half-way through the transition
-      const viaVideo = s.rate > 0 && !!c.src && !!v && !s.broken.has(c.shot.id);
+      const end = next ? switchTime(next) : c.start + c.duration + c.hold;  // hand over half-way through the transition
+      const viaVideo = s.rate > 0 && !!c.src && !!v && !s.broken.has(c.shot.id) && !inHold(c, t);
       if (viaVideo) {
-        if (v!.ended) t = end;
+        if (v!.ended) t = c.hold > 0 ? Math.min(t + dt * s.rate, end) : end;  // the freeze runs on the clock
         else if (v!.readyState >= 2 && !v!.paused) t = c.start + (v!.currentTime - c.trimIn) / c.speed;
       } else {
+        if (v && c.src && s.rate > 0 && !v.paused && inHold(c, t)) {  // entering the freeze: park on the last kept frame
+          v.pause();
+          v.currentTime = c.trimIn + c.duration * c.speed;
+        }
         t += dt * s.rate;
         if (s.rate < 0 && c.src && v && now - lastSeek > 70) {
           lastSeek = now;
@@ -161,7 +168,7 @@ export function useTransport(clips: Clip[], total: number): Transport {
     },
     jump: (dir) => {
       const t = clock.get();
-      const marks = [0, ...st.current.clips.map((c) => c.start + c.duration)];
+      const marks = [0, ...st.current.clips.map((c) => c.start + c.duration + c.hold)];
       const next = dir > 0 ? marks.find((m) => m > t + 1e-3) : [...marks].reverse().find((m) => m < t - 1e-3);
       if (next !== undefined) seek(next);
     },

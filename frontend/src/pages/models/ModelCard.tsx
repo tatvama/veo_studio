@@ -1,8 +1,8 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import {
-  AlertTriangle, AudioLines, Boxes, CalendarDays, Film, Image as ImageIcon, Images, Music, Play, Speech, Star, Trophy, UserRound, Volume2,
-  Wand2, XCircle, Zap,
+  AlertTriangle, AudioLines, Boxes, CalendarDays, Film, Fingerprint, Image as ImageIcon, Images, MessageSquareText, Mic, Music, Play, Speech,
+  Star, Trophy, UserRound, Volume2, Wand2, XCircle, Zap,
 } from "lucide-react";
 import { memo, useCallback, useState, type CSSProperties, type ReactNode } from "react";
 import { toast } from "sonner";
@@ -135,6 +135,10 @@ export function CapIcons({ m }: { m: AIModel }) {
   return (
     <span className="inline-flex flex-wrap items-center gap-x-2.5 gap-y-1 text-2xs text-mute">
       {c.native_audio && <span className="inline-flex items-center gap-0.5 text-green-300" title={t("Generates its own sound")}><Volume2 className="size-3.5" />{t("audio")}</span>}
+      {c.speech_in_video && <span className="inline-flex items-center gap-0.5" title={t("Speaks the line itself: voice and lips in one pass (Google route)")}><MessageSquareText className="size-3.5" />{t("speaks")}</span>}
+      {c.audio_driven && <span className="inline-flex items-center gap-0.5" title={t("Animates the face from a voice track you give it")}><Mic className="size-3.5" />{t("audio-driven")}</span>}
+      {c.lora_input && <span className="inline-flex items-center gap-0.5" title={t("Accepts a trained identity (LoRA) for a locked face")}><Fingerprint className="size-3.5" />{t("identity")}</span>}
+      {c.lipsync_to_audio && <span className="inline-flex items-center gap-0.5" title={t("Re-syncs the lips of an existing clip to given audio")}><Speech className="size-3.5" />{t("lip-sync")}</span>}
       {(c.max_refs ?? 0) > 0 && <span className="inline-flex items-center gap-0.5" title={t("Up to {n} reference images", { n: c.max_refs ?? 0 })}><Images className="size-3.5" />{c.max_refs}</span>}
       {dur && <span title={t("Clip lengths")}>{dur}</span>}
       {!!c.resolutions?.length && <span title={t("Resolutions")}>{c.resolutions.join(" · ")}</span>}

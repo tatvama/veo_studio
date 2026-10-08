@@ -4,6 +4,7 @@ Usage (from VEO_STUDIO/):
     backend/.venv/Scripts/python spike/run_spike.py --list
     backend/.venv/Scripts/python spike/run_spike.py --only models,text,image,tts_gemini --budget 5
     backend/.venv/Scripts/python spike/run_spike.py --all --budget 30
+    backend/.venv/Scripts/python spike/run_spike.py --only image_consistency,dialogue --budget 15   # language matrix
 
 Keys are read from VEO_STUDIO/.env (GEMINI_API_KEY, ELEVENLABS_API_KEY, SYNC_API_KEY, SARVAM_API_KEY).
 Every test prints its estimated cost first; the run stops before the total would pass --budget.
@@ -23,10 +24,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
+from pydantic import BaseModel, Field
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
 import os  # noqa: E402
+
+for _stream in (sys.stdout, sys.stderr):  # Windows consoles default to cp1252, which cannot print the report symbols
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 os.environ["MOCK_PROVIDERS"] = "false"  # never fake results in the spike
 os.environ.setdefault("DATA_ROOT", str(ROOT / "spike" / ".data"))
@@ -63,6 +70,8 @@ class Ctx:
         self.results: list[dict[str, Any]] = []
         self.blind: dict[str, str] = {}
         self.cache: dict[str, Any] = {}
+        self.matrix: list[dict[str, Any]] = []  # dialogue matrix rows
+        self.blocked: dict[str, str] = {}  # provider -> why its remaining tests are skipped
 
     def save(self, name: str, data: bytes) -> Path:
         p = self.out / name
@@ -109,6 +118,16 @@ def t_models(c: Ctx) -> dict:
     (c.out / "models_available.txt").write_text("\n".join(sorted(names)), encoding="utf-8")
     return {"ok": not missing, "notes": ("Missing (set overrides in Settings → Advanced): " + ", ".join(missing)) if missing else "All model IDs found",
             "files": ["models_available.txt"]}
+
+
+@test("veo_access", "gemini", 0.20)
+def t_veo_access(c: Ctx) -> dict:
+    """Does this key's Google project have Veo quota? (Veo needs a billing account linked in AI Studio: Tier 1+.)
+    One 4-second Lite clip, the cheapest possible Veo call. Run `--only veo_access` before the expensive tests."""
+    r = c.svc.video(model_key="video_saver", prompt="A brass oil lamp flickers on a worn stone floor at dusk.",
+                    aspect="9:16", duration=4, resolution="720p")
+    p = c.save("veo_access.mp4", r.data)
+    return {"ok": True, "usd": r.usage.usd, "notes": "Veo quota OK on this key", "files": [p.name]}
 
 
 @test("text", "gemini", 0.01)
@@ -272,6 +291,96 @@ for _l in ("hi", "kn", "te", "ta"):
     test(f"veo_native_{_l}", "gemini", 0.85)(_native(_l))
 
 
+# ── Phase 0 dialogue matrix: can Veo speak our languages well enough to be the default? ──────────────
+# 4 languages × (close-up | medium) × (Fast | Lite), in the language's own script, plus a romanised variant.
+# Every clip is scored by Gemini (what was said, language, pronunciation, lip-sync). `--only dialogue` runs them all.
+
+ROMAN = {
+    "hi": "Maine use kal raat phir dekha. Diya apne aap hil raha tha.",
+    "kn": "Ninne raatri avanannu matte nodide. Deepa taanaagiye alugaaduttittu.",
+    "te": "Ninna raatri atanni malli choosaanu. Deepam daanantata ade kadulutondi.",
+    "ta": "Netru iravu avanai meendum paarthen. Vilakku thaanaagave asainthathu.",
+}
+VOICE = "Voice: a man in his late twenties, warm medium-low voice, calm and unhurried, soft regional accent."
+FRAMINGS = {"closeup": "Close-up on his face, eyes to camera", "medium": "Medium shot, he faces the camera, hands visible"}
+ENGINES = {"fast": "video_balanced", "lite": "video_saver"}
+
+
+class DialogueCheck(BaseModel):
+    heard: str = Field(description="the words you hear, written in the script of the language spoken")
+    language: str = Field(description="language actually spoken, e.g. Kannada, Hindi, English, none")
+    word_match: float = Field(description="0-1: how much of the expected line was spoken correctly")
+    pronunciation: float = Field(description="0-1: how natural a native speaker would find it")
+    sync_score: float = Field(description="0-1: mouth shapes and timing match the speech")
+    subtitles_burned: bool = Field(description="any on-screen text or captions in the picture")
+    notes: str = ""
+
+
+def _dialogue_prompt(lang: str, framing: str, roman: bool) -> str:
+    # The shape that works best for Veo: attribution first, the line early, one speaker, a voice description,
+    # and the look after the dialogue so a long style block cannot push the line out.
+    line = ROMAN[lang] if roman else LINES[lang]
+    name = catalog.LANGUAGES[lang]["name"]
+    return (f'{FRAMINGS[framing]}. Ravi says in {name}, quietly and clearly: "{line}" {VOICE} '
+            f"{DNA} {PLACE} {STYLE} No subtitles, no on-screen text.")
+
+
+def _check_dialogue(c: Ctx, path: Path, lang: str, roman: bool) -> tuple[dict, float]:
+    expected = ROMAN[lang] if roman else LINES[lang]
+    prompt = (f"Expected language: {catalog.LANGUAGES[lang]['name']}. Expected line: {expected}\n"
+              "Listen to the clip. Transcribe exactly what is spoken, name the language actually spoken, score word "
+              "accuracy, pronunciation and lip-sync, and say whether any text is burned into the picture.")
+    obj, usage = c.svc.llm_json("dialogue_check", "You are a strict native-speaker reviewer of AI-generated dialogue.",
+                                prompt, DialogueCheck, videos=[path.read_bytes()])
+    return obj.model_dump(), usage.usd
+
+
+def _matrix(lang: str, framing: str, engine: str, roman: bool = False):
+    def fn(c: Ctx) -> dict:
+        kf = c.cache.get("keyframe")  # same face in every clip when image_consistency ran first
+        r = c.svc.video(model_key=ENGINES[engine], prompt=_dialogue_prompt(lang, framing, roman), aspect="9:16",
+                        duration=8, resolution="720p", **({"first_frame": kf} if kf else {}))
+        name = f"dialogue_{lang}_{'roman' if roman else 'script'}_{framing}_{engine}.mp4"
+        p = c.save(name, r.data)
+        chk, qc_usd = _check_dialogue(c, p, lang, roman)
+        c.matrix.append({"lang": lang, "script": "roman" if roman else "native", "framing": framing, "engine": engine,
+                         "file": name, **chk})
+        ok = chk["word_match"] >= 0.8 and chk["sync_score"] >= 0.6 and not chk["subtitles_burned"]
+        return {"ok": ok, "usd": r.usage.usd + qc_usd, "files": [name],
+                "notes": (f"{chk['language']} · words {chk['word_match']:.2f} · pron {chk['pronunciation']:.2f} · "
+                          f"lips {chk['sync_score']:.2f} · heard: {chk['heard'][:60]}")}
+    return fn
+
+
+for _l in ("hi", "kn", "te", "ta"):
+    for _f in FRAMINGS:
+        for _e, _est in (("fast", 0.82), ("lite", 0.42)):
+            test(f"dialogue_{_l}_{_f}_{_e}", "gemini", _est)(_matrix(_l, _f, _e))
+    test(f"dialogue_{_l}_roman", "gemini", 0.82)(_matrix(_l, "closeup", "fast", roman=True))
+
+
+def matrix_report(rows: list[dict[str, Any]]) -> str:
+    """Per-language table plus the decision the plan needs: native Veo, or TTS + lip-sync."""
+    out = ["# Dialogue matrix", "", "Scores are Gemini's; native speakers should confirm by watching the clips.", ""]
+    for lang in ("hi", "kn", "te", "ta"):
+        rs = [r for r in rows if r["lang"] == lang]
+        if not rs:
+            continue
+        out += [f"## {catalog.LANGUAGES[lang]['name']}", "",
+                "| Script | Framing | Engine | Language heard | Words | Pronunciation | Lips | Text burned | Heard |",
+                "|---|---|---|---|---|---|---|---|---|"]
+        for r in rs:
+            out.append(f"| {r['script']} | {r['framing']} | {r['engine']} | {r['language']} | {r['word_match']:.2f} | "
+                       f"{r['pronunciation']:.2f} | {r['sync_score']:.2f} | {'yes' if r['subtitles_burned'] else 'no'} | "
+                       f"{str(r['heard']).replace('|', '/')[:80]} |")
+        best = max(rs, key=lambda r: (r["word_match"] + r["pronunciation"] + r["sync_score"]))
+        native_ok = best["word_match"] >= 0.8 and best["pronunciation"] >= 0.7 and best["sync_score"] >= 0.6
+        out += ["", (f"**Decision:** native Veo dialogue looks viable (best: {best['script']} script, {best['framing']}, "
+                     f"{best['engine']})." if native_ok
+                     else "**Decision:** use Gemini TTS + lip-sync for this language until Veo improves."), ""]
+    return "\n".join(out)
+
+
 @test("lipsync_kn", "sync", 0.70)
 def t_lipsync(c: Ctx) -> dict:
     video = c.cache.get("native_kn") or c.cache.get("fast_video")
@@ -337,7 +446,8 @@ def main() -> None:
             print(f"{name:24} {prov:11} {est:6.2f}  {provider_mode(prov)}")
         print(f"\nTotal if all run: ${sum(t[2] for t in TESTS):.2f}. Use --all or --only a,b,c  (budget default ${a.budget:.0f})")
         return
-    wanted = [t for t in TESTS if a.all or t[0] in a.only.split(",")]
+    only = [x.strip() for x in a.only.split(",") if x.strip()]
+    wanted = [t for t in TESTS if a.all or t[0] in only or any(t[0].startswith(g + "_") for g in only)]
     out = ROOT / "spike" / "results" / datetime.now().strftime("%Y%m%d-%H%M%S")
     out.mkdir(parents=True, exist_ok=True)
     c = Ctx(out, a.budget)
@@ -345,6 +455,8 @@ def main() -> None:
         row: dict[str, Any] = {"test": name, "provider": prov, "est_usd": est}
         if provider_mode(prov) != "live":
             row.update(status="skipped", notes=f"no {prov} API key")
+        elif prov in c.blocked:
+            row.update(status="skipped", notes=c.blocked[prov])
         elif c.spent + est > c.budget:
             row.update(status="skipped", notes=f"would exceed budget (${c.spent:.2f} + ${est:.2f} > ${c.budget:.2f})")
         else:
@@ -355,6 +467,10 @@ def main() -> None:
                 row.update(status="ok" if res.get("ok") else "check", **res)
             except Exception as e:  # keep going; record the exact failure for debugging
                 row.update(status="error", notes=f"{type(e).__name__}: {e}", trace=traceback.format_exc()[-1500:])
+                if "check your plan and billing" in str(e):  # no quota at all: every later call would fail the same way
+                    c.blocked[prov] = (f"{prov} project has no quota for this (billing not linked / free tier). "
+                                       "Link a billing account in AI Studio, then rerun.")
+                    print(f"  !! {c.blocked[prov]}")
             row["seconds"] = round(time.time() - t0, 1)
             c.spent += float(row.get("usd") or 0)
         print(f"  {row['status']:8} {row.get('notes', '')}")
@@ -370,6 +486,9 @@ def main() -> None:
     lines += ["", "## Listening test", "Play the files in `listen/` without looking at ANSWER_KEY.txt; score each 1–5 for naturalness,",
               "pronunciation and emotion. Then set the winner per language in Settings → Voices."]
     (out / "report.md").write_text("\n".join(lines), encoding="utf-8")
+    if c.matrix:
+        (out / "dialogue_matrix.md").write_text(matrix_report(c.matrix), encoding="utf-8")
+        print(f"Dialogue matrix: {out / 'dialogue_matrix.md'}")
     print(f"\nDone. Report: {out / 'report.md'}")
 
 

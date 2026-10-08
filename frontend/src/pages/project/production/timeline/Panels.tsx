@@ -1,20 +1,22 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import {
-  AudioWaveform, Captions, Check, Coins, Music, Pause, Play, Rewind, SkipBack, SkipForward, SlidersHorizontal, Sparkles, StepBack, StepForward, Type, X,
+  AudioWaveform, Captions, Check, Coins, Ellipsis, Gauge, Music, Pause, Play, Rewind, Scissors, SkipBack, SkipForward, SlidersHorizontal, Snowflake, Sparkles,
+  StepBack, StepForward, Type, X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { formatTC, useClock, type Clock } from "../../../../components/review/utils";
-import { AnimatedNumber, Badge, Button, Card, Field, IconButton, Input, Kbd, Modal, Toggle, Tooltip } from "../../../../components/ui";
+import { AnimatedNumber, Badge, Button, Card, Field, IconButton, Input, Kbd, Modal, Segmented, Toggle, Tooltip } from "../../../../components/ui";
 import { api } from "../../../../lib/api";
 import { LANG_NAMES, usd } from "../../../../lib/format";
-import { fxFilter, fxTransform } from "../../../../lib/fx";
+import { fxFilter, fxTransform, type ShotFx } from "../../../../lib/fx";
 import { useT } from "../../../../lib/i18n";
 import type { AudioAsset, Shot, SubmitResult } from "../../../../lib/types";
 import { ratioOf } from "../shotMeta";
-import { FPS, SFX_USD_PER_SHOT, spansOf, type Clip } from "./shared";
+import type { MenuAnchor } from "./ContextMenu";
+import { FPS, MAX_HOLD, MAX_SPEED, MIN_SPEED, SFX_USD_PER_SHOT, SPEED_PRESETS, spansOf, type Clip, type TrimMode } from "./shared";
 import type { Transport } from "./transport";
 import { BlendLayer } from "./Blend";
 
@@ -255,14 +257,48 @@ export function MusicCard({ music, canEdit, prompt, setPrompt, onCompose, eid }:
   );
 }
 
-/** Trim controls for the selected clip. The bar shows how much of the source clip is kept. */
-export function ClipInspector({ shot, clip, canEdit, onClose, onSeek }: { shot: Shot; clip: Clip; canEdit: boolean; onClose: () => void; onSeek: () => void }) {
+/** A seconds field with one-frame steppers either side (Shift = one second). */
+function FrameStepper({ label, value, min, max, disabled, onChange }: {
+  label: string; value: number; min: number; max: number; disabled?: boolean; onChange: (v: number) => void;
+}) {
+  const t = useT();
+  const frame = 1 / FPS;
+  const clampTo = (v: number) => Math.round(Math.max(min, Math.min(max, v)) * 1000) / 1000;
+  const step = (dir: 1 | -1, big: boolean) => onChange(clampTo(value + dir * (big ? 1 : frame)));
+  return (
+    <Field label={label}>
+      <div className="flex items-stretch">
+        <IconButton title={t("One frame earlier")} disabled={disabled || value <= min} onClick={(e) => step(-1, e.shiftKey)} className="!size-8 rounded-r-none border border-r-0 border-line"><StepBack className="size-3.5" /></IconButton>
+        <Input type="number" step={0.01} min={min} max={max} value={value} disabled={disabled} aria-label={label}
+          onChange={(e) => onChange(clampTo(Number(e.target.value)))}
+          onKeyDown={(e) => { if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); step(e.key === "ArrowUp" ? 1 : -1, e.shiftKey); } }}
+          className="!h-8 min-w-0 rounded-none text-center tabular-nums" />
+        <IconButton title={t("One frame later")} disabled={disabled || value >= max} onClick={(e) => step(1, e.shiftKey)} className="!size-8 rounded-l-none border border-l-0 border-line"><StepForward className="size-3.5" /></IconButton>
+      </div>
+    </Field>
+  );
+}
+
+/**
+ * The selected clip: numeric trims with frame stepping (the bar shows how much of the source clip is kept), speed
+ * and reverse (fx), the freeze after the clip, and the clip's actions.
+ */
+export function ClipInspector({ shot, clip, canEdit, trimMode, onClose, onSeek, onFx, onHold, onMenu }: {
+  shot: Shot; clip: Clip; canEdit: boolean; trimMode: TrimMode; onClose: () => void; onSeek: () => void;
+  /** Writes effects merged with the shot's other fx (undefined removes a key). */ onFx: (patch: Partial<ShotFx>) => Promise<void>;
+  /** Sets the freeze after the clip (0 removes it). */ onHold: (seconds: number) => void;
+  onMenu: (anchor: MenuAnchor, returnFocus: HTMLElement) => void;
+}) {
   const t = useT();
   const qc = useQueryClient();
   const [tin, setTin] = useState(shot.trim_in);
   const [tout, setTout] = useState(shot.trim_out);
+  const [custom, setCustom] = useState(String(clip.speed));
+  const [hold, setHold] = useState(clip.hold);
   const [busy, setBusy] = useState<string | null>(null);
-  useEffect(() => { setTin(shot.trim_in); setTout(shot.trim_out); }, [shot.id]);
+  useEffect(() => { setTin(shot.trim_in); setTout(shot.trim_out); }, [shot.id, shot.trim_in, shot.trim_out]);
+  useEffect(() => { setCustom(String(clip.speed)); }, [shot.id, clip.speed]);
+  useEffect(() => { setHold(clip.hold); }, [shot.id, clip.hold]);
   const save = async (what: string, body: Record<string, any>) => {
     setBusy(what);
     try {
@@ -275,9 +311,21 @@ export function ClipInspector({ shot, clip, canEdit, onClose, onSeek }: { shot: 
       setBusy(null);
     }
   };
-  const raw = Math.max(0.5, shot.video?.duration_s || shot.duration_s);
-  const lo = Math.min(100, Math.max(0, ((Number(tin) || 0) / raw) * 100));
-  const hi = Math.min(100, Math.max(0, ((Number(tout) || 0) / raw) * 100));
+  const fx = async (what: string, patch: Partial<ShotFx>) => {
+    setBusy(what);
+    try { await onFx(patch); } finally { setBusy(null); }
+  };
+  const still = clip.kind === "still";
+  const raw = Math.max(0.5, clip.raw);
+  const keep = 0.5;
+  const kept = Math.max(raw - tin - tout, keep);
+  const dirty = Math.abs(tin - shot.trim_in) > 1e-6 || Math.abs(tout - shot.trim_out) > 1e-6;
+  const lo = Math.min(100, Math.max(0, (tin / raw) * 100));
+  const hi = Math.min(100, Math.max(0, (tout / raw) * 100));
+  const speed = clip.speed;
+  const preset = SPEED_PRESETS.find((s) => Math.abs(s - speed) < 1e-3);
+  const customOk = Number.isFinite(Number(custom)) && Number(custom) >= MIN_SPEED && Number(custom) <= MAX_SPEED;
+  const applySpeed = (s: number) => fx("speed", { speed: Math.abs(s - 1) < 1e-3 ? undefined : Math.round(s * 100) / 100 });
   return (
     <Card className="space-y-3 border-accent/30 p-3.5">
       <div className="flex items-start gap-2">
@@ -286,26 +334,88 @@ export function ClipInspector({ shot, clip, canEdit, onClose, onSeek }: { shot: 
             {shot.code}
             <Tooltip content={t("Move the playhead here")}>
               <button type="button" onClick={onSeek} className="inline-flex h-6 items-center rounded-md bg-raised px-2 text-2xs font-normal tabular-nums text-mute transition-colors hover:bg-hover hover:text-ink">
-                {formatTC(clip.start, FPS, true)} · {clip.duration.toFixed(1)}s
+                {formatTC(clip.start, FPS, true)} · {clip.duration.toFixed(1)}s{clip.hold > 0 && ` + ${clip.hold.toFixed(1)}s`}
               </button>
             </Tooltip>
           </p>
           <p className="mt-0.5 line-clamp-2 text-xs text-mute">{shot.action}</p>
         </div>
+        <IconButton title={t("Clip actions")} aria-haspopup="menu" onClick={(e) => onMenu(e.currentTarget, e.currentTarget)} className="-mt-1 !size-7"><Ellipsis className="size-4" /></IconButton>
         <IconButton title={t("Close")} onClick={onClose} className="-mr-1 -mt-1 !size-7"><X className="size-4" /></IconButton>
       </div>
-      <div className="grid grid-cols-2 gap-2">
-        <Field label={t("Trim start (s)")}><Input type="number" step="0.1" min={0} value={tin} disabled={!canEdit} onChange={(e) => setTin(Number(e.target.value))} /></Field>
-        <Field label={t("Trim end (s)")}><Input type="number" step="0.1" min={0} value={tout} disabled={!canEdit} onChange={(e) => setTout(Number(e.target.value))} /></Field>
-      </div>
-      <div className="relative h-2 overflow-hidden rounded-full bg-accent/70" aria-hidden title={t("The part of the clip that stays in the cut")}>
-        <div className="absolute inset-y-0 left-0 bg-line" style={{ width: `${lo}%` }} />
-        <div className="absolute inset-y-0 right-0 bg-line" style={{ width: `${hi}%` }} />
-      </div>
+
+      <section className="space-y-2" aria-label={t("Trim")}>
+        <div className="grid grid-cols-2 gap-2">
+          <FrameStepper label={t("Trim start (s)")} value={tin} min={0} max={Math.max(0, raw - tout - keep)} disabled={!canEdit || still} onChange={setTin} />
+          <FrameStepper label={t("Trim end (s)")} value={tout} min={0} max={Math.max(0, raw - tin - keep)} disabled={!canEdit || still} onChange={setTout} />
+        </div>
+        <div className="relative h-2 overflow-hidden rounded-full bg-accent/70" aria-hidden title={t("The part of the clip that stays in the cut")}>
+          <div className="absolute inset-y-0 left-0 bg-line" style={{ width: `${lo}%` }} />
+          <div className="absolute inset-y-0 right-0 bg-line" style={{ width: `${hi}%` }} />
+        </div>
+        <p className="flex flex-wrap gap-x-3 gap-y-0.5 font-mono text-2xs tabular-nums text-mute">
+          <span>{t("in")} {formatTC(tin, FPS, true)}</span>
+          <span>{t("out")} {formatTC(raw - tout, FPS, true)}</span>
+          <span className="text-ink">{t("keeps {d}s", { d: (kept / speed).toFixed(2) })}{speed !== 1 && ` (${kept.toFixed(2)}s @ ${speed}×)`}</span>
+        </p>
+        {canEdit && !still && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant={dirty ? "primary" : "secondary"} disabled={!dirty} loading={busy === "trim"} icon={<Scissors className="size-3.5" />}
+              onClick={() => save("trim", { trim_in: tin, trim_out: tout })}>{t("Apply trim")}</Button>
+            {(shot.trim_in > 0 || shot.trim_out > 0) && (
+              <Button size="sm" variant="ghost" loading={busy === "untrim"} onClick={() => save("untrim", { trim_in: 0, trim_out: 0 })}>{t("Reset")}</Button>
+            )}
+            {trimMode === "hold" && <span className="text-2xs text-dim">{t("Numeric trims always close the gap; drag the clip's edges to freeze instead.")}</span>}
+          </div>
+        )}
+      </section>
+
+      {!still && (
+        <section className="space-y-2 border-t border-line pt-3" aria-label={t("Speed")}>
+          <div className="flex items-center gap-2">
+            <Gauge className="size-3.5 text-mute" />
+            <span className="text-xs font-medium text-mute">{t("Speed")}</span>
+            <span className="ml-auto font-mono text-2xs tabular-nums text-dim">{speed}×</span>
+          </div>
+          <Segmented size="sm" value={preset ?? 0} aria-label={t("Speed")} className="w-full [&>button]:flex-1"
+            options={SPEED_PRESETS.map((s) => ({ value: s, label: `${s}×` }))}
+            onChange={(s) => { if (canEdit) void applySpeed(s); }} />
+          <div className="flex items-center gap-2">
+            <Input type="number" step={0.05} min={MIN_SPEED} max={MAX_SPEED} value={custom} disabled={!canEdit} aria-label={t("Custom speed")}
+              onChange={(e) => setCustom(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && customOk) void applySpeed(Number(custom)); }}
+              className="!h-8 w-24 tabular-nums" />
+            <span className="text-2xs text-dim">{t("{min}× – {max}×", { min: MIN_SPEED, max: MAX_SPEED })}</span>
+            <Button size="sm" variant="outline" className="ml-auto" disabled={!canEdit || !customOk || Math.abs(Number(custom) - speed) < 1e-3} loading={busy === "speed"}
+              onClick={() => void applySpeed(Number(custom))}>{t("Apply")}</Button>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <Toggle checked={!!shot.fx?.reverse} disabled={!canEdit || busy === "reverse"} onChange={(v) => void fx("reverse", { reverse: v || undefined })}
+              label={<span className="flex items-center gap-1.5 text-sm"><Rewind className="size-3.5 text-mute" />{t("Reverse")}</span>} />
+            {shot.fx?.reverse && <span className="text-2xs text-dim">{t("Preview plays forward; the export reverses it.")}</span>}
+          </div>
+        </section>
+      )}
+
+      <section className="space-y-2 border-t border-line pt-3" aria-label={t("Freeze after clip")}>
+        <div className="flex items-center gap-2">
+          <Snowflake className="size-3.5 text-mute" />
+          <span className="text-xs font-medium text-mute">{t("Freeze after clip")}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Input type="number" step={0.1} min={0} max={MAX_HOLD} value={hold} disabled={!canEdit} aria-label={t("Freeze after clip (s)")}
+            onChange={(e) => setHold(Math.max(0, Math.min(MAX_HOLD, Number(e.target.value))))}
+            onBlur={() => { if (Math.abs(hold - clip.hold) > 1e-6) onHold(Math.round(hold * 100) / 100); }}
+            onKeyDown={(e) => { if (e.key === "Enter") onHold(Math.round(hold * 100) / 100); }}
+            className="!h-8 w-24 tabular-nums" />
+          <span className="text-2xs text-dim">s</span>
+          <Button size="sm" variant="outline" className="ml-auto" disabled={!canEdit} onClick={() => { setHold(1); onHold(1); }}>{t("Freeze last frame 1s")}</Button>
+        </div>
+        <p className="text-2xs leading-snug text-dim">{t("The last frame stays on screen. Preview only for now — the export closes the gap.")}</p>
+      </section>
+
       {canEdit && (
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant="primary" loading={busy === "trim"} onClick={() => save("trim", { trim_in: tin, trim_out: tout })}>{t("Apply trim")}</Button>
-          <Button size="sm" variant="ghost" loading={busy === "remove"} onClick={() => save("remove", { include: false })}>{t("Remove from cut")}</Button>
+        <div className="flex border-t border-line pt-2">
+          <Button size="sm" variant="ghost" className="ml-auto text-bad" loading={busy === "remove"} onClick={() => save("remove", { include: false })}>{t("Remove from cut")}</Button>
         </div>
       )}
     </Card>
@@ -368,6 +478,8 @@ export function AutoSfxDialog({ open, onClose, clips, selected, mode, run }: {
 const GROUPS: { title: string; rows: [string[], string][] }[] = [
   { title: "Playback", rows: [[["Space"], "Play / pause"], [["J", "K", "L"], "Shuttle reverse / stop / forward (repeat for 2× / 4×)"], [["Home", "End"], "Start / end"]] },
   { title: "Move", rows: [[["←", "→"], "Step one frame"], [["Shift", "← →"], "Step one second"], [["↑", "↓"], "Previous / next cut"], [["Double-click clip"], "Move the playhead to the clip"]] },
+  { title: "Edit", rows: [[["Right-click"], "Clip actions (regenerate, extend, lip-sync, swap take, speed…)"], [["Shift", "F10"], "Clip actions for the focused clip"],
+    [["Drag edge"], "Trim (ripple closes the gap; hold freezes the last frame)"], [["Drag join"], "Roll the cut between two clips"], [["← →"], "Roll the focused join by one frame"]] },
   { title: "View", rows: [[["+", "−"], "Zoom in / out"], [["Ctrl", "wheel"], "Zoom at the cursor"], [["\\"], "Fit to window"], [["S"], "Toggle snapping"]] },
 ];
 

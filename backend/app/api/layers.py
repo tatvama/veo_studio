@@ -33,6 +33,7 @@ def _out(e: Episode) -> dict[str, Any]:
     return {"rev": int(L.get("rev") or 0),
             "video": [{**t, "clips": with_urls(t.get("clips") or [])} for t in L.get("video") or []],
             "audio": [{**t, "clips": with_urls(t.get("clips") or [])} for t in L.get("audio") or []],
+            "holds": dict(L.get("holds") or {}),
             "media": [{**m, "url": st.url(m["src"]), "thumb_url": st.url(m.get("thumb") or "")} for m in L.get("media") or []]}
 
 
@@ -45,6 +46,7 @@ class LayersIn(BaseModel):
     rev: int
     video: list[dict[str, Any]] = []
     audio: list[dict[str, Any]] = []
+    holds: dict[str, Any] | None = None  # {shot_id: seconds} freeze after a shot (timeline "hold" mode); omitted = unchanged
 
 
 @router.put("/episodes/{eid}/layers")
@@ -54,7 +56,8 @@ def put_layers(eid: int, body: LayersIn, user: User = Depends(require("creator")
     cur = dict(e.layers or {})
     if int(cur.get("rev") or 0) != body.rev:
         raise HTTPException(409, "The layers were changed by someone else since you loaded them. Reload to see their changes.")
-    clean = layerlib.clean({"video": body.video, "audio": body.audio}, e.project_id, cur.get("media"))
+    holds = body.holds if body.holds is not None else cur.get("holds")
+    clean = layerlib.clean({"video": body.video, "audio": body.audio, "holds": holds}, e.project_id, cur.get("media"))
     e.layers = {**cur, **clean, "rev": body.rev + 1}
     db.commit()
     emit(db, e.project_id, "episode.updated", {"episode_id": eid, "what": "layers"}, user_id=user.id)

@@ -1,12 +1,14 @@
 import { clsx } from "clsx";
-import { ChevronDown, ChevronRight, Clock, MapPin, Plus, Quote, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Clock, MapPin, Plus, Quote, Trash2, User, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useT } from "../../lib/i18n";
 import { useCharacters } from "../../lib/queries";
 import type { Script, ScriptLine, ScriptScene } from "../../lib/types";
+import { findMentions, plainText } from "../../lib/v3";
 import { IconButton } from "../ui";
-import { AutoInput, AutoText } from "./kit";
+import { AutoInput } from "./kit";
+import { CHARACTER_ONLY, MentionText, useMentionField } from "./MentionField";
 import { spokenSeconds, useCastTones, type Tone } from "./util";
 
 /** Borderless inline-edit look: quiet until hovered, accent ring on focus. */
@@ -26,7 +28,7 @@ export function ScriptEditor({ script, onChange, canEdit, pid, eid }: {
   const root = useRef<HTMLDivElement>(null);
   const { data: cast } = useCharacters(pid);
   const scenes = script.scenes ?? [];
-  const names = useMemo(() => scenes.flatMap((s) => (s.lines ?? []).map((l) => l.character)), [script]);
+  const names = useMemo(() => scenes.flatMap((s) => (s.lines ?? []).map((l) => plainText(l.character))), [script]);
   const toneOf = useCastTones(pid, names);
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   const [justAdded, setJustAdded] = useState<string | null>(null);
@@ -70,8 +72,8 @@ export function ScriptEditor({ script, onChange, canEdit, pid, eid }: {
       {script.logline !== undefined && (
         <div className="rounded-xl border border-line bg-bg/40 p-3.5 @md:p-4">
           <div className="mb-1 flex items-center gap-1.5 text-2xs font-semibold uppercase tracking-wider text-dim"><Quote className="size-3" />{t("Logline")}</div>
-          <AutoText value={script.logline} readOnly={!canEdit} aria-label={t("Logline")} placeholder={t("One sentence that sells the story")}
-            onChange={(e) => onChange({ ...script, logline: e.target.value })} className={clsx(inline, "px-1.5 py-1 text-base font-medium leading-snug")} />
+          <MentionText pid={pid} value={script.logline ?? ""} readOnly={!canEdit} aria-label={t("Logline")} placeholder={t("One sentence that sells the story")}
+            onChange={(v) => onChange({ ...script, logline: v })} className={clsx(inline, "px-1.5 py-1 text-base font-medium leading-snug")} />
         </div>
       )}
 
@@ -139,19 +141,19 @@ export function ScriptEditor({ script, onChange, canEdit, pid, eid }: {
                   transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }} className="overflow-hidden">
                   <div className="space-y-3 px-3 pb-3 pt-3 @md:px-4 @md:pb-4">
                     {(sc.summary || canEdit) && (
-                      <AutoText value={sc.summary} readOnly={!canEdit} aria-label={t("Scene summary")} placeholder={t("What happens in this scene")}
-                        onChange={(e) => patchScene(i, { summary: e.target.value })}
+                      <MentionText pid={pid} value={sc.summary ?? ""} readOnly={!canEdit} aria-label={t("Scene summary")} placeholder={t("What happens in this scene")}
+                        onChange={(v) => patchScene(i, { summary: v })} chipsClassName="pl-3"
                         className={clsx(inline, "rounded-l-none border-l-2 border-line py-1 pl-3 pr-1.5 text-sm leading-relaxed text-mute")} />
                     )}
                     {(sc.action || canEdit) && (
-                      <AutoText value={sc.action ?? ""} readOnly={!canEdit} aria-label={t("Action")} placeholder={t("Action: what we see on screen")}
-                        onChange={(e) => patchScene(i, { action: e.target.value })} className={clsx(inline, "px-1.5 py-1 text-sm leading-relaxed")} />
+                      <MentionText pid={pid} value={sc.action ?? ""} readOnly={!canEdit} aria-label={t("Action")} placeholder={t("Action: what we see on screen. Type @ to mention a character, location or prop")}
+                        onChange={(v) => patchScene(i, { action: v })} className={clsx(inline, "px-1.5 py-1 text-sm leading-relaxed")} />
                     )}
 
                     <div className="pt-1">
                       {lines.map((l, j) => (
                         <Fragment key={j}>
-                          <LineBlock i={i} j={j} line={l} tone={toneOf(l.character)} canEdit={canEdit} fresh={justAdded === `${i}-${j}`} listId={listId}
+                          <LineBlock i={i} j={j} line={l} tone={toneOf(plainText(l.character))} canEdit={canEdit} fresh={justAdded === `${i}-${j}`} listId={listId} pid={pid}
                             onChange={(patch) => patchLine(i, j, patch)} onRemove={() => removeLine(i, j)} />
                           {canEdit && j < lines.length - 1 && <InsertGap onClick={() => insertLine(i, j + 1)} />}
                         </Fragment>
@@ -177,17 +179,15 @@ export function ScriptEditor({ script, onChange, canEdit, pid, eid }: {
   );
 }
 
-function LineBlock({ i, j, line, tone, canEdit, fresh, listId, onChange, onRemove }: {
-  i: number; j: number; line: ScriptLine; tone: Tone; canEdit: boolean; fresh: boolean; listId: string;
+function LineBlock({ i, j, line, tone, canEdit, fresh, listId, pid, onChange, onRemove }: {
+  i: number; j: number; line: ScriptLine; tone: Tone; canEdit: boolean; fresh: boolean; listId: string; pid: number;
   onChange: (patch: Partial<ScriptLine>) => void; onRemove: () => void;
 }) {
   const t = useT();
   const showEmotion = canEdit || !!line.emotion;
   return (
     <div className={clsx("group/line relative mx-auto w-full max-w-[23rem] rounded-lg px-2 py-2 transition-colors", canEdit && "hover:bg-hover/40 focus-within:bg-hover/40", fresh && "anim-fade")}>
-      <input value={line.character} readOnly={!canEdit} list={canEdit ? listId : undefined} data-name={`${i}-${j}`} aria-label={t("Character")} placeholder={t("CHARACTER")}
-        onChange={(e) => onChange({ character: e.target.value })} style={tone.style}
-        className={clsx(inline, "block h-7 w-full px-1.5 text-center text-xs font-semibold uppercase tracking-[0.14em] [&::-webkit-calendar-picker-indicator]:hidden", tone.className)} />
+      <SpeakerField value={line.character} onChange={(v) => onChange({ character: v })} canEdit={canEdit} tone={tone} listId={listId} pid={pid} name={`${i}-${j}`} />
       {showEmotion && (
         <div className="flex items-center justify-center text-2xs text-dim">
           <span aria-hidden>(</span>
@@ -196,8 +196,8 @@ function LineBlock({ i, j, line, tone, canEdit, fresh, listId, onChange, onRemov
           <span aria-hidden>)</span>
         </div>
       )}
-      <AutoText value={line.line} readOnly={!canEdit} aria-label={t("Line")} placeholder={t("Dialogue…")}
-        onChange={(e) => onChange({ line: e.target.value })} className={clsx(inline, "mt-0.5 px-1.5 py-1 text-center text-sm leading-relaxed")} />
+      <MentionText pid={pid} value={line.line} readOnly={!canEdit} aria-label={t("Line")} placeholder={t("Dialogue…")} chipsClassName="justify-center"
+        onChange={(v) => onChange({ line: v })} className={clsx(inline, "mt-0.5 px-1.5 py-1 text-center text-sm leading-relaxed")} />
       {canEdit && (
         <IconButton title={t("Remove line")} onClick={onRemove} tipSide="left"
           className="absolute -right-1 top-1 size-6 opacity-0 transition-opacity hover:text-bad focus-visible:opacity-100 group-focus-within/line:opacity-100 group-hover/line:opacity-100 [@media(hover:none)]:opacity-60">
@@ -205,6 +205,59 @@ function LineBlock({ i, j, line, tone, canEdit, fresh, listId, onChange, onRemov
         </IconButton>
       )}
     </div>
+  );
+}
+
+/**
+ * The centred CHARACTER name. A linked speaker (`@[Name](character:id)`) shows as a chip — the token stays in the data —
+ * and its × turns it back into an editable plain name. Typing `@` in the plain input opens the cast list; the datalist
+ * of cast names remains as the no-@ fallback.
+ */
+function SpeakerField({ value, onChange, canEdit, tone, listId, pid, name }: {
+  value: string; onChange: (v: string) => void; canEdit: boolean; tone: Tone; listId: string; pid: number; name: string;
+}) {
+  const t = useT();
+  const input = useRef<HTMLInputElement>(null);
+  const chip = useRef<HTMLButtonElement>(null);
+  const focusNext = useRef<"chip" | "input" | null>(null);
+  const mention = findMentions(value)[0];
+  const m = useMentionField({
+    pid, value, ref: input, enabled: canEdit, pad: false, kinds: CHARACTER_ONLY,
+    onChange: (v) => { if (findMentions(v).length) focusNext.current = "chip"; onChange(v); },
+  });
+  // After a pick the input is replaced by the chip (and vice-versa on unlink): keep the keyboard on the field.
+  useEffect(() => {
+    const want = focusNext.current;
+    if (!want) return;
+    focusNext.current = null;
+    (want === "chip" ? chip.current : input.current)?.focus();
+  }, [value]);
+
+  if (mention) {
+    return (
+      <div className="flex h-7 items-center justify-center">
+        <span className={clsx("inline-flex h-6 max-w-full items-center gap-1 rounded-full border border-line bg-raised pl-2 text-xs font-semibold uppercase tracking-[0.14em]", canEdit ? "pr-0.5" : "pr-2", tone.className)}
+          style={tone.style} title={t("Linked to the cast")}>
+          <User aria-hidden className="size-3 shrink-0" />
+          <span className="truncate">{mention.name}</span>
+          {canEdit && (
+            <button ref={chip} type="button" data-name={name} aria-label={t("Unlink {name} (edit the name)", { name: mention.name })}
+              onClick={() => { focusNext.current = "input"; onChange(plainText(value)); }}
+              className="grid size-5 place-items-center rounded-full text-mute transition-colors hover:bg-hover hover:text-bad">
+              <X className="size-3" />
+            </button>
+          )}
+        </span>
+      </div>
+    );
+  }
+  return (
+    <>
+      <input ref={input} value={value} readOnly={!canEdit} list={canEdit ? listId : undefined} data-name={name} aria-label={t("Character")} placeholder={t("CHARACTER")}
+        style={tone.style} {...m.fieldProps}
+        className={clsx(inline, "block h-7 w-full px-1.5 text-center text-xs font-semibold uppercase tracking-[0.14em] [&::-webkit-calendar-picker-indicator]:hidden", tone.className)} />
+      {m.popover}
+    </>
   );
 }
 

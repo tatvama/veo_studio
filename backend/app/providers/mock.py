@@ -248,6 +248,14 @@ def llm(task: str, ctx: dict[str, Any]) -> dict[str, Any]:
         return {"prompt": "Instrumental only, no vocals. Soft tanpura drone with gentle bansuri flute, suspenseful, cinematic."}
     if task == "voice_pick":
         return {"speaker": "anand" if ctx.get("gender") == "male" else "kavya"}
+    if task == "end_state":
+        wardrobe = ctx.get("wardrobe") or {}
+        return {"characters": [{"name": n, "outfit": wardrobe.get(n, ""), "state": "as at the start of the scene"}
+                               for n in (ctx.get("characters") or []) if n],
+                "props": list(ctx.get("props") or []), "time_of_day": "", "weather": "", "notes": "MOCK continuity state"}
+    if task == "dialogue_check":
+        return {"heard": ctx.get("line", ""), "language": ctx.get("language_name", "English"), "word_match": 0.92,
+                "pronunciation": 0.85, "sync_score": 0.8, "subtitles_burned": False, "notes": "MOCK dialogue check"}
     if task == "lipsync_qc":
         seed = _h(str(ctx.get("take_id", "")))
         return {"sync_score": round(0.72 + (seed % 25) / 100, 2), "face_visible": True, "artifacts": False,

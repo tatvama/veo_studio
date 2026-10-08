@@ -26,13 +26,13 @@ from ..providers.base import ProviderBlocked, ProviderError, ProviderNotConfigur
 from ..providers.services import Services
 
 HANDLERS: dict[str, Callable[["JobContext"], dict | None]] = {}
-ORCHESTRATORS = {"dub", "autopilot", "produce"}
+ORCHESTRATORS = {"dub", "autopilot", "produce", "campaign"}
 GROUP_OF = {"video": "video", "omni_edit": "video", "lipsync": "lipsync", "voicelock": "audio", "voice": "audio",
             "voice_design": "audio", "voice_preview": "audio", "music": "audio", "sfx": "audio", "table_read": "audio",
             "export": "render", "animatic": "render", "keyframe": "image", "character_sheet": "image",
-            "character_outfit": "image", "character_expressions": "image", "location_images": "image", "marketing": "image",
+            "character_outfit": "image", "character_lighting": "image", "character_expressions": "image", "location_images": "image", "marketing": "image",
             "qc": "llm", "critic_loop": "llm", "search_index": "llm", "model_sync": "system", "fetch_metrics": "system",
-            "publish_youtube": "system", "train_identity": "train", "identity_variations": "image"}
+            "publish_youtube": "system", "train_identity": "train", "identity_variations": "image", "campaign": "system"}
 GROUP_LIMITS = {"video": 3, "lipsync": 2, "audio": 4, "render": 2, "image": 4, "llm": 4, "system": 1, "train": 2}
 # A rate-limited job waits in the queue up to this many times (back-off grows to 15 min, so about a day:
 # long enough for a daily quota to reset at midnight Pacific) before it is retried and failed as usual.
@@ -195,7 +195,7 @@ class Worker:
         self.thread: threading.Thread | None = None
 
     def start(self) -> None:
-        from . import handlers, handlers_growth, handlers_hub, handlers_room  # noqa: F401  (registers handlers)
+        from . import handlers, handlers_campaign, handlers_growth, handlers_hub, handlers_room  # noqa: F401  (registers handlers)
 
         self.recover()
         self.thread = threading.Thread(target=self.loop, name="worker-loop", daemon=True)

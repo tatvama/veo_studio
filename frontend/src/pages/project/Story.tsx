@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import {
-  ArrowRight, BookOpen, Brain, Gauge, Headphones, History, Languages, LayoutGrid, ListChecks, MessagesSquare, Save, ScanSearch, ScrollText,
+  ArrowRight, AtSign, BookOpen, Brain, Gauge, Headphones, History, Languages, LayoutGrid, ListChecks, MessagesSquare, Save, ScanSearch, ScrollText,
   Sparkles, SquareKanban, Users, X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
@@ -17,15 +17,18 @@ import { useSaveShortcut } from "../../components/room/util";
 import { ScriptEditor } from "../../components/room/ScriptEditor";
 import { ScriptVersionsDrawer } from "../../components/room/ScriptVersions";
 import { TableReadPanel } from "../../components/room/TableRead";
-import { Button, Empty, IconButton, Modal, Skeleton, Tabs, rise } from "../../components/ui";
+import { Button, Empty, IconButton, Modal, Skeleton, Tabs, Tooltip, rise } from "../../components/ui";
 import { api } from "../../lib/api";
 import { LANG_NAMES } from "../../lib/format";
 import { tr, useT } from "../../lib/i18n";
 import { useEpisode, useScriptVersions } from "../../lib/queries";
-import type { Script } from "../../lib/types";
+import type { Episode, Script } from "../../lib/types";
+import { resolveMentions } from "../../lib/v3";
 import { useProjectCtx } from "./context";
 
 type RoomTab = "critic" | "table" | "continuity" | "languages";
+/** Script intelligence: a changed dialogue line updated the shot that speaks it (PATCH /episodes response). */
+interface ScriptChange { shot_id: number; code: string; old: string; new: string; stale_takes: number[] }
 
 export default function StoryPage() {
   const t = useT();
@@ -78,11 +81,46 @@ export default function StoryPage() {
     try { await fn(); refresh(); toast.success(ok); return true; } catch { return false; /* api toasts */ } finally { setBusy(""); }
   };
 
+  // Seed the editor from a server copy of the script (saves and resolves hand back known @names as tokens).
+  const seed = (s: Script | undefined | null) => { setScript(s || {}); setDirty(false); setJustSaved(true); };
+
   const saveScript = async () => {
-    const ok = await run("save", () => api.patch(`/api/episodes/${eid}`, { script }), tr("Script saved"));
-    if (ok) { setDirty(false); setJustSaved(true); }
+    setBusy("save");
+    try {
+      const res = await api.patch<Episode & { script_changes?: ScriptChange[] }>(`/api/episodes/${eid}`, { script });
+      seed(res.script);
+      refresh();
+      toast.success(tr("Script saved"));
+      const changes = res.script_changes ?? [];
+      if (changes.length) {
+        const stale = changes.reduce((n, c) => n + (c.stale_takes?.length ?? 0), 0);
+        const shots = changes.length === 1 ? tr("1 shot updated") : tr("{n} shots updated", { n: changes.length });
+        const takes = stale === 1 ? tr("1 take marked stale") : tr("{n} takes marked stale", { n: stale });
+        toast.message(`${shots}, ${takes}`, {
+          description: tr("The dialogue you changed was copied into its shots."),
+          duration: 8000,
+          action: { label: tr("See impact"), onClick: () => nav(`/p/${project.id}/dashboard`) },
+        });
+      }
+    } catch { /* api toasts */ } finally { setBusy(""); }
   };
   useSaveShortcut(canEdit && dirty && busy !== "save", saveScript);
+
+  // Bare @Names → tokens; unknown names become cast members. Unsaved edits are saved first so nothing is lost.
+  const resolveNames = async () => {
+    setBusy("resolve");
+    try {
+      if (dirty) await api.patch(`/api/episodes/${eid}`, { script });
+      const r = await resolveMentions(eid, true);
+      seed(r.script as Script);
+      refresh();
+      qc.invalidateQueries({ queryKey: ["characters"] });
+      qc.invalidateQueries({ queryKey: ["mentions", project.id] });
+      const n = r.created.length;
+      toast.success(n === 0 ? tr("Every @name is already linked") : n === 1 ? tr("1 new cast member created from @names") : tr("{n} new cast members created from @names", { n }),
+        n ? { description: r.created.map((c) => c.name).join(", ") } : undefined);
+    } catch { /* api toasts */ } finally { setBusy(""); }
+  };
 
   if (isError && !ep) return <RoomPage width="default"><LoadError what={t("Couldn't load the story")} onRetry={() => refetch()} /></RoomPage>;
   if (isLoading || !ep) return <StorySkeleton />;
@@ -150,7 +188,12 @@ export default function StoryPage() {
   return (
     <RoomPage width="default" footer={actionBar}>
       <RoomHeader icon={<BookOpen />} title={t("Story")} description={t("Pick a hook, write the script, then let the writers' room tighten it.")}
-        status={canEdit ? <SaveStatus state={state} /> : undefined} />
+        status={canEdit ? <SaveStatus state={state} /> : undefined}
+        actions={canEdit && hasScript ? (
+          <Tooltip content={t("Link every @Name in the script to the cast, locations and props. Unknown names become new characters.")}>
+            <Button size="sm" variant="outline" loading={busy === "resolve"} icon={<AtSign className="size-3.5" />} onClick={resolveNames}>{t("Resolve @names")}</Button>
+          </Tooltip>
+        ) : undefined} />
 
       <div className="space-y-5">
         <HookSection index={1} eid={eid} hooks={hooks} selected={selected} canEdit={canEdit} busy={busy}

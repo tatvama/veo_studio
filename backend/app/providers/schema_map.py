@@ -35,12 +35,13 @@ SLOT_ALIASES: dict[str, list[str]] = {
     "num_images": ["num_images", "num_outputs"],
     "voice": ["voice", "voice_id", "speaker"],
     "language": ["language", "language_code", "lang"],
+    "loras": ["loras", "lora_weights"],
 }
 SLOT_KIND = {  # expected JSON type for a slot
     "prompt": "string", "text": "string", "negative": "string", "first_frame": "string", "last_frame": "string",
     "refs": "array", "elements": "array", "audio": "string", "audios": "array", "video": "string", "videos": "array",
     "duration": "number", "aspect": "string", "resolution": "string", "image_size": "any", "seed": "integer",
-    "gen_audio": "boolean", "num_images": "integer", "voice": "string", "language": "string",
+    "gen_audio": "boolean", "num_images": "integer", "voice": "string", "language": "string", "loras": "array",
 }
 VIDEO_CATS = {"text-to-video", "image-to-video", "video-to-video", "audio-to-video", "reference-to-video"}
 IMAGE_CATS = {"text-to-image", "image-to-image"}
@@ -66,6 +67,7 @@ class GenRequest:
     text: str = ""
     voice: str = ""
     language: str = ""
+    loras: list[dict] = field(default_factory=list)  # [{path, scale}] for engines with a loras input
 
 
 # ── schema reading ───────────────────────────────────────────────────────────
@@ -226,14 +228,20 @@ def derive_capabilities(category: str, endpoint: str, pm: dict) -> dict[str, Any
     else:
         task = "other"
     refs_slot = s.get("refs")
+    native_audio = bool(has("gen_audio")) and (s["gen_audio"].get("default") is not False or True)
     return {
         "task": task,
         "modes": sorted(modes),
+        # gateway flags (plan section 11): what this engine can do for characters and dialogue
+        "speech_in_video": task == "video" and native_audio,  # speaks the line itself (voice + lips in one pass)
+        "audio_driven": "a2v" in modes,  # animates a face from a given voice track
+        "lora_input": has("loras"),  # accepts a trained identity (LoRA weights)
+        "lipsync_to_audio": "lipsync" in modes,  # re-syncs lips of an existing clip to given audio
         "max_refs": (refs_slot or {}).get("max_items") or (4 if refs_slot or has("elements") else 0),
         "durations": _durations(s.get("duration")),
         "resolutions": (s.get("resolution") or {}).get("enum"),
         "aspects": (s.get("aspect") or {}).get("enum"),
-        "native_audio": bool(has("gen_audio")) and (s["gen_audio"].get("default") is not False or True),
+        "native_audio": native_audio,
         "usable": not pm.get("unmapped_required"),
     }
 
@@ -352,6 +360,8 @@ def build_args(pm: dict, caps: dict, req: GenRequest, upload: Callable[[Path], s
         put("resolution", pick_resolution(s["resolution"], req.resolution))
     if req.seed is not None:
         put("seed", req.seed)
+    if req.loras and "loras" in s and req.mode not in ("lipsync", "tts"):
+        put("loras", req.loras)
     if "gen_audio" in s and req.mode not in ("t2i", "i2i", "tts"):
         put("gen_audio", bool(req.generate_audio))
     if "num_images" in s and req.mode in ("t2i", "i2i"):

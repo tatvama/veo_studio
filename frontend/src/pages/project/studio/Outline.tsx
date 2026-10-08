@@ -2,13 +2,14 @@ import { useDraggable, useDroppable } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { clsx } from "clsx";
-import { ChevronDown, Clapperboard, Film, GripVertical, ImageIcon, Loader2, MapPin, Plus, UserPlus } from "lucide-react";
+import { ChevronDown, Clapperboard, Film, GripVertical, ImageIcon, Link2, Loader2, MapPin, Plus, UserPlus } from "lucide-react";
 import { useState } from "react";
 import { useT } from "../../../lib/i18n";
 import { LockMark } from "../../../components/shell/PresenceBar";
 import { useLockHolder } from "../../../lib/collab";
 import type { Character, Episode, Scene, Shot } from "../../../lib/types";
-import { Avatar, Badge, Button } from "../../../components/ui";
+import { Avatar, Badge, Button, Tooltip } from "../../../components/ui";
+import { linkFromOf, type LinkFrom } from "./continuity";
 
 /** Drag payloads shared by the Studio panels. */
 export type DragData = { type: "shot"; shotId: number; sceneId: number | null } | { type: "character"; characterId: number }
@@ -40,6 +41,7 @@ export function Outline({ episode, cast, selected, onSelect, onAddShot, canEdit 
   const groups = outlineGroups(episode);
   const shots = groups.flatMap((g) => g.shots);
   const byId = new Map(cast.map((c) => [c.id, c]));
+  const shotById = new Map((episode.shots ?? []).map((s) => [s.id, s]));
   let n = 0;
   return (
     <div className="h-full overflow-y-auto p-2">
@@ -54,7 +56,8 @@ export function Outline({ episode, cast, selected, onSelect, onAddShot, canEdit 
                 onAdd={canEdit ? () => onAddShot(scene?.id ?? null) : undefined}>
                 {list.map((s, i) => (
                   <ShotItem key={s.id} shot={s} no={first + i + 1} selected={selected === s.id} onSelect={() => onSelect(s.id)}
-                    people={(s.characters ?? []).map((id) => byId.get(id)).filter((c): c is Character => !!c)} canEdit={canEdit} />
+                    people={(s.characters ?? []).map((id) => byId.get(id)).filter((c): c is Character => !!c)} canEdit={canEdit}
+                    linkFrom={linkFromOf(s, shotById)} />
                 ))}
                 {!list.length && <p className="px-2 py-2 text-2xs text-dim">{t("Drop shots here")}</p>}
               </SceneGroup>
@@ -91,8 +94,8 @@ function SceneGroup({ scene, index, count, secs, onAdd, children }: {
   );
 }
 
-function ShotItem({ shot, no, selected, onSelect, people, canEdit }: {
-  shot: Shot; no: number; selected: boolean; onSelect: () => void; people: Character[]; canEdit: boolean;
+function ShotItem({ shot, no, selected, onSelect, people, canEdit, linkFrom }: {
+  shot: Shot; no: number; selected: boolean; onSelect: () => void; people: Character[]; canEdit: boolean; linkFrom: LinkFrom | null;
 }) {
   const t = useT();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging, isOver, active } = useSortable({
@@ -121,6 +124,13 @@ function ShotItem({ shot, no, selected, onSelect, people, canEdit }: {
             <span className={clsx("size-1.5 shrink-0 rounded-full", STATUS_DOT[shot.status] ?? "bg-dim/60")} title={shot.status.replace("_", " ")} />
             <span className="font-mono text-2xs font-semibold text-mute">{shot.code || `#${no}`}</span>
             <span className="text-2xs tabular-nums text-dim">{len}s</span>
+            {linkFrom && (
+              <Tooltip content={linkFrom.mode === "extend" ? t("Extends {code}'s clip", { code: linkFrom.code }) : t("Starts from {code}'s last frame", { code: linkFrom.code })}>
+                <span role="img" aria-label={t("Continues from {code}", { code: linkFrom.code })} className="grid size-3.5 place-items-center text-accent-ink">
+                  <Link2 className="size-3" />
+                </span>
+              </Tooltip>
+            )}
             {shot.generating && <Loader2 className="size-3 animate-spin text-accent-ink" aria-label={t("generating")} />}
             {lock && <LockMark name={lock.name} />}
           </span>

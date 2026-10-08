@@ -1,22 +1,30 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { Camera, Check, ChevronDown, Clock, Loader2, MapPin, Package, RefreshCw, Shirt, Swords, Target, X } from "lucide-react";
+import { BookMarked, Camera, Check, ChevronDown, Clock, Loader2, MapPin, Package, RefreshCw, Shirt, Swords, Target, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
 import { useT } from "../../lib/i18n";
 import type { Character, Location, SceneCard } from "../../lib/types";
+import type { EndState } from "../../lib/v3";
 import { Avatar as PersonAvatar, IconButton, Input, Select, Textarea } from "../ui";
+import { EndStateBlock, endStateEmpty, summarizeEndState } from "../world/EndState";
+import { PropPicker } from "../world/PropPicker";
+import { WardrobeSelect } from "../world/WardrobeSelect";
 import { RField } from "./kit";
 
-type Editable = "title" | "summary" | "goal" | "conflict" | "turn" | "emotion" | "time_of_day" | "location_id" | "characters"
-  | "props" | "wardrobe" | "continuity_notes" | "coverage" | "blocking" | "approved";
-type Draft = Pick<SceneCard, Editable>;
+/** v3 fields the scene payload carries on top of the SceneCard type: picked props and the Continuity Bible end state. */
+export type SceneCardV3 = SceneCard & { prop_ids?: number[]; end_state?: Partial<EndState> };
 
-const pick = (s: SceneCard): Draft => ({
+type Editable = "title" | "summary" | "goal" | "conflict" | "turn" | "emotion" | "time_of_day" | "location_id" | "characters"
+  | "props" | "prop_ids" | "wardrobe" | "continuity_notes" | "coverage" | "blocking" | "approved";
+type Draft = Pick<SceneCard, Exclude<Editable, "prop_ids">> & { prop_ids: number[] };
+
+const pick = (s: SceneCardV3): Draft => ({
   title: s.title ?? "", summary: s.summary ?? "", goal: s.goal ?? "", conflict: s.conflict ?? "", turn: s.turn ?? "",
   emotion: s.emotion ?? "", time_of_day: s.time_of_day ?? "", location_id: s.location_id ?? null, characters: s.characters ?? [],
-  props: s.props ?? [], wardrobe: s.wardrobe ?? {}, continuity_notes: s.continuity_notes ?? "", coverage: s.coverage ?? [],
+  props: s.props ?? [], prop_ids: (s.prop_ids ?? []).map(Number), wardrobe: s.wardrobe ?? {}, continuity_notes: s.continuity_notes ?? "", coverage: s.coverage ?? [],
   blocking: s.blocking ?? "", approved: !!s.approved,
 });
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
@@ -27,8 +35,10 @@ export function Avatar({ c, size = 28 }: { c: Pick<Character, "name" | "avatar_u
 }
 
 /** One scene card on the Scenes board. Text fields save on blur; chips, toggles and selects save immediately. */
-export function SceneCardView({ scene, index, cast, locations, canEdit, expanded, onToggle }: {
-  scene: SceneCard; index: number; cast: Character[]; locations: Location[]; canEdit: boolean; expanded: boolean; onToggle: () => void;
+export function SceneCardView({ scene, index, cast, locations, canEdit, expanded, onToggle, projectId }: {
+  scene: SceneCardV3; index: number; cast: Character[]; locations: Location[]; canEdit: boolean; expanded: boolean; onToggle: () => void;
+  /** Needed for the prop picker (project props) and the World links. */
+  projectId: number;
 }) {
   const t = useT();
   const qc = useQueryClient();
@@ -38,6 +48,7 @@ export function SceneCardView({ scene, index, cast, locations, canEdit, expanded
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
+  const [endOpen, setEndOpen] = useState(false);
 
   // Server updates (ours or a teammate's) flow in, except for fields the user is still editing.
   const serverKey = JSON.stringify(pick(scene));
@@ -93,6 +104,8 @@ export function SceneCardView({ scene, index, cast, locations, canEdit, expanded
   const inScene = draft.characters.map((id) => cast.find((c) => c.id === id)).filter(Boolean) as Character[];
   const loc = locations.find((l) => l.id === draft.location_id);
   const hasBeats = !!(draft.goal || draft.conflict || draft.turn);
+  const propCount = draft.prop_ids.length + draft.props.length;
+  const endSummary = summarizeEndState(scene.end_state);
 
   const text = (k: "goal" | "conflict" | "turn" | "summary" | "blocking" | "continuity_notes", label: ReactNode, rows = 2, placeholder?: string) => (
     <RField label={label}>
@@ -170,7 +183,8 @@ export function SceneCardView({ scene, index, cast, locations, canEdit, expanded
                 <div className="ml-auto flex flex-wrap items-center gap-1">
                   {draft.coverage.slice(0, 2).map((c) => <Chip key={c} icon={<Camera className="size-3" />}>{c}</Chip>)}
                   {draft.coverage.length > 2 && <Chip>+{draft.coverage.length - 2}</Chip>}
-                  {draft.props.length > 0 && <Chip icon={<Package className="size-3" />}>{draft.props.length}</Chip>}
+                  {propCount > 0 && <Chip icon={<Package className="size-3" />}>{propCount}</Chip>}
+                  {!endStateEmpty(scene.end_state) && <Chip icon={<BookMarked className="size-3" />}>{t("end state")}</Chip>}
                 </div>
               </div>
             </button>
@@ -224,14 +238,18 @@ export function SceneCardView({ scene, index, cast, locations, canEdit, expanded
                 )}
                 {inScene.length > 0 && (
                   <div className="space-y-1.5 rounded-lg border border-line bg-bg/40 p-3">
-                    <p className="flex items-center gap-1.5 text-xs font-medium text-mute"><Shirt className="size-3.5 text-dim" />{t("Wardrobe — must stay consistent")}</p>
+                    <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs font-medium text-mute">
+                      <Shirt className="size-3.5 text-dim" />{t("Wardrobe — must stay consistent")}
+                      <span className="ml-auto text-2xs font-normal text-dim">{t("Named costumes come from the Bible; pick Other… for free text.")}</span>
+                    </p>
                     <div className="grid gap-2 @xl:grid-cols-2">
                       {inScene.map((c) => (
-                        <div key={c.id} className="flex items-center gap-2">
+                        <div key={c.id} className="@container flex items-center gap-2">
                           <Avatar c={c} size={28} />
                           <span className="w-20 shrink-0 truncate text-xs font-medium" title={c.name}>{c.name}</span>
-                          <Input className="h-8! text-xs!" disabled={!canEdit} placeholder={t("Outfit")} aria-label={`${c.name}: ${t("Outfit")}`} value={draft.wardrobe[String(c.id)] ?? ""}
-                            onChange={(e) => edit("wardrobe", { ...draft.wardrobe, [String(c.id)]: e.target.value })} onBlur={() => commit("wardrobe")} />
+                          <WardrobeSelect characterId={c.id} characterName={c.name} disabled={!canEdit} value={draft.wardrobe[String(c.id)] ?? ""}
+                            onPick={(v) => { const w = { ...draft.wardrobe }; if (v) w[String(c.id)] = v; else delete w[String(c.id)]; set("wardrobe", w); }}
+                            onText={(v) => edit("wardrobe", { ...draft.wardrobe, [String(c.id)]: v })} onCommit={() => commit("wardrobe")} />
                         </div>
                       ))}
                     </div>
@@ -248,10 +266,15 @@ export function SceneCardView({ scene, index, cast, locations, canEdit, expanded
                     <ChipEditor value={draft.coverage} disabled={!canEdit} icon={<Camera className="size-3 text-dim" />}
                       placeholder={t("wide master, OTS, CU reaction…")} onChange={(v) => set("coverage", v)} />
                   </Group>
-                  <Group label={t("Props")}>
-                    <ChipEditor value={draft.props} disabled={!canEdit} icon={<Package className="size-3 text-dim" />}
-                      placeholder={t("Add a prop and press Enter")} onChange={(v) => set("props", v)} />
-                  </Group>
+                  <div className="space-y-3">
+                    <Group label={t("Props — from the project")}>
+                      <PropPicker pid={projectId} value={draft.prop_ids} disabled={!canEdit} onChange={(ids) => set("prop_ids", ids)} />
+                    </Group>
+                    <Group label={t("Prop notes — free text")}>
+                      <ChipEditor value={draft.props} disabled={!canEdit} icon={<Package className="size-3 text-dim" />}
+                        placeholder={t("Add a note and press Enter")} onChange={(v) => set("props", v)} />
+                    </Group>
+                  </div>
                 </div>
               </Block>
 
@@ -259,6 +282,33 @@ export function SceneCardView({ scene, index, cast, locations, canEdit, expanded
                 <div className="grid gap-3 @xl:grid-cols-2">
                   {text("blocking", t("Blocking — positions, entrances, eyelines"), 3)}
                   {text("continuity_notes", t("Continuity notes"), 3)}
+                </div>
+              </Block>
+
+              <Block title={t("End of scene")}>
+                <div className="rounded-lg border border-line bg-bg/40">
+                  <button type="button" onClick={() => setEndOpen((o) => !o)} aria-expanded={endOpen}
+                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors hover:bg-hover/40">
+                    <BookMarked className="size-3.5 shrink-0 text-dim" />
+                    <span className="min-w-0 flex-1 truncate text-xs">
+                      {endSummary ? <span className="text-mute">{endSummary}</span> : <span className="text-dim">{t("Where everyone and everything is when the scene ends — not written yet.")}</span>}
+                    </span>
+                    <ChevronDown className={clsx("size-4 shrink-0 text-dim transition-transform duration-200", endOpen && "rotate-180")} />
+                  </button>
+                  <AnimatePresence initial={false}>
+                    {endOpen && (
+                      <motion.div key="end" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }} className="overflow-hidden">
+                        <div className="border-t border-line px-3 pb-3 pt-2.5">
+                          <EndStateBlock sceneId={scene.id} eid={scene.episode_id} state={scene.end_state} cast={cast} canEdit={canEdit} />
+                          <p className="mt-2 text-2xs text-dim">
+                            <Link to={`/p/${projectId}/world?tab=bible`} className="font-medium text-accent-ink hover:underline">{t("Open the Continuity Bible")}</Link>
+                            {" · "}{t("every scene's end state in one place, plus the wardrobe timeline.")}
+                          </p>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                 </div>
               </Block>
             </div>

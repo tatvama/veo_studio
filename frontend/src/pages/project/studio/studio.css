@@ -53,3 +53,15 @@
 .dockview-theme-veo .dv-groupview { border-radius: 10px; overflow: hidden; border: 1px solid var(--color-line); }
 .dockview-theme-veo .dv-tab.dv-active-tab { box-shadow: inset 0 -2px 0 var(--color-accent); }
 .dockview-theme-veo .dv-tab { padding: 0 10px; }
+
+/* Film Map: a continuity link flows from the source shot to the shot that continues it; the dotted edge is
+   "continue from the previous shot" without an explicit link. (`dashdraw` comes with React Flow's stylesheet.) */
+.react-flow__edge.filmmap-link path.react-flow__edge-path { stroke-dasharray: 7 5; animation: dashdraw 0.45s linear infinite; }
+.react-flow__edge.filmmap-link.selected path.react-flow__edge-path,
+.react-flow__edge.filmmap-link:focus-visible path.react-flow__edge-path {
+  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--color-accent) 70%, transparent));
+}
+.react-flow__edge.filmmap-prev path.react-flow__edge-path { stroke-dasharray: 2 5; stroke-linecap: round; }
+@media (prefers-reduced-motion: reduce) {
+  .react-flow__edge.filmmap-link path.react-flow__edge-path { animation: none; }
+}

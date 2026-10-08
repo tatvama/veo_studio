@@ -44,6 +44,9 @@ function pickForm(s: Shot): Partial<Shot> {
     location_id: s.location_id, dialogue: s.dialogue, narration: s.narration, sfx: s.sfx, music_cue: s.music_cue, mode: s.mode,
     quality_mode: s.quality_mode, voice_mode: s.voice_mode, continuity_from_prev: s.continuity_from_prev, include: s.include,
     trim_in: s.trim_in, trim_out: s.trim_out, notes: s.notes,
+    // v3: props, Film Map continuity link (ShotDetails writes these into the form so the Save button sends them)
+    ...({ prop_ids: (s as any).prop_ids ?? [], continuity_from_shot_id: (s as any).continuity_from_shot_id ?? null,
+          continuity_mode: (s as any).continuity_mode ?? "last_frame" } as Partial<Shot>),
   };
 }
 

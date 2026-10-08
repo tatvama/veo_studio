@@ -106,11 +106,20 @@ def character_out(db: Session, c: Character, brief: bool = False) -> dict:
         from ..core import identity as identity_core
         out["training"] = identity_core.summary(db, c)
         out["assets"] = [a.to_dict(url=url(a.path)) for a in assets]
+        from ..core import lock as lock_core
+        from ..models import CharacterVersion, Costume
+        out["lock_effective"] = lock_core.effective(c)
+        out["versions"] = [v.to_dict() for v in db.query(CharacterVersion).filter(CharacterVersion.character_id == c.id)
+                           .order_by(CharacterVersion.version)]
+        out["costumes"] = [x.to_dict() for x in db.query(Costume).filter(Costume.character_id == c.id, Costume.archived.is_(False))
+                           .order_by(Costume.id)]
         out["voices"] = [v.to_dict(sample_url=url(v.sample_path))
                          for v in db.query(VoiceProfile).filter(VoiceProfile.character_id == c.id).order_by(VoiceProfile.language)]
     else:
+        from ..models import Costume
         out["voices"] = [v.language for v in db.query(VoiceProfile).filter(VoiceProfile.character_id == c.id)]
         out["asset_count"] = len(assets)
+        out["costume_count"] = db.query(Costume).filter(Costume.character_id == c.id, Costume.archived.is_(False)).count()
     return out
 
 

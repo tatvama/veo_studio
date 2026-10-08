@@ -42,9 +42,10 @@ export function useLiveEvents(projectId: number | null) {
         }
         if (t.startsWith("job") || t === "jobs.created") touch("jobs", "episode", "costs");
         if (t === "job.updated" && e.payload.status === "failed") toast.error(`Job failed: ${String(e.payload.error || e.payload.type).slice(0, 160)}`);
-        if (t.startsWith("take") || t === "shot.updated" || t === "episode.updated" || t === "audio.created") touch("episode", "shot", "board");
-        if (t === "bible.updated") touch("characters", "character", "locations", "location", "project");
-        if (t.startsWith("project") || t === "autopilot.updated") touch("project", "projects");
+        if (t.startsWith("take") || t === "shot.updated" || t === "episode.updated" || t === "audio.created") touch("episode", "shot", "board", "impact", "dashboard", "wardrobe", "continuity-bible", "dialogue-check");
+        if (t === "bible.updated") touch("characters", "character", "locations", "location", "project", "costumes", "character-versions", "character-lock", "character-look", "props", "mentions");
+        if (t.startsWith("project") || t === "autopilot.updated") touch("project", "projects", "seasons", "dashboard");
+        if (t.startsWith("job")) touch("dashboard");
         if (t === "agent.message") touch("agent");
         if (t.startsWith("models")) touch("models", "model", "shot-engines");
         if (t === "episode.updated") touch("table-read", "script-versions", "marketing", "scenes", "layers");

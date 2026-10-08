@@ -13,7 +13,8 @@ export const TRACKED = ["brief", "story", "scenes", "bible", "storyboard", "time
  * done = finished, progress = started, todo = not started, none = not a step (Review, Activity).
  */
 export function computePipeline(project: Project | undefined, ep: Episode | undefined): Record<string, Stage> {
-  const out: Record<string, Stage> = { review: { state: "none" }, activity: { state: "none" } };
+  const out: Record<string, Stage> = { review: { state: "none" }, activity: { state: "none" }, dashboard: { state: "none" },
+                                       world: { state: "none" }, campaign: { state: "none" } };
   if (!project) return out;
 
   const brief = project.brief ?? {};

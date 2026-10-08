@@ -1,13 +1,13 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { ArrowRight, BookOpen, Check, CheckCheck, LayoutGrid, Sparkles, SquareKanban } from "lucide-react";
+import { ArrowRight, BookOpen, Check, CheckCheck, Globe, LayoutGrid, Sparkles, SquareKanban } from "lucide-react";
 import { AnimatePresence, LayoutGroup, motion } from "motion/react";
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { ContinuityPanel } from "../../components/room/Continuity";
 import { Fact, LoadError, RoomHeader, RoomPage } from "../../components/room/kit";
-import { SceneCardView } from "../../components/room/SceneCard";
+import { SceneCardView, type SceneCardV3 } from "../../components/room/SceneCard";
 import { AnimatedNumber, Button, Empty, Modal, ProgressRing, Skeleton, Tooltip, rise } from "../../components/ui";
 import { api } from "../../lib/api";
 import { tr, useT } from "../../lib/i18n";
@@ -29,7 +29,7 @@ export default function ScenesPage() {
 
   if (isError && !ep) return <RoomPage width="full"><LoadError what={t("Couldn't load the scene cards")} onRetry={() => refetch()} /></RoomPage>;
   if (isLoading || !ep) return <ScenesSkeleton />;
-  const scenes = ((ep.scenes ?? []) as SceneCard[]).slice().sort((a, b) => a.order - b.order);
+  const scenes = ((ep.scenes ?? []) as SceneCardV3[]).slice().sort((a, b) => a.order - b.order);
   const scriptScenes = ep.script?.scenes?.length ?? 0;
   const approved = scenes.filter((s) => s.approved).length;
   const allApproved = scenes.length > 0 && approved === scenes.length;
@@ -152,7 +152,7 @@ export default function ScenesPage() {
               <motion.div layout className="grid items-start gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,22rem),1fr))]">
                 <AnimatePresence initial={false}>
                   {scenes.map((s, i) => (
-                    <SceneCardView key={s.id} scene={s} index={i} cast={cast ?? []} locations={locs ?? []} canEdit={canEdit}
+                    <SceneCardView key={s.id} scene={s} index={i} cast={cast ?? []} locations={locs ?? []} canEdit={canEdit} projectId={project.id}
                       expanded={expanded === s.id} onToggle={() => setExpanded(expanded === s.id ? null : s.id)} />
                   ))}
                 </AnimatePresence>
@@ -164,6 +164,11 @@ export default function ScenesPage() {
             <ContinuityPanel index={2} eid={eid} report={ep.continuity} canRun={canEdit} compact
               hint={shotCount ? undefined : t("Checks props, wardrobe and time of day across scene cards. Re-run after shots are planned to check shots too.")} />
             <div {...rise(3)} className={clsx("rounded-xl border border-line bg-panel p-4", rise(3).className)}>
+              <h2 className="mb-1 flex items-center gap-1.5 text-sm font-semibold tracking-tight"><Globe className="size-4 text-accent-ink" />{t("World")}</h2>
+              <p className="text-xs leading-relaxed text-mute">{t("Props with reference images, the wardrobe timeline and every scene's end state live on the World page.")}</p>
+              <Link to={`/p/${project.id}/world`} className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-accent-ink hover:underline">{t("Open World")}<ArrowRight className="size-3.5" /></Link>
+            </div>
+            <div {...rise(4)} className={clsx("rounded-xl border border-line bg-panel p-4", rise(4).className)}>
               <h2 className="mb-3 text-sm font-semibold tracking-tight">{t("How this flows")}</h2>
               <ol className="space-y-3">
                 {flow.map((s, i) => (

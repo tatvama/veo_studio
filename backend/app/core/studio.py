@@ -243,6 +243,24 @@ def _find_loc(db: Session, project: Project, name: str) -> Location | None:
     return loc
 
 
+def add_next_shot(db: Session, src: Shot, action: str = "", framing: str = "", camera: str = "", duration_s: int = 8,
+                  mode: str = "last_frame") -> Shot:
+    """The shot after `src` with the same cast, wardrobe, location and props, linked so its keyframe starts from the
+    last frame of `src` (or its video extends src's clip)."""
+    for later in db.query(Shot).filter(Shot.episode_id == src.episode_id, Shot.order > src.order).all():
+        later.order += 1
+    n = Shot(episode_id=src.episode_id, scene_id=src.scene_id, order=src.order + 1,
+             duration_s=duration_s if duration_s in (4, 6, 8) else 8, framing=framing or src.framing, camera=camera or "static",
+             action=action or f"The action continues directly from {src.code}.", characters=list(src.characters or []),
+             outfits=dict(src.outfits or {}), location_id=src.location_id, prop_ids=list(src.prop_ids or []),
+             quality_mode=src.quality_mode, engine=src.engine or "auto", continuity_from_shot_id=src.id,
+             continuity_mode=mode if mode in ("last_frame", "extend") else "last_frame", mode="auto")
+    db.add(n)
+    db.flush()
+    renumber(db, db.get(Episode, src.episode_id))
+    return n
+
+
 def renumber(db: Session, episode: Episode) -> None:
     shots = db.query(Shot).filter(Shot.episode_id == episode.id).order_by(Shot.order, Shot.id).all()
     prefix = f"E{episode.number:02}" if episode.kind == "episode" else f"C{episode.id:02}"
@@ -264,14 +282,16 @@ def breakdown(db: Session, user: User, episode: Episode) -> list[dict]:
         cards_txt = "SCENE CARDS (follow the coverage plan, blocking and wardrobe):\n" + "\n".join(
             f"[{s.order}] {s.title}: goal={s.goal}; conflict={s.conflict}; turn={s.turn}; emotion={s.emotion}; blocking={s.blocking}; "
             f"coverage={'; '.join(s.coverage or [])}; props={', '.join(s.props or [])}" for s in carded)
-    prompt = (f"{context_text(db, project, episode)}\n\nSCRIPT:\n{json.dumps(script, ensure_ascii=False)[:14000]}\n\n"
+    from . import mentions
+    script_plain = mentions.plain_script(script)
+    prompt = (f"{context_text(db, project, episode)}\n\nSCRIPT:\n{json.dumps(script_plain, ensure_ascii=False)[:14000]}\n\n"
               f"{cards_txt}\n"
               f"{('HOOK (shot 1): ' + hook['text'] + ' — ' + hook.get('visual', '')) if hook else ''}\n"
               f"Break this into shots. Target total length about {target_duration(project)} seconds. "
               f"Keep the dialogue text exactly as written in the script (language: {lang_name(project.primary_language)}). "
               f"scene_index refers to the script's scenes (0-based).")
     out = _llm(db, user, project, "breakdown", prompts.DP, prompt, S.BreakdownOut,
-               {"scenes": script.get("scenes", []), "concept": project.concept}, pro=project.type == "series")
+               {"scenes": script_plain.get("scenes", []), "concept": project.concept}, pro=project.type == "series")
     # replace existing shots (keep old ones archived by deleting rows without takes; shots with takes are excluded)
     old = db.query(Shot).filter(Shot.episode_id == episode.id).all()
     for s in old:
@@ -293,14 +313,17 @@ def breakdown(db: Session, user: User, episode: Episode) -> list[dict]:
     db.flush()
     scenes: dict[int, Scene] = {}
     for i, sc in enumerate(script.get("scenes", [])):
-        loc = _find_loc(db, project, sc.get("location", ""))
+        ment = mentions.scene_entities(sc)
+        loc = (db.get(Location, ment["location"][0]) if ment["location"] else None) or _find_loc(db, project, mentions.plain(sc.get("location", "")))
         row = reuse.get(i)
         if row is None:
             row = Scene(episode_id=episode.id, order=i, title=sc.get("title", f"Scene {i + 1}"),
                         location_id=loc.id if loc else None, time_of_day=sc.get("time_of_day", ""), summary=sc.get("summary", ""))
             db.add(row)
             db.flush()
-        elif not row.approved:  # keep the card's plan, refresh what the script owns
+        if ment["prop"]:
+            row.prop_ids = ment["prop"]
+        if not row.approved:  # keep the card's plan, refresh what the script owns
             row.title = sc.get("title") or row.title
             row.summary = sc.get("summary") or row.summary
             row.time_of_day = sc.get("time_of_day") or row.time_of_day
