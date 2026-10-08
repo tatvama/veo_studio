@@ -16,6 +16,7 @@ import type { AudioAsset, Shot, SubmitResult } from "../../../../lib/types";
 import { ratioOf } from "../shotMeta";
 import { FPS, SFX_USD_PER_SHOT, spansOf, type Clip } from "./shared";
 import type { Transport } from "./transport";
+import { BlendLayer } from "./Blend";
 
 // ── preview ──────────────────────────────────────────────────────────────────
 
@@ -87,6 +88,8 @@ export function SequencePlayer({ tp, clips, musicUrl, musicDb, aspect, showTitle
   const [stageRef, box] = useElementSize<HTMLDivElement>();
   const frameW = Math.max(0, Math.min(box.w, box.h * (r.w / r.h)));
   const frameH = frameW * (r.h / r.w);
+  const mainRef = useRef<HTMLDivElement>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const m = tp.mref.current;
@@ -97,8 +100,10 @@ export function SequencePlayer({ tp, clips, musicUrl, musicDb, aspect, showTitle
     <Card className="@container flex min-h-[min(72vh,460px)] flex-col overflow-hidden @3xl:min-h-0">
       {/* the stage fills whatever height the layout gives it; the frame inside always keeps the project's aspect ratio */}
       <div ref={stageRef} className="relative min-h-[200px] flex-1 cursor-pointer bg-black" onClick={tp.toggle} role="presentation">
-        <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 overflow-hidden bg-black shadow-[0_0_0_1px_rgb(255_255_255/0.08)] [container-type:inline-size]"
+        <div ref={frameRef} className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 overflow-hidden bg-black shadow-[0_0_0_1px_rgb(255_255_255/0.08)] [container-type:inline-size]"
           style={{ width: frameW, height: frameH }}>
+          {/* the playing shot; during a transition the blend layer shows the other one and both animate */}
+          <div ref={mainRef} className="absolute inset-0">
           {hasVideo ? (
             <video ref={tp.vref} src={clip.src} playsInline preload="auto" className="h-full w-full object-contain"
               style={{ filter: fxFilter(clip.shot.fx, 0.6) || undefined, transform: fxTransform(clip.shot.fx) || undefined }}
@@ -106,6 +111,8 @@ export function SequencePlayer({ tp, clips, musicUrl, musicDb, aspect, showTitle
           ) : clip?.still ? (
             <img src={clip.still} alt="" className="h-full w-full object-contain" style={{ filter: fxFilter(clip.shot.fx, 0.6) || undefined, transform: fxTransform(clip.shot.fx) || undefined }} />
           ) : <div className="flex h-full items-center justify-center p-3 text-center text-sm text-white/60">{t("No media for {code}", { code: clip?.shot.code ?? "" })}</div>}
+          </div>
+          <BlendLayer tp={tp} clips={clips} mainRef={mainRef} frameRef={frameRef} />
           {overlay}
           <PreviewOverlays clock={tp.clock} clip={clip} showTitles={showTitles} showCC={showCC} />
           <AnimatePresence>

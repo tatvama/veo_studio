@@ -2,7 +2,7 @@ import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type D
 import { SortableContext, arrayMove, horizontalListSortingStrategy } from "@dnd-kit/sortable";
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { AudioWaveform, Captions, Clapperboard, Film, Keyboard, Magnet, Maximize2, Mic, Music, Type, Volume2, ZoomIn, ZoomOut } from "lucide-react";
+import { AudioLines, AudioWaveform, Captions, Clapperboard, Film, Keyboard, Layers, Loader2, Magnet, Maximize2, Mic, Music, Type, Volume2, ZoomIn, ZoomOut } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -26,10 +26,11 @@ import {
   LaneItem, OverlayLane, OverlayPopover, PlayheadLine, SnapGuide, TimeRuler, Track, WaveLane, type OverlayEdit,
 } from "./production/timeline/Tracks";
 import { CutButton, MainClip, TransitionBlock } from "./production/timeline/MainTrack";
-import { AddLayerRow, LayerInspector, LayerPlayback, LayerTrackRow, useLayersEditor, type LayerSel } from "./production/timeline/Layers";
+import { LayerInspector, LayerPlayback, LayerTrackRow, useLayersEditor, type LayerSel } from "./production/timeline/Layers";
 import { useTransport } from "./production/timeline/transport";
 
-export default function TimelinePage() {
+/** `embedded`: inside a Studio panel — a smaller player on top and the tracks (all layers) filling the rest. */
+export default function TimelinePage({ embedded = false }: { embedded?: boolean } = {}) {
   const { project, eid, lang, canEdit } = useProjectCtx();
   const t = useT();
   const qc = useQueryClient();
@@ -63,6 +64,11 @@ export default function TimelinePage() {
   const total = clips.length ? clips[clips.length - 1].start + clips[clips.length - 1].duration : 0;
   const { layers, edit: editLayers, upload: uploadMedia, saving: layersSaving } = useLayersEditor(eid);
   const [layerSel, setLayerSel] = useState<LayerSel>(null);
+  const addLayer = (kind: "video" | "audio") => {
+    editLayers((d) => ({ ...d, [kind]: [...d[kind], { id: Math.random().toString(36).slice(2, 12),
+      name: `${kind === "video" ? "Video" : "Audio"} ${d[kind].length + (kind === "video" ? 2 : 1)}`, muted: false, hidden: false, gain_db: 0, clips: [] }] }));
+    toast.success(kind === "video" ? t("Video layer added — drop a picture or clip on it") : t("Audio layer added — drop a sound on it"));
+  };
   const music = ep?.music?.find((m) => m.selected) ?? ep?.music?.[0];
   const settings = ep?.settings ?? {};
   const tp = useTransport(clips, total);
@@ -306,10 +312,11 @@ export default function TimelinePage() {
   const musicDb = volDraft ?? settings.music_volume_db ?? -16;
 
   return (
-    <div className="@container h-full overflow-y-auto overscroll-contain">
-      <div className="flex min-h-full flex-col gap-3 p-3 sm:p-4">
-        {/* preview + inspector: takes the height the timeline leaves free (at least 340px) */}
-        <div className="grid min-h-[340px] flex-1 gap-3 @3xl:grid-cols-[minmax(0,1fr)_minmax(280px,340px)] @3xl:grid-rows-[minmax(0,1fr)]">
+    <div className={clsx("@container h-full", embedded ? "overflow-hidden" : "overflow-y-auto overscroll-contain")}>
+      <div className={clsx("flex flex-col", embedded ? "h-full gap-2 p-2" : "min-h-full gap-3 p-3 sm:p-4")}>
+        {/* preview + inspector: takes the height the timeline leaves free (at least 340px); in the Studio a fixed share */}
+        <div className={clsx("grid gap-3 @3xl:grid-cols-[minmax(0,1fr)_minmax(280px,340px)] @3xl:grid-rows-[minmax(0,1fr)]",
+          embedded ? "h-[42%] min-h-[200px] shrink-0 grid-rows-[minmax(0,1fr)] gap-2 auto-rows-[minmax(0,1fr)] overflow-y-auto @3xl:grid-cols-[minmax(0,1fr)_minmax(240px,300px)] [&>*]:!min-h-0" : "min-h-[340px] flex-1")}>
           <SequencePlayer tp={tp} clips={clips} musicUrl={music?.url} musicDb={musicDb} aspect={project.aspect}
             lang={lang} showTitles={showTitles} setShowTitles={setShowTitles} showCC={showCC} setShowCC={setShowCC} total={total}
             overlay={<LayerPlayback tp={tp} doc={layers} />} />
@@ -332,7 +339,7 @@ export default function TimelinePage() {
         </div>
 
         {/* ── timeline ──────────────────────────────────────────────────────── */}
-        <Card className="@container shrink-0 overflow-hidden">
+        <Card className={clsx("@container overflow-hidden", embedded ? "flex min-h-0 flex-1 flex-col" : "shrink-0")}>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-panel px-3 py-2">
             <div className="flex items-center gap-2 text-xs">
               <span className="grid size-6 place-items-center rounded-md bg-raised text-mute"><Film className="size-3.5" /></span>
@@ -346,6 +353,17 @@ export default function TimelinePage() {
               <span className="inline-flex items-center gap-1"><Kbd>\</Kbd>{t("fit")}</span>
             </p>
             <div className="flex-1" />
+            {canEdit && (
+              <>
+                <Tooltip content={t("A layer over the shots: picture-in-picture, B-roll, logos, pictures")}>
+                  <Button size="sm" variant="outline" icon={<Layers className="size-3.5" />} onClick={() => addLayer("video")}>{t("Video layer")}</Button>
+                </Tooltip>
+                <Tooltip content={t("A sound layer: voice-over, extra music, sound effects")}>
+                  <Button size="sm" variant="outline" icon={<AudioLines className="size-3.5" />} onClick={() => addLayer("audio")}>{t("Audio layer")}</Button>
+                </Tooltip>
+                {layersSaving && <span className="inline-flex items-center gap-1 text-2xs text-dim"><Loader2 className="size-3 animate-spin" />{t("Saving…")}</span>}
+              </>
+            )}
             {canEdit && (
               <Tooltip content={t("Plan and generate ambience and spot effects for every shot")}>
                 <Button size="sm" variant="outline" icon={<AudioWaveform className="size-3.5" />} onClick={autoSfx}>{t("Auto SFX")}</Button>
@@ -369,7 +387,7 @@ export default function TimelinePage() {
             <IconButton title={t("Keyboard shortcuts")} onClick={() => setKeysOpen(true)}><Keyboard className="size-4" /></IconButton>
           </div>
 
-          <div ref={scrollRef} className="overflow-x-auto">
+          <div ref={scrollRef} className={embedded ? "min-h-0 flex-1 overflow-auto overscroll-contain" : "overflow-x-auto"}>
             <div className="relative" style={{ width: contentW }}>
               <TimeRuler total={total} pps={pps} view={view} clock={tp.clock}
                 onScrub={(x, phase) => {
@@ -464,7 +482,9 @@ export default function TimelinePage() {
                   <LaneItem key={`${c.shot.id}-${i}`} tone="mute" left={(c.start + sp.start) * pps} width={Math.max((sp.end - sp.start) * pps, 4)} title={sp.text}>{sp.text}</LaneItem>
                 )))}
               </Track>
-              <AddLayerRow canEdit={canEdit} edit={editLayers} saving={layersSaving} />
+              {canEdit && layers && !layers.video.length && !layers.audio.length && (
+                <p className="sticky left-0 px-3 py-2 text-2xs text-dim">{t("Add a Video layer or an Audio layer (toolbar above) for picture-in-picture, B-roll, logos, voice-overs or extra music — then drop files on it.")}</p>
+              )}
               {snapLine !== null && <SnapGuide time={snapLine} pps={pps} />}
               <PlayheadLine clock={tp.clock} pps={pps} viewLeft={view.left} />
             </div>

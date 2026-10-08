@@ -81,7 +81,7 @@ function MapPanel() {
 }
 
 function TimelinePanel() {
-  return <Suspense fallback={<PageSkeleton cards={2} />}><TimelinePage /></Suspense>;
+  return <Suspense fallback={<PageSkeleton cards={2} />}><TimelinePage embedded /></Suspense>;
 }
 
 const COMPONENTS: Record<string, React.FunctionComponent<IDockviewPanelProps>> = {

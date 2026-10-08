@@ -43,7 +43,7 @@ export function TimeRuler({ total, pps, view, clock, onScrub }: {
     return clamp((clientX - r.left) / pps, 0, total);
   };
   return (
-    <div className="flex border-b border-line bg-raised/60" style={{ height: RULER_H }}>
+    <div className="sticky top-0 z-40 flex border-b border-line bg-raised" style={{ height: RULER_H }}>
       <div className="sticky left-0 z-30 flex shrink-0 items-center border-r border-line bg-panel px-2.5" style={{ width: LABEL_W }} title={`${FPS} fps`}>
         <PlayheadReadout clock={clock} />
       </div>
