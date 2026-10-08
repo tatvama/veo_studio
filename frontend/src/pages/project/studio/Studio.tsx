@@ -7,13 +7,16 @@ import { Clapperboard, ExternalLink, Film, LayoutGrid, ListTree, Maximize2, Pane
 import { lazy, Suspense, useCallback, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { useGenerate } from "../../../components/Generate";
 import { Avatar, Button, Menu, PageSkeleton, Tooltip } from "../../../components/ui";
 import { api } from "../../../lib/api";
 import { tr, useT } from "../../../lib/i18n";
 import { useCharacters, useEpisode } from "../../../lib/queries";
-import type { Shot } from "../../../lib/types";
+import type { Shot, SubmitResult } from "../../../lib/types";
+import { nextShot, type NextShotIn } from "../../../lib/v3";
 import { useProjectCtx } from "../context";
 import ShotDrawer from "../ShotDrawer";
+import { linkOf, type LinkMode } from "./continuity";
 import { CastPanel, EmptyStudio, Outline, outlineOrder, type DragData } from "./Outline";
 import { StudioCtx, useStudio, type StudioState } from "./state";
 
@@ -115,6 +118,12 @@ function HeaderActions({ containerApi, group, activePanel, location }: IDockview
   );
 }
 
+/** PATCH /api/shots responses list the takes an edit just made stale; say so once. */
+function announceStale(ids?: number[]) {
+  if (!ids?.length) return;
+  toast.message(ids.length === 1 ? tr("1 earlier take is now marked stale") : tr("{n} earlier takes are now marked stale", { n: ids.length }));
+}
+
 function defaultLayout(api: DockviewApi) {
   api.clear();
   api.addPanel({ id: "outline", component: "outline", title: tr(PANELS.outline.title) });
@@ -145,6 +154,7 @@ export default function StudioPage() {
   const { project, eid, lang, canEdit } = useProjectCtx();
   const { data: episode } = useEpisode(eid, lang);
   const { data: cast } = useCharacters(project.id);
+  const { submit } = useGenerate();
   const [selected, setSelected] = useState<number | null>(null);
   const [dragging, setDragging] = useState<DragData | null>(null);
   const apiRef = useRef<DockviewApi | null>(null);
@@ -192,10 +202,66 @@ export default function StudioPage() {
     refresh();
   }, [episode, cast, refresh]);
 
+  // Film Map continuity: the target shot continues from the source (keyframe from its last frame, or video extending its clip)
+  const linkShot = useCallback(async (shotId: number, fromShotId: number | null, mode: LinkMode = "last_frame") => {
+    const shots = episode?.shots ?? [];
+    const shot = shots.find((s) => s.id === shotId);
+    const src = fromShotId != null ? shots.find((s) => s.id === fromShotId) : undefined;
+    if (!shot || (fromShotId != null && (!src || fromShotId === shotId))) return;
+    try {
+      const r = await api.patch<Shot & { stale_takes?: number[] }>(`/api/shots/${shotId}`,
+        src ? { continuity_from_shot_id: src.id, continuity_mode: mode } : { continuity_from_shot_id: null });
+      if (src) {
+        toast.success(mode === "extend" ? tr("{target} now extends {source}'s clip", { target: shot.code, source: src.code })
+          : tr("{target} now starts from {source}'s last frame", { target: shot.code, source: src.code }));
+      } else toast.success(tr("{code} no longer continues from another shot", { code: shot.code }));
+      announceStale(r.stale_takes);
+    } catch { /* api toasts */ }
+    refresh();
+  }, [episode, refresh]);
+
+  const setLinkMode = useCallback(async (shotId: number, mode: LinkMode) => {
+    const shot = episode?.shots?.find((s) => s.id === shotId);
+    const link = shot ? linkOf(shot) : null;
+    if (!shot || !link || link.mode === mode) return;
+    const src = episode?.shots?.find((s) => s.id === link.fromId);
+    try {
+      const r = await api.patch<Shot & { stale_takes?: number[] }>(`/api/shots/${shotId}`, { continuity_mode: mode });
+      toast.success(mode === "extend" ? tr("{target} now extends {source}'s clip", { target: shot.code, source: src?.code ?? "" })
+        : tr("{target} now starts from {source}'s last frame", { target: shot.code, source: src?.code ?? "" }));
+      announceStale(r.stale_takes);
+    } catch { /* api toasts */ }
+    refresh();
+  }, [episode, refresh]);
+
+  // the shot after `shotId`, linked to it; with `generate` the keyframe + video jobs go through the cost / approval flow
+  const addNextShot = useCallback(async (shotId: number, body: NextShotIn) => {
+    const src = episode?.shots?.find((s) => s.id === shotId);
+    if (!src) return null;
+    const got: { shot?: Shot } = {};
+    try {
+      if (body.generate) {
+        await submit(async () => {
+          const r = await nextShot(shotId, body);
+          got.shot = r.shot as Shot;
+          return (r.jobs as SubmitResult | null) ?? { batch_id: "", status: "nothing_to_do", total_usd: 0, jobs: [] };
+        }, tr("Next shot after {code}", { code: src.code }));
+      } else {
+        got.shot = (await nextShot(shotId, body)).shot as Shot;
+        toast.success(body.mode === "extend" ? tr("{code} added after {src} — its video will extend that clip", { code: got.shot.code, src: src.code })
+          : tr("{code} added after {src} — it starts from that shot's last frame", { code: got.shot.code, src: src.code }));
+      }
+    } catch { /* api toasts */ }
+    refresh();
+    if (!got.shot) return null;
+    setSelected(got.shot.id);
+    return got.shot.id;
+  }, [episode, refresh, submit]);
+
   const state: StudioState = useMemo(() => ({
-    episode, cast: cast ?? [], selected, select: setSelected, addShot, canEdit, refresh, moveShot, setCast,
+    episode, cast: cast ?? [], selected, select: setSelected, addShot, canEdit, refresh, moveShot, setCast, linkShot, setLinkMode, addNextShot,
     goCharacters: () => nav(`/p/${project.id}/bible`), goShots: () => nav(`/p/${project.id}/shots`),
-  }), [episode, cast, selected, addShot, canEdit, nav, project.id, refresh, moveShot, setCast]);
+  }), [episode, cast, selected, addShot, canEdit, nav, project.id, refresh, moveShot, setCast, linkShot, setLinkMode, addNextShot]);
 
   const onReady = (e: DockviewReadyEvent) => {
     apiRef.current = e.api;
