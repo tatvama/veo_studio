@@ -116,8 +116,10 @@ def character_out(db: Session, c: Character, brief: bool = False) -> dict:
         out["voices"] = [v.to_dict(sample_url=url(v.sample_path))
                          for v in db.query(VoiceProfile).filter(VoiceProfile.character_id == c.id).order_by(VoiceProfile.language)]
     else:
+        from ..models import Costume
         out["voices"] = [v.language for v in db.query(VoiceProfile).filter(VoiceProfile.character_id == c.id)]
         out["asset_count"] = len(assets)
+        out["costume_count"] = db.query(Costume).filter(Costume.character_id == c.id, Costume.archived.is_(False)).count()
     return out
 
 
