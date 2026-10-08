@@ -326,17 +326,7 @@ def next_shot(sid: int, body: NextShotIn, user: User = Depends(require("creator"
         raise HTTPException(400, "duration must be 4, 6 or 8 seconds")
     p = _project(db, s)
     episode = db.get(Episode, s.episode_id)
-    for later in db.query(Shot).filter(Shot.episode_id == s.episode_id, Shot.order > s.order).all():
-        later.order += 1
-    n = Shot(episode_id=s.episode_id, scene_id=s.scene_id, order=s.order + 1, duration_s=body.duration_s,
-             framing=body.framing or s.framing, camera=body.camera or "static",
-             action=body.action or f"The action continues directly from {s.code}.",
-             characters=list(s.characters or []), outfits=dict(s.outfits or {}), location_id=s.location_id,
-             prop_ids=list(s.prop_ids or []), quality_mode=s.quality_mode, engine=s.engine or "auto",
-             continuity_from_shot_id=s.id, continuity_mode=body.mode, mode="auto")
-    db.add(n)
-    db.flush()
-    studio.renumber(db, episode)
+    n = studio.add_next_shot(db, s, body.action, body.framing, body.camera, body.duration_s, body.mode)
     db.commit()
     emit(db, p.id, "episode.updated", {"episode_id": episode.id, "what": "shots"}, user_id=user.id)
     out = {"shot": shot_out(db, n, p), "jobs": None}

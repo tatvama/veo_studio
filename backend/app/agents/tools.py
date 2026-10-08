@@ -8,7 +8,7 @@ from typing import Any, Callable
 from sqlalchemy.orm import Session
 
 from .. import catalog
-from ..core import budget, generation, jobs, studio
+from ..core import budget, continuity, dependencies, generation, jobs, lock as lock_core, studio
 from ..models import Character, Episode, Project, Shot, User
 from ..pipeline.selection import current
 
@@ -240,6 +240,118 @@ def start_autopilot(c: AgentCtx, through: str = "final") -> dict:
 # Free actions run at once, but these would overwrite or pile onto what the user already has, so the Director asks
 # first (in both approval modes: this is about the user's work, not money).
 
+def _char(c: AgentCtx, name: str) -> Character:
+    low = (name or "").strip().lower()
+    for ch in studio.cast(c.db, c.project):
+        if ch.name.strip().lower() == low or ch.name.strip().lower().split()[0] == low.split()[0]:
+            return ch
+    raise ValueError(f"No cast member called {name!r}")
+
+
+def continuity_state(c: AgentCtx, scene_number: int = 1) -> dict:
+    """Write the Continuity Bible entry (state at the end of a scene) with AI."""
+    from ..models import Scene
+    sc = (c.db.query(Scene).filter(Scene.episode_id == c.ep().id).order_by(Scene.order, Scene.id).all())
+    if not sc or scene_number < 1 or scene_number > len(sc):
+        return {"error": f"There are {len(sc)} scenes; pick 1..{len(sc)}"}
+    state = continuity.end_state(c.db, c.user, c.project, c.ep(), sc[scene_number - 1])
+    c.actions.append(f"continuity state written for scene {scene_number}")
+    return state
+
+
+def wardrobe_report(c: AgentCtx) -> dict:
+    """Who wears what in every scene, and where an outfit changes without the script saying so."""
+    return continuity.wardrobe_timeline(c.db, c.project, c.ep())
+
+
+def impact_report(c: AgentCtx) -> dict:
+    """Everything stale after recent edits (keyframes, videos, voices, lip-syncs) and what redoing it costs."""
+    return dependencies.impact(c.db, c.project, c.ep())
+
+
+def regenerate_stale(c: AgentCtx, shot_codes: list[str] | None = None) -> dict:
+    ids = [s.id for s in c.shots(shot_codes)] if shot_codes else None
+    specs = dependencies.regenerate_specs(c.db, c.project, c.ep(), ids)
+    return c.submit(specs, "regenerate stale takes")
+
+
+def next_shot(c: AgentCtx, shot_code: str, action: str = "", mode: str = "last_frame", generate: bool = False) -> dict:
+    """Add the shot after `shot_code` with the same cast/wardrobe/location, linked by last frame or as an extension."""
+    src = next((s for s in c.shots([shot_code])), None)
+    if not src:
+        return {"error": f"No shot {shot_code}"}
+    n = studio.add_next_shot(c.db, src, action, mode=mode)
+    c.db.commit()
+    c.actions.append(f"added {n.code} after {src.code} ({mode})")
+    out: dict = {"shot": _shot_brief(c.db, n, c.project.primary_language), "code": n.code}
+    if generate:
+        out["jobs"] = c.submit(generation.video_specs(c.db, c.project, [n]), f"video {n.code}")
+    return out
+
+
+def lock_character(c: AgentCtx, character: str, lock: dict | None = None, **kw) -> dict:
+    """Set the Character Lock (face, body, skin_hair, voice, costume_continuity, gestures, age, lighting, strictness)."""
+    ch = _char(c, character)
+    data = {**(lock or {}), **kw}
+    ch.lock = {k: v for k, v in {**(ch.lock or {}), **data}.items() if k in lock_core.DEFAULT}
+    c.db.commit()
+    c.actions.append(f"lock updated for {ch.name}")
+    return {"character": ch.name, "lock": lock_core.effective(ch), "prompt_text": lock_core.prompt_text(ch)}
+
+
+def freeze_look(c: AgentCtx, character: str, label: str = "", episode_from: int | None = None, episode_to: int | None = None,
+                dna_text: str = "", voice_description: str = "") -> dict:
+    """Freeze the character's current look as a version for a range of episodes (how a character ages or changes)."""
+    from ..models import CharacterAsset, CharacterVersion
+    ch = _char(c, character)
+    last = (c.db.query(CharacterVersion).filter(CharacterVersion.character_id == ch.id)
+            .order_by(CharacterVersion.version.desc()).first())
+    approved = [a.id for a in c.db.query(CharacterAsset).filter(CharacterAsset.character_id == ch.id, CharacterAsset.archived.is_(False),
+                                                               CharacterAsset.approved.is_(True)).all()]
+    v = CharacterVersion(character_id=ch.id, version=(last.version + 1) if last else 1, label=label or f"v{(last.version + 1) if last else 1}",
+                         episode_from=episode_from, episode_to=episode_to, dna_text=dna_text or ch.dna_text,
+                         voice_description=voice_description or ch.voice_description, lock=dict(ch.lock or {}), asset_ids=approved,
+                         identity=dict(ch.identity or {}), created_by=c.user.id)
+    c.db.add(v)
+    ch.version = v.version
+    c.db.commit()
+    c.actions.append(f"froze {ch.name} as {v.label}")
+    return v.to_dict()
+
+
+def add_costume(c: AgentCtx, character: str, name: str, description: str = "", episode_from: int | None = None,
+                episode_to: int | None = None, generate: bool = True) -> dict:
+    """Give a character a named outfit (3-angle turnaround generated when `generate`)."""
+    from ..models import Costume
+    ch = _char(c, character)
+    row = c.db.query(Costume).filter(Costume.character_id == ch.id, Costume.name == name, Costume.archived.is_(False)).first()
+    if row is None:
+        row = Costume(character_id=ch.id, name=name)
+        c.db.add(row)
+    row.description, row.episode_from, row.episode_to = description, episode_from, episode_to
+    c.db.commit()
+    out: dict = {"costume": row.to_dict()}
+    if generate:
+        scope = episode_from if episode_from == episode_to else None
+        out["jobs"] = c.submit([generation.outfit_spec(c.db, c.project.id, ch, name, description, scope)], f"outfit {name}")
+    return out
+
+
+def set_dialogue_route(c: AgentCtx, method: str = "native", native_languages: list[str] | None = None) -> dict:
+    """How dialogue is made for this project: native (Veo speaks the line itself, voice + lips in one pass),
+    audio_first (locked TTS voice + lip-sync), audio_driven, voice_lock."""
+    if method not in ("native", "audio_first", "audio_driven", "voice_lock", "native_when_possible"):
+        return {"error": "method must be native, audio_first, audio_driven, voice_lock or native_when_possible"}
+    brief = dict(c.project.brief or {})
+    brief["dialogue_method"] = method
+    if native_languages is not None:
+        brief["native_languages"] = [x for x in native_languages if x in catalog.LANGUAGES]
+    c.project.brief = brief
+    c.db.commit()
+    c.actions.append(f"dialogue route: {method}")
+    return {"dialogue_method": method, "native_languages": brief.get("native_languages")}
+
+
 def _needs_confirmation(c: AgentCtx, name: str, args: dict) -> tuple[str, str] | None:
     """(what, detail) when running `name` now would replace existing work; None when it is safe to just do it."""
     ep = c.ep()
@@ -296,6 +408,10 @@ TOOL_FUNCS: dict[str, Callable[..., dict]] = {
     "generate_keyframes": generate_keyframes, "generate_videos": generate_videos, "voice_and_lipsync": voice_and_lipsync,
     "generate_music": generate_music, "make_animatic": make_animatic, "dub_episode": dub_episode,
     "export_video": export_video, "edit_clip": edit_clip, "make_cutdowns": make_cutdowns, "start_autopilot": start_autopilot,
+    # v3: continuity, change impact, Film Map, Character Lab, dialogue route
+    "continuity_state": continuity_state, "wardrobe_report": wardrobe_report, "impact_report": impact_report,
+    "regenerate_stale": regenerate_stale, "next_shot": next_shot, "lock_character": lock_character, "freeze_look": freeze_look,
+    "add_costume": add_costume, "set_dialogue_route": set_dialogue_route,
 }
 
 _codes = {"type": "array", "items": {"type": "string"}, "description": "Shot codes like E01-SH03. Empty = all that still need it."}
@@ -336,4 +452,24 @@ TOOL_DECLS = [
     _t("start_autopilot", "Run the whole pipeline automatically up to a milestone: script, cast (scenes, characters, voices), "
        "storyboard (shot list + keyframes) or final (videos through the finished export).",
        {"through": {"type": "string", "enum": ["script", "cast", "storyboard", "final"]}}),
+    # v3
+    _t("continuity_state", "Write the Continuity Bible entry for a scene: who wears what, props in hand, time of day, weather at the END of it.",
+       {"scene_number": {"type": "integer"}}, ["scene_number"]),
+    _t("wardrobe_report", "Who wears what in every scene, with continuity breaks flagged."),
+    _t("impact_report", "What became stale after edits (keyframes, videos, voices, lip-syncs) and the cost of redoing it."),
+    _t("regenerate_stale", "Redo every stale take (paid).", {"shot_codes": _codes}),
+    _t("next_shot", "Add the shot after a given one with the same cast, wardrobe and location, starting from its last frame or extending its clip.",
+       {"shot_code": {"type": "string"}, "action": {"type": "string"}, "mode": {"type": "string", "enum": ["last_frame", "extend"]},
+        "generate": {"type": "boolean"}}, ["shot_code"]),
+    _t("lock_character", "Set a character's lock: face, body, skin_hair, voice, costume_continuity (booleans), gestures, age, lighting (text), strictness 0-1.",
+       {"character": {"type": "string"}, "lock": {"type": "object"}}, ["character", "lock"]),
+    _t("freeze_look", "Freeze a character's current look as a version for an episode range (older, new hairstyle, beard...).",
+       {"character": {"type": "string"}, "label": {"type": "string"}, "episode_from": {"type": "integer"},
+        "episode_to": {"type": "integer"}, "dna_text": {"type": "string"}, "voice_description": {"type": "string"}}, ["character"]),
+    _t("add_costume", "Give a character a named outfit with a 3-angle turnaround (paid images).",
+       {"character": {"type": "string"}, "name": {"type": "string"}, "description": {"type": "string"},
+        "episode_from": {"type": "integer"}, "episode_to": {"type": "integer"}, "generate": {"type": "boolean"}}, ["character", "name"]),
+    _t("set_dialogue_route", "Choose how dialogue is made: native (Veo speaks the line itself) or audio_first (locked voice + lip-sync), and which languages Veo may speak.",
+       {"method": {"type": "string", "enum": ["native", "audio_first", "audio_driven", "voice_lock", "native_when_possible"]},
+        "native_languages": {"type": "array", "items": {"type": "string"}}}, ["method"]),
 ]

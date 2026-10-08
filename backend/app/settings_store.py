@@ -43,6 +43,9 @@ DEFAULTS: dict[str, Any] = {
     "dialogue_words_qc": True,  # after a spoken clip: did it say the scripted words, in the right language?
     "dialogue_words_threshold": 0.75,
     "outfit_qc": True,  # fail a take whose outfit does not match the scene wardrobe (when the character lock asks for it)
+    # {engine id: {language code: 0..1}} from the team's own listening tests; shown in the Model Hub and used to warn
+    # when a shot speaks a language an engine scored badly on
+    "engine_language_scores": {},
     # Accuracy
     "identity_trainer": {"trainer": "fal-ai/qwen-image-2512-trainer", "inference": "fal-ai/qwen-image-2512/lora",
                          "steps": 1000, "scale": 1.0, "min_images": 12},

@@ -228,14 +228,20 @@ def derive_capabilities(category: str, endpoint: str, pm: dict) -> dict[str, Any
     else:
         task = "other"
     refs_slot = s.get("refs")
+    native_audio = bool(has("gen_audio")) and (s["gen_audio"].get("default") is not False or True)
     return {
         "task": task,
         "modes": sorted(modes),
+        # gateway flags (plan section 11): what this engine can do for characters and dialogue
+        "speech_in_video": task == "video" and native_audio,  # speaks the line itself (voice + lips in one pass)
+        "audio_driven": "a2v" in modes,  # animates a face from a given voice track
+        "lora_input": has("loras"),  # accepts a trained identity (LoRA weights)
+        "lipsync_to_audio": "lipsync" in modes,  # re-syncs lips of an existing clip to given audio
         "max_refs": (refs_slot or {}).get("max_items") or (4 if refs_slot or has("elements") else 0),
         "durations": _durations(s.get("duration")),
         "resolutions": (s.get("resolution") or {}).get("enum"),
         "aspects": (s.get("aspect") or {}).get("enum"),
-        "native_audio": bool(has("gen_audio")) and (s["gen_audio"].get("default") is not False or True),
+        "native_audio": native_audio,
         "usable": not pm.get("unmapped_required"),
     }
 

@@ -243,6 +243,24 @@ def _find_loc(db: Session, project: Project, name: str) -> Location | None:
     return loc
 
 
+def add_next_shot(db: Session, src: Shot, action: str = "", framing: str = "", camera: str = "", duration_s: int = 8,
+                  mode: str = "last_frame") -> Shot:
+    """The shot after `src` with the same cast, wardrobe, location and props, linked so its keyframe starts from the
+    last frame of `src` (or its video extends src's clip)."""
+    for later in db.query(Shot).filter(Shot.episode_id == src.episode_id, Shot.order > src.order).all():
+        later.order += 1
+    n = Shot(episode_id=src.episode_id, scene_id=src.scene_id, order=src.order + 1,
+             duration_s=duration_s if duration_s in (4, 6, 8) else 8, framing=framing or src.framing, camera=camera or "static",
+             action=action or f"The action continues directly from {src.code}.", characters=list(src.characters or []),
+             outfits=dict(src.outfits or {}), location_id=src.location_id, prop_ids=list(src.prop_ids or []),
+             quality_mode=src.quality_mode, engine=src.engine or "auto", continuity_from_shot_id=src.id,
+             continuity_mode=mode if mode in ("last_frame", "extend") else "last_frame", mode="auto")
+    db.add(n)
+    db.flush()
+    renumber(db, db.get(Episode, src.episode_id))
+    return n
+
+
 def renumber(db: Session, episode: Episode) -> None:
     shots = db.query(Shot).filter(Shot.episode_id == episode.id).order_by(Shot.order, Shot.id).all()
     prefix = f"E{episode.number:02}" if episode.kind == "episode" else f"C{episode.id:02}"
