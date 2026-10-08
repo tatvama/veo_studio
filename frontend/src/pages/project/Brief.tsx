@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { Check, Clapperboard, Eye, FileText, Mic, Rocket, Sparkles, Star, Tv, Wallet } from "lucide-react";
+import { Check, Clapperboard, Eye, FileText, Mic, Rocket, Sparkles, Speech, Star, Tv, Wallet } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { AutopilotPanel, defaultStops } from "../../components/AutopilotPanel";
 import { useGenerate } from "../../components/Generate";
 import { Counter, Fact, FloatingSaveBar, RField, RoomHeader, RoomPage, SaveStatus, SectionCard, type SaveState } from "../../components/room/kit";
+import { PronunciationTable, toPronDict, toPronRows, type PronRow } from "../../components/room/PronunciationTable";
 import { radioKeys, useSaveShortcut } from "../../components/room/util";
 import { TrendScout, type BriefField } from "../../components/room/TrendScout";
 import { Button, Field, Input, Select, Skeleton, Textarea, Toggle, Tooltip, rise } from "../../components/ui";
@@ -26,6 +27,8 @@ const ASPECTS = [
   { value: "1:1", label: "1:1", sub: "Feed posts", w: 22, h: 22 },
 ] as const;
 const LENGTHS = [15, 30, 60, 120, 300];
+/** v3 field on the project payload (GET /api/projects/{id}); patched with the Brief. */
+type ProjectV3 = Project & { pronunciations?: Record<string, string> | null };
 
 export default function BriefPage() {
   const t = useT();
@@ -36,6 +39,7 @@ export default function BriefPage() {
   const [params, setParams] = useSearchParams();
   const [p, setP] = useState<Project>(project);
   const [brief, setBrief] = useState<Record<string, any>>(project.brief || {});
+  const [pron, setPron] = useState<PronRow[]>(() => toPronRows((project as ProjectV3).pronunciations));
   const [busy, setBusy] = useState("");
   const [episodes, setEpisodes] = useState(5);
   const [dirty, setDirty] = useState(false);
@@ -55,6 +59,7 @@ export default function BriefPage() {
     setDirty(false);
     setP(project);
     setBrief(project.brief || {});
+    setPron(toPronRows((project as ProjectV3).pronunciations));
   }, [project.id, project.updated_at, JSON.stringify(project.brief?.trends ?? null)]);
 
   // Started from Home with "Make it for me": run to the chosen milestone, stopping for approval at each one before it.
@@ -77,6 +82,7 @@ export default function BriefPage() {
   const markDirty = () => { dirtyRef.current = true; setDirty(true); setJustSaved(false); };
   const set = (k: keyof Project, v: any) => { setP({ ...p, [k]: v }); markDirty(); };
   const setB = (k: string, v: any) => { setBrief((b) => ({ ...b, [k]: v })); markDirty(); };
+  const setPronRows = (rows: PronRow[]) => { setPron(rows); markDirty(); };
   const narrator = brief.narrator || { provider: "gemini", voice_id: "Charon", style: "warm, clear storyteller" };
 
   const save = async () => {
@@ -84,7 +90,7 @@ export default function BriefPage() {
     try {
       const body: Record<string, any> = {
         concept: p.concept, aspect: p.aspect, languages: p.languages, primary_language: p.primary_language,
-        quality_mode: p.quality_mode, agent_mode: p.agent_mode, brief,
+        quality_mode: p.quality_mode, agent_mode: p.agent_mode, brief, pronunciations: toPronDict(pron),
       };
       if (canProduce) {
         if (p.budget_cap_usd === null || Number.isNaN(p.budget_cap_usd)) body.clear_budget_cap = true;
@@ -104,6 +110,7 @@ export default function BriefPage() {
     setDirty(false);
     setP(project);
     setBrief(project.brief || {});
+    setPron(toPronRows((project as ProjectV3).pronunciations));
   };
 
   useSaveShortcut(canEdit && dirty && busy !== "save", save);
@@ -370,9 +377,18 @@ export default function BriefPage() {
             </div>
           </SectionCard>
 
+          {/* ── pronunciation dictionary ──────────────────────────────────────── */}
+          <SectionCard index={5} icon={<Speech />} title={t("Pronunciation")}
+            description={t("How names and special words should be said. Applied before every voice line, narrator and characters alike, in every language.")}>
+            <PronunciationTable rows={pron} onChange={setPronRows} disabled={!canEdit} />
+            <p className="mt-3 text-2xs leading-snug text-dim">
+              {t("Write it the way you would spell it out for a newsreader (“Shree Raa-ma”). Each character also has its own name pronunciation in the Bible.")}
+            </p>
+          </SectionCard>
+
           {/* ── season plan ──────────────────────────────────────────────────── */}
           {project.type === "series" && (
-            <SectionCard index={5} icon={<Tv />} title={t("Season plan")} description={t("Plan the arc once; pick an episode to work on it.")}
+            <SectionCard index={6} icon={<Tv />} title={t("Season plan")} description={t("Plan the arc once; pick an episode to work on it.")}
               actions={canEdit && (
                 <div className="flex items-center gap-2">
                   <Input type="number" min={1} max={30} className="h-8! w-20!" aria-label={t("Episodes")} value={episodes} onChange={(e) => setEpisodes(Number(e.target.value))} />

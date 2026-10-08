@@ -18,8 +18,9 @@ export function findMentions(s: string): { kind: MentionKind; id: number; name: 
   }
   return out;
 }
-export const useMentionCandidates = (pid: number, q = "") =>
-  useQuery({ queryKey: ["mentions", pid, q], queryFn: () => api.get<MentionCandidate[]>(`/api/projects/${pid}/mentions?q=${encodeURIComponent(q)}`),
+export const useMentionCandidates = (pid: number, q = "", kind?: MentionKind, limit = 12) =>
+  useQuery({ queryKey: ["mentions", pid, q, kind ?? "all", limit],
+             queryFn: () => api.get<MentionCandidate[]>(`/api/projects/${pid}/mentions?q=${encodeURIComponent(q)}${kind ? `&kind=${kind}` : ""}&limit=${limit}`),
              enabled: !!pid, staleTime: 15_000 });
 export interface MentionCreated { kind: MentionKind; id: number; name: string; token: string }
 export const createMention = (kind: MentionKind, name: string, project_id: number) =>

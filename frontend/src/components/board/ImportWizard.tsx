@@ -1,15 +1,16 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { ArrowLeft, ArrowRight, Check, ClipboardCopy, FileText, ImagePlus, Sparkles, UploadCloud, Users, Wand2 } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, ClipboardCopy, FileText, ImagePlus, UploadCloud, Users, Wand2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { DropZone } from "../../pages/brand/DropZone";
 import { api } from "../../lib/api";
 import { tr, useT } from "../../lib/i18n";
 import { useCharacters } from "../../lib/queries";
-import type { Board, BoardScene, Character, ImportResult } from "../../lib/types";
-import { Alert, Avatar, Badge, Button, Modal, Segmented, Select, Textarea } from "../ui";
-import { ShotListEditor, uid, withKeys } from "./ShotListEditor";
+import type { Board, Character, ImportResult } from "../../lib/types";
+import { importApply } from "../../lib/v3";
+import { Avatar, Button, Modal, Segmented, Select, Textarea } from "../ui";
+import { ImportPreview, ImportSummary, NEW_PICK, type CastPick } from "./ImportPreview";
 
 const EXT = [".docx", ".pdf", ".txt", ".md", ".fountain"];
 
@@ -29,10 +30,35 @@ VISUAL: Mango trees sway in the breeze.
 RAVI (smiling): I can smell it from here!
 MEERA: Then come inside.`;
 
-type Step = "source" | "cast" | "review";
-type Pick = { kind: "existing"; id: number } | { kind: "new" } | { kind: "vo" };
+type Step = "source" | "cast" | "preview";
 
-/** Import a prepared script: read it, map its names to characters, review scene by scene, save as the shot list. */
+/**
+ * The draft and mapping that /import/apply receives. Voice-over picks leave the mapping (so no character is created),
+ * their lines become VO and their names leave the on-screen lists.
+ */
+function prepare(res: ImportResult, picks: Record<string, CastPick>) {
+  const vo = new Set<string>();
+  const mapping: Record<string, number | "new"> = {};
+  for (const c of res.characters) {
+    const p = picks[c.name] ?? NEW_PICK;
+    if (p.kind === "vo") vo.add(c.name);
+    else mapping[c.name] = p.kind === "existing" ? p.id : "new";
+  }
+  const draft = {
+    ...res.draft,
+    scenes: res.draft.scenes.map((sc) => ({
+      ...sc,
+      shots: sc.shots.map((sh) => ({
+        ...sh,
+        characters: sh.characters.filter((n) => !vo.has(n)),
+        lines: sh.lines.map(({ changed: _c, ...l }) => (vo.has(l.speaker) ? { ...l, speaker: "VO" } : l)),
+      })),
+    })),
+  };
+  return { draft, mapping };
+}
+
+/** Import a prepared script: read it, map its names to characters, preview every scene, then apply (shot list + Story script). */
 export function ImportWizard({ open, onClose, eid, projectId, hasShots, onDone }: {
   open: boolean; onClose: () => void; eid: number; projectId: number; hasShots: boolean; onDone: (b: Board) => void;
 }) {
@@ -46,21 +72,17 @@ export function ImportWizard({ open, onClose, eid, projectId, hasShots, onDone }
   const [method, setMethod] = useState<"auto" | "markers" | "ai">("auto");
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState<ImportResult | null>(null);
-  const [picks, setPicks] = useState<Record<string, Pick>>({});
+  const [picks, setPicks] = useState<Record<string, CastPick>>({});
   const [photos, setPhotos] = useState<Record<string, File>>({});
-  const [scenes, setScenes] = useState<BoardScene[]>([]);
-  const [made, setMade] = useState<Character[]>([]);
-  const [mode, setMode] = useState<"replace" | "append">("replace");
+  const [writeScript, setWriteScript] = useState(true);
 
   const pool = useMemo(() => {
     const m = new Map<number, Character>();
-    [...(cast ?? []), ...(library ?? []), ...made].forEach((c) => m.set(c.id, c));
+    [...(cast ?? []), ...(library ?? [])].forEach((c) => m.set(c.id, c));
     return m;
-  }, [cast, library, made]);
+  }, [cast, library]);
 
-  const reset = () => {
-    setStep("source"); setFile(null); setText(""); setRes(null); setPicks({}); setPhotos({}); setScenes([]); setMade([]);
-  };
+  const reset = () => { setStep("source"); setFile(null); setText(""); setRes(null); setPicks({}); setPhotos({}); setWriteScript(true); };
   const close = () => { if (!busy) { reset(); onClose(); } };
 
   const read = async () => {
@@ -73,106 +95,51 @@ export function ImportWizard({ open, onClose, eid, projectId, hasShots, onDone }
       fd.append("method", method);
       const r = await api.post<ImportResult>(`/api/episodes/${eid}/import/parse`, fd);
       setRes(r);
-      const p: Record<string, Pick> = {};
-      r.characters.forEach((c) => { p[c.name] = c.match ? { kind: "existing", id: c.match.id } : { kind: "new" }; });
+      const p: Record<string, CastPick> = {};
+      r.characters.forEach((c) => { p[c.name] = c.match ? { kind: "existing", id: c.match.id } : NEW_PICK; });
       setPicks(p);
-      setStep(r.characters.length ? "cast" : "review");
-      if (!r.characters.length) setScenes(toBoard(r, {}));
+      setStep(r.characters.length ? "cast" : "preview");
     } catch { /* api toasts */ } finally { setBusy(false); }
   };
 
-  const toBoard = (r: ImportResult, ids: Record<string, number | "VO">): BoardScene[] =>
-    withKeys(r.draft.scenes.map((sc) => ({
-      key: uid(), title: sc.title, location: sc.location, time_of_day: sc.time_of_day, summary: sc.summary,
-      shots: sc.shots.map((sh) => ({
-        key: uid(), prompt: sh.prompt, duration_s: [4, 6, 8].includes(sh.duration_s) ? sh.duration_s : 8, extend_to: 0, extend_prompt: "",
-        framing: sh.framing || "", camera: sh.camera || "",
-        characters: sh.characters.map((n) => ids[n]).filter((v): v is number => typeof v === "number"),
-        lines: sh.lines.map((l) => ({ speaker: l.speaker === "VO" ? "VO" as const : (ids[l.speaker] ?? "VO"), text: l.text, emotion: l.emotion, changed: l.changed })),
-      })),
-    })));
-
-  const confirmCast = async () => {
+  const apply = async () => {
     if (!res) return;
     setBusy(true);
     try {
-      const ids: Record<string, number | "VO"> = {};
-      const next = { ...picks };
-      const pending = { ...photos };
-      try {
-        for (const c of res.characters) {
-          const p = next[c.name] ?? { kind: "new" };
-          if (p.kind === "vo") ids[c.name] = "VO";
-          else if (p.kind === "existing") ids[c.name] = p.id;
-          else {
-            const ch = await api.post<Character>("/api/characters", { name: c.name, project_id: projectId });
-            ids[c.name] = ch.id;
-            // from now on it is an existing character: going Back and Next again (or retrying) won't make a second one
-            next[c.name] = { kind: "existing", id: ch.id };
-            setMade((m) => [...m, ch]);
-          }
-          const photo = pending[c.name];
-          const id = ids[c.name];
-          if (photo && typeof id === "number") {
-            await api.upload(`/api/characters/${id}/upload`, photo);
-            delete pending[c.name];  // uploaded once
-          }
-        }
-      } finally {
-        setPicks(next);
-        setPhotos(pending);
+      const { draft, mapping } = prepare(res, picks);
+      const r = await importApply(eid, draft, mapping, true, writeScript);
+      // Photos go to whichever character each name ended up as (matched or just created).
+      for (const [name, photo] of Object.entries(photos)) {
+        const id = r.characters?.[name];
+        if (typeof id === "number") { try { await api.upload(`/api/characters/${id}/upload`, photo); } catch { /* api toasts */ } }
       }
-      qc.invalidateQueries({ queryKey: ["characters"] });
-      setScenes(toBoard(res, ids));
-      setStep("review");
-    } catch { /* api toasts */ } finally { setBusy(false); }
-  };
-
-  const save = async () => {
-    setBusy(true);
-    try {
-      let all = scenes;
-      let version: string | undefined;
-      if (hasShots && mode === "append") {
-        const cur = await api.get<Board>(`/api/episodes/${eid}/board`);
-        all = [...cur.scenes, ...scenes];
-        version = cur.version;
-      }
-      const strip = all.map(({ key: _k, ...sc }) => ({ ...sc, shots: sc.shots.map(({ key: _s, ...sh }) => ({ ...sh, lines: sh.lines.map(({ changed: _c, ...l }) => l) })) }));
-      const b = await api.put<Board>(`/api/episodes/${eid}/board`, { scenes: strip, version });
-      const n = b.scenes.reduce((a, s) => a + s.shots.length, 0);
-      toast.success(tr("Script imported: {s} scenes, {n} shots", { s: b.scenes.length, n }));
-      qc.invalidateQueries({ queryKey: ["episode"] });
-      qc.invalidateQueries({ queryKey: ["project", projectId] });
-      onDone(b);
+      const shots = r.scenes.reduce((a, s) => a + (s.shots?.length ?? 0), 0);
+      toast.success(tr("Script imported: {s} scenes, {n} shots", { s: r.scenes.length, n: shots }),
+        r.created.length ? { description: tr("New characters: {names}", { names: r.created.map((c) => c.name).join(", ") }) } : undefined);
+      for (const key of ["episode", "board", "project", "characters"]) qc.invalidateQueries({ queryKey: [key] });
+      onDone(r as unknown as Board);
       reset();
       onClose();
     } catch { /* api toasts */ } finally { setBusy(false); }
   };
 
-  const castList = useMemo(() => {
-    const ids = new Set<number>();
-    scenes.forEach((s) => s.shots.forEach((h) => { h.characters.forEach((c) => ids.add(c)); h.lines.forEach((l) => typeof l.speaker === "number" && ids.add(l.speaker)); }));
-    (cast ?? []).forEach((c) => ids.add(c.id));
-    return [...ids].map((id) => pool.get(id)).filter((c): c is Character => !!c);
-  }, [scenes, cast, pool]);
-
   const steps: { id: Step; label: string }[] = [
-    { id: "source", label: t("Script") }, { id: "cast", label: t("Characters") }, { id: "review", label: t("Review") },
+    { id: "source", label: t("Script") }, { id: "cast", label: t("Characters") }, { id: "preview", label: t("Preview") },
   ];
   const stepIdx = steps.findIndex((s) => s.id === step);
-  const totals = { scenes: scenes.length, shots: scenes.reduce((a, s) => a + s.shots.length, 0) };
-  const changed = scenes.reduce((a, s) => a + s.shots.reduce((b, h) => b + h.lines.filter((l) => l.changed).length, 0), 0);
+  const shots = res?.draft.scenes.reduce((a, s) => a + s.shots.length, 0) ?? 0;
 
   const footer = (
     <>
-      {step !== "source" && <Button variant="ghost" icon={<ArrowLeft className="size-4" />} disabled={busy} onClick={() => setStep(step === "review" && res?.characters.length ? "cast" : "source")}>{t("Back")}</Button>}
+      {step !== "source" && (
+        <Button variant="ghost" icon={<ArrowLeft className="size-4" />} disabled={busy} onClick={() => setStep(step === "preview" && res?.characters.length ? "cast" : "source")}>{t("Back")}</Button>
+      )}
       <div className="flex-1" />
       {step === "source" && <Button variant="primary" loading={busy} icon={<Wand2 className="size-4" />} onClick={read}>{t("Read script")}</Button>}
-      {step === "cast" && <Button variant="primary" loading={busy} iconRight={<ArrowRight className="size-4" />} onClick={confirmCast}>{t("Next: review scenes")}</Button>}
-      {step === "review" && (
-        <Button variant="primary" loading={busy} icon={<Check className="size-4" />} onClick={save} disabled={!totals.shots}>
-          {t("Create {n} shots", { n: totals.shots })}
+      {step === "cast" && <Button variant="primary" iconRight={<ArrowRight className="size-4" />} onClick={() => setStep("preview")}>{t("Next: preview")}</Button>}
+      {step === "preview" && (
+        <Button variant="primary" loading={busy} icon={<Check className="size-4" />} onClick={apply} disabled={!shots}>
+          {t("Import {n} shots", { n: shots })}
         </Button>
       )}
     </>
@@ -230,11 +197,11 @@ export function ImportWizard({ open, onClose, eid, projectId, hasShots, onDone }
 
       {step === "cast" && res && (
         <div className="space-y-3">
-          <Summary res={res} />
-          <p className="text-sm text-mute">{t("Who is who? Match each name in your script to a character, create a new one (add a photo to set the look), or read it as voice-over.")}</p>
+          <ImportSummary res={res} />
+          <p className="text-sm text-mute">{t("Who is who? Match each name in your script to a character, create a new one (add a photo to set the look), or read it as voice-over. Nothing is saved until you import.")}</p>
           <ul className="divide-y divide-line rounded-xl border border-line">
             {res.characters.map((c) => {
-              const p = picks[c.name] ?? { kind: "new" };
+              const p = picks[c.name] ?? NEW_PICK;
               const value = p.kind === "existing" ? String(p.id) : p.kind;
               const chosen = p.kind === "existing" ? pool.get(p.id) : undefined;
               return (
@@ -244,8 +211,8 @@ export function ImportWizard({ open, onClose, eid, projectId, hasShots, onDone }
                     <p className="text-sm font-semibold">{c.name}</p>
                     <p className="text-2xs text-dim">{c.lines === 1 ? t("1 line") : c.lines ? t("{n} lines", { n: c.lines }) : t("on screen, no lines")}{c.match ? ` · ${t("matched {name}", { name: c.match.name })}` : ""}</p>
                   </div>
-                  <Select value={value} className="!h-8 !w-60 text-xs" aria-label={t("Character for {name}", { name: c.name })}
-                    onChange={(e) => setPicks({ ...picks, [c.name]: e.target.value === "new" ? { kind: "new" } : e.target.value === "vo" ? { kind: "vo" } : { kind: "existing", id: Number(e.target.value) } })}>
+                  <Select value={value} className="h-8! w-60! text-xs" aria-label={t("Character for {name}", { name: c.name })}
+                    onChange={(e) => setPicks({ ...picks, [c.name]: e.target.value === "new" ? NEW_PICK : e.target.value === "vo" ? { kind: "vo" } : { kind: "existing", id: Number(e.target.value) } })}>
                     <option value="new">＋ {t("Create new character")}</option>
                     <option value="vo">🎙 {t("Voice-over (narrator)")}</option>
                     {!!cast?.length && <optgroup label={t("In this project")}>{cast.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</optgroup>}
@@ -266,38 +233,13 @@ export function ImportWizard({ open, onClose, eid, projectId, hasShots, onDone }
               );
             })}
           </ul>
-          <p className="flex items-center gap-1.5 text-2xs text-dim"><Users className="size-3" />{t("New characters are added to this project and the library. Uploaded photos are used as their look reference.")}</p>
+          <p className="flex items-center gap-1.5 text-2xs text-dim"><Users className="size-3" />{t("New characters are added to this project and the library when you import. Uploaded photos become their look reference.")}</p>
         </div>
       )}
 
-      {step === "review" && res && (
-        <div className="space-y-3">
-          <Summary res={res} />
-          {res.warnings.map((w) => <Alert key={w} tone="warn">{w}</Alert>)}
-          <div className="flex flex-wrap items-center gap-3 rounded-xl border border-line bg-raised/40 px-3 py-2 text-xs">
-            <span className="font-medium">{t("{s} scenes · {n} shots", { s: totals.scenes, n: totals.shots })}</span>
-            {changed > 0 && <Badge tone="warn">{t("{n} lines to check", { n: changed })}</Badge>}
-            <div className="flex-1" />
-            {hasShots && (
-              <Segmented size="sm" value={mode} onChange={setMode} aria-label={t("Existing shots")}
-                options={[{ value: "replace", label: t("Replace current shot list") }, { value: "append", label: t("Add after it") }]} />
-            )}
-          </div>
-          <div className="max-h-[55vh] overflow-y-auto pr-1 @container">
-            <ShotListEditor scenes={scenes} onChange={setScenes} cast={castList} codes={false} />
-          </div>
-        </div>
+      {step === "preview" && res && (
+        <ImportPreview res={res} picks={picks} pool={pool} hasShots={hasShots} writeScript={writeScript} onWriteScript={setWriteScript} />
       )}
     </Modal>
-  );
-}
-
-function Summary({ res }: { res: ImportResult }) {
-  const t = useT();
-  return (
-    <div className="flex flex-wrap items-center gap-2 text-xs text-mute">
-      <Badge tone={res.method === "ai" ? "accent" : "ok"}>{res.method === "ai" ? <><Sparkles className="size-3" />{t("Arranged by AI")}</> : <><Check className="size-3" />{t("Read from your layout")}</>}</Badge>
-      <span>{res.source}</span>·<span>{t("{s} scenes, {n} shots, {l} lines", { s: res.stats.scenes, n: res.stats.shots, l: res.stats.lines })}</span>
-    </div>
   );
 }

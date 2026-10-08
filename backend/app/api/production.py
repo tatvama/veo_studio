@@ -147,8 +147,11 @@ def patch_season(sid: int, body: SeasonPatch, user: User = Depends(require("crea
 # ── @mentions ────────────────────────────────────────────────────────────────
 
 @router.get("/projects/{pid}/mentions")
-def mention_candidates(pid: int, q: str = "", user: User = Depends(current_user), db: Session = Depends(get_db)):
-    return mentions.candidates(db, get_or_404(db, Project, pid), q)
+def mention_candidates(pid: int, q: str = "", kind: str | None = None, limit: int = 12, user: User = Depends(current_user),
+                       db: Session = Depends(get_db)):
+    if kind is not None and kind not in mentions.KINDS:
+        raise HTTPException(400, "kind must be character, location or prop")
+    return mentions.candidates(db, get_or_404(db, Project, pid), q, max(1, min(limit, 50)), kind)
 
 
 class ResolveIn(BaseModel):

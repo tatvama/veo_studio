@@ -114,8 +114,9 @@ def _match_name(name: str, rows: list[Any]) -> Any | None:
     return None
 
 
-def candidates(db: Session, project: Project | None, q: str = "", limit: int = 12) -> list[dict]:
-    """Autocomplete list for the editor: the project's cast, locations and props first, then the shared library."""
+def candidates(db: Session, project: Project | None, q: str = "", limit: int = 12, kind: str | None = None) -> list[dict]:
+    """Autocomplete list for the editor: the project's cast, locations and props first, then the shared library.
+    `kind` narrows to one entity kind (the speaker field only wants characters)."""
     from . import studio
     q = _norm(q)
     out: list[dict] = []
@@ -134,12 +135,14 @@ def candidates(db: Session, project: Project | None, q: str = "", limit: int = 1
         pp = {r.prop_id for r in db.query(ProjectProp).filter(ProjectProp.project_id == project.id).all()}
         props = [p for p in db.query(Prop).filter(Prop.archived.is_(False)).all() if p.id in pp]
         props += [p for p in db.query(Prop).filter(Prop.shared.is_(True), Prop.archived.is_(False)).all() if p.id not in pp]
-    for kind, rows in (("character", chars), ("location", locs), ("prop", props)):
+    for kind_, rows in (("character", chars), ("location", locs), ("prop", props)):
+        if kind and kind_ != kind:
+            continue
         for r in rows:
             if q and q not in _norm(r.name):
                 continue
-            out.append({"kind": kind, "id": r.id, "name": r.name, "token": token(kind, r.id, r.name),
-                        "in_project": bool(project) and (r in cast if kind == "character" else True)})
+            out.append({"kind": kind_, "id": r.id, "name": r.name, "token": token(kind_, r.id, r.name),
+                        "in_project": bool(project) and (r in cast if kind_ == "character" else True)})
     return out[:limit] if q else out[: limit * 3]
 
 
