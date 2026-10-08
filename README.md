@@ -94,7 +94,12 @@ The voice samples in `listen/` have code names, so the team can do a **blind lis
 | Timeline | Timeline tab | Zoom, snap, J/K/L shuttle, waveforms for dialogue, music and SFX, **Auto SFX**, title and lower-third track, caption preview, music volume and ducking |
 | Export | Export tab | **Animatic** (free preview), **Render** (Shorts / Reels / YouTube / Square, karaoke or clean captions, auto-reframe, brand-kit end card), **Dub**, **Cut into shorts**, **Marketing pack** (titles, descriptions, hashtags and thumbnails per platform and language), **Publish to YouTube** (or schedule it), **Client link** |
 | Review | Review tab | Frame-accurate player, timecoded comments, draw on the frame, A/B **wipe compare** between renders, approve the final. Clients get a link that works without an account, on phone or desktop |
-| Director | Right panel (`Ctrl+J`) | Ask in plain words, e.g. *"dub into Telugu"*, *"Ravi wears his wedding outfit in this episode"*, *"cut this into 3 shorts"*. In Co-pilot mode it proposes the work with a price and you click **Approve** |
+| Director | Right panel (`Ctrl+J`) | Ask in plain words, e.g. *"dub into Telugu"*, *"Ravi wears his wedding outfit in this episode"*, *"cut this into 3 shorts"*, *"freeze Ravi's look for episodes 1-3"*, *"what is stale?"*. In Co-pilot mode it proposes the work with a price and you click **Approve** |
+| World | World tab | **Props** (reusable objects with a reference image, mentioned in scripts with `@`), the **wardrobe timeline** (who wears what in every scene, continuity breaks flagged) and the **Continuity Bible** (the state at the end of every scene, written by AI and corrected by hand, carried into the next scene's prompts) |
+| Dashboard | Dashboard tab | Shots by status, approved vs planned seconds, spend by provider, **cost per approved second**, **change impact** (everything stale after an edit, with a one-click regenerate), seasons |
+| Ads & Reels | Ads & Reels tab | One brief into every language x aspect variant with **locked brand facts**; reels cut from highlights of what you already made |
+
+**v3 (Tatvam):** `@mentions` in the script editor (characters, places, props stored by id), an import wizard that previews visuals and dialogue before anything is saved, Film Map **shot-to-shot links** (last frame or extension) and **next shot**, the **Character Lock** (face, body, voice, costume, gestures, strictness), **character versions** per episode range, **costumes** with 3-angle turnarounds, the **back view** and **lighting variants** in the reference pack, the **Google dialogue route** (Veo speaks each line itself in the languages you allow; dubbing regenerates per language; QC checks the words spoken), **change impact** (edits mark takes stale instead of deleting anything), and a professional timeline (right-click AI actions, roll trims, speed, keyframe animation on layers). Design notes: [docs/V3.md](docs/V3.md); the plan: [TATVAM_PLAN.md](TATVAM_PLAN.md).
 
 **Anywhere:** `Ctrl+K` opens the command palette (pages, projects, actions, theme, language, search). `?` lists every shortcut. **Search everything** finds shots, takes, scenes, characters and renders by what's in them ("Ravi near the lamp at night").
 
@@ -196,16 +201,20 @@ backend/app/
   config.py          .env settings          catalog.py   model IDs, prices, languages, voices, presets
   models.py          database tables        settings_store.py  team settings + encrypted API keys
   api/               REST: auth, admin, projects, bible, shots, generate, work (jobs, approvals, comments, agent, ws, media),
+                     production (dashboards, impact, seasons, mentions, continuity bible, lock, versions, costumes, props), campaign,
                      hub (Model Hub), room (writers' room), growth (brand kits, search, consents, audit, YouTube, review links, prefs)
   core/              studio.py (writing room), generation.py (job specs + estimates), model_hub.py (catalog, policy, pricing),
+                     mentions.py (@tokens), dependencies.py (change impact), lock.py (Character Lock), continuity.py (bible,
+                     wardrobe), dashboard.py, campaign.py,
                      budget.py, jobs.py, youtube.py, audit.py
   agents/            director.py (agent loop), tools.py, prompts.py, schemas.py
   providers/         gemini.py, fal.py, schema_map.py (OpenAPI → capabilities → arguments), elevenlabs.py, syncso.py, sarvam.py,
                      mock.py, services.py (one run_model() for every engine)
   pipeline/          prompting.py, voice.py, captions.py (karaoke ASS), assembler.py (reframe, SFX, end card), ffmpeg.py, faces.py
-  workers/           worker.py (DB job queue), handlers.py, handlers_hub.py, handlers_room.py, handlers_growth.py, run.py
+  workers/           worker.py (DB job queue), handlers.py, handlers_hub.py, handlers_room.py, handlers_growth.py, handlers_campaign.py, run.py
 frontend/src/
   pages/             Home, Login, Library, SearchPage, BrandKits, PublicReview, models/ (Model Hub), admin/*,
+                     project/Dashboard, World, Campaign (v3),
                      project/* (Brief, Story, Scenes, Bible, Storyboard, ShotDrawer, Timeline, Export, Review, Activity)
   components/        shell/ (palette, tour, theme, user menu), hub/, room/, review/, growth/, Generate (cost dialog), ui
   lib/               api, queries, types, live (WebSocket), i18n.ts + i18n/{hi,kn,te,ta}.ts
