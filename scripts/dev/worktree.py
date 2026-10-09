@@ -183,9 +183,14 @@ def cmd_clean(a: argparse.Namespace) -> None:
         print(f"remove  branch   {b:31} ({why})")
     if not remove_wt and not remove_br:
         return
-    if not a.yes and input("Remove these? [y/N] ").strip().lower() not in ("y", "yes"):
-        print("Nothing removed.")
-        return
+    if not a.yes:
+        try:
+            answer = input("Remove these? [y/N] ")
+        except EOFError:  # no terminal to answer: never remove without a yes
+            answer = ""
+        if answer.strip().lower() not in ("y", "yes"):
+            print("Nothing removed.")
+            return
     for w, _ in remove_wt:
         git("worktree", "remove", str(w["path"]), cwd=root)
         git("branch", "-D", w["branch_name"], cwd=root, check=False)
@@ -212,4 +217,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    if sys.stdout.encoding and sys.stdout.encoding.lower() not in ("utf-8", "utf8"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     main()
