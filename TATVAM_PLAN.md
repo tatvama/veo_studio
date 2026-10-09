@@ -229,6 +229,7 @@ All seven gateway requirements exist in the Model Hub: dynamic registry, capabil
 - Capability flags for **speech-in-video**, **audio-driven**, **LoRA input** and **lip-sync-to-audio**, plus a **language quality score** per model from our own tests.
 - Fallback across providers asks for approval when the next engine is more expensive than the limit.
 - A Replicate adapter beside fal.ai, using the same schema mapper.
+- **Done (Oct 2026):** OpenRouter (video catalog with live prices, optional text route) and BytePlus ModelArk (Seedance 2.0 / 2.5 / 2.5 Premium, Seedream 5.0 Pro) as providers. Engines that run the same model share a route key, and the router tries the cheapest live route first, then the others. AI characters are registered in the BytePlus asset library so Seedance takes them as trusted references instead of blocking them as real people.
 
 ---
 
@@ -390,6 +391,22 @@ New items only, grouped by where they sit. The web studio owns all of them unles
 | **9. Desktop finishing room** | 18 to 26 | Tauri shell, local project folder, SQLite mirror, sync with checkout locks, proxies, upscale step, hardware-encoded 4K export with presets, then the GPU render engine with shader transitions, keyframes, masks, chroma key, colour tools, Indic-shaped titles, ducking and mixer, pop-out monitors, workspace presets, installer and auto-update (section 16) | The 3-minute short is finished on the desktop in 4K with shader transitions, uploaded, reviewed and approved on a phone, and reopened on the web with every version intact |
 
 Estimates assume 2 to 3 engineers plus the existing code. Phase 9 starts after Phase 5 and its render engine is one strong developer for three to five months; it must not be squeezed into Phase 5. The acceptance test for Phases 2 to 5 is the **3-minute short**: story, two recurring characters, one location, storyboard, generated shots with saved references, continuity kept, edited in the timeline, dialogue synced, a horizontal master, a vertical reel, and the project reopened on another machine with every version intact.
+
+### 19.1 Next up (immediate)
+
+Short items to add before the next phase, in this order. Each one builds on what shipped in October 2026 (Poster Studio, single-port server, health checks, OpenRouter and BytePlus providers, cheapest-route routing).
+
+| # | Item | What to build | Done when |
+| --- | --- | --- | --- |
+| 1 | **Live keys check for the new providers** | Add the OpenRouter key and the BytePlus API key and access key + secret. Make one clip each way (first frame, reference images), register one character, and compare the cost ledger with the providers' bills. Confirm OpenRouter's reference-image field and data-URI support, and the Seedance 2.5 Premium price | Real clips from both providers, costs within 5% of the bills |
+| 2 | **Deploy to Coolify** | Use `connect_timeout` instead of `timeout` for psycopg, pick the database (shared Postgres or a fresh one), add the new provider keys to the compose environment, and check the health probes | `/api/health/ready` is green on Coolify and a job runs end to end |
+| 3 | **Blocked-shot recovery** | A "Retry with another engine" button on a take blocked by a safety filter, and an opt-in setting "On a safety block, try another model" that works even with Google first. Show the price of the next engine before it runs | A character shot blocked by Veo finishes on Seedance with the registered character in one click |
+| 4 | **Seedance-ready characters** | Optional auto-registration with BytePlus when a character sheet is approved or locked. A "Seedance-ready" badge on cast cards and in the shot model picker. Re-check asset status, and remove entries from the library on request | Every locked AI character is ready for Seedance without a manual step |
+| 5 | **More from Seedance** | Audio-driven dialogue (reference audio, for the dialogue chain), extending a clip from a reference video, and 480p draft previews before the final render | A dialogue shot can run on Seedance from the recorded voice |
+| 6 | **OpenRouter images** | Image models through OpenRouter (Nano Banana, Seedream) as extra routes in the image chain | Keyframes still generate when Google's image quota is used up |
+| 7 | **One card per model in the Model Hub** | A grouped catalog view (each model once, with its routes), editing the route key in the model page, and switching single routes on or off | Seedance shows as one card with three routes |
+| 8 | **Spend safety across providers** | Read OpenRouter credit and BytePlus balance, skip a provider with no credit, ask for approval when the fallback route costs more than the limit, and leave the asset-library key out of the "providers live" count | No job fails for lack of credit when another route can do it |
+| 9 | **Phase 0 on real keys** | Still waiting for Veo billing: run the language matrix and confirm LoRA training | Per-language decision recorded |
 
 ---
 
