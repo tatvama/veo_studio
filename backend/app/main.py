@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import mimetypes
 import time
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -21,8 +21,8 @@ mimetypes.add_type("image/svg+xml", ".svg")
 mimetypes.add_type("image/webp", ".webp")
 mimetypes.add_type("video/mp4", ".mp4")
 
-from .api import (admin, auth, bible, board, campaign, designs, fx, generate, growth, hub, layers, production, projects, rates,
-                  room, shots,
+from .api import (admin, auth, bible, board, campaign, designs, fx, generate, growth, hub, layers, mcp_access, production,
+                  projects, rates, room, shots,
                   work)
 from .config import ROOT, get_settings
 from .db import Base, engine
@@ -42,7 +42,11 @@ async def lifespan(app: FastAPI):
     if settings.run_worker_in_process:
         from .workers.worker import start_worker
         start_worker()
-    yield
+    async with AsyncExitStack() as stack:
+        if settings.mcp_enabled:
+            from .mcp_server.server import session_manager
+            await stack.enter_async_context(session_manager().run())
+        yield
     if settings.run_worker_in_process:
         from .workers.worker import stop_worker
         stop_worker()
@@ -55,8 +59,12 @@ app.add_middleware(RetryReads)  # re-run a GET once if a dropped database connec
 
 for r in (auth.router, admin.router, projects.router, bible.router, shots.router, generate.router, work.router, hub.router,
           room.router, growth.router, board.router, fx.router, layers.router, production.router, campaign.router, rates.router,
-          designs.router):
+          designs.router, mcp_access.router):
     app.include_router(r)
+
+if settings.mcp_enabled:  # /mcp and the OAuth endpoints for MCP clients (app/mcp_server), before the web app catch-all
+    from .mcp_server.server import routes as mcp_routes
+    app.router.routes.extend(mcp_routes())
 
 
 @app.exception_handler(ProviderError)

@@ -342,9 +342,12 @@ def _media_role(db: Session, token: str | None) -> str | None:
 @router.get("/media/{path:path}")
 def media(path: str, request: Request, db: Session = Depends(get_db)):
     role = _media_role(db, request.cookies.get(COOKIE))
+    private = path.replace("\\", "/").lstrip("/").startswith("consents/")
+    if not role and not private:
+        from ..mcp_server.media import check_link
+        role = "viewer" if check_link(path, request.query_params.get("sig")) else None  # a signed link from the MCP server
     if not role:
         raise HTTPException(401, "Please log in")
-    private = path.replace("\\", "/").lstrip("/").startswith("consents/")
     if private and role_rank(role) < role_rank("producer"):  # signed releases hold personal data
         raise HTTPException(403, "Only a producer can open consent releases")
     st = get_storage()

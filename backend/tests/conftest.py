@@ -17,6 +17,7 @@ os.environ.update({
     "APP_SECRET": "test-secret",
     "RUN_WORKER_IN_PROCESS": "true",
     "WORKER_CONCURRENCY": "4",
+    "MCP_ALLOWED_HOSTS": "testserver",  # the MCP endpoint checks the Host header; TestClient sends this one
 })
 
 import pytest  # noqa: E402
