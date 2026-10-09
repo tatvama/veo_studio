@@ -1,17 +1,16 @@
 import { LogoMark } from "../components/shell/Brand";
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import {
-  CircleAlert, Eye, EyeOff, Languages, LockKeyhole, Monitor, Moon, ShieldCheck, Sun, Wand2, Link2, ArrowRight, TriangleAlert,
-} from "lucide-react";
+import { ArrowRight, CircleAlert, Eye, EyeOff, Languages, LockKeyhole, Monitor, Moon, Sun, TriangleAlert } from "lucide-react";
 import { AnimatePresence, motion, useAnimate } from "motion/react";
-import { Fragment, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
+import { useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
 import { usePrefActions } from "../components/shell/prefs";
 import { nextTheme, useThemePref } from "../components/shell/theme";
-import { Button, IconButton, Input, Meter, Panel, rise } from "../components/ui";
+import { Button, IconButton, Input, Meter, rise } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { UI_LANGUAGES, useT, useUiLanguage } from "../lib/i18n";
 import { useAuthStatus } from "../lib/queries";
+import { EngineMarquee, Reel, Stage, useShowreel } from "./login/Cinema";
 
 type Field = "name" | "email" | "password";
 type Errors = Partial<Record<Field, string>>;
@@ -49,7 +48,7 @@ function GoogleMark() {
   );
 }
 
-function Brand({ className, compact }: { className?: string; compact?: boolean }) {
+function Brand({ className }: { className?: string }) {
   const t = useT();
   return (
     <div className={clsx("flex items-center gap-3", className)}>
@@ -57,12 +56,12 @@ function Brand({ className, compact }: { className?: string; compact?: boolean }
         initial={{ rotate: -30, scale: 0.6, opacity: 0 }}
         animate={{ rotate: 0, scale: 1, opacity: 1 }}
         transition={{ type: "spring", stiffness: 260, damping: 16, delay: 0.1 }}
-        className="grid size-11 shrink-0 place-items-center"
+        className="grid size-10 shrink-0 place-items-center"
       >
-        <LogoMark size={44} />
+        <LogoMark size={40} />
       </motion.span>
       {/* the wordmark drops away below 360px so the language and theme switchers always fit */}
-      <span className={clsx("leading-none", compact && "max-[359px]:hidden")}>
+      <span className="leading-none max-[359px]:hidden">
         <span className="text-gradient block text-lg font-semibold tracking-[0.22em]">TATVAM</span>
         <span className="eyebrow mt-1.5 block tracking-[0.32em]">{t("AI STUDIO")}</span>
       </span>
@@ -89,67 +88,31 @@ function StatusRow({ setupNeeded, googleEnabled, className }: { setupNeeded: boo
       <li className="flex items-center gap-1.5 text-mute">
         <span aria-hidden>◆</span>{setupNeeded ? t("Setup pending") : googleEnabled ? t("Email or Google") : t("Email sign-in")}
       </li>
-      <li className="ml-auto hidden sm:block">TATVAM · v3</li>
     </ul>
   );
 }
 
-/** Left-hand "access terminal": what the studio does, laid out as labelled rows, then a status footer. Wide screens only. */
-function Showcase({ setupNeeded, googleEnabled }: { setupNeeded: boolean; googleEnabled: boolean }) {
+/** Left side on wide screens: the pitch in one line, the five languages, and the showreel caption with its frame picker. */
+function Hero({ reel }: { reel: ReturnType<typeof useShowreel> }) {
   const t = useT();
-  const steps = [t("Concept"), t("Hook"), t("Script"), t("Scenes"), t("Shots"), t("Video")];
-  const rows: { icon: ReactNode; k: string; text: string; ai?: boolean }[] = [
-    { icon: <Wand2 className="size-3.5" />, k: t("Director"), text: t("The Director writes the hooks, script, cast and shots — you approve."), ai: true },
-    { icon: <ShieldCheck className="size-3.5" />, k: t("Budget"), text: t("Every cost is shown and approved before it is spent.") },
-    { icon: <Link2 className="size-3.5" />, k: t("Review"), text: t("Share review links with clients — no account needed.") },
-  ];
   return (
     <section className="hidden lg:block">
-      <div {...rise(0)} className={rise(0).className}><Brand /></div>
-      <p {...rise(1)} className={clsx("eyebrow mt-10 flex items-center gap-2 !text-accent-ink", rise(1).className)}>
-        <span aria-hidden className="live-dot" />{t("Access terminal")}
+      <p {...rise(0)} className={clsx("lg-glass inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs text-mute", rise(0).className)}>
+        <span aria-hidden className="live-dot" />{t("AI film studio · made in India")}
       </p>
-      <h2 {...rise(2)} className={clsx("mt-3 max-w-lg text-balance text-4xl font-semibold leading-[1.1] tracking-tight", rise(2).className)}>
-        {t("From one idea to a finished video.")}{" "}
-        <span className="text-gradient">{t("In five languages.")}</span>
+      <h2 {...rise(1)} className={clsx("lg-headline mt-6 max-w-2xl text-balance", rise(1).className)}>
+        {t("Every story,")}<br /><span className="text-gradient">{t("made cinematic.")}</span>
       </h2>
-
-      <Panel index={3} flush eyebrow={t("What you get")} className="mt-8 max-w-xl bg-panel/80 backdrop-blur" bodyClassName="pt-3">
-        <dl className="grid grid-cols-[max-content_minmax(0,1fr)] border-t border-line">
-          {rows.map((r) => (
-            <div key={r.k} className="col-span-2 grid grid-cols-subgrid items-baseline gap-x-5 border-b border-line px-4 py-3">
-              <dt className={clsx("eyebrow flex items-center gap-1.5", r.ai && "!text-ai")}>{r.icon}{r.k}</dt>
-              <dd className="text-sm leading-relaxed text-mute">{r.text}</dd>
-            </div>
-          ))}
-          <div className="col-span-2 grid grid-cols-subgrid items-baseline gap-x-5 border-b border-line px-4 py-3">
-            <dt className="eyebrow">{t("How it works")}</dt>
-            <dd>
-              <ol aria-label={t("How it works")} className="flex flex-wrap items-center gap-y-1.5">
-                {steps.map((s, i) => (
-                  <Fragment key={s}>
-                    <li className="mono rounded-md border border-line bg-raised/60 px-2 py-1 text-2xs"><span className="text-dim">{String(i + 1).padStart(2, "0")}</span> {s}</li>
-                    {i < steps.length - 1 && <ArrowRight aria-hidden className="mx-1 size-3 text-dim" />}
-                  </Fragment>
-                ))}
-              </ol>
-            </dd>
-          </div>
-          <div className="col-span-2 grid grid-cols-subgrid items-baseline gap-x-5 px-4 py-3">
-            <dt className="eyebrow">{t("Languages")}</dt>
-            <dd className="flex flex-wrap gap-1.5">
-              {Object.entries(UI_LANGUAGES).map(([code, label]) => (
-                <span key={code} lang={code} className="inline-flex items-center gap-1.5 rounded-md border border-line bg-raised/60 px-2 py-1 text-xs text-mute">
-                  <span className="mono text-2xs uppercase text-dim">{code}</span>{label}
-                </span>
-              ))}
-            </dd>
-          </div>
-        </dl>
-      </Panel>
-
-      <div {...rise(4)} className={clsx("mt-5 max-w-xl", rise(4).className)}>
-        <StatusRow setupNeeded={setupNeeded} googleEnabled={googleEnabled} />
+      <p {...rise(2)} className={clsx("mt-5 max-w-xl text-base leading-relaxed text-mute", rise(2).className)}>
+        {t("Write it, cast it, shoot it. Your AI crew handles hooks, scripts, characters, shots, voices and lip-sync, and you approve every step and every rupee.")}
+      </p>
+      <ul {...rise(3)} aria-label={t("Languages")} className={clsx("mt-5 flex flex-wrap gap-2", rise(3).className)}>
+        {Object.entries(UI_LANGUAGES).map(([code, label]) => (
+          <li key={code} lang={code} className="lg-glass rounded-full px-3 py-1 text-xs text-ink">{label}</li>
+        ))}
+      </ul>
+      <div {...rise(4)} className={clsx("mt-10 max-w-xl", rise(4).className)}>
+        <Reel index={reel.index} paused={reel.paused} onPick={reel.go} onHold={reel.setHold} />
       </div>
     </section>
   );
@@ -186,6 +149,7 @@ export default function Login({ setupNeeded, googleEnabled }: { setupNeeded: boo
   const uiLang = useUiLanguage();
   const theme = useThemePref();
   const online = useOnline();
+  const reel = useShowreel();
   // Signed out: choices apply now and are saved to the account right after sign-in.
   const prefs = usePrefActions(false);
   const [email, setEmail] = useState("");
@@ -248,32 +212,26 @@ export default function Login({ setupNeeded, googleEnabled }: { setupNeeded: boo
   const str = strength(password);
   const strengthLabels = [t("Too short"), t("Weak"), t("Okay"), t("Good"), t("Strong")];
   // 16px on phones keeps iOS from zooming into the field on focus
-  const fieldCls = (f: Field) => clsx("h-11 max-sm:text-base!", errors[f] && "border-bad/60! focus:border-bad! focus:ring-bad/20!");
+  const fieldCls = (f: Field) => clsx("h-11 bg-panel/60 max-sm:text-base!", errors[f] && "border-bad/60! focus:border-bad! focus:ring-bad/20!");
+  const glassBtn = "lg-glass flex h-10 items-center gap-1.5 rounded-full text-xs text-mute transition-colors hover:text-ink sm:h-9";
 
   return (
-    // .login-bg's blurred glow overflows its box; `clip` (unlike `hidden`) can't be scrolled by focus, which would shift the page sideways.
-    <div className="login-bg flex min-h-full flex-col" style={{ overflow: "clip" }}>
-      <header className="relative z-10 flex items-center justify-between gap-3 px-4 py-3 sm:px-6 sm:py-4">
-        <Brand compact className="lg:invisible" />
+    // `clip` (unlike `hidden`) can't be scrolled by focus, which would shift the page sideways.
+    <div className="relative flex min-h-full flex-col" style={{ overflow: "clip" }}>
+      <Stage index={reel.index} />
+
+      <header className="relative z-10 flex items-center justify-between gap-3 px-4 py-3 sm:px-8 sm:py-5">
+        <Brand />
         <div className="flex items-center gap-2">
-          <label className="flex h-10 items-center gap-1.5 rounded-lg border border-line bg-panel/80 pl-2.5 text-xs text-mute backdrop-blur transition-colors focus-within:border-accent/60 hover:text-ink sm:h-9">
+          <label className={clsx(glassBtn, "pl-3 pr-1 focus-within:border-accent/60")}>
             <Languages className="size-4 shrink-0" />
             <span className="sr-only">{t("Interface language")}</span>
-            <select
-              value={uiLang}
-              onChange={(e) => prefs.setLanguage(e.target.value)}
-              className="h-full max-w-[9rem] cursor-pointer bg-transparent text-xs text-ink outline-none"
-            >
+            <select value={uiLang} onChange={(e) => prefs.setLanguage(e.target.value)} className="h-full max-w-[9rem] cursor-pointer bg-transparent pr-2 text-xs text-ink outline-none">
               {Object.entries(UI_LANGUAGES).map(([code, label]) => <option key={code} value={code} lang={code}>{label}</option>)}
             </select>
           </label>
-          <button
-            type="button"
-            onClick={() => prefs.setTheme(nextTheme(theme))}
-            title={t("Theme: {name}", { name: themeLabel })}
-            aria-label={t("Theme: {name}", { name: themeLabel })}
-            className="flex h-10 items-center gap-1.5 rounded-lg border border-line bg-panel/80 px-2.5 text-xs text-mute backdrop-blur transition-colors hover:text-ink active:scale-95 sm:h-9"
-          >
+          <button type="button" onClick={() => prefs.setTheme(nextTheme(theme))} title={t("Theme: {name}", { name: themeLabel })} aria-label={t("Theme: {name}", { name: themeLabel })}
+            className={clsx(glassBtn, "px-3 active:scale-95")}>
             <motion.span key={theme} initial={{ rotate: -40, opacity: 0 }} animate={{ rotate: 0, opacity: 1 }} transition={{ duration: 0.2 }}>
               <ThemeIcon className="size-4" />
             </motion.span>
@@ -282,32 +240,29 @@ export default function Login({ setupNeeded, googleEnabled }: { setupNeeded: boo
         </div>
       </header>
 
-      <main className="relative z-10 flex flex-1 items-center justify-center px-4 pb-8 pt-2 sm:px-6">
-        <div className="grid w-full max-w-5xl items-center gap-12 lg:grid-cols-[minmax(0,1fr)_26rem] lg:gap-14 xl:gap-20">
-          <Showcase setupNeeded={setupNeeded} googleEnabled={googleEnabled} />
+      <main className="relative z-10 flex flex-1 items-center px-4 pb-6 pt-2 sm:px-8">
+        <div className="mx-auto grid w-full max-w-[84rem] items-center gap-10 lg:grid-cols-[minmax(0,1fr)_27rem] lg:gap-16 xl:gap-24">
+          <Hero reel={reel} />
 
-          <motion.div
-            initial={{ opacity: 0, y: 16, scale: 0.98 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-            className="mx-auto w-full max-w-[26rem]"
-          >
-            <div ref={card}>
-              <Panel
-                tone="accent"
-                eyebrow={setupNeeded ? t("First-time setup") : t("Sign in")}
-                icon={<LockKeyhole />}
-                actions={<span className="eyebrow flex items-center gap-1.5"><span aria-hidden className={clsx("live-dot", !online && "is-bad")} />{online ? t("Online") : t("Offline")}</span>}
-                className="bg-panel/90 shadow-modal backdrop-blur-xl"
-                bodyClassName="p-5 sm:p-6"
-              >
+          <div className="mx-auto w-full max-w-[27rem]">
+            {/* phones and tablets: the pitch in two lines above the card */}
+            <h2 className="lg-headline mb-6 text-balance text-center !text-[2.1rem] sm:!text-[2.6rem] lg:hidden">
+              {t("Every story,")} <span className="text-gradient">{t("made cinematic.")}</span>
+            </h2>
+
+            <motion.div initial={{ opacity: 0, y: 18, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}>
+              <div ref={card} className="lg-card p-6 sm:p-7">
+                <div className="mb-5 flex items-center justify-between gap-3">
+                  <span className="eyebrow flex items-center gap-2 !text-accent-ink"><LockKeyhole className="size-3.5" />{setupNeeded ? t("First-time setup") : t("Sign in")}</span>
+                  <span className="eyebrow flex items-center gap-1.5"><span aria-hidden className={clsx("live-dot", !online && "is-bad")} />{online ? t("Online") : t("Offline")}</span>
+                </div>
                 <form onSubmit={submit} noValidate className="space-y-4">
                   <div {...rise(0)} className={rise(0).className}>
-                    <h1 className="text-balance text-2xl font-semibold tracking-tight">
+                    <h1 className="text-balance text-[1.75rem] font-semibold leading-tight tracking-tight">
                       {setupNeeded ? t("Set up your studio") : t("Welcome back")}
                     </h1>
-                    <p className="mt-1 text-sm text-mute">
-                      {setupNeeded ? t("First-time setup — create the admin account") : t("Sign in to your studio")}
+                    <p className="mt-1.5 text-sm text-mute">
+                      {setupNeeded ? t("First-time setup — create the admin account") : t("Sign in to pick up where your crew left off.")}
                     </p>
                     {setupNeeded && (
                       <p className="mt-3 flex items-start gap-2 rounded-lg border border-line bg-raised/60 px-3 py-2 text-xs leading-relaxed text-mute">
@@ -320,7 +275,7 @@ export default function Login({ setupNeeded, googleEnabled }: { setupNeeded: boo
                   {setupNeeded && (
                     <div {...rise(1)} className={rise(1).className}>
                       <FieldRow id="login-name" label={t("Your name")} optional>
-                        <Input id="login-name" ref={refs.name} className="h-11 max-sm:text-base!" value={name} onChange={(e) => setName(e.target.value)}
+                        <Input id="login-name" ref={refs.name} className="h-11 bg-panel/60 max-sm:text-base!" value={name} onChange={(e) => setName(e.target.value)}
                           autoComplete="name" autoFocus={!touch} placeholder={t("e.g. Asha Rao")} />
                       </FieldRow>
                     </div>
@@ -382,8 +337,8 @@ export default function Login({ setupNeeded, googleEnabled }: { setupNeeded: boo
                     )}
                   </AnimatePresence>
 
-                  <div {...rise(4)} className={clsx("space-y-4", rise(4).className)}>
-                    <Button type="submit" variant="primary" size="lg" block loading={busy} className="h-11" iconRight={<ArrowRight className="size-4" />}>
+                  <div {...rise(4)} className={clsx("space-y-4 pt-1", rise(4).className)}>
+                    <Button type="submit" variant="primary" size="lg" block loading={busy} className="lg-sheen h-12 rounded-xl text-[0.95rem]" iconRight={<ArrowRight className="size-4" />}>
                       {setupNeeded ? t("Create admin & start") : t("Sign in")}
                     </Button>
 
@@ -393,7 +348,7 @@ export default function Login({ setupNeeded, googleEnabled }: { setupNeeded: boo
                           <span className="h-px flex-1 bg-line" />{t("or")}<span className="h-px flex-1 bg-line" />
                         </div>
                         <a href="/api/auth/google/start"
-                          className="flex h-11 w-full items-center justify-center gap-2.5 rounded-lg border border-line bg-panel text-sm font-medium transition-[background-color,border-color,transform] hover:border-dim/50 hover:bg-hover active:scale-[0.98]">
+                          className="lg-glass flex h-12 w-full items-center justify-center gap-2.5 rounded-xl text-sm font-medium transition-[background-color,border-color,transform] hover:border-dim/50 hover:bg-hover active:scale-[0.98]">
                           <GoogleMark />{t("Continue with Google")}
                         </a>
                       </>
@@ -404,16 +359,17 @@ export default function Login({ setupNeeded, googleEnabled }: { setupNeeded: boo
                     )}
                   </div>
                 </form>
-              </Panel>
-            </div>
+              </div>
+            </motion.div>
 
-            <p className="mt-5 text-balance text-center text-xs leading-relaxed text-dim lg:hidden">
-              {t("Concept → hook → script → scenes → shots → video, in English, Hindi, Kannada, Telugu and Tamil.")}
-            </p>
-            <StatusRow setupNeeded={setupNeeded} googleEnabled={googleEnabled} className="mt-4 justify-center lg:hidden" />
-          </motion.div>
+            <StatusRow setupNeeded={setupNeeded} googleEnabled={googleEnabled} className="mt-4 justify-center" />
+          </div>
         </div>
       </main>
+
+      <footer className="relative z-10 px-4 pb-5 sm:px-8">
+        <div className="mx-auto max-w-[84rem]"><EngineMarquee /></div>
+      </footer>
     </div>
   );
 }
