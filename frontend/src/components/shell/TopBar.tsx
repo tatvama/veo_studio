@@ -8,7 +8,7 @@ import type { UserBrief } from "../../lib/types";
 import { Kbd } from "../ui";
 import { Brand } from "./Brand";
 import { MOD } from "./keys";
-import { getNav, getProjectTabs } from "./nav";
+import { getNav, getProjectSteps, getProjectTabs } from "./nav";
 import { RateChip } from "./money";
 import { JobsPill, NotificationsButton, ProviderDots, SpendPill } from "./telemetry";
 import { ThemeButton } from "./ThemeButton";
@@ -16,7 +16,7 @@ import { UserMenu } from "./UserMenu";
 
 interface Crumb { label: string; to?: string }
 
-/** Where you are: Studio / Project / Section. Collapses to the last two on small screens. */
+/** Where you are: Studio / Project / Step / Page. Collapses to the last two on small screens. */
 function useCrumbs(role: UserBrief["role"]): Crumb[] {
   const t = useT();
   const { pathname } = useLocation();
@@ -26,9 +26,9 @@ function useCrumbs(role: UserBrief["role"]): Crumb[] {
   return useMemo(() => {
     const home = { label: t("Command center"), to: "/" };
     if (pm) {
-      const tab = pathname.split("/")[3];
-      const label = getProjectTabs(t).find((x) => x.to === tab)?.label;
-      return [home, { label: project?.title || t("Project"), to: `/p/${pid}` }, ...(label ? [{ label }] : [])];
+      const tab = getProjectTabs(t).find((x) => x.to === pathname.split("/")[3]);
+      const step = tab && getProjectSteps(t).find((s) => s.id === tab.area);
+      return [home, { label: project?.title || t("Project"), to: `/p/${pid}` }, ...(step ? [{ label: step.label }] : []), ...(tab ? [{ label: tab.label }] : [])];
     }
     const cur = getNav(t, role).find((n) => n.to !== "/" && pathname.startsWith(n.to));
     return cur ? [home, { label: cur.label }] : [{ label: t("Command center") }];

@@ -36,8 +36,8 @@ const EDITABLE = [
   "dialogue_method", "dub_method", "hub_auto_sync", "hub_sync_hours", "hub_auto_enable", "identity_trainer", "face_match_threshold",
   "lipsync_qc", "lipsync_qc_threshold", "critic_rounds", "critic_min_score", "caption_style", "auto_reframe", "sfx_auto",
   "ui_default_language", "google_first", "native_dialogue_languages", "dialogue_words_qc", "dialogue_words_threshold", "outfit_qc",
-  "cheapest_route", "text_provider", "openrouter_text_model", "quota_fallback_routes", "safety_fallback", "fallback_extra_limit_usd",
-  "byteplus_auto_register",
+  "cheapest_route", "text_provider", "openrouter_text_model", "director_engine", "quota_fallback_routes", "safety_fallback",
+  "fallback_extra_limit_usd", "byteplus_auto_register",
 ] as const;
 
 type Draft = Record<string, any>;
@@ -84,6 +84,7 @@ const MODEL_LABELS: Record<string, string> = {
   tts_gemini: "Voice — Gemini", music: "Music (full track)", music_clip: "Music (short clip)", embedding: "Search embeddings",
   tts_elevenlabs: "Voice — ElevenLabs", sts_elevenlabs: "Voice changer — ElevenLabs", ttv_elevenlabs: "Voice design — ElevenLabs",
   tts_sarvam: "Voice — Sarvam", lipsync: "Lip-sync", lipsync_pro: "Lip-sync (pro)", lipsync_angles: "Lip-sync (angles)",
+  director_claude: "Director chat — Claude",
 };
 
 /** True when a plain-number setting holds something the server would reject (shown as a red field). */
@@ -460,6 +461,14 @@ export default function SettingsPage() {
                       <Input className="min-w-44 flex-1 font-mono" value={draft.openrouter_text_model ?? ""} disabled={ro} aria-label={t("OpenRouter model")}
                         placeholder={t("Same Gemini model")} onChange={(e) => set("openrouter_text_model", e.target.value.trim())} />
                     )}
+                  </div>
+                </Row>
+                <Row label={t("Director chat agent")} hint={t("Claude needs an Anthropic key (AI services below); without one the Director uses Gemini. If you pick Gemini, Claude is never used.")} changed={ch("director_engine")}>
+                  <div className="w-full max-w-md">
+                    <Select value={draft.director_engine ?? "claude"} disabled={ro} aria-label={t("Director chat agent")} onChange={(e) => set("director_engine", e.target.value)}>
+                      <option value="claude">{t("Claude Sonnet 5.5")}</option>
+                      <option value="gemini">{t("Gemini")}</option>
+                    </Select>
                   </div>
                 </Row>
                 <Row stack label={t("Default video quality")} hint={t(QUALITY_INFO[quality]?.desc ?? "")} changed={ch("default_quality_mode")}>

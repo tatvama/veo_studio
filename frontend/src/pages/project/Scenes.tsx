@@ -130,9 +130,9 @@ export default function ScenesPage() {
                 ))}
               </ol>
             </WorkPanel>
-            <WorkPanel index={4} n={4} kicker={t("World")} icon={<Globe />} title={t("Props, wardrobe & end states")}>
-              <p className="text-xs leading-relaxed text-mute">{t("Props with reference images, the wardrobe timeline and every scene's end state live on the World page.")}</p>
-              <Link to={`/p/${project.id}/world`} className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-accent-ink hover:underline">{t("Open World")}<ArrowRight className="size-3.5" /></Link>
+            <WorkPanel index={4} n={4} kicker={t("Cast")} icon={<Globe />} title={t("Props, wardrobe & end states")}>
+              <p className="text-xs leading-relaxed text-mute">{t("Props with reference images, the wardrobe timeline and every scene's end state live under Cast, in Props & wardrobe.")}</p>
+              <Link to={`/p/${project.id}/world`} className="mt-3 inline-flex items-center gap-1 text-xs font-medium text-accent-ink hover:underline">{t("Open Props & wardrobe")}<ArrowRight className="size-3.5" /></Link>
             </WorkPanel>
           </>
         }>

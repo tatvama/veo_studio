@@ -151,7 +151,7 @@ export function Recovery({ shot, canEdit }: { shot: Shot; canEdit: boolean }) {
         <p className="mt-1.5 flex items-start gap-1.5 text-2xs leading-snug text-dim">
           <Settings2 className="mt-px size-3 shrink-0" />
           <span>{fill(t("Turn on “On a safety block, try another model” in {settings} and this happens by itself."), {
-            settings: <Link to="/settings" className={LINK}>{t("Settings")}</Link>,
+            settings: <Link to="/settings#generation" className={LINK}>{t("Settings → Generation")}</Link>,
           })}</span>
         </p>
       )}

@@ -289,7 +289,7 @@ function ShotRow({ no, shot, cast, toneOf, disabled, codes, onChange, onMove, ca
                     </button>
                   );
                 })}
-                {!cast.length && <span className="text-2xs text-dim">{t("No characters yet — add them on the Characters step or in the Bible.")}</span>}
+                {!cast.length && <span className="text-2xs text-dim">{t("No characters yet — add them in Cast › Characters & places.")}</span>}
               </div>
             )}
           </div>

@@ -34,6 +34,7 @@ PROVIDER_LABELS = {
     "openrouter": "OpenRouter (Seedance, Kling, Wan, Veo, Hailuo, Grok video … and text; one key, pay per use)",
     "byteplus": "BytePlus ModelArk (Seedance 2.0 / 2.5 video, Seedream images; ByteDance direct)",
     "byteplus_iam": "BytePlus asset library (access key + secret: registers your AI characters for Seedance)",
+    "anthropic": "Anthropic Claude (Claude Sonnet 5.5 runs the Director chat agent)",
 }
 
 

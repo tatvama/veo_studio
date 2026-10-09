@@ -1,8 +1,7 @@
 import { clsx } from "clsx";
 import type { LucideIcon } from "lucide-react";
 import {
-  ArrowLeft, ArrowRight, BookOpen, Bot, Boxes, Check, Clapperboard, Command, FileText, Film, FolderOpen, LayoutGrid, PartyPopper, Search,
-  SquareKanban, UserRound, Users,
+  ArrowLeft, ArrowRight, BookOpen, Bot, Boxes, Check, Clapperboard, Command, Film, FolderOpen, LayoutGrid, PartyPopper, Search, UserRound, Users,
 } from "lucide-react";
 import { animate, AnimatePresence, motion, useMotionValue, useReducedMotionConfig, useTransform, type MotionValue } from "motion/react";
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -11,7 +10,7 @@ import { useT, useUiLanguage } from "../../lib/i18n";
 import { useUI } from "../../lib/store";
 import { Button, Kbd } from "../ui";
 import { MOD } from "./keys";
-import { getProjectTabs } from "./nav";
+import { getProjectSteps } from "./nav";
 import { usePrefActions, usePrefsQuery } from "./prefs";
 
 interface Step {
@@ -57,22 +56,18 @@ function buildSteps(t: (s: string, v?: Record<string, string | number>) => strin
       body: t("Every video starts as a project. Describe a concept or start from a template; your team's projects, live queue and approvals are listed here.") },
     { anchor: "nav-search", fallback: menu, icon: Search, title: t("Search everything"),
       body: t("Find shots, takes, characters and renders by what's in them — in plain words.") },
-    { anchor: "tab-brief", projectOnly: true, icon: FileText, title: t("Brief"),
-      body: t("The Director turns your concept into a brief — audience, goal, length, tone and format. Adjust it before anything is written.") },
-    { anchor: "tab-story", projectOnly: true, icon: BookOpen, title: t("Story"),
-      body: t("Generate and score hooks, then the script. A critic rates each draft and suggests rewrites; every version is kept.") },
-    { anchor: "tab-scenes", projectOnly: true, icon: SquareKanban, title: t("Scenes"),
-      body: t("The script becomes scene cards: goal, conflict, emotion, characters and continuity notes.") },
-    { anchor: "tab-bible", projectOnly: true, icon: Users, title: t("Bible"),
-      body: t("Characters, locations, voices and the visual style live here, so every shot stays consistent.") },
-    { anchor: "tab-storyboard", projectOnly: true, icon: LayoutGrid, title: t("Storyboard"),
-      body: t("Plan shots, generate keyframes and videos, and pick the best takes. The cost is always shown before anything is generated.") },
-    { anchor: "tab-timeline", projectOnly: true, icon: Film, title: t("Timeline"),
+    { anchor: "step-story", projectOnly: true, icon: BookOpen, title: `1 · ${t("Story")}`,
+      body: t("Brief, hooks & script, and scenes. The Director turns your concept into a brief, writes and scores hooks and the script, then plans every scene.") },
+    { anchor: "step-cast", projectOnly: true, icon: Users, title: `2 · ${t("Cast")}`,
+      body: t("Characters, places, voices, props and wardrobe. Lock each look once it is approved, so every shot stays consistent.") },
+    { anchor: "step-shots", projectOnly: true, icon: LayoutGrid, title: `3 · ${t("Shots")}`,
+      body: t("Plan shots, generate keyframes and videos, and pick the best takes, as a storyboard, a list or the Studio. The cost is always shown before anything is generated.") },
+    { anchor: "step-edit", projectOnly: true, icon: Film, title: `4 · ${t("Edit")}`,
       body: t("Arrange and trim clips, and add music, narration, sound effects and titles.") },
-    { anchor: "tab-export", projectOnly: true, icon: Clapperboard, title: t("Export & Review"),
-      body: t("Render for Shorts, Reels or YouTube in every language, then share a review link so clients can comment on exact frames.") },
-    { anchor: "nav-models", fallback: menu, icon: Boxes, title: t("Model Hub"),
-      body: t("Browse the latest AI video, image and voice models, compare prices, and choose which engines your shots use.") },
+    { anchor: "step-deliver", projectOnly: true, icon: Clapperboard, title: `5 · ${t("Deliver")}`,
+      body: t("Render for Shorts, Reels or YouTube in every language, share a review link so clients can comment on exact frames, and make ads, reels and posters.") },
+    { anchor: "nav-more", fallback: menu, icon: Boxes, title: t("More"),
+      body: t("The Model Hub, brand kits and admin pages. In the Model Hub you can browse the latest AI video, image and voice models, compare prices, and choose which engines your shots use.") },
     { anchor: "director", projectOnly: true, icon: Bot, title: `${t("Director")} (${MOD}+J)`,
       body: t("Your AI co-pilot inside every project. Ask it to write, plan, generate or dub — paid steps wait for your OK.") },
     { anchor: "user-menu", fallback: menu, icon: UserRound, title: t("Your account"),
@@ -91,8 +86,12 @@ function visibleBox(el: HTMLElement | null, viaFallback: boolean): Box | null {
 
 function findBox(step: Step): Box | null {
   if (!step.anchor) return null;
-  const el = document.querySelector<HTMLElement>(`[data-tour="${step.anchor}"]`);
-  return visibleBox(el, false) ?? (step.fallback ? visibleBox(step.fallback(), true) : null);
+  // the same anchor can sit in the project rail and in the narrow-screen strip; use whichever is on screen
+  for (const el of document.querySelectorAll<HTMLElement>(`[data-tour="${step.anchor}"]`)) {
+    const box = visibleBox(el, false);
+    if (box) return box;
+  }
+  return step.fallback ? visibleBox(step.fallback(), true) : null;
 }
 
 const sameBox = (a: Box | null, b: Box | null) =>
@@ -171,27 +170,25 @@ function useMover() {
   }, [reduce]);
 }
 
-const STAGES = ["brief", "story", "scenes", "bible", "storyboard", "timeline", "export"];
-
-/** Stand-in for the project's top bar, shown when the tour runs outside a project: highlights where this step lives. */
+/** Stand-in for the project's five steps, shown when the tour runs outside a project: highlights where this step lives. */
 function MiniTabs({ active }: { active: string }) {
   const t = useT();
-  const tabs = getProjectTabs(t).filter((x) => STAGES.includes(x.to));
+  const steps = getProjectSteps(t);
   return (
     <div aria-hidden className="mt-3 flex items-center gap-1 rounded-xl border border-line bg-raised p-1">
-      {tabs.map((tb) => {
-        const on = `tab-${tb.to}` === active;
-        const Icon = tb.icon;
+      {steps.map((s) => {
+        const on = `step-${s.id}` === active;
+        const Icon = s.icon;
         return (
           <span
-            key={tb.to}
+            key={s.id}
             className={clsx(
               "flex h-7 min-w-0 items-center justify-center gap-1 rounded-lg px-1.5 text-2xs font-medium transition-[flex-grow,background-color,color] duration-300",
               on ? "flex-[2.4] bg-accent/15 text-accent-ink ring-1 ring-accent/40" : "flex-1 text-dim",
             )}
           >
             <Icon className="size-3.5 shrink-0" />
-            {on && <span className="truncate">{tb.label}</span>}
+            {on && <span className="truncate">{s.label}</span>}
           </span>
         );
       })}
@@ -397,10 +394,10 @@ function Tour({ onDone }: { onDone: () => void }) {
                   </div>
                 </div>
                 <p id={bodyId} className="text-sm leading-relaxed text-mute">{step.body}</p>
-                {!box && step.projectOnly && step.anchor?.startsWith("tab-") && <MiniTabs active={step.anchor} />}
+                {!box && step.projectOnly && step.anchor?.startsWith("step-") && <MiniTabs active={step.anchor} />}
                 {!box && step.anchor && (
                   <p className="mt-3 rounded-lg border border-line bg-raised px-3 py-2 text-xs leading-relaxed text-mute">
-                    {step.projectOnly ? t("Open any project to find this in its top bar.") : t("It lives in the menu (top left) on small screens.")}
+                    {step.projectOnly ? t("Open any project to find this in its five steps.") : t("It lives in the menu (top left) on small screens.")}
                   </p>
                 )}
                 {box?.viaFallback && (

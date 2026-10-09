@@ -1,5 +1,6 @@
-import { CircleCheck, Clock3, Hourglass, Radio, ShieldAlert } from "lucide-react";
+import { CircleCheck, Clock3, History, Hourglass, Radio, ShieldAlert } from "lucide-react";
 import { useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import { cn } from "../../lib/cn";
 import { usd } from "../../lib/format";
 import { useT } from "../../lib/i18n";
@@ -23,6 +24,7 @@ function Lead({ status }: { status: string }) {
 /** The jobs of this project that are running or waiting right now. */
 export function LiveQueue({ pid, shots, index, className }: { pid: number; shots: Shot[]; index?: number; className?: string }) {
   const t = useT();
+  const nav = useNavigate();
   const setTrayOpen = useUI((u) => u.setTrayOpen);
   const { data, isLoading, isError, refetch } = useJobs(pid);
   const code = useMemo(() => new Map(shots.map((s) => [s.id, s.code])), [shots]);
@@ -33,7 +35,13 @@ export function LiveQueue({ pid, shots, index, className }: { pid: number; shots
   const eyebrow = t("Live queue");
   const status = (s: string) => ({ running: t("running"), queued: t("queued"), awaiting_approval: t("awaiting approval"), proposed: t("proposed") } as Record<string, string>)[s] ?? s.replaceAll("_", " ");
 
-  const tray = <Button size="sm" variant="ghost" onClick={() => setTrayOpen(true)}>{t("Job tray")}</Button>;
+  // the project's activity log is not one of the five steps: it is reached from here and from the project's "⋯" menu
+  const tray = (
+    <div className="flex items-center gap-1">
+      <Button size="sm" variant="ghost" icon={<History className="size-3.5" />} onClick={() => nav(`/p/${pid}/activity`)}>{t("Activity log")}</Button>
+      <Button size="sm" variant="ghost" onClick={() => setTrayOpen(true)}>{t("Job tray")}</Button>
+    </div>
+  );
 
   if (isError && !data) return <Panel index={index} className={className} eyebrow={eyebrow} icon={<Radio />}><LoadError what={t("Couldn't load the queue")} onRetry={() => refetch()} /></Panel>;
   if (isLoading || !data) return <Panel index={index} className={className} eyebrow={eyebrow} icon={<Radio />}><div className="space-y-2" aria-busy="true"><Skeleton className="h-10 w-full" /><Skeleton className="h-10 w-full" /></div></Panel>;

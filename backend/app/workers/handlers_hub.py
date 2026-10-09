@@ -68,7 +68,7 @@ def auto_register_reason(db, ch: Character) -> str:
     """Why this character isn't registered with BytePlus by itself right now ("" = it would be)."""
     from ..config import get_settings
     if not settings_store.get_setting(db, "byteplus_auto_register"):
-        return "Automatic registration is off (Settings → AI services)"
+        return "Automatic registration is off (Settings → Generation)"
     mode = provider_mode("byteplus_iam")
     if mode == "missing":
         return "No BytePlus access key + secret"

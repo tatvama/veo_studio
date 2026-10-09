@@ -169,7 +169,7 @@ export function BytePlusPanel({ character: c, n }: { character: Character; n?: n
             <span>
               {!auto ? t("Registers by itself when the sheet is approved or the character is locked.")
                 : auto.startsWith("Automatic registration is off") ? (
-                  <>{t("Automatic registration is off. Turn it on in")} <Link to="/settings#keys" className="font-medium text-accent-ink hover:underline">{t("Settings → AI services")}</Link>.</>
+                  <>{t("Automatic registration is off. Turn it on in")} <Link to="/settings#generation" className="font-medium text-accent-ink hover:underline">{t("Settings → Generation")}</Link>.</>
                 ) : `${t("Won't register by itself")} — ${t(auto)}.`}
             </span>
           </p>
