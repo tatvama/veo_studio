@@ -174,6 +174,35 @@ def test_no_credit_hold_skips_the_provider(client, no_cooling):
         assert "byteplus:seedance-2.0" in ids
 
 
+def test_byteplus_zero_cash_never_skips(client, monkeypatch):
+    """BytePlus reports prepaid cash only: an account on card billing or a savings plan reads $0 and can still pay."""
+    monkeypatch.setattr(services_mod, "provider_mode", lambda p: "live")
+    monkeypatch.setattr(credit, "_read_balance", lambda p: {"usd": 0.0})
+    with SessionLocal() as db:
+        credit.release(db)
+        db.commit()
+    assert credit.balance("byteplus", refresh=True)["usd"] == 0.0
+    assert credit.short_of("byteplus", 3.0) == ""
+    with SessionLocal() as db:
+        assert "byteplus" not in credit.holds(db)
+    row = next(p for p in credit.status() if p["provider"] == "byteplus")
+    assert row["cash_only"] is True and row["held"] is False
+    credit.balance("openrouter", refresh=True)  # OpenRouter's balance is real credit: $0 still holds it
+    with SessionLocal() as db:
+        assert "openrouter" in credit.holds(db)
+        credit.release(db)
+        db.commit()
+
+
+def test_byteplus_balance_names_the_billing_policy():
+    denied = {"ResponseMetadata": {"Error": {"Code": "AccessDenied", "Message": "User is not authorized to perform: "
+                                                                                "billing:QueryBalanceAcct on resource: "}}}
+    lib = byteplus.AssetLibrary("AKAP:secret", http=httpx.Client(transport=httpx.MockTransport(
+        lambda r: httpx.Response(403, json=denied))))
+    with pytest.raises(byteplus.ProviderError, match="BillingCenterReadOnlyAccess"):
+        lib.balance()
+
+
 def test_openrouter_balance_and_providers_live_count(client):
     def handle(req: httpx.Request) -> httpx.Response:
         if req.url.path.endswith("/key"):
