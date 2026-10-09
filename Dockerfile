@@ -10,9 +10,9 @@ RUN npm run build
 
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
-# ffmpeg (with libass + harfbuzz for Indic captions) and Noto fonts for Devanagari, Kannada, Telugu and Tamil
+# ffmpeg (with libass + harfbuzz for Indic captions), Noto fonts for Devanagari, Kannada, Telugu and Tamil, curl for healthchecks
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ffmpeg fonts-noto-core fonts-noto-ui-core fontconfig ca-certificates \
+      ffmpeg fonts-noto-core fonts-noto-ui-core fontconfig ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* && fc-cache -f
 WORKDIR /app
 COPY backend/requirements.txt backend/requirements.txt
