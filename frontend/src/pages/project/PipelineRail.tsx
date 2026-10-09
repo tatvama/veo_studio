@@ -5,7 +5,7 @@ import {
 import { motion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, NavLink } from "react-router-dom";
-import { MOD } from "../../components/shell/keys";
+import { isTypingTarget, MOD, TOGGLE_RAIL_EVENT } from "../../components/shell/keys";
 import { PresenceBar } from "../../components/shell/PresenceBar";
 import { getProjectPhases, type ProjectTab } from "../../components/shell/nav";
 import { Badge, IconButton, ScrollStrip, Select, Tooltip } from "../../components/ui";
@@ -95,6 +95,13 @@ export function PipelineRail(p: RailProps) {
   const ui = useUI();
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem(COLLAPSE_KEY) === "1"; } catch { return false; } });
   useEffect(() => { try { localStorage.setItem(COLLAPSE_KEY, collapsed ? "1" : "0"); } catch { /* storage blocked */ } }, [collapsed]);
+  useEffect(() => {
+    const toggle = () => setCollapsed((v) => !v);
+    const key = (e: KeyboardEvent) => { if (e.key === "[" && !e.ctrlKey && !e.metaKey && !e.altKey && !isTypingTarget(e.target)) { e.preventDefault(); toggle(); } };
+    window.addEventListener(TOGGLE_RAIL_EVENT, toggle);
+    window.addEventListener("keydown", key);
+    return () => { window.removeEventListener(TOGGLE_RAIL_EVENT, toggle); window.removeEventListener("keydown", key); };
+  }, []);
   const phases = usePhases(p.tabs, p.simple);
   const { project, pid, episodes } = p;
   const lang = ctx.lang;
@@ -112,7 +119,7 @@ export function PipelineRail(p: RailProps) {
   );
 
   return (
-    <aside className={clsx("relative z-20 hidden shrink-0 flex-col border-r border-line bg-panel/70 backdrop-blur transition-[width] duration-200 ease-out lg:flex", collapsed ? "w-[3.75rem]" : "w-[15.5rem]")}
+    <aside data-pipeline-rail data-collapsed={collapsed ? "1" : "0"} className={clsx("relative z-20 hidden shrink-0 flex-col border-r border-line bg-panel/70 backdrop-blur transition-[width] duration-200 ease-out lg:flex", collapsed ? "w-[3.75rem]" : "w-[15.5rem]")}
       aria-label={t("Project pipeline")}>
       {/* identity */}
       <div className={clsx("border-b border-line", collapsed ? "flex flex-col items-center gap-1.5 py-2.5" : "space-y-2.5 p-3")}>

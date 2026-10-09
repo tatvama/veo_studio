@@ -122,7 +122,7 @@ export function Tooltip({ content, children, side = "top", delay = 380, shortcut
                 transition={{ duration: 0.14, ease: [0.22, 1, 0.36, 1] }}
                 style={{ transformOrigin: origin }}
                 className={cn(
-                  "flex max-w-[260px] items-center gap-2 rounded-lg border border-line bg-raised px-2.5 py-1.5 text-xs font-medium leading-snug text-ink shadow-pop",
+                  "flex max-w-[280px] items-center gap-2 rounded-md border border-line bg-raised/95 px-2.5 py-1.5 text-xs font-medium leading-snug text-ink shadow-pop backdrop-blur-md",
                   className,
                 )}
               >
