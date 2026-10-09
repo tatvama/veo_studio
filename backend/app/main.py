@@ -20,7 +20,8 @@ mimetypes.add_type("image/svg+xml", ".svg")
 mimetypes.add_type("image/webp", ".webp")
 mimetypes.add_type("video/mp4", ".mp4")
 
-from .api import (admin, auth, bible, board, campaign, fx, generate, growth, hub, layers, production, projects, rates, room, shots,
+from .api import (admin, auth, bible, board, campaign, designs, fx, generate, growth, hub, layers, production, projects, rates,
+                  room, shots,
                   work)
 from .config import ROOT, get_settings
 from .db import Base, engine
@@ -52,7 +53,8 @@ app.add_middleware(CORSMiddleware, allow_origins=[settings.frontend_origin], all
 app.add_middleware(RetryReads)  # re-run a GET once if a dropped database connection failed it (see middleware.py)
 
 for r in (auth.router, admin.router, projects.router, bible.router, shots.router, generate.router, work.router, hub.router,
-          room.router, growth.router, board.router, fx.router, layers.router, production.router, campaign.router, rates.router):
+          room.router, growth.router, board.router, fx.router, layers.router, production.router, campaign.router, rates.router,
+          designs.router):
     app.include_router(r)
 
 

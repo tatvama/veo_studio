@@ -21,6 +21,7 @@ JOB_LABELS = {
     "character_expressions": "Expressions", "location_images": "Location images", "voice_design": "Voice design",
     "voice_preview": "Voice preview", "omni_edit": "Omni edit", "animatic": "Animatic", "export": "Export",
     "dub": "Dub episode", "autopilot": "Autopilot", "produce": "Produce all", "identity_variations": "Photo variations",
+    "design_image": "Poster image",
 }
 
 

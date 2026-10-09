@@ -630,6 +630,61 @@ class BrandKit(Base, Serializable):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+# ── Poster Studio ──────────────────────────────────────────────
+
+class Design(Base, Serializable):
+    """A poster, thumbnail or social creative: a stack of layers (see api/designs.py for the layer schema).
+    The browser renders it (so Indian scripts are shaped correctly) and uploads thumbnails and exports."""
+    __tablename__ = "designs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("projects.id"), nullable=True, index=True)
+    title: Mapped[str] = mapped_column(String(200), default="Untitled design")
+    format: Mapped[str] = mapped_column(String(40), default="custom")  # preset key, e.g. film_poster, yt_thumb
+    width: Mapped[int] = mapped_column(Integer, default=1080)
+    height: Mapped[int] = mapped_column(Integer, default=1350)
+    # {v: 1, background: {...}, layers: [...]}; image layers keep a storage-relative `asset` and get `src` on read
+    doc: Mapped[Any] = mapped_column(JSON, default=dict)
+    template: Mapped[str] = mapped_column(String(60), default="")
+    brand_kit_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    thumb_path: Mapped[str] = mapped_column(String(500), default="")
+    status: Mapped[str] = mapped_column(String(20), default="draft")  # draft | approved
+    revision: Mapped[int] = mapped_column(Integer, default=1)  # bumped on every save; guards against overwriting a teammate
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class DesignVersion(Base, Serializable):
+    """A named snapshot of a design, to compare or roll back to."""
+    __tablename__ = "design_versions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    design_id: Mapped[int] = mapped_column(ForeignKey("designs.id"), index=True)
+    note: Mapped[str] = mapped_column(String(200), default="")
+    doc: Mapped[Any] = mapped_column(JSON, default=dict)
+    width: Mapped[int] = mapped_column(Integer, default=0)
+    height: Mapped[int] = mapped_column(Integer, default=0)
+    thumb_path: Mapped[str] = mapped_column(String(500), default="")
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class DesignExport(Base, Serializable):
+    """A finished file made from a design (PNG, JPG, WebP or PDF)."""
+    __tablename__ = "design_exports"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    design_id: Mapped[int] = mapped_column(ForeignKey("designs.id"), index=True)
+    project_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    kind: Mapped[str] = mapped_column(String(10), default="png")
+    path: Mapped[str] = mapped_column(String(500))
+    width: Mapped[int] = mapped_column(Integer, default=0)
+    height: Mapped[int] = mapped_column(Integer, default=0)
+    bytes: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class SearchItem(Base, Serializable):
     """Semantic search index over takes, shots, characters and exports."""
     __tablename__ = "search_items"
