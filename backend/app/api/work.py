@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import time
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -12,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from ..agents import director
 from ..core import collab, jobs
-from ..db import SessionLocal, get_db
+from ..db import SessionLocal, get_db, is_network_error
 from ..events import emit
 from ..models import AgentMessage, Approval, Comment, Episode, Event, Job, Project, User, role_rank
 from ..security import COOKIE, current_user, require, user_from_token, ws_user
@@ -251,7 +252,14 @@ async def ws(websocket: WebSocket):
                 with SessionLocal() as db:
                     rows = db.query(Event).filter(Event.id > last).order_by(Event.id).limit(200).all()
                     return [(e.id, e.project_id, e.to_dict()) for e in rows]
-            rows = await asyncio.to_thread(fetch, last_id)
+            try:
+                rows = await asyncio.to_thread(fetch, last_id)
+            except Exception as e:
+                if not is_network_error(e):
+                    raise
+                # the database link hiccuped: keep the socket open and try again shortly instead of dropping the tab
+                await asyncio.sleep(2.0)
+                continue
             for eid, pid, data in rows:
                 last_id = eid
                 if pid is None or project_id is None or pid == project_id:
@@ -308,13 +316,36 @@ def presence(pid: int, user: User = Depends(current_user), db: Session = Depends
 
 # ── media (auth-checked) ─────────────────────────────────────────────────────
 
+_MEDIA_AUTH: dict[str, tuple[float, str]] = {}  # session token -> (valid until, role)
+MEDIA_AUTH_TTL_S = 60.0
+
+
+def _media_role(db: Session, token: str | None) -> str | None:
+    """The signed-in role for a media request. A page of thumbnails fires dozens of these at once; remembering a checked
+    session for a minute saves a database round trip per file. Signing out or a role change applies within a minute."""
+    if not token:
+        return None
+    now = time.monotonic()
+    hit = _MEDIA_AUTH.get(token)
+    if hit and hit[0] > now:
+        return hit[1]
+    u = user_from_token(db, token)
+    if not u:
+        _MEDIA_AUTH.pop(token, None)
+        return None
+    if len(_MEDIA_AUTH) > 1000:
+        _MEDIA_AUTH.clear()
+    _MEDIA_AUTH[token] = (now + MEDIA_AUTH_TTL_S, u.role)
+    return u.role
+
+
 @router.get("/media/{path:path}")
 def media(path: str, request: Request, db: Session = Depends(get_db)):
-    u = user_from_token(db, request.cookies.get(COOKIE))
-    if not u:
+    role = _media_role(db, request.cookies.get(COOKIE))
+    if not role:
         raise HTTPException(401, "Please log in")
     private = path.replace("\\", "/").lstrip("/").startswith("consents/")
-    if private and role_rank(u.role) < role_rank("producer"):  # signed releases hold personal data
+    if private and role_rank(role) < role_rank("producer"):  # signed releases hold personal data
         raise HTTPException(403, "Only a producer can open consent releases")
     st = get_storage()
     try:

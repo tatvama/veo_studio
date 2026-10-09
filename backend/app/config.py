@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     # recycled before a remote server or a NAT drops them.
     db_pool_size: int = 5
     db_max_overflow: int = 10
-    db_pool_recycle_s: int = 1800
+    db_pool_recycle_s: int = 300
     db_connect_timeout_s: int = 10
     media_root: Path = ROOT / "media"
     data_root: Path = ROOT / "data"

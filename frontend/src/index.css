@@ -463,57 +463,6 @@ body {
   pointer-events: none;
 }
 
-/* ── Login: slow, CSS-only drifting gradient ─────────────────────────────── */
-@keyframes aurora {
-  0% { background-position: 0% 0%, 100% 0%, 50% 100%; }
-  50% { background-position: 30% 20%, 70% 30%, 40% 70%; }
-  100% { background-position: 0% 0%, 100% 0%, 50% 100%; }
-}
-@keyframes float-slow {
-  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
-  50% { transform: translate3d(2%, -3%, 0) scale(1.06); }
-}
-
-.login-bg {
-  position: relative;
-  isolation: isolate;
-  overflow: clip;
-  background-color: var(--color-bg);
-  background-image:
-    radial-gradient(42rem 30rem at 15% 10%, rgb(34 211 238 / 0.16), transparent 60%),
-    radial-gradient(36rem 26rem at 85% 15%, rgb(129 140 248 / 0.16), transparent 60%),
-    radial-gradient(40rem 30rem at 50% 100%, rgb(167 139 250 / 0.1), transparent 60%);
-  background-size: 140% 140%, 140% 140%, 140% 140%;
-  background-repeat: no-repeat;
-  animation: aurora 22s ease-in-out infinite;
-}
-.login-bg::before {
-  content: "";
-  position: absolute;
-  inset: -20%;
-  z-index: -1;
-  background: conic-gradient(from 180deg at 50% 50%, transparent 0deg, rgb(34 211 238 / 0.07) 90deg, transparent 180deg, rgb(129 140 248 / 0.07) 270deg, transparent 360deg);
-  filter: blur(60px);
-  animation: float-slow 18s ease-in-out infinite;
-}
-.login-bg::after {
-  /* faint hairline grid */
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  background-image: linear-gradient(var(--color-line) 1px, transparent 1px), linear-gradient(90deg, var(--color-line) 1px, transparent 1px);
-  background-size: 44px 44px;
-  opacity: 0.35;
-  mask-image: radial-gradient(ellipse at center, black 20%, transparent 70%);
-}
-:root[data-theme="light"] .login-bg {
-  background-image:
-    radial-gradient(42rem 30rem at 15% 10%, rgb(6 182 212 / 0.16), transparent 60%),
-    radial-gradient(36rem 26rem at 85% 15%, rgb(99 102 241 / 0.14), transparent 60%),
-    radial-gradient(40rem 30rem at 50% 100%, rgb(167 139 250 / 0.1), transparent 60%);
-}
-
 /* ── Reduced motion: OS setting or the in-app "Reduce motion" preference ───── */
 @media (prefers-reduced-motion: reduce) {
   html { scroll-behavior: auto; }
