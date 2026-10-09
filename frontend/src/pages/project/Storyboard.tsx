@@ -6,18 +6,19 @@ import {
   Check, Clock, Ellipsis, Film, Image as ImageIcon, LayoutGrid, Mic, Moon, Music, Plus, SquareCheck, Sun, Sunrise, Sunset, WandSparkles,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { useGenerate } from "../../components/Generate";
 import { engineShort, isAutoEngine, useModelList } from "../../components/hub/util";
-import { Button, Empty, IconButton, Kbd, Menu, Progress, ProgressRing, ScrollStrip, Skeleton } from "../../components/ui";
+import { Button, Empty, IconButton, Kbd, Menu, Meter, ProgressRing, ScrollStrip, Skeleton } from "../../components/ui";
 import { api } from "../../lib/api";
-import { LANG_SHORT, secs } from "../../lib/format";
+import { LANG_SHORT, secs, usd } from "../../lib/format";
 import { tr, useT } from "../../lib/i18n";
 import { useEpisode, useSettings } from "../../lib/queries";
 import { useUI } from "../../lib/store";
 import type { Scene, Shot } from "../../lib/types";
 import { useProjectCtx } from "./context";
+import { Cell, RailSeg } from "./production/instruments";
 import { LoadError } from "./production/LoadError";
 import { QualityMenu } from "./production/QualityMenu";
 import { ShotCard } from "./production/ShotCard";
@@ -211,24 +212,47 @@ export default function Storyboard() {
   return (
     <div className="@container relative flex h-full">
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* ── toolbar (nothing to summarise or filter while the storyboard is empty) ── */}
-        {shots.length > 0 && <div className="shrink-0 border-b border-line bg-panel/60 backdrop-blur">
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-2.5 sm:px-5">
-            <div className="flex shrink-0 items-center gap-2.5">
-              <ProgressRing value={pct} size={38} stroke={4} tone={pct >= 1 ? "var(--color-ok)" : "var(--color-accent)"}>{Math.round(pct * 100)}</ProgressRing>
-              <div className="leading-tight">
-                <p className="text-sm font-semibold tabular-nums">{t("{vid}/{n} videos", { vid: done.vid, n: shots.length })}</p>
-                <p className="text-2xs text-mute">{t("{n} shots", { n: shots.length })} · {secs(total)} · {t("{kf}/{n} keyframes", { kf: done.kf, n: shots.length })}</p>
+        {/* ── instrument strip (nothing to summarise or filter while the storyboard is empty) ── */}
+        {shots.length > 0 && <div className="relative shrink-0 border-b border-line bg-panel/75 backdrop-blur">
+          <span aria-hidden className="edge-light pointer-events-none absolute inset-x-6 top-0 h-px opacity-70" />
+          {/* telemetry */}
+          <div className="flex flex-wrap items-stretch gap-y-1 px-2 pb-1 pt-2 sm:px-3">
+            <div className="flex shrink-0 items-center gap-2.5 py-0.5 pl-1 pr-3" title={t("{vid}/{n} videos", { vid: done.vid, n: shots.length })}>
+              <ProgressRing value={pct} size={36} stroke={3.5} tone={pct >= 1 ? "var(--color-ok)" : "var(--color-accent)"}>{Math.round(pct * 100)}</ProgressRing>
+              <div className="flex flex-col gap-1.5">
+                <span className="eyebrow">{t("Videos")}</span>
+                <span className="mono flex items-baseline gap-0.5 text-[0.95rem] font-medium leading-none"><span className={pct >= 1 ? "text-ok" : "text-ink"}>{done.vid}</span><span className="text-dim">/{shots.length}</span></span>
               </div>
             </div>
+            <div className="flex min-w-0 flex-wrap items-stretch divide-x divide-line/70 border-l border-line/70">
+              <Cell label={t("Keyframes")} bar={{ frac: shots.length ? done.kf / shots.length : 0 }} className="min-w-[5.5rem]" title={t("{kf}/{n} keyframes", { kf: done.kf, n: shots.length })}>
+                <span>{done.kf}</span><span className="text-dim">/{shots.length}</span>
+              </Cell>
+              <Cell label={t("QC issues")} tone={counts.qc ? "bad" : "ok"} className="min-w-[4.5rem]">
+                <span>{counts.qc}</span>
+              </Cell>
+              <Cell label={t("Approved")} tone={counts.approved && counts.approved === shots.length ? "ok" : "neutral"} className="min-w-[5rem] max-sm:hidden">
+                <span>{counts.approved}</span><span className="text-dim">/{shots.length}</span>
+              </Cell>
+              <Cell label={t("Length")} className="min-w-[5rem] max-sm:hidden" title={t("{n} shots", { n: shots.length })}>
+                <span>{secs(total)}</span>
+              </Cell>
+            </div>
+            <div className="flex-1" />
+            <Cell label={t("Spent")} tone="money" className="border-l border-line/70" title={t("Spent on this project")}>
+              <span>{usd(project.spent_usd)}</span>
+            </Cell>
+          </div>
 
-            <FilterChips className="min-w-0 flex-1 basis-[260px]" value={filter} onChange={setFilter} filters={filters} counts={counts} />
+          {/* controls */}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line/60 px-2 py-1.5 sm:px-3">
+            <FilterRail className="min-w-0 flex-1 basis-[260px]" value={filter} onChange={setFilter} filters={filters} counts={counts} />
 
             {canEdit && (
               <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">
                 <Button size="sm" variant={picking ? "secondary" : "ghost"} aria-pressed={picking} className={clsx(picking && "border-info/50 text-info")}
                   icon={<SquareCheck className="size-3.5" />} onClick={() => setPicking(!picking)}>{picking ? t("Done") : t("Select")}</Button>
-                <span aria-hidden className="mx-0.5 hidden h-5 w-px bg-line sm:block" />
+                <span aria-hidden className="tick-v hidden h-5 sm:block" />
                 <div className="flex items-center gap-2">
                   <Button size="sm" icon={<ImageIcon className="size-3.5" />} loading={busyAct === "kf"}
                     onClick={() => run("kf", () => generate(eid, { action: "keyframes", shot_ids: ids, only_missing: !ids }, ids ? tr("Keyframes (selected)") : tr("Keyframes for shots missing one")))}>
@@ -242,6 +266,7 @@ export default function Storyboard() {
                     <QualityMenu joined value={quality} onChange={setQuality} defaultKey={project.quality_mode} />
                   </div>
                 </div>
+                <span aria-hidden className="tick-v hidden h-5 sm:block" />
                 <div className="flex items-center gap-1">
                   <Menu width={288} items={moreItems} trigger={(p) => (
                     <Button size="sm" variant="secondary" icon={<Ellipsis className="size-4" />} loading={busyAct === "lip" || busyAct === "music" || busyAct === "animatic"} {...p}>
@@ -260,9 +285,9 @@ export default function Storyboard() {
             {picking && (
               <motion.div key="pickbar" initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }}
                 transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }} className="overflow-hidden">
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-info/20 bg-info/8 px-4 py-1.5 text-xs sm:px-5">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-info/25 bg-info/8 px-3 py-1.5 text-xs">
                   <SquareCheck className="size-4 text-info" />
-                  <span className="font-medium">{picked.length ? t("{n} selected", { n: picked.length }) : t("Click shots to select them")}</span>
+                  <span className="mono font-medium">{picked.length ? t("{n} selected", { n: picked.length }) : t("Click shots to select them")}</span>
                   <button className="font-medium text-info hover:underline" onClick={() => setPicked(visible.map((s) => s.id))}>{t("Select all {n}", { n: visible.length })}</button>
                   {picked.length > 0 && <button className="text-mute hover:text-ink" onClick={() => setPicked([])}>{t("Clear")}</button>}
                   <span className="text-dim">{picked.length ? t("Generate buttons now apply to the selection.") : t("With nothing selected, generate buttons cover every shot that needs it.")}</span>
@@ -290,7 +315,7 @@ export default function Storyboard() {
               <SortableContext items={visible.map((s) => s.id)} strategy={rectSortingStrategy}>
                 <div key={filter}>
                   {groups.map((g) => (
-                    <section key={g.key} className="pb-4">
+                    <section key={g.key} className="pb-5">
                       {g.title && (
                         <SceneHeader group={g} picking={picking && canEdit}
                           allPicked={g.shots.every((s) => picked.includes(s.id))}
@@ -299,7 +324,7 @@ export default function Storyboard() {
                             setPicked((p) => (idsIn.every((i) => p.includes(i)) ? p.filter((x) => !idsIn.includes(x)) : Array.from(new Set([...p, ...idsIn]))));
                           }} />
                       )}
-                      <div className={clsx("grid gap-3 px-4 pt-3 sm:px-5", wide ? GRID.wide : GRID.tall)}>
+                      <div className={clsx("grid gap-3 px-3 pt-3 sm:px-4", wide ? GRID.wide : GRID.tall)}>
                         {g.shots.map((s) => (
                           <ShotCard key={s.id} shot={s} lang={lang} aspect={project.aspect} index={indexOf[s.id] ?? 0} threshold={threshold}
                             draggable={canEdit && filter === "all"}
@@ -315,7 +340,7 @@ export default function Storyboard() {
             </DndContext>
           )}
           {shots.length > 0 && (
-            <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 px-4 pb-6 pt-2 text-2xs text-dim sm:px-5">
+            <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 px-3 pb-6 pt-2 text-2xs text-dim sm:px-4">
               {t("Drag to reorder")} · <Kbd>←</Kbd><Kbd>→</Kbd><Kbd>↑</Kbd><Kbd>↓</Kbd> {t("move between shots")} · <Kbd>A</Kbd> {t("approve")} · <Kbd>K</Kbd> {t("keyframe")} · <Kbd>V</Kbd> {t("video")} · <Kbd>Esc</Kbd> {t("close")}
             </p>
           )}
@@ -339,28 +364,14 @@ export default function Storyboard() {
 
 // ── pieces ───────────────────────────────────────────────────────────────────
 
-function FilterChips({ value, onChange, filters, counts, className }: {
+function FilterRail({ value, onChange, filters, counts, className }: {
   value: Filter; onChange: (f: Filter) => void; filters: { id: Filter; label: string }[]; counts: Record<Filter, number>; className?: string;
 }) {
-  const id = useId();
   const t = useT();
   return (
-    <ScrollStrip role="radiogroup" aria-label={t("Filter shots")} className={clsx("-my-1 py-1", className)}>
-      <div className="flex w-max items-center gap-1.5 pr-3">
-        {filters.map((f) => {
-          const on = value === f.id;
-          const n = counts[f.id];
-          return (
-            <button key={f.id} type="button" role="radio" aria-checked={on} data-active={on || undefined} onClick={() => onChange(f.id)}
-              className={clsx("relative inline-flex h-7 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 text-xs font-medium transition-colors",
-                on ? "border-accent/45 text-ink" : "border-line text-mute hover:border-dim/50 hover:text-ink")}>
-              {on && <motion.span layoutId={`sbf-${id}`} transition={{ type: "spring", stiffness: 520, damping: 40 }} className="absolute inset-0 rounded-full bg-accent/12" />}
-              <span className="relative">{f.label}</span>
-              <span className={clsx("relative rounded-full px-1.5 text-2xs font-semibold tabular-nums leading-4", on ? "bg-accent/20 text-accent-ink" : "bg-raised text-dim")}>{n}</span>
-            </button>
-          );
-        })}
-      </div>
+    <ScrollStrip className={clsx("-my-1 py-1", className)}>
+      <RailSeg label={t("Filter shots")} value={value} onChange={onChange} className="w-max"
+        options={filters.map((f) => ({ value: f.id, label: f.label, count: counts[f.id] }))} />
     </ScrollStrip>
   );
 }
@@ -370,17 +381,23 @@ const TOD_ICON: [RegExp, ReactNode][] = [
   [/night/i, <Moon key="c" className="size-3" />], [/day|noon|afternoon/i, <Sun key="d" className="size-3" />],
 ];
 
-interface Group { key: string; scene: string; title: string; tod: string; sub: string; shots: Shot[]; done: number; all: number }
+interface Group { key: string; scene: string; no: number; title: string; tod: string; sub: string; shots: Shot[]; done: number; all: number }
 
+/** A sticky mono rail above each scene: "SC01 · title · DUSK · 4 SHOTS" and a segmented progress meter. */
 function SceneHeader({ group, picking, allPicked, onTogglePick }: { group: Group; picking: boolean; allPicked: boolean; onTogglePick: () => void }) {
   const t = useT();
   const frac = group.all ? group.done / group.all : 0;
   const todIcon = TOD_ICON.find(([re]) => re.test(group.tod))?.[1] ?? <Clock className="size-3" />;
+  const cells = Math.max(1, Math.min(group.all, 10));
   return (
-    <div className="sticky top-0 z-10 flex items-center gap-3 border-b border-line/70 bg-bg/92 px-4 py-2 backdrop-blur-md sm:px-5">
-      <div className="flex min-w-0 flex-1 items-baseline gap-2">
-        <h3 className="shrink-0 text-sm font-semibold tracking-tight">{group.title}</h3>
-        {group.tod && <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-raised px-1.5 py-0.5 text-2xs font-medium text-mute">{todIcon}{group.tod}</span>}
+    <div className="sticky top-0 z-10 flex items-center gap-2.5 border-b border-line/70 bg-bg/90 px-3 py-1.5 backdrop-blur-md sm:px-4">
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        <span className="mono inline-flex h-5 shrink-0 items-center rounded border border-accent/30 bg-accent/10 px-1.5 text-2xs font-semibold tracking-wide text-accent-ink">
+          {group.no ? `SC${String(group.no).padStart(2, "0")}` : "—"}
+        </span>
+        <h3 className="min-w-0 truncate text-xs font-semibold tracking-tight">{group.title}</h3>
+        {group.tod && <span className="mono inline-flex shrink-0 items-center gap-1 text-2xs uppercase tracking-wider text-mute">· {todIcon}{group.tod}</span>}
+        <span className="mono shrink-0 text-2xs uppercase tracking-wider text-dim">· {t("{n} shots", { n: group.all })}</span>
         {group.sub && <span className="hidden min-w-0 truncate text-2xs text-dim @2xl:inline" title={group.sub}>{group.sub}</span>}
       </div>
       {picking && (
@@ -389,8 +406,8 @@ function SceneHeader({ group, picking, allPicked, onTogglePick }: { group: Group
         </button>
       )}
       <div className="flex shrink-0 items-center gap-2" title={t("{vid}/{n} videos", { vid: group.done, n: group.all })}>
-        <span className="w-16 sm:w-24"><Progress value={frac} size="sm" tone={frac >= 1 ? "ok" : "accent"} /></span>
-        <span className={clsx("w-8 text-right text-2xs font-medium tabular-nums", frac >= 1 ? "text-ok" : "text-mute")}>{group.done}/{group.all}</span>
+        <Meter className="w-14 sm:w-24" filled={Math.round(frac * cells)} total={cells} tone={frac >= 1 ? "ok" : "accent"} />
+        <span className={clsx("mono w-9 text-right text-2xs font-medium tabular-nums", frac >= 1 ? "text-ok" : "text-mute")}>{group.done}/{group.all}</span>
         {frac >= 1 && <Check className="-ml-1 size-3.5 text-ok" strokeWidth={3} />}
       </div>
     </div>
@@ -407,7 +424,7 @@ function groupByScene(shots: Shot[], scenes: Scene[], all: Shot[]): Group[] {
       const sc = scenes.find((x) => x.id === s.scene_id);
       const inScene = all.filter((x) => String(x.scene_id ?? "none") === scene);
       out.push({
-        key: `${scene}-${out.length}`, scene, title: sc?.title ?? "", tod: sc?.time_of_day ?? "", sub: sc?.summary ?? "", shots: [s],
+        key: `${scene}-${out.length}`, scene, no: sc ? scenes.indexOf(sc) + 1 : 0, title: sc?.title ?? "", tod: sc?.time_of_day ?? "", sub: sc?.summary ?? "", shots: [s],
         done: inScene.filter((x) => x.video).length, all: inScene.length,
       });
     }
@@ -418,19 +435,25 @@ function groupByScene(shots: Shot[], scenes: Scene[], all: Shot[]): Group[] {
 function StoryboardSkeleton({ wide, aspect }: { wide: boolean; aspect: string }) {
   return (
     <div className="flex h-full flex-col" aria-busy="true">
-      <div className="flex shrink-0 flex-wrap items-center gap-4 border-b border-line bg-panel/60 px-5 py-2.5">
-        <div className="flex items-center gap-2.5"><Skeleton className="size-[38px] rounded-full" /><div className="space-y-1.5"><Skeleton className="h-3.5 w-24" /><Skeleton className="h-2.5 w-36" /></div></div>
-        <div className="flex gap-1.5">{[64, 104, 96, 88, 84].map((w, i) => <Skeleton key={i} className="h-7 rounded-full" style={{ width: w }} />)}</div>
-        <div className="flex-1" />
-        <div className="flex gap-2"><Skeleton className="h-7 w-16" /><Skeleton className="h-7 w-24" /><Skeleton className="h-7 w-28" /><Skeleton className="h-7 w-20" /></div>
+      <div className="shrink-0 border-b border-line bg-panel/75">
+        <div className="flex flex-wrap items-center gap-4 px-3 pb-1 pt-2">
+          <div className="flex items-center gap-2.5"><Skeleton className="size-9 rounded-full" /><div className="space-y-1.5"><Skeleton className="h-2.5 w-12" /><Skeleton className="h-3.5 w-14" /></div></div>
+          {[80, 64, 72, 72].map((w, i) => <div key={i} className="space-y-1.5"><Skeleton className="h-2.5" style={{ width: w * 0.7 }} /><Skeleton className="h-3.5" style={{ width: w * 0.5 }} /></div>)}
+        </div>
+        <div className="flex flex-wrap items-center gap-3 border-t border-line/60 px-3 py-1.5">
+          <Skeleton className="h-8 w-[22rem] max-w-full" />
+          <div className="flex-1" />
+          <div className="flex gap-2"><Skeleton className="h-7 w-16" /><Skeleton className="h-7 w-24" /><Skeleton className="h-7 w-28" /><Skeleton className="h-7 w-20" /></div>
+        </div>
       </div>
       <div className="min-h-0 flex-1 overflow-hidden">
-        <div className="flex items-center gap-3 border-b border-line/70 px-5 py-2"><Skeleton className="h-4 w-20" /><Skeleton className="h-4 w-14 rounded-full" /><div className="flex-1" /><Skeleton className="h-1.5 w-24 rounded-full" /></div>
-        <div className={clsx("grid gap-3 px-5 pt-3", wide ? GRID.wide : GRID.tall)}>
+        <div className="flex items-center gap-3 border-b border-line/70 px-4 py-2"><Skeleton className="h-5 w-12" /><Skeleton className="h-3.5 w-28" /><div className="flex-1" /><Skeleton className="h-1.5 w-24" /></div>
+        <div className={clsx("grid gap-3 px-4 pt-3", wide ? GRID.wide : GRID.tall)}>
           {Array.from({ length: 8 }, (_, i) => (
             <div key={i} className="overflow-hidden rounded-xl border border-line bg-panel">
-              <Skeleton className="rounded-none" style={{ aspectRatio: thumbRatio(aspect) }} />
-              <div className="space-y-2 p-2.5"><Skeleton className="h-3 w-full" /><Skeleton className="h-3 w-3/5" /><div className="flex gap-1"><Skeleton className="size-5" /><Skeleton className="size-5" /><Skeleton className="size-5" /></div></div>
+              <Skeleton className="h-7 rounded-none" />
+              <div className="p-1.5 pb-0"><Skeleton className="rounded-md" style={{ aspectRatio: thumbRatio(aspect) }} /></div>
+              <div className="space-y-2 p-2.5"><Skeleton className="h-3 w-full" /><Skeleton className="h-3 w-3/5" /><div className="grid grid-cols-5 gap-1.5"><Skeleton className="h-5" /><Skeleton className="h-5" /><Skeleton className="h-5" /><Skeleton className="h-5" /><Skeleton className="h-5" /></div></div>
             </div>
           ))}
         </div>

@@ -1,0 +1,53 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   Writing + casting workspaces (Brief, Story, Scenes, Bible, Shot list, World).
+   Only the few things Tailwind utilities can't express cleanly. Everything is built from the Command tokens in index.css,
+   so dark and light follow automatically. Imported by components/room/workspace.tsx.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* The screenplay page: a ledger rule at the gutter edge, like the margin line of a script page. */
+.rm-page {
+  --rm-gutter: 3.25rem;
+  position: relative;
+  background-image: linear-gradient(to right, transparent calc(var(--rm-gutter) - 1px), var(--color-line) calc(var(--rm-gutter) - 1px),
+    var(--color-line) var(--rm-gutter), transparent var(--rm-gutter));
+  background-repeat: no-repeat;
+}
+@media (max-width: 40rem) {
+  .rm-page { --rm-gutter: 2.5rem; }
+}
+
+/* Dashed leader used by timelines (episode axis, version list, scene flow). */
+.rm-rule {
+  background-image: linear-gradient(to right, var(--color-line) 50%, transparent 50%);
+  background-size: 6px 1px;
+  background-repeat: repeat-x;
+  background-position: left center;
+}
+.rm-rule-y {
+  background-image: linear-gradient(to bottom, var(--color-line) 50%, transparent 50%);
+  background-size: 1px 6px;
+  background-repeat: repeat-y;
+}
+
+/* A wardrobe break: an amber inner line and a faint glow so the cell reads even in a sea of cells. */
+.rm-break {
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--color-warn) 55%, transparent), 0 0 14px -6px var(--color-warn);
+}
+
+/* Faint scanline texture for portrait wells and empty image slots. */
+.rm-scan {
+  background-image: repeating-linear-gradient(to bottom, transparent 0 3px, color-mix(in oklab, var(--color-accent) 5%, transparent) 3px 4px);
+}
+
+/* Outline rail: the active marker slides, everything else is quiet. */
+.rm-outline a[aria-current="location"] { color: var(--color-ink); }
+
+/* Horizontal strips that scroll on small screens without showing a scrollbar. */
+.rm-strip { overflow-x: auto; scrollbar-width: none; }
+.rm-strip::-webkit-scrollbar { display: none; }
+
+/* Sticky table header / first column hairlines (wardrobe matrix, shot table). */
+.rm-matrix th, .rm-matrix td { border-color: var(--color-line); }
+.rm-matrix thead th { position: sticky; top: 0; z-index: 3; }
+.rm-matrix tbody th { position: sticky; left: 0; z-index: 2; }
+.rm-matrix thead th:first-child { left: 0; z-index: 4; }

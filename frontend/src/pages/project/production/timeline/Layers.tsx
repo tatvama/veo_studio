@@ -5,9 +5,10 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEven
 import { toast } from "sonner";
 import { formatTC, useClockThrottled, type Clock } from "../../../../components/review/utils";
 import { usePeaks, type WaveSeg } from "../../../../components/review/Waveform";
-import { Button, Field, IconButton, Input, Popover, Toggle, Tooltip } from "../../../../components/ui";
+import { Button, Field, IconButton, Input, Panel, Popover, Toggle, Tooltip } from "../../../../components/ui";
 import { api, ApiError } from "../../../../lib/api";
 import { tr, useT } from "../../../../lib/i18n";
+import { Rng } from "../instruments";
 import { KF_DEFAULT, KF_KEYS, MAX_KEYFRAMES, normalizeKf, stateAt, type KfKey, type Keyframe } from "./keyframes";
 import { FPS, LABEL_W, TRACK_H, type Holds } from "./shared";
 import type { Transport } from "./transport";
@@ -153,15 +154,16 @@ export function LayerTrackRow({ kind, track, index, doc, pps, view, canEdit, sel
     });
   };
 
-  const tone = kind === "video" ? "border-violet-400/60 bg-violet-500/25 text-violet-100" : "border-sky-400/60 bg-sky-500/20 text-sky-100";
+  const tone = kind === "video" ? "border-accent-2/60 bg-accent-2/25 text-ink" : "border-info/60 bg-info/20 text-ink";
   return (
     <div className="flex border-b border-line/60" style={{ height: kind === "video" ? TRACK_H + 10 : TRACK_H + 4 }}>
-      <div className="sticky left-0 z-30 flex shrink-0 items-center gap-1 border-r border-line bg-panel px-1.5" style={{ width: LABEL_W }}>
-        <span className={clsx("grid size-5 shrink-0 place-items-center rounded-md [&>svg]:size-3", kind === "video" ? "bg-violet-500/20 text-violet-300" : "bg-sky-500/20 text-sky-300")}>
+      <div className="sticky left-0 z-30 flex shrink-0 items-center gap-1 border-r border-line bg-panel pl-2.5 pr-1.5" style={{ width: LABEL_W }}>
+        <span aria-hidden className={clsx("absolute inset-y-1.5 left-0 w-[2px] rounded-r", kind === "video" ? "bg-accent-2" : "bg-info")} />
+        <span className={clsx("grid size-5 shrink-0 place-items-center rounded-md border [&>svg]:size-3", kind === "video" ? "border-accent-2/30 bg-accent-2/10 text-accent-2" : "border-info/30 bg-info/10 text-info")}>
           {kind === "video" ? <LayersIcon /> : <AudioLines />}
         </span>
         <input value={track.name} disabled={!canEdit} onChange={(e) => setTrack((x) => ({ ...x, name: e.target.value }))} aria-label={t("Layer name")}
-          className="min-w-0 flex-1 truncate bg-transparent text-2xs font-semibold uppercase tracking-wide text-mute outline-none focus:text-ink" />
+          className="mono min-w-0 flex-1 truncate bg-transparent text-2xs font-medium uppercase tracking-wider text-mute outline-none focus:text-ink" />
         {kind === "video" && (
           <button type="button" title={track.hidden ? t("Show layer") : t("Hide layer")} disabled={!canEdit} onClick={() => setTrack((x) => ({ ...x, hidden: !x.hidden }))}
             className="grid size-5 place-items-center rounded text-dim hover:text-ink">{track.hidden ? <EyeOff className="size-3" /> : <Eye className="size-3" />}</button>
@@ -177,10 +179,10 @@ export function LayerTrackRow({ kind, track, index, doc, pps, view, canEdit, sel
           </>
         )}
       </div>
-      <div className={clsx("relative flex-1", track.hidden && "opacity-40", index % 2 === 0 && "bg-raised/25")}
+      <div className={clsx("tl-lane relative flex-1", track.hidden && "opacity-40", index % 2 === 0 && "bg-raised/25")}
         onDragOver={(e) => { if (canEdit && e.dataTransfer.types.includes("Files")) e.preventDefault(); }}
         onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f && canEdit) void onFile(f); }}>
-        {kind === "audio" && <WaveLane segs={segs} view={view} pps={pps} className="text-sky-300 opacity-70" />}
+        {kind === "audio" && <WaveLane segs={segs} view={view} pps={pps} className="text-info opacity-70" />}
         {track.clips.map((c0) => {
           const c = drag?.id === c0.id ? { ...c0, ...drag } : c0;
           const on = sel?.clipId === c.id;
@@ -190,14 +192,14 @@ export function LayerTrackRow({ kind, track, index, doc, pps, view, canEdit, sel
               title={`${c.name} · ${c.dur.toFixed(1)}s`}
               style={{ position: "absolute", left: c.start * pps, width: Math.max(c.dur * pps, 6), top: 3, bottom: 3,
                 backgroundImage: kind === "video" && thumb ? `url(${thumb})` : undefined, backgroundSize: "auto 100%", backgroundRepeat: "repeat-x" }}
-              className={clsx("group overflow-hidden rounded-md border text-2xs", tone, canEdit && "cursor-grab", on ? "z-[3] ring-2 ring-accent" : "z-[1]")}>
+              className={clsx("tl-clip group overflow-hidden rounded-md border text-2xs", tone, canEdit && "cursor-grab", on ? "is-sel z-[3] border-accent" : "z-[1]")}>
               {c.fade_in > 0 && <span className="pointer-events-none absolute inset-y-0 left-0 bg-gradient-to-r from-black/60 to-transparent" style={{ width: c.fade_in * pps }} />}
               {c.fade_out > 0 && <span className="pointer-events-none absolute inset-y-0 right-0 bg-gradient-to-l from-black/60 to-transparent" style={{ width: c.fade_out * pps }} />}
               {c.keyframes?.map((k, i) => (
                 <span key={i} aria-hidden title={t("Keyframe at {t}", { t: formatTC(k.t, FPS, true) })}
                   className="pointer-events-none absolute bottom-0.5 size-1.5 -translate-x-1/2 rotate-45 border border-black/50 bg-accent-2" style={{ left: k.t * pps }} />
               ))}
-              <span className="relative flex items-center gap-1 truncate px-2 py-0.5 font-medium [text-shadow:0_1px_2px_rgb(0_0_0/0.8)]">
+              <span className="mono relative flex items-center gap-1 truncate px-2 py-0.5 font-medium [text-shadow:0_1px_2px_rgb(0_0_0/0.6)]">
                 {c.kind === "image" ? <ImageIcon className="size-3 shrink-0" /> : c.kind === "video" ? <Film className="size-3 shrink-0" /> : <Music2 className="size-3 shrink-0" />}
                 {c.name}
               </span>
@@ -280,9 +282,9 @@ export function LayerInspector({ doc, sel, canEdit, edit, onClose, onSeek, clock
   const slider = (label: string, k: keyof LayerClip, min: number, max: number, step: number, fmt: (v: number) => string, fallback = 0) => (
     <div className="flex items-center gap-2">
       <span className="w-16 shrink-0 text-2xs text-mute">{label}</span>
-      <input type="range" min={min} max={max} step={step} value={Number(c[k] ?? fallback)} disabled={!canEdit} aria-label={label}
-        onChange={(e) => set({ [k]: Number(e.target.value) } as Partial<LayerClip>)} className="h-1.5 min-w-0 flex-1 accent-[var(--color-accent)]" />
-      <span className="w-12 shrink-0 text-right text-2xs tabular-nums text-dim">{fmt(Number(c[k] ?? fallback))}</span>
+      <Rng min={min} max={max} step={step} value={Number(c[k] ?? fallback)} disabled={!canEdit} aria-label={label}
+        onChange={(e) => set({ [k]: Number(e.target.value) } as Partial<LayerClip>)} className="flex-1" />
+      <span className="mono w-12 shrink-0 text-right text-2xs tabular-nums text-dim">{fmt(Number(c[k] ?? fallback))}</span>
     </div>
   );
   // keyframes (picture clips only)
@@ -307,14 +309,14 @@ export function LayerInspector({ doc, sel, canEdit, edit, onClose, onSeek, clock
     );
   };
   return (
-    <div className="space-y-3 rounded-xl border border-line bg-panel p-3">
+    <Panel tone="accent" flush bodyClassName="space-y-3 p-3">
       <div className="flex items-center gap-2">
-        <span className={clsx("grid size-7 place-items-center rounded-lg", sel.track === "video" ? "bg-violet-500/20 text-violet-300" : "bg-sky-500/20 text-sky-300")}>
+        <span className={clsx("grid size-7 place-items-center rounded-lg border", sel.track === "video" ? "border-accent-2/30 bg-accent-2/10 text-accent-2" : "border-info/30 bg-info/10 text-info")}>
           {c.kind === "image" ? <ImageIcon className="size-4" /> : c.kind === "video" ? <Film className="size-4" /> : <Music2 className="size-4" />}
         </span>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-semibold">{c.name}</p>
-          <p className="text-2xs text-dim">{track.name} · {t("at {s}s for {d}s", { s: c.start.toFixed(2), d: c.dur.toFixed(2) })}</p>
+          <p className="mono text-2xs text-dim">{track.name} · {t("at {s}s for {d}s", { s: c.start.toFixed(2), d: c.dur.toFixed(2) })}</p>
         </div>
         <Button size="sm" variant="ghost" onClick={() => onSeek(c.start)}>{t("Go to")}</Button>
         <Button size="sm" variant="ghost" onClick={onClose}>✕</Button>
@@ -344,8 +346,8 @@ export function LayerInspector({ doc, sel, canEdit, edit, onClose, onSeek, clock
         <section className="space-y-2 rounded-lg border border-line bg-raised/40 p-2" aria-label={t("Keyframes")}>
           <div className="flex items-center gap-2">
             <Diamond className="size-3.5 text-accent-2" />
-            <span className="text-xs font-semibold">{t("Keyframes")}</span>
-            <span className="rounded-full bg-raised px-1.5 text-2xs tabular-nums text-dim">{kfs.length}/{MAX_KEYFRAMES}</span>
+            <span className="eyebrow">{t("Keyframes")}</span>
+            <span className="mono text-2xs tabular-nums text-dim">{kfs.length}/{MAX_KEYFRAMES}</span>
             <Tooltip content={atPlayhead ? t("Capture the picture's position, size, opacity and angle at the playhead") : t("Move the playhead onto this clip first")}>
               <Button size="sm" variant="outline" className="ml-auto" icon={<Plus className="size-3.5" />} disabled={!canEdit || !atPlayhead || kfs.length >= MAX_KEYFRAMES} onClick={addAtPlayhead}>
                 {t("Add at playhead")}
@@ -358,7 +360,7 @@ export function LayerInspector({ doc, sel, canEdit, edit, onClose, onSeek, clock
                 <li key={i} className="rounded-lg border border-line bg-panel p-1.5">
                   <div className="mb-1 flex items-center gap-1.5">
                     <button type="button" onClick={() => onSeek(c.start + k.t)} title={t("Move the playhead here")}
-                      className="inline-flex h-6 items-center gap-1 rounded-md bg-raised px-1.5 font-mono text-2xs tabular-nums text-mute hover:bg-hover hover:text-ink">
+                      className="mono inline-flex h-6 items-center gap-1 rounded-md border border-line bg-raised px-1.5 text-2xs tabular-nums text-mute hover:border-accent/40 hover:text-ink">
                       <Diamond className="size-2.5 text-accent-2" />{formatTC(k.t, FPS, true)}
                     </button>
                     <Input type="number" step={1 / FPS} min={0} max={c.dur} value={k.t} disabled={!canEdit} aria-label={t("Keyframe time (s)")}
@@ -388,7 +390,7 @@ export function LayerInspector({ doc, sel, canEdit, edit, onClose, onSeek, clock
           <Button size="sm" variant="ghost" className="ml-auto text-bad" icon={<Trash2 className="size-3.5" />} onClick={remove}>{t("Remove")}</Button>
         </div>
       )}
-    </div>
+    </Panel>
   );
 }
 

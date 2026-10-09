@@ -1,0 +1,86 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   Director "comms console" and the job-queue console: the few things Tailwind utilities can't say.
+   Tokens only. Everything is in the `components` layer so utilities on the element still win.
+   ════════════════════════════════════════════════════════════════════════════ */
+@layer theme, base, components, utilities;
+
+@layer components {
+  /* A violet bar of light along an edge (the Director's version of `edge-light`). */
+  .dr-edge {
+    height: 1px;
+    background-image: linear-gradient(90deg, transparent, color-mix(in oklab, var(--color-ai) 80%, transparent) 28%,
+      color-mix(in oklab, var(--color-accent-2) 65%, transparent) 72%, transparent);
+  }
+
+  /* Header ground: a violet glow from the top edge. */
+  .dr-glow { background: radial-gradient(120% 90% at 50% -30%, color-mix(in oklab, var(--color-ai) 14%, transparent), transparent 70%); }
+
+  /* The conversation log ground: a very faint violet hairline grid that fades toward the bottom. */
+  .dr-log {
+    background-image:
+      linear-gradient(color-mix(in oklab, var(--color-ai) 5%, transparent) 1px, transparent 1px),
+      linear-gradient(90deg, color-mix(in oklab, var(--color-ai) 5%, transparent) 1px, transparent 1px);
+    background-size: 28px 28px;
+  }
+
+  /* The Director's mark: a violet tile with a ping ring. `is-working` pings faster, `is-idle` is calm. */
+  @keyframes dr-ring { 0% { transform: scale(0.92); opacity: 0.75; } 80%, 100% { transform: scale(1.55); opacity: 0; } }
+  .dr-mark {
+    position: relative; display: grid; place-items: center; flex-shrink: 0; color: var(--color-ai);
+    border: 1px solid color-mix(in oklab, var(--color-ai) 38%, transparent);
+    background: linear-gradient(160deg, color-mix(in oklab, var(--color-ai) 22%, transparent), color-mix(in oklab, var(--color-accent-2) 10%, transparent));
+    box-shadow: 0 0 18px -6px color-mix(in oklab, var(--color-ai) 70%, transparent);
+  }
+  .dr-mark::after {
+    content: ""; position: absolute; inset: -1px; border-radius: inherit; pointer-events: none;
+    border: 1px solid var(--color-ai); animation: dr-ring 2.6s ease-out infinite;
+  }
+  .dr-mark.is-working::after { animation-duration: 1.15s; }
+  .dr-mark.is-idle::after { animation: none; opacity: 0; }
+
+  /* Message block: a hairline block with a coloured rail on the left edge. */
+  .dr-msg { position: relative; }
+  .dr-msg::before {
+    content: ""; position: absolute; left: 0; top: 0.5rem; bottom: 0.5rem; width: 2px; border-radius: 2px; background: var(--dr-rail, var(--color-line));
+  }
+  .dr-msg[data-from="director"] { --dr-rail: var(--color-ai); }
+  .dr-msg[data-from="user"] { --dr-rail: var(--color-accent); }
+
+  /* The input: a command line. The ring glows violet on focus. */
+  .dr-input { transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease, background-color var(--dur-fast) ease; }
+  .dr-input:focus-within {
+    border-color: color-mix(in oklab, var(--color-ai) 60%, transparent); background: var(--color-bg);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-ai) 14%, transparent);
+  }
+
+  /* Quick-order chips: like `cx-chip` but they light violet on hover (they talk to the Director). */
+  .dr-chip {
+    display: inline-flex; align-items: center; gap: 0.375rem; height: 1.75rem; padding: 0 0.625rem; flex-shrink: 0; white-space: nowrap;
+    border: 1px solid var(--color-line); border-radius: 0.5rem; background: var(--color-raised); color: var(--color-mute);
+    font-size: 0.75rem; font-weight: 500; line-height: 1;
+    transition: color var(--dur-fast) ease, background-color var(--dur-fast) ease, border-color var(--dur-fast) ease, transform var(--dur-fast) ease;
+  }
+  .dr-chip > svg { width: 0.875rem; height: 0.875rem; flex-shrink: 0; color: var(--color-dim); transition: color var(--dur-fast) ease; }
+  .dr-chip:hover:not(:disabled) {
+    color: var(--color-ink); border-color: color-mix(in oklab, var(--color-ai) 50%, transparent); background: color-mix(in oklab, var(--color-ai) 10%, var(--color-raised));
+  }
+  .dr-chip:hover:not(:disabled) > svg { color: var(--color-ai); }
+  .dr-chip:active:not(:disabled) { transform: scale(0.97); }
+  .dr-chip:disabled { opacity: 0.5; cursor: not-allowed; }
+  @media (max-width: 640px) { .dr-chip { height: 2.25rem; } }
+
+  /* ── Job queue console ─────────────────────────────────────────────────── */
+  /* A thin progress line along the top of the collapsed strip. */
+  .jq-line { position: absolute; left: 0; top: 0; height: 1px; background-image: linear-gradient(90deg, var(--color-accent), var(--color-accent-2)); box-shadow: 0 0 8px var(--color-accent); transition: width 0.6s var(--ease-out-expo); }
+
+  /* A bar track with a fill that carries the `sweep` light while the job runs. */
+  .jq-track { position: relative; height: 0.375rem; overflow: hidden; border-radius: 9999px; background: var(--color-line); }
+  .jq-fill { position: absolute; inset: 0 auto 0 0; border-radius: inherit; background-image: linear-gradient(90deg, var(--color-accent), var(--color-accent-2)); transition: width 0.5s var(--ease-out-expo); }
+  .jq-fill[data-tone="ok"] { background-image: none; background-color: var(--color-ok); }
+  .jq-fill[data-tone="bad"] { background-image: none; background-color: var(--color-bad); }
+  .jq-fill[data-tone="warn"] { background-image: none; background-color: var(--color-warn); }
+  .jq-fill[data-tone="info"] { background-image: none; background-color: var(--color-info); }
+}
+
+/* Violet equalizer (the `eq` bars in the Director's colour). Unlayered on purpose: index.css's `.eq > i` is unlayered too. */
+.eq.is-ai > i { background: var(--color-ai); }

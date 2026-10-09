@@ -9,10 +9,11 @@ import {
   ArrowRightToLine, ChevronDown, CircleCheck, Clapperboard, Film, ImageIcon, Link2, Loader2, MapPin, MessageSquareWarning, Plus, Sparkles,
   StepForward, TriangleAlert, Unlink, Video,
 } from "lucide-react";
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
 import { toast } from "sonner";
 import { useGenerate } from "../../../components/Generate";
 import { Avatar, Button, Input, Menu, Popover, Segmented, Toggle, Tooltip } from "../../../components/ui";
+import "../../../styles/production.css";
 import { api } from "../../../lib/api";
 import { tr, useT } from "../../../lib/i18n";
 import { useLocations } from "../../../lib/queries";
@@ -41,10 +42,10 @@ type LocData = { l: Location };
 type LinkEdgeData = { kind: "link"; sourceShotId: number; targetShotId: number; sourceCode: string; targetCode: string; mode: LinkMode };
 
 const STATUS: Record<string, { label: string; cls: string }> = {
-  draft: { label: "draft", cls: "bg-dim/15 text-mute" },
-  keyframe_ready: { label: "keyframe", cls: "bg-info/15 text-info" },
-  video_ready: { label: "video", cls: "bg-accent/15 text-accent-ink" },
-  approved: { label: "approved", cls: "bg-ok/15 text-ok" },
+  draft: { label: "draft", cls: "bg-black/65 text-white/80" },
+  keyframe_ready: { label: "keyframe", cls: "bg-black/65 text-info" },
+  video_ready: { label: "video", cls: "bg-black/65 text-accent" },
+  approved: { label: "approved", cls: "bg-black/65 text-ok" },
 };
 
 // ── nodes ────────────────────────────────────────────────────────────────────
@@ -53,17 +54,18 @@ const SceneNode = memo(function SceneNode({ data }: NodeProps<Node<SceneData>>) 
   const s = useStudio();
   const { scene, index, count, secs, location } = data;
   return (
-    <div className="w-[230px] rounded-2xl border-2 border-accent/40 bg-panel p-3 shadow-card">
+    <div className="hud relative w-[230px] rounded-xl border border-accent/35 bg-panel p-3 shadow-card">
+      <span aria-hidden className="edge-light pointer-events-none absolute inset-x-3 top-0 h-px" />
       <Handle type="target" position={Position.Left} id="loc" className="!size-3 !border-2 !border-panel !bg-info" title={t("Connect a location")} />
-      <div className="flex items-center gap-1.5">
-        <span className="rounded bg-accent/15 px-1.5 py-0.5 font-mono text-2xs font-bold text-accent-ink">{scene ? `SC${String(index).padStart(2, "0")}` : "—"}</span>
-        <span className="min-w-0 flex-1 truncate text-sm font-semibold">{scene?.title || t("Unsorted shots")}</span>
+      <div className="flex items-center gap-2">
+        <span className="mono rounded border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-2xs font-semibold tracking-wide text-accent-ink">{scene ? `SC${String(index).padStart(2, "0")}` : "—"}</span>
+        <span className="min-w-0 flex-1 truncate text-sm font-semibold tracking-tight">{scene?.title || t("Unsorted shots")}</span>
       </div>
-      <p className="mt-1.5 flex items-center gap-1 text-2xs text-mute"><MapPin className="size-3" />{location?.name || <span className="text-dim">{t("no location — connect one")}</span>}</p>
-      <p className="mt-0.5 text-2xs tabular-nums text-dim">{count} {t("shots")} · {secs}s</p>
+      <p className="mt-2 flex items-center gap-1.5 text-2xs text-mute"><MapPin className="size-3 shrink-0 text-info" />{location?.name || <span className="text-dim">{t("no location — connect one")}</span>}</p>
+      <p className="mono mt-1.5 text-2xs uppercase tracking-wider tabular-nums text-dim">{count} {t("shots")} · {secs}s</p>
       {s.canEdit && (
         <button type="button" onClick={() => s.addShot(scene?.id ?? null)}
-          className="nodrag mt-2 inline-flex items-center gap-1 rounded-md border border-dashed border-accent/50 px-2 py-0.5 text-2xs font-medium text-accent-ink hover:bg-accent/10">
+          className="nodrag mt-2.5 inline-flex items-center gap-1 rounded-md border border-dashed border-accent/45 px-2 py-0.5 text-2xs font-medium text-accent-ink transition-colors hover:bg-accent/10">
           <Plus className="size-3" />{t("Add shot")}
         </button>
       )}
@@ -221,18 +223,21 @@ const ShotNode = memo(function ShotNode({ data }: NodeProps<Node<ShotData>>) {
         </NodeToolbar>
       )}
       <div onMouseEnter={enter} onMouseLeave={leave} style={{ width: SHOT_W }}
-        className={clsx("rounded-2xl border bg-panel shadow-card transition-shadow", selected ? "border-accent ring-2 ring-accent/30" : "border-line")}>
+        className={clsx("hud relative rounded-xl border bg-panel shadow-card transition-shadow",
+          selected ? "border-accent shadow-[0_0_0_1px_var(--color-accent),0_0_26px_-6px_var(--color-accent)]" : "border-line")}>
         <Handle type="target" position={Position.Left} id="in" className="!size-2.5 !border-2 !border-panel !bg-accent"
-          title={t("Drop another shot's orange dot here: this shot then continues from it")} />
+          title={t("Drop another shot's right-hand dot here: this shot then continues from it")} />
         <Handle type="target" position={Position.Top} id="cast" className="!size-3 !border-2 !border-panel !bg-ok" title={t("Connect a character")} />
-        <div className="relative h-[104px] overflow-hidden rounded-t-2xl bg-raised">
-          {thumb ? <img src={thumb} alt="" className="size-full object-cover" draggable={false} /> : (
-            <div className="grid size-full place-items-center text-dim"><ImageIcon className="size-6" /></div>
-          )}
-          <span className="absolute left-1.5 top-1.5 rounded bg-black/60 px-1 font-mono text-2xs font-semibold text-white">{shot.code}</span>
-          <span className={clsx("absolute right-1.5 top-1.5 rounded px-1 text-2xs font-medium backdrop-blur", st.cls)}>{t(st.label)}</span>
-          {shot.generating && <span className="absolute inset-0 grid place-items-center bg-black/35"><Loader2 className="size-5 animate-spin text-white" /></span>}
-          {lock && <LockMark name={lock.name} className="absolute bottom-1.5 left-1.5" />}
+        <div className="p-1.5 pb-0">
+          <div className={clsx("scr h-[98px]", !thumb && "scr-empty", selected && "is-lit")}>
+            {thumb ? <img src={thumb} alt="" className="size-full object-cover" draggable={false} /> : (
+              <div className="grid size-full place-items-center text-white/40"><ImageIcon className="size-6" /></div>
+            )}
+            <span className="mono absolute left-2.5 top-2.5 z-[5] rounded bg-black/65 px-1 text-2xs font-semibold text-white">{shot.code}</span>
+            <span className={clsx("mono absolute right-2.5 top-2.5 z-[5] rounded px-1 text-2xs font-medium uppercase tracking-wider backdrop-blur", st.cls)}>{t(st.label)}</span>
+            {shot.generating && <span className="absolute inset-0 z-[6] grid place-items-center bg-black/55"><span className="eq" aria-hidden><i /><i /><i /><i /></span></span>}
+            {lock && <LockMark name={lock.name} className="absolute bottom-2.5 left-2.5 z-[5]" />}
+          </div>
         </div>
         <div className="space-y-1.5 p-2">
           <ShotBadges shot={shot} lang={lang} linkFrom={linkFrom} />
@@ -241,16 +246,16 @@ const ShotNode = memo(function ShotNode({ data }: NodeProps<Node<ShotData>>) {
             {people.length ? (
               <span className="flex -space-x-1.5">{people.slice(0, 4).map((c) => <Avatar key={c.id} name={c.name} src={c.avatar_url} size={20} className="ring-2 ring-panel" />)}</span>
             ) : <span className="text-2xs text-dim">{t("nobody")}</span>}
-            <span className="ml-auto text-2xs tabular-nums text-dim">{Math.max(shot.extend_to || 0, shot.duration_s)}s</span>
+            <span className="mono ml-auto text-2xs tabular-nums text-dim">{Math.max(shot.extend_to || 0, shot.duration_s)}s</span>
           </div>
           {editable && (
             <div className="nodrag flex gap-1">
               <button type="button" disabled={!!busy || shot.generating} onClick={() => void run("keyframe", tr("Keyframe"))}
-                className="inline-flex flex-1 items-center justify-center gap-1 rounded-md border border-line py-1 text-2xs font-medium hover:bg-hover disabled:opacity-50">
+                className="inline-flex flex-1 items-center justify-center gap-1 rounded-md border border-line py-1 text-2xs font-medium transition-colors hover:border-dim/50 hover:bg-hover disabled:opacity-50">
                 {busy === "keyframe" ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}{t("Keyframe")}
               </button>
               <button type="button" disabled={!!busy || shot.generating} onClick={() => void run("video", tr("Video"))}
-                className="inline-flex flex-1 items-center justify-center gap-1 rounded-md border border-line py-1 text-2xs font-medium hover:bg-hover disabled:opacity-50">
+                className="inline-flex flex-1 items-center justify-center gap-1 rounded-md border border-line py-1 text-2xs font-medium transition-colors hover:border-dim/50 hover:bg-hover disabled:opacity-50">
                 {busy === "video" ? <Loader2 className="size-3 animate-spin" /> : <Video className="size-3" />}{t("Video")}
               </button>
               <Tooltip content={t("Add the next shot: same cast, place and outfits, continuing from this one")}>
@@ -274,11 +279,12 @@ const CharacterNode = memo(function CharacterNode({ data }: NodeProps<Node<CharD
   const t = useT();
   const { c, lit } = data;
   return (
-    <div className={clsx("flex items-center gap-2 rounded-xl border bg-panel px-2 py-1.5 shadow-card", lit ? "border-ok" : "border-line")} style={{ width: SIDE_W }}>
+    <div className={clsx("flex items-center gap-2 rounded-xl border border-l-[3px] bg-panel px-2 py-1.5 shadow-card transition-shadow",
+      lit ? "border-ok shadow-[0_0_18px_-6px_var(--color-ok)]" : "border-line border-l-ok/60")} style={{ width: SIDE_W }}>
       <Avatar name={c.name} src={c.avatar_url} size={34} />
       <div className="min-w-0 flex-1">
         <p className="truncate text-xs font-semibold">{c.name}</p>
-        <p className={clsx("truncate text-2xs", c.avatar_url ? "text-dim" : "text-warn")}>{c.avatar_url ? (c.role || t("character")) : t("no photo yet")}</p>
+        <p className={clsx("mono truncate text-2xs uppercase tracking-wider", c.avatar_url ? "text-dim" : "text-warn")}>{c.avatar_url ? (c.role || t("character")) : t("no photo yet")}</p>
       </div>
       <Handle type="source" position={Position.Right} id="cast" className="!size-3 !border-2 !border-panel !bg-ok" title={t("Drag to a shot to put them in it")} />
     </div>
@@ -288,7 +294,7 @@ const CharacterNode = memo(function CharacterNode({ data }: NodeProps<Node<CharD
 const LocationNode = memo(function LocationNode({ data }: NodeProps<Node<LocData>>) {
   const { l } = data;
   return (
-    <div className="flex items-center gap-2 rounded-xl border border-line bg-panel px-2 py-1.5 shadow-card" style={{ width: SIDE_W }}>
+    <div className="flex items-center gap-2 rounded-xl border border-l-[3px] border-line border-l-info/60 bg-panel px-2 py-1.5 shadow-card" style={{ width: SIDE_W }}>
       <span className="grid size-[34px] shrink-0 place-items-center overflow-hidden rounded-lg bg-raised">
         {l.thumb_url ? <img src={l.thumb_url} alt="" className="size-full object-cover" draggable={false} /> : <MapPin className="size-4 text-info" />}
       </span>
@@ -301,10 +307,11 @@ const LocationNode = memo(function LocationNode({ data }: NodeProps<Node<LocData
 const NODE_TYPES = { scene: SceneNode, shot: ShotNode, character: CharacterNode, location: LocationNode };
 
 // ── edges ────────────────────────────────────────────────────────────────────
-/** Continuity link: an animated accent edge with a label that shows the mode; click it to switch, or open the menu to switch / remove. */
+/** Continuity link: an animated accent-to-indigo edge with a mono label that shows the mode; click it to switch, or open the menu to switch / remove. */
 function LinkEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, selected, markerEnd }: EdgeProps<Edge<LinkEdgeData, "link">>) {
   const t = useT();
   const s = useStudio();
+  const gid = useId().replace(/:/g, "");
   const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
   if (!data) return <BaseEdge id={id} path={path} />;
   const extend = data.mode === "extend";
@@ -312,23 +319,29 @@ function LinkEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targ
   const vars = { source: data.sourceCode, target: data.targetCode };
   return (
     <>
-      <BaseEdge id={id} path={path} markerEnd={markerEnd} interactionWidth={16} style={{ stroke: "var(--color-accent)", strokeWidth: selected ? 3 : 2 }} />
+      <defs>
+        <linearGradient id={`lg-${gid}`} gradientUnits="userSpaceOnUse" x1={sourceX} y1={sourceY} x2={targetX} y2={targetY === sourceY ? targetY + 0.01 : targetY}>
+          <stop offset="0" style={{ stopColor: "var(--color-accent)" }} />
+          <stop offset="1" style={{ stopColor: "var(--color-accent-2)" }} />
+        </linearGradient>
+      </defs>
+      <BaseEdge id={id} path={path} markerEnd={markerEnd} interactionWidth={16} style={{ stroke: `url(#lg-${gid})`, strokeWidth: selected ? 3 : 2 }} />
       <EdgeLabelRenderer>
         <div className="nodrag nopan absolute" style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`, pointerEvents: "all" }}>
-          <div className={clsx("flex items-center rounded-full border bg-panel shadow-card transition-colors", selected ? "border-accent" : "border-accent/50")}>
+          <div className={clsx("flex items-center rounded-lg border bg-panel shadow-card transition-colors", selected ? "border-accent shadow-[0_0_14px_-4px_var(--color-accent)]" : "border-accent/40")}>
             <Tooltip content={s.canEdit
               ? (extend ? t("{target}'s video extends {source}'s clip — click to start from its last frame instead", vars)
                 : t("{target} starts from {source}'s last frame — click to extend the clip instead", vars))
               : (extend ? t("{target}'s video extends {source}'s clip", vars) : t("{target} starts from {source}'s last frame", vars))}>
               <button type="button" disabled={!s.canEdit} onClick={() => void s.setLinkMode(data.targetShotId, other)}
-                className="inline-flex items-center gap-1 rounded-full py-0.5 pl-1.5 pr-1.5 text-2xs font-medium text-accent-ink transition-colors hover:bg-accent/10 disabled:cursor-default disabled:hover:bg-transparent">
+                className="mono inline-flex items-center gap-1 rounded-lg py-0.5 pl-1.5 pr-1.5 text-2xs font-medium uppercase tracking-wider text-accent-ink transition-colors hover:bg-accent/10 disabled:cursor-default disabled:hover:bg-transparent">
                 {extend ? <ArrowRightToLine className="size-3" /> : <Link2 className="size-3" />}
                 {extend ? <>{t("extend")}<span aria-hidden>▸</span></> : t("last frame")}
               </button>
             </Tooltip>
             {s.canEdit && (
               <Menu placement="bottom-start" width={232} trigger={(p) => (
-                <button type="button" {...p} aria-label={t("Link options")} className="grid size-5 place-items-center rounded-full text-dim transition-colors hover:bg-hover hover:text-ink">
+                <button type="button" {...p} aria-label={t("Link options")} className="grid size-5 place-items-center rounded-lg text-dim transition-colors hover:bg-hover hover:text-ink">
                   <ChevronDown className="size-3" />
                 </button>
               )} items={[
@@ -416,8 +429,8 @@ function FilmGraph() {
         const dotted = shot.continuity_from_prev && !linkFrom && before != null;
         if (dotted) {
           es.push({ id: `prev-${shot.id}`, source: `shot-${before}`, sourceHandle: "out", target: id, targetHandle: "in", deletable: false, selectable: false,
-            className: "filmmap-prev", label: t("continues"), labelStyle: { fontSize: 11, fill: "var(--color-dim)" }, labelBgStyle: { fill: "var(--color-panel)" },
-            labelBgPadding: [4, 2], labelBgBorderRadius: 4, style: { stroke: "var(--color-accent)", strokeWidth: 1.5, opacity: 0.7 }, data: { kind: "prev" } });
+            className: "filmmap-prev", label: t("continues"), labelStyle: { fontSize: 11, fill: "var(--color-dim)", fontFamily: "var(--font-mono)", letterSpacing: "0.06em" }, labelBgStyle: { fill: "var(--color-panel)" },
+            labelBgPadding: [5, 3], labelBgBorderRadius: 6, style: { stroke: "var(--color-accent-2)", strokeWidth: 1.5, opacity: 0.8 }, data: { kind: "prev" } });
         }
         // the plain sequence edge stays unless a link (or the dotted edge) already draws that pair
         const covered = prevShot != null && (linked.has(`${prevShot.id}>${shot.id}`) || (dotted && before === prevShot.id));
@@ -528,17 +541,18 @@ function FilmGraph() {
       colorMode={dark ? "dark" : "light"} fitView fitViewOptions={{ padding: 0.15, maxZoom: 1 }} minZoom={0.15} maxZoom={1.6}
       deleteKeyCode={s.canEdit ? ["Delete", "Backspace"] : null} proOptions={{ hideAttribution: true }}
       style={{ background: "var(--color-bg)" }}>
-      <Background gap={24} size={1.2} color="var(--color-line)" />
+      <Background gap={22} size={1.3} />
       <Controls showInteractive={false} />
-      <MiniMap pannable zoomable nodeStrokeWidth={2} className="!hidden @3xl:!block" style={{ background: "var(--color-panel)" }}
-        nodeColor={(n) => (n.type === "scene" ? "var(--color-accent)" : n.type === "character" ? "var(--color-ok)" : n.type === "location" ? "var(--color-info)" : "var(--color-raised)")} />
+      <MiniMap pannable zoomable nodeStrokeWidth={2} className="!hidden @3xl:!block"
+        nodeColor={(n) => (n.type === "scene" ? "var(--color-accent)" : n.type === "character" ? "var(--color-ok)" : n.type === "location" ? "var(--color-info)" : "var(--color-hover)")} />
       <Panel position="top-left">
-        <div className="flex items-center gap-2 rounded-xl border border-line bg-panel/90 px-2 py-1 text-2xs text-mute shadow-card backdrop-blur">
+        <div className="hud relative flex items-center gap-2 rounded-xl border border-line bg-panel/90 px-2.5 py-1.5 text-2xs text-mute shadow-card backdrop-blur">
           <Clapperboard className="size-3.5 shrink-0 text-accent-ink" />
+          <span className="eyebrow !text-ink">{t("Film map")}</span>
           <span className="hidden @md:inline">{t("Each row is a scene, its shots in order")}</span>
           {s.canEdit && (
-            <Tooltip content={t("Drag a character's green dot to a shot to put them in it · a location's blue dot to a scene · a shot's orange dot to another shot so it continues from that one (click the link's label to switch between last frame and extend) · drag a shot to another row to move it · select a link and press Delete to remove it")}>
-              <span className="grid size-5 cursor-help place-items-center rounded-full border border-line font-semibold">?</span>
+            <Tooltip content={t("Drag a character's green dot to a shot to put them in it · a location's blue dot to a scene · a shot's right-hand dot to another shot so it continues from that one (click the link's label to switch between last frame and extend) · drag a shot to another row to move it · select a link and press Delete to remove it")}>
+              <span className="mono grid size-5 cursor-help place-items-center rounded-md border border-line font-semibold">?</span>
             </Tooltip>
           )}
           <Toggle checked={allLinks} onChange={setAllLinks} label={<span className="text-2xs">{t("All cast links")}</span>} />
@@ -554,7 +568,7 @@ export default function FilmMap() {
   const s = useStudio();
   if (!s.episode) return null;
   if (!(s.episode.shots ?? []).some((x) => x.include)) {
-    return <div className="grid h-full place-items-center p-6 text-sm text-mute">{t("No shots yet — write them in the Shot list, then they appear here.")}</div>;
+    return <div className="scr-empty grid h-full place-items-center p-6 text-sm text-mute"><p className="max-w-xs text-center">{t("No shots yet — write them in the Shot list, then they appear here.")}</p></div>;
   }
-  return <div className="@container h-full"><ReactFlowProvider><FilmGraph /></ReactFlowProvider></div>;
+  return <div className="filmmap @container h-full"><ReactFlowProvider><FilmGraph /></ReactFlowProvider></div>;
 }

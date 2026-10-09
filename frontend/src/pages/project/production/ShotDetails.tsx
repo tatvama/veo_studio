@@ -62,8 +62,8 @@ export function Details({ shot, form, setForm, lang, lines, disabled, hasLines, 
                 return (
                   <button key={c.id} type="button" disabled={disabled} aria-pressed={on}
                     onClick={() => set("characters", on ? form.characters!.filter((x) => x !== c.id) : [...(form.characters || []), c.id])}
-                    className={clsx("flex items-center gap-1.5 rounded-full border py-0.5 pl-0.5 pr-2.5 text-xs transition-colors disabled:opacity-60",
-                      on ? "border-accent/60 bg-accent/10 text-ink" : "border-line text-mute hover:border-dim/60 hover:text-ink")}>
+                    className={clsx("flex items-center gap-1.5 rounded-lg border py-0.5 pl-0.5 pr-2.5 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-60",
+                      on ? "border-accent/50 bg-accent/10 text-ink shadow-[0_0_12px_-6px_var(--color-accent)]" : "border-line text-mute hover:border-dim/60 hover:text-ink")}>
                     <Avatar name={c.name} src={c.avatar_url} size={22} />
                     {c.name}
                     {c.locked && <Lock className="size-2.5 text-dim" aria-label={t("Locked")} />}
@@ -105,7 +105,7 @@ export function Details({ shot, form, setForm, lang, lines, disabled, hasLines, 
             <p className="rounded-lg bg-warn/10 px-2.5 py-1.5 text-2xs leading-snug text-warn">{t("Tip: one speaker per shot lip-syncs best (use shot / reverse-shot)")}</p>
           )}
           {lines.map((l, i) => (
-            <div key={i} className="space-y-1.5 rounded-lg border border-line bg-panel p-2">
+            <div key={i} className="space-y-1.5 rounded-lg border border-line border-l-2 border-l-info/50 bg-panel p-2">
               <div className="flex items-center gap-1.5">
                 <Select value={String(l.character_id)} disabled={disabled} className="!h-8 !w-40 shrink-0 text-xs" aria-label={t("Speaker")}
                   onChange={(e) => { const ls = [...lines]; ls[i] = { ...l, character_id: e.target.value === "NARRATOR" ? "NARRATOR" : Number(e.target.value) }; setLines(ls); }}>
@@ -179,7 +179,7 @@ export function Details({ shot, form, setForm, lang, lines, disabled, hasLines, 
           </div>
 
           {/* continuity from a specific shot (v3) */}
-          <div className="rounded-lg border border-line bg-panel/60 p-2.5">
+          <div className="rounded-lg border border-line bg-raised/30 p-2.5">
             <div className="grid items-end gap-3 @md:grid-cols-[minmax(0,1fr)_auto]">
               <Field label={t("Continues from")} hint={t("Start this shot where another one ends: its last frame becomes the first frame, or its video is extended.")}>
                 <Select value={contFrom ?? ""} disabled={disabled || !ep} aria-label={t("Continues from")}
@@ -295,17 +295,17 @@ function PropsPicker({ projectId, value, disabled, onChange }: { projectId: numb
     <div className="space-y-1.5">
       <div className="flex items-baseline justify-between gap-3">
         <span className="text-xs font-medium text-mute">{t("Props in shot")}</span>
-        {value.length > 0 && <span className="text-2xs tabular-nums text-dim">{t("{n} selected", { n: value.length })}</span>}
+        {value.length > 0 && <span className="mono text-2xs tabular-nums text-dim">{t("{n} selected", { n: value.length })}</span>}
       </div>
-      {isLoading ? <div className="flex gap-1.5"><Skeleton className="h-7 w-20 !rounded-full" /><Skeleton className="h-7 w-24 !rounded-full" /></div> : (
+      {isLoading ? <div className="flex gap-1.5"><Skeleton className="h-7 w-20" /><Skeleton className="h-7 w-24" /></div> : (
         <div className="flex flex-wrap gap-1.5" role="group" aria-label={t("Props in shot")}>
           {shown.map((p) => {
             const on = value.includes(p.id);
             return (
               <button key={p.id} type="button" disabled={disabled} aria-pressed={on} onClick={() => toggle(p.id)} title={p.description || undefined}
-                className={clsx("inline-flex h-7 max-w-full items-center gap-1.5 rounded-full border pl-1 pr-2.5 text-xs transition-colors disabled:opacity-60",
-                  on ? "border-accent/60 bg-accent/10 text-ink" : "border-line text-mute hover:border-dim/60 hover:text-ink")}>
-                {p.url ? <img src={p.url} alt="" className="size-5 rounded-full object-cover" /> : <span className="grid size-5 place-items-center rounded-full bg-raised text-dim"><Package className="size-3" /></span>}
+                className={clsx("inline-flex h-7 max-w-full items-center gap-1.5 rounded-lg border pl-1 pr-2.5 text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-60",
+                  on ? "border-accent/50 bg-accent/10 text-ink shadow-[0_0_12px_-6px_var(--color-accent)]" : "border-line text-mute hover:border-dim/60 hover:text-ink")}>
+                {p.url ? <img src={p.url} alt="" className="size-5 rounded-md object-cover" /> : <span className="grid size-5 place-items-center rounded-md bg-raised text-dim"><Package className="size-3" /></span>}
                 <span className="truncate">{p.name}</span>
                 {on && <Check className="size-3 text-accent-ink" strokeWidth={3} />}
               </button>
@@ -331,25 +331,18 @@ function EngineCard({ shot, canEdit, hasLines, lipEngine, setLipEngine, onShooto
 }) {
   const t = useT();
   return (
-    <section className="rounded-xl border border-line bg-raised/35">
-      <header className="flex items-center gap-2 px-3 py-2.5">
-        <span className="grid size-6 shrink-0 place-items-center rounded-md bg-accent/12 text-accent-ink"><Cpu className="size-3.5" /></span>
-        <div className="min-w-0 flex-1">
-          <h4 className="text-sm font-semibold tracking-tight">{t("Engine")}</h4>
-          <p className="truncate text-2xs text-dim">{t("The model that makes this shot. Auto follows your team's routing policy.")}</p>
-        </div>
-        {canEdit && (
-          <Tooltip content={t("Generate this shot with 2–4 engines and pick the best")} side="left">
-            <Button size="sm" variant="outline" icon={<Swords className="size-3.5" />} onClick={onShootout}>{t("Shootout")}</Button>
-          </Tooltip>
-        )}
-      </header>
-      <div className="space-y-2 border-t border-line/70 p-2.5">
+    <Collapse memo="engine" title={t("Engine")} icon={<Cpu />} summary={t("The model that makes this shot. Auto follows your team's routing policy.")}
+      actions={canEdit ? (
+        <Tooltip content={t("Generate this shot with 2–4 engines and pick the best")} side="left">
+          <Button size="sm" variant="outline" icon={<Swords className="size-3.5" />} onClick={onShootout}>{t("Shootout")}</Button>
+        </Tooltip>
+      ) : undefined}>
+      <div className="space-y-2">
         <EnginePicker key={shot.id} shot={shot} canEdit={canEdit} embedded />
         {canEdit && hasLines && (
           <EnginePicker key={`lip-${shot.id}`} shot={shot} purpose="lipsync" canEdit={canEdit} value={lipEngine} onChange={setLipEngine} label={t("Lip-sync engine")} embedded />
         )}
       </div>
-    </section>
+    </Collapse>
   );
 }

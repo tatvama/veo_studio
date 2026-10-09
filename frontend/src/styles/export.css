@@ -1,0 +1,14 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   Export page (render console): the few patterns that console.css does not cover. Tokens only.
+   ════════════════════════════════════════════════════════════════════════════ */
+@layer theme, base, components, utilities;
+
+@layer components {
+  /* `.cx-monitor` paints its scanlines with ::after and `.hud` draws its bottom-right bracket with ::after too, so the two
+     must not sit on the same element. Put `hud xp-frame` on a wrapper around the monitor: the brackets then sit above the bed. */
+  .xp-frame { border-radius: 0.625rem; }
+  .xp-frame::before, .xp-frame::after { z-index: 3; }
+
+  /* Library of finished renders: tiles reflow to as many columns as fit (one on a phone). */
+  .xp-tiles { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fill, minmax(min(100%, 15.5rem), 1fr)); }
+}

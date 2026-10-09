@@ -1,37 +1,42 @@
-/* dockview panels in the app's own colours. The --color-* tokens switch with the light/dark theme, so this follows it. */
+/* ════════════════════════════════════════════════════════════════════════════
+   Studio: dockview and the Film Map in the Command design system.
+   The --color-* tokens switch with the light / dark theme, so this follows it.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ── dockview ─────────────────────────────────────────────────────────────── */
 .dockview-theme-veo {
   --dv-paneview-active-outline-color: var(--color-accent);
-  --dv-tabs-and-actions-container-font-size: 12px;
-  --dv-tabs-and-actions-container-height: 32px;
-  --dv-drag-over-background-color: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  --dv-tabs-and-actions-container-font-size: 11px;
+  --dv-tabs-and-actions-container-height: 34px;
+  --dv-drag-over-background-color: color-mix(in srgb, var(--color-accent) 16%, transparent);
   --dv-drag-over-border-color: var(--color-accent);
   --dv-drag-over-border: 1px solid var(--color-accent);
   --dv-edge-dock-indicator-color: var(--color-accent);
   --dv-tabs-container-scrollbar-color: var(--color-line);
   --dv-icon-hover-background-color: var(--color-hover);
-  --dv-floating-box-shadow: 0 12px 40px rgb(0 0 0 / 0.35), 0 2px 8px rgb(0 0 0 / 0.2);
+  --dv-floating-box-shadow: var(--shadow-pop);
   --dv-floating-border: 1px solid var(--color-line);
   --dv-overlay-z-index: 30;
-  --dv-tab-font-size: 12px;
+  --dv-tab-font-size: 11px;
   --dv-border-radius: 10px;
   --dv-tab-margin: 0;
   --dv-sash-color: transparent;
-  --dv-active-sash-color: var(--color-accent);
+  --dv-active-sash-color: color-mix(in srgb, var(--color-accent) 75%, transparent);
   --dv-active-sash-transition-duration: 0.1s;
-  --dv-active-sash-transition-delay: 0.3s;
+  --dv-active-sash-transition-delay: 0.15s;
   --dv-spacing-padding: 0px;
-  --dv-tab-border-radius: 8px;
+  --dv-tab-border-radius: 0px;
   --dv-sash-border-radius: 4px;
   --dv-dropdown-border-radius: 8px;
   --dv-tab-close-icon-size: 12px;
   --dv-floating-group-border: 1px solid var(--color-line);
   --dv-floating-group-dragging-opacity: 0.6;
-  --dv-floating-titlebar-height: 22px;
+  --dv-floating-titlebar-height: 24px;
   --dv-floating-titlebar-background-color: var(--color-raised);
   --dv-floating-titlebar-border-bottom: 1px solid var(--color-line);
   --dv-group-view-background-color: var(--color-panel);
-  --dv-tabs-and-actions-container-background-color: var(--color-raised);
-  --dv-activegroup-visiblepanel-tab-background-color: var(--color-panel);
+  --dv-tabs-and-actions-container-background-color: color-mix(in srgb, var(--color-raised) 70%, var(--color-panel));
+  --dv-activegroup-visiblepanel-tab-background-color: color-mix(in srgb, var(--color-accent) 7%, var(--color-panel));
   --dv-activegroup-hiddenpanel-tab-background-color: transparent;
   --dv-inactivegroup-visiblepanel-tab-background-color: var(--color-panel);
   --dv-inactivegroup-hiddenpanel-tab-background-color: transparent;
@@ -47,21 +52,143 @@
   --dv-context-menu-color: var(--color-ink);
   --dv-dnd-compass-color: var(--color-accent);
   --dv-smart-guides-color: var(--color-accent);
-  background: var(--color-bg);
+  background: transparent;
   color: var(--color-ink);
 }
-.dockview-theme-veo .dv-groupview { border-radius: 10px; overflow: hidden; border: 1px solid var(--color-line); }
-.dockview-theme-veo .dv-tab.dv-active-tab { box-shadow: inset 0 -2px 0 var(--color-accent); }
-.dockview-theme-veo .dv-tab { padding: 0 10px; }
 
-/* Film Map: a continuity link flows from the source shot to the shot that continues it; the dotted edge is
+/* a panel: hairline card, the active one lit */
+.dockview-theme-veo .dv-groupview {
+  border-radius: 10px;
+  overflow: hidden;
+  border: 1px solid var(--color-line);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.dockview-theme-veo .dv-groupview.dv-active-group {
+  border-color: color-mix(in srgb, var(--color-accent) 34%, var(--color-line));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 10%, transparent), 0 10px 30px -18px color-mix(in srgb, var(--color-accent) 40%, transparent);
+}
+
+/* the header: hairline underneath, a lit edge on the active panel */
+.dockview-theme-veo .dv-tabs-and-actions-container {
+  position: relative;
+  box-shadow: inset 0 -1px 0 var(--color-line);
+}
+.dockview-theme-veo .dv-groupview.dv-active-group > .dv-tabs-and-actions-container {
+  background-image: linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-accent) 75%, transparent) 25%, color-mix(in srgb, var(--color-accent-2) 70%, transparent) 70%, transparent);
+  background-size: 100% 1px;
+  background-position: top;
+  background-repeat: no-repeat;
+}
+
+/* tabs: hairline, mono labels, a glowing underline on the active one */
+.dockview-theme-veo .dv-tab {
+  display: flex;
+  align-items: center;
+  padding: 0 6px 0 12px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition: color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+.dockview-theme-veo .dv-tab:hover { color: var(--color-ink); }
+.dockview-theme-veo .dv-tab.dv-active-tab {
+  box-shadow: inset 0 -2px 0 var(--color-dim);
+}
+.dockview-theme-veo .dv-groupview.dv-active-group > .dv-tabs-and-actions-container .dv-tab.dv-active-tab {
+  box-shadow: inset 0 -2px 0 var(--color-accent), 0 6px 14px -10px var(--color-accent);
+}
+.dockview-theme-veo .dv-tab .dv-default-tab { gap: 6px; }
+.dockview-theme-veo .dv-tab .dv-default-tab .dv-default-tab-content { display: inline-flex; align-items: center; gap: 6px; margin-right: 2px; }
+.dockview-theme-veo .dv-tab .dv-default-tab-icon { display: inline-flex; opacity: 0.85; }
+.dockview-theme-veo .dv-tab.dv-active-tab .dv-default-tab-icon { color: var(--color-accent-ink); opacity: 1; }
+.dockview-theme-veo .dv-tab .dv-default-tab .dv-default-tab-action { border-radius: 4px; padding: 3px; color: var(--color-dim); }
+.dockview-theme-veo .dv-tab .dv-default-tab .dv-default-tab-action:hover { color: var(--color-ink); background-color: var(--color-hover); }
+
+/* the empty part of the header is a drag handle: give it a faint tick pattern so it reads as one */
+.dockview-theme-veo .dv-tabs-and-actions-container .dv-void-container {
+  background-image: repeating-linear-gradient(135deg, transparent 0 6px, color-mix(in srgb, var(--color-line) 55%, transparent) 6px 7px);
+  background-size: 100% 6px;
+  background-position: center;
+  background-repeat: repeat-x;
+  opacity: 0.8;
+}
+
+/* sashes: invisible gap that lights up in the accent as you reach for it */
+.dockview-theme-veo .dv-split-view-container .dv-sash-container .dv-sash:not(.dv-disabled):hover,
+.dockview-theme-veo .dv-split-view-container .dv-sash-container .dv-sash:not(.dv-disabled):active {
+  box-shadow: 0 0 12px 0 color-mix(in srgb, var(--color-accent) 60%, transparent);
+}
+
+/* floating / popped panels */
+.dockview-theme-veo .dv-resize-container { border-radius: 10px; }
+
+/* the group's right-hand actions: a readout, then small icon buttons */
+.studio-ro { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em; color: var(--color-dim); font-variant-numeric: tabular-nums; }
+
+/* ── Film Map ─────────────────────────────────────────────────────────────── */
+.filmmap {
+  --xy-background-color: var(--color-bg);
+  --xy-edge-stroke: var(--color-accent);
+  --xy-edge-stroke-selected: var(--color-accent-ink);
+  --xy-connectionline-stroke: var(--color-accent);
+  --xy-connectionline-stroke-width: 2;
+  --xy-handle-background-color: var(--color-accent);
+  --xy-handle-border-color: var(--color-panel);
+  --xy-node-color: var(--color-ink);
+  --xy-node-border: 0;
+  --xy-node-background-color: transparent;
+  --xy-node-boxshadow-hover: none;
+  --xy-node-boxshadow-selected: none;
+  --xy-node-border-radius: 12px;
+  --xy-controls-button-background-color: var(--color-panel);
+  --xy-controls-button-background-color-hover: var(--color-hover);
+  --xy-controls-button-color: var(--color-mute);
+  --xy-controls-button-color-hover: var(--color-ink);
+  --xy-controls-button-border-color: var(--color-line);
+  --xy-controls-box-shadow: none;
+  --xy-minimap-background-color: var(--color-panel);
+  --xy-minimap-mask-background-color: color-mix(in srgb, var(--color-bg) 72%, transparent);
+  --xy-minimap-mask-stroke-color: var(--color-accent);
+  --xy-minimap-mask-stroke-width: 1;
+  --xy-minimap-node-background-color: var(--color-raised);
+  --xy-minimap-node-stroke-color: var(--color-line);
+  --xy-background-pattern-color: color-mix(in srgb, var(--color-dim) 38%, transparent);
+  --xy-edge-label-background-color: var(--color-panel);
+  --xy-edge-label-color: var(--color-mute);
+  --xy-selection-background-color: color-mix(in srgb, var(--color-accent) 8%, transparent);
+  --xy-selection-border: 1px dashed color-mix(in srgb, var(--color-accent) 70%, transparent);
+  --xy-attribution-background-color: transparent;
+}
+.filmmap .react-flow__controls {
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+}
+.filmmap .react-flow__controls-button { border-bottom: 1px solid var(--color-line); }
+.filmmap .react-flow__controls-button:last-child { border-bottom: 0; }
+.filmmap .react-flow__minimap {
+  border: 1px solid var(--color-line);
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: var(--shadow-card);
+}
+.filmmap .react-flow__handle { border-radius: 3px; transition: transform 0.12s ease, box-shadow 0.12s ease; }
+.filmmap .react-flow__handle:hover, .filmmap .react-flow__handle.connectingfrom { transform: scale(1.35); box-shadow: 0 0 10px 0 currentColor; }
+.filmmap .react-flow__node { cursor: default; }
+.filmmap .react-flow__edge-textbg { rx: 6; }
+
+/* a continuity link flows from the source shot to the shot that continues it; the dotted edge is
    "continue from the previous shot" without an explicit link. (`dashdraw` comes with React Flow's stylesheet.) */
 .react-flow__edge.filmmap-link path.react-flow__edge-path { stroke-dasharray: 7 5; animation: dashdraw 0.45s linear infinite; }
 .react-flow__edge.filmmap-link.selected path.react-flow__edge-path,
 .react-flow__edge.filmmap-link:focus-visible path.react-flow__edge-path {
-  filter: drop-shadow(0 0 3px color-mix(in srgb, var(--color-accent) 70%, transparent));
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--color-accent) 75%, transparent));
 }
 .react-flow__edge.filmmap-prev path.react-flow__edge-path { stroke-dasharray: 2 5; stroke-linecap: round; }
 @media (prefers-reduced-motion: reduce) {
   .react-flow__edge.filmmap-link path.react-flow__edge-path { animation: none; }
 }
+:root[data-motion="reduced"] .react-flow__edge.filmmap-link path.react-flow__edge-path { animation: none; }

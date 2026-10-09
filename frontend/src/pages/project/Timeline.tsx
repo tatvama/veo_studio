@@ -9,8 +9,8 @@ import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { useGenerate } from "../../components/Generate";
 import { usePeaks, type WaveSeg } from "../../components/review/Waveform";
-import { clamp, lsGet, lsSet, shortcutAllowed } from "../../components/review/utils";
-import { Button, Card, Empty, IconButton, Kbd, Segmented, Skeleton, Tooltip } from "../../components/ui";
+import { clamp, formatTC, lsGet, lsSet, shortcutAllowed } from "../../components/review/utils";
+import { Button, Empty, IconButton, Kbd, Skeleton, Tooltip } from "../../components/ui";
 import { api } from "../../lib/api";
 import { secs } from "../../lib/format";
 import type { ShotFx } from "../../lib/fx";
@@ -18,6 +18,7 @@ import { useT } from "../../lib/i18n";
 import { useEpisode, useSettings } from "../../lib/queries";
 import type { Episode, Shot, SubmitResult } from "../../lib/types";
 import { useProjectCtx } from "./context";
+import { RailSeg, RailToggle, Rng } from "./production/instruments";
 import { LoadError } from "./production/LoadError";
 import { ClipMenu, type ClipMenuState } from "./production/timeline/ClipMenu";
 import type { MenuAnchor } from "./production/timeline/ContextMenu";
@@ -27,7 +28,7 @@ import {
   type Clip, type Holds, type Overlay, type TrimDraft, type TrimMode,
 } from "./production/timeline/shared";
 import {
-  LaneItem, OverlayLane, OverlayPopover, PlayheadLine, SnapGuide, TimeRuler, Track, WaveLane, type OverlayEdit,
+  LaneItem, OverlayLane, OverlayPopover, PlayheadLine, SnapGuide, TimeRuler, Track, WaveLane, rulerMajor, type OverlayEdit,
 } from "./production/timeline/Tracks";
 import { CutButton, HoldBlock, MainClip, RollHandle, TransitionBlock, type HoldPatch } from "./production/timeline/MainTrack";
 import { LayerInspector, LayerPlayback, LayerTrackRow, useLayersEditor, type LayerSel } from "./production/timeline/Layers";
@@ -398,52 +399,57 @@ export default function TimelinePage({ embedded = false }: { embedded?: boolean 
         </div>
 
         {/* ── timeline ──────────────────────────────────────────────────────── */}
-        <Card className={clsx("@container overflow-hidden", embedded ? "flex min-h-0 flex-1 flex-col" : "shrink-0")}>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-panel px-3 py-2">
-            <div className="flex items-center gap-2 text-xs">
-              <span className="grid size-6 place-items-center rounded-md bg-raised text-mute"><Film className="size-3.5" /></span>
-              <span className="font-semibold">{t("{n} clips", { n: shots.length })}</span>
-              <span className="tabular-nums text-mute">· {secs(total)}</span>
+        <section className={clsx("hud @container relative overflow-hidden rounded-xl border border-line bg-panel", embedded ? "flex min-h-0 flex-1 flex-col" : "shrink-0")}>
+          <span aria-hidden className="edge-light pointer-events-none absolute inset-x-4 top-0 z-10 h-px opacity-70" />
+          {/* the instrument strip: what the cut is, the edit modes, layers, zoom */}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-raised/30 px-3 py-2">
+            <div className="flex items-center gap-2.5">
+              <span className="grid size-7 place-items-center rounded-md border border-line bg-panel text-mute"><Film className="size-3.5" /></span>
+              <div className="leading-none">
+                <p className="eyebrow">{t("{n} clips", { n: shots.length })}</p>
+                <p className="mono mt-1.5 flex items-baseline gap-2 text-sm font-semibold tabular-nums">{formatTC(total, FPS, true)}<span className="text-2xs font-normal text-dim">{secs(total)}</span></p>
+              </div>
             </div>
-            <p className="hidden items-center gap-x-2 gap-y-1 text-2xs text-dim @4xl:flex">
+            <p className="hidden items-center gap-x-2 gap-y-1 border-l border-line pl-3 text-2xs text-dim @4xl:flex">
               <span className="inline-flex items-center gap-1"><Kbd>Space</Kbd>{t("play")}</span>
               <span className="inline-flex items-center gap-1"><Kbd>J</Kbd><Kbd>K</Kbd><Kbd>L</Kbd>{t("shuttle")}</span>
               <span className="inline-flex items-center gap-1"><Kbd>S</Kbd>{t("snap")}</span>
               <span className="inline-flex items-center gap-1"><Kbd>\</Kbd>{t("fit")}</span>
             </p>
             <div className="flex-1" />
+            {/* edit modes: ripple / hold and snapping read as one segmented family */}
+            <div className="flex items-center gap-1.5">
+              {canEdit && (
+                <Tooltip content={trimMode === "ripple" ? t("Ripple: trimming a clip closes the gap — the rest of the cut slides up") : t("Hold: trimming keeps the rest of the cut in place by freezing the clip's last frame (preview only until the export supports it)")}>
+                  <span className="inline-flex"><RailSeg label={t("Trim mode")} value={trimMode} onChange={setTrimMode}
+                    options={[{ value: "ripple", label: t("Ripple") }, { value: "hold", label: t("Hold") }]} /></span>
+                </Tooltip>
+              )}
+              <Tooltip content={snap ? t("Snapping on (S)") : t("Snapping off (S)")}>
+                <span className="inline-flex"><RailToggle on={snap} onClick={toggleSnap} icon={<Magnet />}>{t("Snap")}</RailToggle></span>
+              </Tooltip>
+            </div>
             {canEdit && (
               <>
-                <Tooltip content={t("A layer over the shots: picture-in-picture, B-roll, logos, pictures")}>
-                  <Button size="sm" variant="outline" icon={<Layers className="size-3.5" />} onClick={() => addLayer("video")}>{t("Video layer")}</Button>
-                </Tooltip>
-                <Tooltip content={t("A sound layer: voice-over, extra music, sound effects")}>
-                  <Button size="sm" variant="outline" icon={<AudioLines className="size-3.5" />} onClick={() => addLayer("audio")}>{t("Audio layer")}</Button>
-                </Tooltip>
-                {layersSaving && <span className="inline-flex items-center gap-1 text-2xs text-dim"><Loader2 className="size-3 animate-spin" />{t("Saving…")}</span>}
+                <span aria-hidden className="tick-v hidden h-6 sm:block" />
+                <div className="flex items-center gap-1.5">
+                  <Tooltip content={t("A layer over the shots: picture-in-picture, B-roll, logos, pictures")}>
+                    <Button size="sm" variant="outline" icon={<Layers className="size-3.5" />} onClick={() => addLayer("video")}>{t("Video layer")}</Button>
+                  </Tooltip>
+                  <Tooltip content={t("A sound layer: voice-over, extra music, sound effects")}>
+                    <Button size="sm" variant="outline" icon={<AudioLines className="size-3.5" />} onClick={() => addLayer("audio")}>{t("Audio layer")}</Button>
+                  </Tooltip>
+                  <Tooltip content={t("Plan and generate ambience and spot effects for every shot")}>
+                    <Button size="sm" variant="outline" icon={<AudioWaveform className="size-3.5" />} onClick={autoSfx}>{t("Auto SFX")}</Button>
+                  </Tooltip>
+                  {layersSaving && <span className="mono inline-flex items-center gap-1 text-2xs text-dim"><Loader2 className="size-3 animate-spin" />{t("Saving…")}</span>}
+                </div>
               </>
             )}
-            {canEdit && (
-              <Tooltip content={t("Plan and generate ambience and spot effects for every shot")}>
-                <Button size="sm" variant="outline" icon={<AudioWaveform className="size-3.5" />} onClick={autoSfx}>{t("Auto SFX")}</Button>
-              </Tooltip>
-            )}
-            {canEdit && (
-              <Tooltip content={trimMode === "ripple" ? t("Ripple: trimming a clip closes the gap — the rest of the cut slides up") : t("Hold: trimming keeps the rest of the cut in place by freezing the clip's last frame (preview only until the export supports it)")}>
-                <span className="inline-flex"><Segmented size="sm" value={trimMode} onChange={setTrimMode} aria-label={t("Trim mode")}
-                  options={[{ value: "ripple", label: t("Ripple") }, { value: "hold", label: t("Hold") }]} /></span>
-              </Tooltip>
-            )}
-            <Tooltip content={snap ? t("Snapping on (S)") : t("Snapping off (S)")}>
-              <button type="button" aria-pressed={snap} onClick={toggleSnap}
-                className={clsx("inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors",
-                  snap ? "border-accent/40 bg-accent/12 text-accent-ink" : "border-line text-mute hover:bg-hover hover:text-ink")}>
-                <Magnet className="size-3.5" />{t("Snap")}
-              </button>
-            </Tooltip>
-            <div className="inline-flex items-center gap-0.5 rounded-lg border border-line bg-raised/60 p-0.5" role="group" aria-label={t("Zoom")}>
+            <span aria-hidden className="tick-v hidden h-6 sm:block" />
+            <div className="inline-flex items-center gap-0.5 rounded-lg border border-line bg-panel/70 p-0.5" role="group" aria-label={t("Zoom")}>
               <IconButton title={t("Zoom out (−)")} onClick={() => zoomTo(pps / 1.25)} className="!size-7"><ZoomOut className="size-4" /></IconButton>
-              <input type="range" min={0} max={100} step={0.5} value={ppsToSlider(pps)} aria-label={t("Zoom")}
+              <Rng min={0} max={100} step={0.5} value={ppsToSlider(pps)} aria-label={t("Zoom")}
                 onChange={(e) => zoomTo(sliderToPps(Number(e.target.value)))} className="mx-1 w-20 @2xl:w-28" />
               <IconButton title={t("Zoom in (+ / Ctrl+wheel)")} onClick={() => zoomTo(pps * 1.25)} className="!size-7"><ZoomIn className="size-4" /></IconButton>
               <span aria-hidden className="mx-0.5 h-4 w-px bg-line" />
@@ -453,7 +459,7 @@ export default function TimelinePage({ embedded = false }: { embedded?: boolean 
           </div>
 
           <div ref={scrollRef} className={embedded ? "min-h-0 flex-1 overflow-auto overscroll-contain" : "overflow-x-auto"}>
-            <div className="relative" style={{ width: contentW }}>
+            <div className="relative" style={{ width: contentW, "--tl-major": `${rulerMajor(pps) * pps}px` } as React.CSSProperties}>
               <TimeRuler total={total} pps={pps} view={view} clock={tp.clock}
                 onScrub={(x, phase) => {
                   const s = snapTime(x);
@@ -464,7 +470,7 @@ export default function TimelinePage({ embedded = false }: { embedded?: boolean 
                 <LayerTrackRow key={tk.id} kind="video" track={tk} index={i} doc={layers} pps={pps} view={view} canEdit={canEdit} sel={layerSel}
                   onSelect={(s) => { setLayerSel(s); setSel(null); }} edit={editLayers} upload={uploadMedia} playhead={() => tp.clock.get()} snapTime={(x) => snapTime(x, true)} />
               ))}
-              <Track icon={<Film />} label={t("Video")} count={clips.length} height={VIDEO_H}>
+              <Track icon={<Film />} label={t("Video")} tone="neutral" count={clips.length} height={VIDEO_H}>
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
                   <SortableContext items={order} strategy={horizontalListSortingStrategy}>
                     <div className="group/track relative h-full">
@@ -494,39 +500,39 @@ export default function TimelinePage({ embedded = false }: { embedded?: boolean 
                   </SortableContext>
                 </DndContext>
               </Track>
-              <Track icon={<Mic />} label={t("Dialogue")} tone="ok" count={dialogueCount || undefined} stripe>
-                <WaveLane segs={voiceSegs} {...lane} className="text-ok opacity-60" />
+              <Track icon={<Mic />} label={t("Dialogue")} tone="info" count={dialogueCount || undefined} stripe>
+                <WaveLane segs={voiceSegs} {...lane} className="text-info opacity-60" />
                 {clips.map((c) => {
                   const spans = spansOf(c.shot);
                   const lines = c.shot.dialogue?.[lang] ?? [];
                   return spans.length ? spans.map((sp, i) => (
-                    <LaneItem key={`${c.shot.id}-${i}`} tone="ok" pill left={(c.start + sp.start) * pps} width={Math.max((sp.end - sp.start) * pps, 4)} title={sp.text}>{sp.text}</LaneItem>
+                    <LaneItem key={`${c.shot.id}-${i}`} tone="info" pill left={(c.start + sp.start) * pps} width={Math.max((sp.end - sp.start) * pps, 4)} title={sp.text}>{sp.text}</LaneItem>
                   )) : lines.length ? (
-                    <LaneItem key={c.shot.id} tone="ok" dashed left={c.start * pps} width={Math.max(c.duration * pps - 3, 4)} title={t("Not voiced yet")}>
+                    <LaneItem key={c.shot.id} tone="info" dashed left={c.start * pps} width={Math.max(c.duration * pps - 3, 4)} title={t("Not voiced yet")}>
                       {lines.map((l) => l.line).join(" / ")}
                     </LaneItem>
                   ) : null;
                 })}
               </Track>
-              <Track icon={<Volume2 />} label={t("Narration")} tone="info" count={narrationCount || undefined}>
-                <WaveLane segs={narrSegs} {...lane} className="text-info opacity-60" />
+              <Track icon={<Volume2 />} label={t("Narration")} tone="accent" count={narrationCount || undefined}>
+                <WaveLane segs={narrSegs} {...lane} className="text-accent opacity-60" />
                 {clips.filter((c) => c.shot.narration?.[lang]).map((c) => (
-                  <LaneItem key={c.shot.id} tone="info" pill dashed={!c.shot.narration_take} left={c.start * pps}
+                  <LaneItem key={c.shot.id} tone="accent" pill dashed={!c.shot.narration_take} left={c.start * pps}
                     width={Math.max(Math.min((c.shot.narration_take?.duration_s || c.duration) * pps, c.duration * pps), 4)} title={c.shot.narration[lang]}>
                     {c.shot.narration[lang]}
                   </LaneItem>
                 ))}
               </Track>
-              <Track icon={<Music />} label={t("Music")} tone="accent" count={music ? 1 : undefined} stripe>
-                <WaveLane segs={musicSegs} {...lane} className="text-accent-ink opacity-50" />
+              <Track icon={<Music />} label={t("Music")} tone="ai" count={music ? 1 : undefined} stripe>
+                <WaveLane segs={musicSegs} {...lane} className="text-ai opacity-55" />
                 {music ? (
-                  <LaneItem tone="accent" pill left={0} width={total * pps}>
+                  <LaneItem tone="ai" pill left={0} width={total * pps}>
                     ♪ {music.prompt.slice(0, 80)} · {settings.music_volume_db ?? -16} dB{settings.duck !== false ? ` · ${t("ducked")}` : ""}
                   </LaneItem>
-                ) : <span className="sticky left-[140px] inline-block px-2 text-2xs leading-[38px] text-dim">{t("No music yet")}</span>}
+                ) : <span className="mono sticky left-[140px] inline-block px-2 text-2xs uppercase leading-[38px] tracking-wider text-dim">{t("No music yet")}</span>}
               </Track>
-              <Track icon={<AudioWaveform />} label={t("SFX")} tone="warn" count={sfxCount || undefined}>
-                <WaveLane segs={sfxSegs} {...lane} className="text-warn opacity-60" />
+              <Track icon={<AudioWaveform />} label={t("SFX")} tone="ok" count={sfxCount || undefined}>
+                <WaveLane segs={sfxSegs} {...lane} className="text-ok opacity-60" />
                 {clips.map((c) => {
                   const fx = c.shot.sfx_track;
                   if (fx?.path) {
@@ -534,12 +540,12 @@ export default function TimelinePage({ embedded = false }: { embedded?: boolean 
                     const d = peaks[mediaUrl(fx.path)];
                     const w = Math.max(0, Math.min(d?.duration ?? c.duration - off, c.duration - off));
                     return (
-                      <LaneItem key={c.shot.id} tone="warn" pill left={(c.start + off) * pps} width={Math.max(w * pps, 4)}
+                      <LaneItem key={c.shot.id} tone="ok" pill left={(c.start + off) * pps} width={Math.max(w * pps, 4)}
                         title={`${fx.prompt ?? ""}${fx.volume_db != null ? ` · ${fx.volume_db} dB` : ""}`}>{fx.prompt}</LaneItem>
                     );
                   }
                   return c.shot.sfx ? (
-                    <LaneItem key={c.shot.id} tone="warn" dashed left={c.start * pps} width={Math.max(c.duration * pps - 3, 4)} title={t("Written cue — not generated yet")}>{c.shot.sfx}</LaneItem>
+                    <LaneItem key={c.shot.id} tone="ok" dashed left={c.start * pps} width={Math.max(c.duration * pps - 3, 4)} title={t("Written cue — not generated yet")}>{c.shot.sfx}</LaneItem>
                   ) : null;
                 })}
               </Track>
@@ -551,7 +557,7 @@ export default function TimelinePage({ embedded = false }: { embedded?: boolean 
                 <OverlayLane clips={clips} pps={pps} canEdit={canEdit} snapTime={snapTime} setSnapLine={setSnapLine}
                   onOpen={(e) => setOvEdit(e)} onCommit={(shot, list) => { saveOverlays(shot, list).catch(() => {}); }} />
               </Track>
-              <Track icon={<Captions />} label={t("Captions")} count={captionCount || undefined}>
+              <Track icon={<Captions />} label={t("Captions")} tone="neutral" count={captionCount || undefined}>
                 {clips.map((c) => spansOf(c.shot).map((sp, i) => (
                   <LaneItem key={`${c.shot.id}-${i}`} tone="mute" left={(c.start + sp.start) * pps} width={Math.max((sp.end - sp.start) * pps, 4)} title={sp.text}>{sp.text}</LaneItem>
                 )))}
@@ -563,7 +569,7 @@ export default function TimelinePage({ embedded = false }: { embedded?: boolean 
               <PlayheadLine clock={tp.clock} pps={pps} viewLeft={view.left} />
             </div>
           </div>
-        </Card>
+        </section>
       </div>
 
       <AnimatePresence>
@@ -586,13 +592,13 @@ function TimelineSkeleton() {
     <div className="flex h-full flex-col gap-3 overflow-hidden p-4" aria-busy="true">
       <div className="grid min-h-[300px] flex-1 grid-rows-[minmax(0,1fr)] gap-3 md:grid-cols-[minmax(0,1fr)_320px]">
         <div className="flex flex-col overflow-hidden rounded-xl border border-line bg-panel">
-          <Skeleton className="flex-1 rounded-none" />
-          <div className="flex items-center justify-center gap-2 border-t border-line p-3"><Skeleton className="size-8" /><Skeleton className="size-8" /><Skeleton className="size-9 rounded-full" /><Skeleton className="size-8" /><Skeleton className="size-8" /></div>
+          <div className="flex flex-1 p-2 pb-0"><Skeleton className="flex-1 rounded-md" /></div>
+          <div className="flex items-center justify-between gap-2 p-3"><Skeleton className="h-7 w-44" /><div className="flex items-center gap-2"><Skeleton className="size-8" /><Skeleton className="size-8" /><Skeleton className="size-11 rounded-full" /><Skeleton className="size-8" /><Skeleton className="size-8" /></div><div className="w-24" /></div>
         </div>
         <div className="hidden space-y-3 md:block"><Skeleton className="h-28 rounded-xl" /><Skeleton className="h-44 rounded-xl" /></div>
       </div>
       <div className="shrink-0 overflow-hidden rounded-xl border border-line bg-panel">
-        <div className="flex items-center gap-3 border-b border-line p-2.5"><Skeleton className="h-6 w-32" /><div className="flex-1" /><Skeleton className="h-8 w-24" /><Skeleton className="h-8 w-40" /></div>
+        <div className="flex items-center gap-3 border-b border-line p-2.5"><Skeleton className="h-8 w-32" /><div className="flex-1" /><Skeleton className="h-8 w-24" /><Skeleton className="h-8 w-40" /></div>
         <Skeleton className="rounded-none" style={{ height: RULER_H }} />
         {[VIDEO_H, TRACK_H, TRACK_H, TRACK_H].map((h, i) => (
           <div key={i} className="flex border-t border-line/60" style={{ height: h }}><div className="border-r border-line bg-panel" style={{ width: LABEL_W }} /><Skeleton className="m-1 flex-1" /></div>

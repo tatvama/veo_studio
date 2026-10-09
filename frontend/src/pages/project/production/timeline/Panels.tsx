@@ -8,12 +8,13 @@ import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { formatTC, useClock, type Clock } from "../../../../components/review/utils";
-import { AnimatedNumber, Badge, Button, Card, Field, IconButton, Input, Kbd, Modal, Segmented, Toggle, Tooltip } from "../../../../components/ui";
+import { AnimatedNumber, Badge, Button, Field, IconButton, Input, Kbd, Modal, Panel, Segmented, Toggle, Tooltip } from "../../../../components/ui";
 import { api } from "../../../../lib/api";
 import { LANG_NAMES, usd } from "../../../../lib/format";
 import { fxFilter, fxTransform, type ShotFx } from "../../../../lib/fx";
 import { useT } from "../../../../lib/i18n";
 import type { AudioAsset, Shot, SubmitResult } from "../../../../lib/types";
+import { Rng } from "../instruments";
 import { ratioOf } from "../shotMeta";
 import type { MenuAnchor } from "./ContextMenu";
 import { FPS, MAX_HOLD, MAX_SPEED, MIN_SPEED, SFX_USD_PER_SHOT, SPEED_PRESETS, spansOf, type Clip, type TrimMode } from "./shared";
@@ -71,9 +72,19 @@ function useElementSize<T extends HTMLElement>() {
   return [ref, size] as const;
 }
 
-function PlayheadText({ clock }: { clock: Clock }) {
+/** The playhead as big mono digits: HH:MM:SS in ink, the frames in accent. */
+function Timecode({ clock, total }: { clock: Clock; total: number }) {
+  const t = useT();
   const v = useClock(clock);
-  return <>{formatTC(v, FPS)}</>;
+  const [hh, mm, ss, ff] = formatTC(v, FPS).split(":");
+  return (
+    <div role="timer" aria-label={t("Playhead")} className="mono flex items-baseline gap-2.5 tabular-nums">
+      <span className="text-[1.7rem] font-semibold leading-none tracking-tight">
+        <span className="text-dim">{hh}:</span>{mm}:{ss}<span className="text-base font-medium text-accent-ink">:{ff}</span>
+      </span>
+      <span className="text-2xs text-dim">/ {formatTC(total, FPS, true)}</span>
+    </div>
+  );
 }
 
 export function SequencePlayer({ tp, clips, musicUrl, musicDb, aspect, showTitles, setShowTitles, showCC, setShowCC, total, overlay }: {
@@ -99,44 +110,56 @@ export function SequencePlayer({ tp, clips, musicUrl, musicDb, aspect, showTitle
   }, [musicDb, musicUrl]);
 
   return (
-    <Card className="@container flex min-h-[min(72vh,460px)] flex-col overflow-hidden @3xl:min-h-0">
+    <section className="hud @container relative flex min-h-[min(72vh,460px)] flex-col overflow-hidden rounded-xl border border-line bg-panel @3xl:min-h-0">
+      <span aria-hidden className="edge-light pointer-events-none absolute inset-x-4 top-0 z-10 h-px opacity-70" />
       {/* the stage fills whatever height the layout gives it; the frame inside always keeps the project's aspect ratio */}
-      <div ref={stageRef} className="relative min-h-[200px] flex-1 cursor-pointer bg-black" onClick={tp.toggle} role="presentation">
-        <div ref={frameRef} className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 overflow-hidden bg-black shadow-[0_0_0_1px_rgb(255_255_255/0.08)] [container-type:inline-size]"
-          style={{ width: frameW, height: frameH }}>
-          {/* the playing shot; during a transition the blend layer shows the other one and both animate */}
-          <div ref={mainRef} className="absolute inset-0">
-          {hasVideo ? (
-            <video ref={tp.vref} src={clip.src} playsInline preload="auto" className="h-full w-full object-contain"
-              style={{ filter: fxFilter(clip.shot.fx, 0.6) || undefined, transform: fxTransform(clip.shot.fx) || undefined }}
-              onLoadedMetadata={tp.onVideoMeta} onError={() => tp.onVideoError(clip.shot.id)} />
-          ) : clip?.still ? (
-            <img src={clip.still} alt="" className="h-full w-full object-contain" style={{ filter: fxFilter(clip.shot.fx, 0.6) || undefined, transform: fxTransform(clip.shot.fx) || undefined }} />
-          ) : <div className="flex h-full items-center justify-center p-3 text-center text-sm text-white/60">{t("No media for {code}", { code: clip?.shot.code ?? "" })}</div>}
+      <div className="flex min-h-[200px] flex-1 p-2 pb-0">
+        <div ref={stageRef} className="scr relative min-h-[200px] flex-1 cursor-pointer" onClick={tp.toggle} role="presentation">
+          <div ref={frameRef} className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 overflow-hidden bg-black shadow-[0_0_0_1px_rgb(255_255_255/0.08)] [container-type:inline-size]"
+            style={{ width: frameW, height: frameH }}>
+            {/* the playing shot; during a transition the blend layer shows the other one and both animate */}
+            <div ref={mainRef} className="absolute inset-0">
+            {hasVideo ? (
+              <video ref={tp.vref} src={clip.src} playsInline preload="auto" className="h-full w-full object-contain"
+                style={{ filter: fxFilter(clip.shot.fx, 0.6) || undefined, transform: fxTransform(clip.shot.fx) || undefined }}
+                onLoadedMetadata={tp.onVideoMeta} onError={() => tp.onVideoError(clip.shot.id)} />
+            ) : clip?.still ? (
+              <img src={clip.still} alt="" className="h-full w-full object-contain" style={{ filter: fxFilter(clip.shot.fx, 0.6) || undefined, transform: fxTransform(clip.shot.fx) || undefined }} />
+            ) : <div className="flex h-full items-center justify-center p-3 text-center text-sm text-white/60">{t("No media for {code}", { code: clip?.shot.code ?? "" })}</div>}
+            </div>
+            <BlendLayer tp={tp} clips={clips} mainRef={mainRef} frameRef={frameRef} />
+            {overlay}
+            <PreviewOverlays clock={tp.clock} clip={clip} showTitles={showTitles} showCC={showCC} />
+            <AnimatePresence>
+              {!tp.playing && (
+                <motion.span key="hint" initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 1.15 }} transition={{ duration: 0.16 }}
+                  className="pointer-events-none absolute left-1/2 top-1/2 grid size-12 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-white/25 bg-black/50 text-white backdrop-blur-md">
+                  <Play className="size-5 translate-x-px" fill="currentColor" />
+                </motion.span>
+              )}
+            </AnimatePresence>
           </div>
-          <BlendLayer tp={tp} clips={clips} mainRef={mainRef} frameRef={frameRef} />
-          {overlay}
-          <PreviewOverlays clock={tp.clock} clip={clip} showTitles={showTitles} showCC={showCC} />
-          <AnimatePresence>
-            {!tp.playing && (
-              <motion.span key="hint" initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 1.15 }} transition={{ duration: 0.16 }}
-                className="pointer-events-none absolute left-1/2 top-1/2 grid size-12 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-black/50 text-white backdrop-blur-md">
-                <Play className="size-5 translate-x-px" fill="currentColor" />
-              </motion.span>
-            )}
-          </AnimatePresence>
+          {/* instrument readouts on the glass */}
+          <div className="mono pointer-events-none absolute inset-x-3 top-3 z-[6] flex items-start justify-between gap-2 text-2xs uppercase tracking-wider">
+            <span className="flex min-w-0 items-center gap-1.5 rounded bg-black/55 px-1.5 py-0.5 text-white/90 backdrop-blur-sm">
+              <span aria-hidden className={clsx("led", tp.playing && "is-on")} />
+              <span className="truncate">{clip?.shot.code} · {tp.idx + 1}/{clips.length}</span>
+              {clip?.kind && <span className="hidden text-white/55 @md:inline">{t(clip.kind)}</span>}
+            </span>
+            <span className="shrink-0 rounded bg-black/55 px-1.5 py-0.5 text-white/65 backdrop-blur-sm">{aspect} · {FPS}fps</span>
+          </div>
         </div>
       </div>
       {musicUrl && <audio ref={tp.mref} src={musicUrl} loop preload="auto" onLoadedMetadata={tp.placeMusic} />}
 
-      <div className="grid shrink-0 grid-cols-2 items-center gap-x-3 gap-y-1.5 border-t border-line bg-panel px-3 py-2 @xl:grid-cols-[1fr_auto_1fr]">
-        <div className="order-1 flex min-w-0 items-baseline gap-1.5 font-mono tabular-nums">
-          <span className="text-sm font-semibold"><PlayheadText clock={tp.clock} /></span>
-          <span className="text-2xs text-dim">/ {formatTC(total, FPS)}</span>
+      {/* transport */}
+      <div className="grid shrink-0 grid-cols-2 items-center gap-x-4 gap-y-2 px-3 py-2.5 @xl:grid-cols-[1fr_auto_1fr]">
+        <div className="order-1 flex min-w-0 items-center gap-2.5">
+          <Timecode clock={tp.clock} total={total} />
           <AnimatePresence>
             {tp.playing && tp.rate !== 1 && (
               <motion.span key={tp.rate} initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}
-                className="ml-1 inline-flex items-center gap-0.5 self-center rounded bg-accent/15 px-1.5 py-0.5 text-2xs font-semibold text-accent-ink">
+                className="mono inline-flex items-center gap-0.5 self-center rounded bg-accent/15 px-1.5 py-0.5 text-2xs font-semibold text-accent-ink">
                 {tp.rate < 0 && <Rewind className="size-3" fill="currentColor" />}{Math.abs(tp.rate)}×
               </motion.span>
             )}
@@ -147,21 +170,20 @@ export function SequencePlayer({ tp, clips, musicUrl, musicDb, aspect, showTitle
           <IconButton title={t("Previous frame (←)")} onClick={() => tp.step(-1)}><StepBack className="size-4" /></IconButton>
           <Tooltip content={tp.playing ? t("Pause") : t("Play sequence")} shortcut={<Kbd>Space</Kbd>}>
             <button type="button" onClick={tp.toggle} aria-label={tp.playing ? t("Pause") : t("Play sequence")}
-              className="btn-primary mx-1 grid size-9 place-items-center rounded-full text-black transition-transform active:scale-95">
-              {tp.playing ? <Pause className="size-4" fill="currentColor" /> : <Play className="size-4 translate-x-px" fill="currentColor" />}
+              className="btn-primary mx-1.5 grid size-11 place-items-center rounded-full transition-transform active:scale-95">
+              {tp.playing ? <Pause className="size-5" fill="currentColor" /> : <Play className="size-5 translate-x-px" fill="currentColor" />}
             </button>
           </Tooltip>
           <IconButton title={t("Next frame (→)")} onClick={() => tp.step(1)}><StepForward className="size-4" /></IconButton>
           <IconButton title={t("Next cut (↓)")} onClick={() => tp.jump(1)}><SkipForward className="size-4" /></IconButton>
         </div>
         <div className="order-2 flex min-w-0 items-center justify-end gap-1 @xl:order-3">
-          <span className="mr-1 min-w-0 truncate text-xs text-mute">{clip?.shot.code} · {tp.idx + 1}/{clips.length} · {t(clip?.kind ?? "")}</span>
           <IconButton title={t("Show titles & lower thirds")} active={showTitles} aria-pressed={showTitles} onClick={() => setShowTitles(!showTitles)}><Type className="size-4" /></IconButton>
           <IconButton title={t("Show captions")} active={showCC} aria-pressed={showCC} onClick={() => setShowCC(!showCC)}><Captions className="size-4" /></IconButton>
         </div>
       </div>
       <p className="hidden shrink-0 border-t border-line/60 bg-raised/30 px-3 py-1 text-2xs text-dim @2xl:block">{t("Quick preview. For the exact mix, render an animatic or export.")}</p>
-    </Card>
+    </section>
   );
 }
 
@@ -172,19 +194,13 @@ export function MixCard({ lang, db, duck, canEdit, onVolume, onDuck }: {
 }) {
   const t = useT();
   return (
-    <Card className="p-3.5">
-      <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-        <span className="grid size-6 place-items-center rounded-md bg-accent/12 text-accent-ink"><SlidersHorizontal className="size-3.5" /></span>
-        {t("Mix")} <Badge>{LANG_NAMES[lang] ?? lang}</Badge>
-      </h3>
+    <Panel eyebrow={t("Mix")} icon={<SlidersHorizontal />} actions={<Badge>{LANG_NAMES[lang] ?? lang}</Badge>} bodyClassName="space-y-3">
       <Field label={t("Music volume: {db} dB", { db })}>
-        <input type="range" min={-30} max={-4} value={db} disabled={!canEdit} onChange={(e) => onVolume(Number(e.target.value))} className="w-full" />
+        <Rng min={-30} max={-4} value={db} disabled={!canEdit} onChange={(e) => onVolume(Number(e.target.value))} />
       </Field>
-      <div className="mt-3">
-        <Toggle checked={duck} disabled={!canEdit} onChange={onDuck} label={<span className="text-sm">{t("Lower music under voices (ducking)")}</span>} />
-      </div>
-      <p className="mt-3 text-2xs leading-snug text-dim">{t("Final loudness is normalised to −14 LUFS for YouTube / Instagram.")}</p>
-    </Card>
+      <Toggle checked={duck} disabled={!canEdit} onChange={onDuck} label={<span className="text-sm">{t("Lower music under voices (ducking)")}</span>} />
+      <p className="text-2xs leading-snug text-dim">{t("Final loudness is normalised to −14 LUFS for YouTube / Instagram.")}</p>
+    </Panel>
   );
 }
 
@@ -199,16 +215,16 @@ function MusicRow({ m, canEdit, selecting, onUse }: { m: AudioAsset; canEdit: bo
     if (el.paused) void el.play().catch(() => {}); else el.pause();
   };
   return (
-    <li className={clsx("flex items-center gap-2.5 rounded-lg border p-2 transition-colors", m.selected ? "border-accent/50 bg-accent/5" : "border-line hover:border-dim/40")}>
+    <li className={clsx("flex items-center gap-2.5 rounded-lg border p-2 transition-colors", m.selected ? "border-ai/45 bg-ai/6" : "border-line hover:border-dim/40")}>
       <button type="button" onClick={toggle} aria-label={playing ? t("Pause") : t("Play")}
-        className="grid size-8 shrink-0 place-items-center rounded-full bg-raised text-ink transition-colors hover:bg-accent hover:text-black">
+        className="grid size-8 shrink-0 place-items-center rounded-full border border-line bg-raised text-ink outline-none transition-colors hover:border-accent hover:bg-accent hover:text-[var(--on-accent)] focus-visible:ring-2 focus-visible:ring-accent/60">
         {playing ? <Pause className="size-3.5" fill="currentColor" /> : <Play className="size-3.5 translate-x-px" fill="currentColor" />}
       </button>
       <div className="min-w-0 flex-1">
         <p className="truncate text-xs font-medium" title={m.prompt}>{m.prompt || t("Music")}</p>
-        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-line"><div className="h-full origin-left rounded-full bg-accent transition-transform duration-200" style={{ transform: `scaleX(${p})` }} /></div>
+        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-line"><div className="h-full origin-left rounded-full bg-ai shadow-[0_0_8px_var(--color-ai)] transition-transform duration-200" style={{ transform: `scaleX(${p})` }} /></div>
       </div>
-      {m.selected ? <Badge tone="accent">{t("in use")}</Badge> : canEdit && (
+      {m.selected ? <Badge tone="ai">{t("in use")}</Badge> : canEdit && (
         <Button size="sm" variant="ghost" icon={<Check className="size-3" />} loading={selecting} onClick={onUse}>{t("Use")}</Button>
       )}
       <audio ref={a} src={m.url} preload="none" onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => { setPlaying(false); setP(0); }}
@@ -235,17 +251,13 @@ export function MusicCard({ music, canEdit, prompt, setPrompt, onCompose, eid }:
     setSelecting(null);
   };
   return (
-    <Card className="p-3.5">
-      <h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">
-        <span className="grid size-6 place-items-center rounded-md bg-accent/12 text-accent-ink"><Music className="size-3.5" /></span>
-        {t("Music")}
-        {music.length > 0 && <span className="rounded-full bg-raised px-1.5 text-2xs font-semibold tabular-nums leading-4 text-dim">{music.length}</span>}
-      </h3>
+    <Panel eyebrow={t("Music")} icon={<Music />} tone="ai" bodyClassName="space-y-3"
+      actions={music.length > 0 ? <span className="mono text-2xs text-dim">{music.length}</span> : undefined}>
       {music.length > 0 ? (
-        <ul className="mb-3 space-y-1.5">
+        <ul className="space-y-1.5">
           {music.map((m) => <MusicRow key={m.id} m={m} canEdit={canEdit} selecting={selecting === m.id} onUse={() => use(m)} />)}
         </ul>
-      ) : <p className="mb-3 text-xs text-mute">{t("No music yet")}</p>}
+      ) : <p className="text-xs text-mute">{t("No music yet")}</p>}
       {canEdit && (
         <div className="flex gap-2">
           <Input placeholder={t("Describe the music (optional)")} aria-label={t("Describe the music (optional)")} value={prompt} onChange={(e) => setPrompt(e.target.value)} className="!h-8"
@@ -253,7 +265,7 @@ export function MusicCard({ music, canEdit, prompt, setPrompt, onCompose, eid }:
           <Button size="sm" icon={<Sparkles className="size-3.5" />} onClick={onCompose}>{t("Compose")}</Button>
         </div>
       )}
-    </Card>
+    </Panel>
   );
 }
 
@@ -272,7 +284,7 @@ function FrameStepper({ label, value, min, max, disabled, onChange }: {
         <Input type="number" step={0.01} min={min} max={max} value={value} disabled={disabled} aria-label={label}
           onChange={(e) => onChange(clampTo(Number(e.target.value)))}
           onKeyDown={(e) => { if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); step(e.key === "ArrowUp" ? 1 : -1, e.shiftKey); } }}
-          className="!h-8 min-w-0 rounded-none text-center tabular-nums" />
+          className="mono !h-8 min-w-0 rounded-none text-center tabular-nums" />
         <IconButton title={t("One frame later")} disabled={disabled || value >= max} onClick={(e) => step(1, e.shiftKey)} className="!size-8 rounded-l-none border border-l-0 border-line"><StepForward className="size-3.5" /></IconButton>
       </div>
     </Field>
@@ -327,13 +339,13 @@ export function ClipInspector({ shot, clip, canEdit, trimMode, onClose, onSeek, 
   const customOk = Number.isFinite(Number(custom)) && Number(custom) >= MIN_SPEED && Number(custom) <= MAX_SPEED;
   const applySpeed = (s: number) => fx("speed", { speed: Math.abs(s - 1) < 1e-3 ? undefined : Math.round(s * 100) / 100 });
   return (
-    <Card className="space-y-3 border-accent/30 p-3.5">
+    <Panel tone="accent" flush bodyClassName="space-y-3 p-3.5">
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
-          <p className="flex flex-wrap items-center gap-2 font-mono text-sm font-semibold">
+          <p className="mono flex flex-wrap items-center gap-2 text-sm font-semibold">
             {shot.code}
             <Tooltip content={t("Move the playhead here")}>
-              <button type="button" onClick={onSeek} className="inline-flex h-6 items-center rounded-md bg-raised px-2 text-2xs font-normal tabular-nums text-mute transition-colors hover:bg-hover hover:text-ink">
+              <button type="button" onClick={onSeek} className="mono inline-flex h-6 items-center rounded-md border border-line bg-raised px-2 text-2xs font-normal tabular-nums text-mute transition-colors hover:border-accent/40 hover:text-ink">
                 {formatTC(clip.start, FPS, true)} · {clip.duration.toFixed(1)}s{clip.hold > 0 && ` + ${clip.hold.toFixed(1)}s`}
               </button>
             </Tooltip>
@@ -349,7 +361,7 @@ export function ClipInspector({ shot, clip, canEdit, trimMode, onClose, onSeek, 
           <FrameStepper label={t("Trim start (s)")} value={tin} min={0} max={Math.max(0, raw - tout - keep)} disabled={!canEdit || still} onChange={setTin} />
           <FrameStepper label={t("Trim end (s)")} value={tout} min={0} max={Math.max(0, raw - tin - keep)} disabled={!canEdit || still} onChange={setTout} />
         </div>
-        <div className="relative h-2 overflow-hidden rounded-full bg-accent/70" aria-hidden title={t("The part of the clip that stays in the cut")}>
+        <div className="relative h-2 overflow-hidden rounded-full bg-accent/70 shadow-[0_0_10px_-3px_var(--color-accent)]" aria-hidden title={t("The part of the clip that stays in the cut")}>
           <div className="absolute inset-y-0 left-0 bg-line" style={{ width: `${lo}%` }} />
           <div className="absolute inset-y-0 right-0 bg-line" style={{ width: `${hi}%` }} />
         </div>
@@ -374,8 +386,8 @@ export function ClipInspector({ shot, clip, canEdit, trimMode, onClose, onSeek, 
         <section className="space-y-2 border-t border-line pt-3" aria-label={t("Speed")}>
           <div className="flex items-center gap-2">
             <Gauge className="size-3.5 text-mute" />
-            <span className="text-xs font-medium text-mute">{t("Speed")}</span>
-            <span className="ml-auto font-mono text-2xs tabular-nums text-dim">{speed}×</span>
+            <span className="eyebrow">{t("Speed")}</span>
+            <span className="mono ml-auto text-2xs tabular-nums text-accent-ink">{speed}×</span>
           </div>
           <Segmented size="sm" value={preset ?? 0} aria-label={t("Speed")} className="w-full [&>button]:flex-1"
             options={SPEED_PRESETS.map((s) => ({ value: s, label: `${s}×` }))}
@@ -399,7 +411,7 @@ export function ClipInspector({ shot, clip, canEdit, trimMode, onClose, onSeek, 
       <section className="space-y-2 border-t border-line pt-3" aria-label={t("Freeze after clip")}>
         <div className="flex items-center gap-2">
           <Snowflake className="size-3.5 text-mute" />
-          <span className="text-xs font-medium text-mute">{t("Freeze after clip")}</span>
+          <span className="eyebrow">{t("Freeze after clip")}</span>
         </div>
         <div className="flex items-center gap-2">
           <Input type="number" step={0.1} min={0} max={MAX_HOLD} value={hold} disabled={!canEdit} aria-label={t("Freeze after clip (s)")}
@@ -418,7 +430,7 @@ export function ClipInspector({ shot, clip, canEdit, trimMode, onClose, onSeek, 
           <Button size="sm" variant="ghost" className="ml-auto text-bad" loading={busy === "remove"} onClick={() => save("remove", { include: false })}>{t("Remove from cut")}</Button>
         </div>
       )}
-    </Card>
+    </Panel>
   );
 }
 
@@ -459,10 +471,10 @@ export function AutoSfxDialog({ open, onClose, clips, selected, mode, run }: {
         )}
         <div className="flex items-end justify-between rounded-xl border border-line bg-raised/40 px-4 py-3">
           <div>
-            <p className="text-2xs font-medium uppercase tracking-wide text-dim">{t("Estimated cost")}</p>
+            <p className="eyebrow">{t("Estimated cost")}</p>
             <p className="mt-0.5 text-sm text-mute">{t("{n} shots", { n })}</p>
           </div>
-          <span className="text-3xl font-semibold leading-none tabular-nums">{live ? "~" : ""}<AnimatedNumber value={cost} format={(v) => usd(v)} duration={0.6} /></span>
+          <span className="mono text-3xl font-semibold leading-none tabular-nums text-money">{live ? "~" : ""}<AnimatedNumber value={cost} format={(v) => usd(v)} duration={0.6} /></span>
         </div>
         {replacing > 0 && <p className="rounded-lg bg-warn/10 px-3 py-2 text-xs text-warn">{t("{n} shots already have effects — they'll be replaced.", { n: replacing })}</p>}
         {mode === "missing" ? (
@@ -490,7 +502,7 @@ export function ShortcutsDialog({ open, onClose }: { open: boolean; onClose: () 
       <div className="space-y-4">
         {GROUPS.map((g) => (
           <section key={g.title}>
-            <h4 className="mb-1.5 text-2xs font-semibold uppercase tracking-wide text-dim">{t(g.title)}</h4>
+            <h4 className="eyebrow mb-2">{t(g.title)}</h4>
             <dl className="space-y-1.5">
               {g.rows.map(([keys, label]) => (
                 <div key={label} className="flex items-center gap-3 text-sm">
