@@ -1,8 +1,9 @@
 import { clsx } from "clsx";
-import { Archive, Columns2, Cpu, Crown, Eye, Film, History, Image as ImageIcon, LifeBuoy, Loader2, Maximize2, Mic, Play, ShieldCheck, Sparkles, Swords, Trophy, X } from "lucide-react";
+import { Anchor, Archive, Columns2, Cpu, Crown, Eye, Film, History, Image as ImageIcon, LifeBuoy, Loader2, Maximize2, Mic, Play, ShieldCheck, Sparkles, Swords, Trophy, WandSparkles, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import { useGenerate } from "../../../components/Generate";
 import { SyncedCompare, usePickWinner } from "../../../components/hub/Compare";
 import { QcBadges, QcDetails, qcSummary } from "../../../components/hub/Qc";
 import { takeEngine } from "../../../components/hub/util";
@@ -10,7 +11,7 @@ import { Badge, Button, Empty, IconButton, Modal } from "../../../components/ui"
 import { api } from "../../../lib/api";
 import { LANG_SHORT, QUALITY_INFO, ago, usd } from "../../../lib/format";
 import { tr, useT } from "../../../lib/i18n";
-import type { Shot, Take } from "../../../lib/types";
+import type { Shot, SubmitResult, Take } from "../../../lib/types";
 import { markFresh, type TakeV3 } from "../../../lib/v3";
 import { ratioOf, thumbRatio } from "./shotMeta";
 
@@ -34,7 +35,9 @@ export function Takes({ shot, canEdit, canReview, refresh, aspect, onShootout, o
   const [big, setBig] = useState(false);
   const [archiving, setArchiving] = useState<number | null>(null);
   const [freshing, setFreshing] = useState<number | null>(null);
+  const [enhancing, setEnhancing] = useState<number | null>(null);
   const { pick, busy } = usePickWinner(shot.id);
+  const { submit } = useGenerate();
   const takes = shot.takes ?? [];
   const staleCount = useMemo(() => takes.filter((x) => (x as TakeV3).stale).length, [takes]);
   const groups = useMemo(() => KIND_ORDER.map((k) => ({ kind: k, items: takes.filter((x) => x.kind === k) })).filter((g) => g.items.length), [takes]);
@@ -77,6 +80,14 @@ export function Takes({ shot, canEdit, canReview, refresh, aspect, onShootout, o
       refresh();
       toast.success(tr("Take #{id} marked fresh", { id: x.id }));
     } catch { /* api() showed the error */ } finally { setFreshing(null); }
+  };
+  // Enhance: the Pro image model re-renders this keyframe (same framing and faces) as a new take
+  const enhance = async (x: Take) => {
+    setEnhancing(x.id);
+    try {
+      await submit(() => api.post<SubmitResult>(`/api/takes/${x.id}/enhance`), tr("Enhance keyframe #{id}", { id: x.id }));
+      refresh();
+    } finally { setEnhancing(null); }
   };
   const pair = takes.filter((x) => compare.includes(x.id));
 
@@ -158,8 +169,9 @@ export function Takes({ shot, canEdit, canReview, refresh, aspect, onShootout, o
               {g.items.map((x) => (
                 <TakeCard key={x.id} x={x} aspect={aspect} row={row || isAudio(x.kind)} showing={viewing === x.id}
                   canEdit={canEdit} canReview={canReview} comparing={compare.includes(x.id)} qcOpen={qcOpen === x.id}
-                  busy={busy === x.id} archiving={archiving === x.id} freshing={freshing === x.id}
+                  busy={busy === x.id} archiving={archiving === x.id} freshing={freshing === x.id} enhancing={enhancing === x.id}
                   onView={() => onView(x)} onPick={(mode) => pick(x, mode)} onArchive={() => arch(x)} onFresh={() => fresh(x)}
+                  onEnhance={() => enhance(x)}
                   onCompare={() => setCompare((c) => (c.includes(x.id) ? c.filter((y) => y !== x.id) : [...c.slice(-3), x.id]))}
                   onToggleQc={() => setQcOpen((o) => (o === x.id ? null : x.id))} />
               ))}
@@ -178,10 +190,10 @@ export function Takes({ shot, canEdit, canReview, refresh, aspect, onShootout, o
 }
 
 /** One take: a poster that opens it in the viewer, what made it, its QC, and the actions that apply. */
-function TakeCard({ x, aspect, row, showing, canEdit, canReview, comparing, qcOpen, busy, archiving, freshing, onView, onPick, onArchive, onCompare, onToggleQc, onFresh }: {
+function TakeCard({ x, aspect, row, showing, canEdit, canReview, comparing, qcOpen, busy, archiving, freshing, enhancing, onView, onPick, onArchive, onCompare, onToggleQc, onFresh, onEnhance }: {
   x: Take; aspect: string; row: boolean; showing: boolean; canEdit: boolean; canReview: boolean; comparing: boolean; qcOpen: boolean;
-  busy: boolean; archiving: boolean; freshing: boolean; onView: () => void; onPick: (mode: "winner" | "select") => void; onArchive: () => void; onCompare: () => void;
-  onToggleQc: () => void; onFresh: () => void;
+  busy: boolean; archiving: boolean; freshing: boolean; enhancing: boolean; onView: () => void; onPick: (mode: "winner" | "select") => void; onArchive: () => void; onCompare: () => void;
+  onToggleQc: () => void; onFresh: () => void; onEnhance: () => void;
 }) {
   const t = useT();
   const q = qcSummary(x);
@@ -240,6 +252,12 @@ function TakeCard({ x, aspect, row, showing, canEdit, canReview, comparing, qcOp
           {x.params?.quality && <Badge>{t(QUALITY_INFO[x.params.quality]?.label ?? x.params.quality)}</Badge>}
           {x.params?.mode && <Badge tone="info">{String(x.params.mode).replaceAll("_", " ")}</Badge>}
           <QcBadges take={x} />
+          {x.kind === "keyframe" && x.params?.enhanced_from && (
+            <Badge tone="info" title={t("Enhanced from take #{id} with the Pro image model", { id: x.params.enhanced_from })}><WandSparkles className="size-3" />{t("enhanced")}</Badge>
+          )}
+          {x.kind === "keyframe" && x.params?.anchor && (
+            <Badge title={t("Made with the scene's anchor keyframe as a reference for set, light and wardrobe")}><Anchor className="size-3" />{t("scene look")}</Badge>
+          )}
           {x.params?.warning && <Badge tone="warn">{t(x.params.warning)}</Badge>}
         </div>
         {engine && <p className="mono flex items-center gap-1 truncate text-mute" title={x.params?.engine || x.model}><Cpu className="size-3 shrink-0" />{engine}</p>}
@@ -261,6 +279,12 @@ function TakeCard({ x, aspect, row, showing, canEdit, canReview, comparing, qcOp
           {stale && canReview && (
             <Button size="sm" variant="outline" icon={<Sparkles className="size-3.5" />} loading={freshing} onClick={onFresh}
               title={t("Keep this take: clear the stale flag")}>{t("Mark fresh")}</Button>
+          )}
+          {x.kind === "keyframe" && canEdit && (
+            <Button size="sm" variant="outline" icon={<WandSparkles className="size-3.5" />} loading={enhancing} onClick={onEnhance}
+              title={t("Re-render with the Pro image model: same framing and faces, better detail, skin, hands and light. Saved as a new take.")}>
+              {t("Enhance")}
+            </Button>
           )}
           <span className="flex-1" />
           {visual && (

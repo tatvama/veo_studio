@@ -23,31 +23,52 @@ def episode_shots(db: Session, episode: Episode, shot_ids: list[int] | None = No
 
 
 def keyframe_specs(db: Session, project: Project, shots: list[Shot], only_missing: bool = False, hero: bool = False) -> list[dict]:
+    """Each scene's anchor first; the scene's other keyframes carry `after_shot` and are claimed once the anchor's
+    keyframe is done (core/scene_order.py), so they can follow its look. Scenes still run side by side."""
+    from ..pipeline.scene_look import anchor_map
     est = Estimator(db)
-    out = []
+    anchors = anchor_map(db, shots)
+    first, after = [], []
     for s in shots:
         if only_missing and is_real(current(db, s.id, "keyframe")):
             continue
-        out.append(spec("keyframe", payload={"hero": hero}, project_id=project.id, episode_id=s.episode_id, shot_id=s.id,
-                        estimate=est.image(1, hero), label=f"Keyframe {s.code}"))
-    return out
+        payload: dict[str, Any] = {"hero": hero}
+        if s.id in anchors:
+            payload["after_shot"] = anchors[s.id]
+        (after if s.id in anchors else first).append(
+            spec("keyframe", payload=payload, project_id=project.id, episode_id=s.episode_id, shot_id=s.id,
+                 estimate=est.image(1, hero), label=f"Keyframe {s.code}"))
+    return first + after
+
+
+def enhance_spec(db: Session, project: Project, shot: Shot, take: Take) -> dict:
+    """Re-render a keyframe with the Pro image model, keeping its composition and faces (a new take)."""
+    return spec("keyframe", payload={"hero": True, "enhance_take_id": take.id}, project_id=project.id,
+                episode_id=shot.episode_id, shot_id=shot.id, estimate=Estimator(db).image(1, hero=True),
+                label=f"Enhance keyframe {shot.code}")
 
 
 def video_specs(db: Session, project: Project, shots: list[Shot], quality: str | None = None, only_missing: bool = False,
                 mode: str | None = None) -> list[dict]:
+    from ..pipeline.scene_look import anchor_map
     est = Estimator(db)
-    out = []
+    anchors = anchor_map(db, shots)
+    first, after = [], []
     for s in shots:
         if only_missing and is_real(current(db, s.id, "video")):
             continue
         q = quality or s.quality_mode or project.quality_mode
         cost = est.video(s, project, q)
         kf = current(db, s.id, "keyframe")
+        payload: dict[str, Any] = {"quality": q, "mode": mode}
         if not kf or kf.stale:  # the video job makes the missing (or stale) keyframe first
             cost += est.image(1)
-        out.append(spec("video", payload={"quality": q, "mode": mode}, project_id=project.id, episode_id=s.episode_id,
-                        shot_id=s.id, estimate=cost, label=f"Video {s.code} ({q})"))
-    return out
+            if s.id in anchors:  # ... after its scene's anchor has one to follow (core/scene_order.py)
+                payload["after_shot"] = anchors[s.id]
+        (after if "after_shot" in payload else first).append(
+            spec("video", payload=payload, project_id=project.id, episode_id=s.episode_id, shot_id=s.id, estimate=cost,
+                 label=f"Video {s.code} ({q})"))
+    return first + after
 
 
 def voice_specs(db: Session, project: Project, shots: list[Shot], lang: str) -> list[dict]:

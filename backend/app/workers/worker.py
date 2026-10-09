@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..core import budget, ratelimit
+from ..core.scene_order import held_back
 from ..db import SessionLocal, utcnow
 from ..events import emit, prune
 from ..models import Job, Shot
@@ -265,7 +266,10 @@ class Worker:
             cands = (db.query(Job).filter(Job.status == "queued")
                      .filter((Job.run_after.is_(None)) | (Job.run_after <= now))
                      .order_by(Job.priority.desc(), Job.id.asc()).limit(300).all())
+            held = held_back(db, cands, now)  # scene keyframes wait for their anchor (core/scene_order.py)
             for j in cands:
+                if j.id in held:
+                    continue
                 is_orch = j.type in ORCHESTRATORS
                 nested = is_orch and bool(j.parent_job_id)
                 if is_orch and not nested and free_orch <= 0:

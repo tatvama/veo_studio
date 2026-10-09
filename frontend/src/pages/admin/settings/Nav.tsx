@@ -54,6 +54,7 @@ export const SETTING_SECTION: Record<string, string> = {
   quota_fallback_routes: "generation", safety_fallback: "generation", fallback_extra_limit_usd: "generation",
   byteplus_auto_register: "generation",
   auto_retake: "quality", max_auto_retakes: "quality", qc_threshold: "quality", face_match_threshold: "quality", lipsync_qc: "quality", lipsync_qc_threshold: "quality",
+  auto_scene_continuity: "quality", keyframe_qc: "quality", keyframe_auto_retake: "quality", keyframe_qc_threshold: "quality",
   dialogue_method: "dialogue", dub_method: "dialogue", native_dialogue_languages: "dialogue", dialogue_words_qc: "dialogue",
   dialogue_words_threshold: "dialogue", outfit_qc: "dialogue",
   caption_style: "delivery", auto_reframe: "delivery", sfx_auto: "delivery", ui_default_language: "delivery",

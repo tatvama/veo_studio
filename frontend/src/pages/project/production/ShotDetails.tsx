@@ -209,9 +209,43 @@ export function Details({ shot, form, setForm, lang, lines, disabled, hasLines, 
             <Toggle checked={!!form.continuity_from_prev} disabled={disabled} onChange={(v) => set("continuity_from_prev", v)} label={<span className="text-xs">{t("Continue from previous shot")}</span>} />
             <Toggle checked={form.include !== false} disabled={disabled} onChange={(v) => set("include", v)} label={<span className="text-xs">{t("Include in cut")}</span>} />
           </div>
+          <SceneAnchorToggle shot={shot} disabled={disabled} />
           <Field label={t("Notes")}><Input value={form.notes || ""} disabled={disabled} onChange={(e) => set("notes", e.target.value)} /></Field>
         </div>
       </Collapse>
+    </div>
+  );
+}
+
+/** Which shot sets the scene's look (GET /api/shots/{id} → scene_anchor). */
+interface SceneAnchor { scene_id: number; shot_id: number; code: string; is_anchor: boolean; pinned: boolean; auto: boolean }
+
+/**
+ * Scene look anchor: the scene's other keyframes take this shot's keyframe as their reference for set, light and
+ * wardrobe. The first shot of a scene is the anchor unless another one is pinned here.
+ */
+function SceneAnchorToggle({ shot, disabled }: { shot: Shot; disabled: boolean }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState(false);
+  const a = (shot as Shot & { scene_anchor?: SceneAnchor | null }).scene_anchor;
+  if (!shot.scene_id || !a || !a.auto) return null;
+  const pin = async (on: boolean) => {
+    setBusy(true);
+    try {
+      await api.patch(`/api/scenes/${a.scene_id}`, { anchor_shot_id: on ? shot.id : null });
+      qc.invalidateQueries({ queryKey: ["shot"] });
+      toast.success(on ? tr("{code} now sets the look of its scene", { code: shot.code }) : tr("The scene's first shot sets its look again"));
+    } catch { /* api() showed the error */ } finally { setBusy(false); }
+  };
+  return (
+    <div className="space-y-1">
+      <Toggle checked={a.is_anchor} disabled={disabled || busy || (a.is_anchor && !a.pinned)} onChange={(v) => void pin(v)}
+        label={<span className="text-xs">{t("Scene look anchor")}</span>} />
+      <p className="text-2xs text-dim">
+        {a.is_anchor ? t("The other keyframes of this scene copy this one's set, light and wardrobe.")
+          : t("This keyframe follows the look of {code}.", { code: a.code })}
+      </p>
     </div>
   );
 }

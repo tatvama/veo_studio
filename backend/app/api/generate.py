@@ -229,3 +229,14 @@ def edit_take(tid: int, body: EditIn, user: User = Depends(require("creator")), 
         raise HTTPException(400, "Only video takes can be edited")
     s, e, p = _shot_ctx(db, t.shot_id)
     return jobs.submit(db, user, p, [generation.omni_edit_spec(db, p, t, body.instruction)])
+
+
+@router.post("/takes/{tid}/enhance")
+def enhance_take(tid: int, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
+    """Re-render this keyframe with the Pro image model: same composition, framing and faces; better detail, skin,
+    hands and lighting. Saved as a new take."""
+    t = get_or_404(db, Take, tid)
+    if t.kind != "keyframe" or t.archived:
+        raise HTTPException(400, "Only keyframes can be enhanced")
+    s, e, p = _shot_ctx(db, t.shot_id, user)
+    return jobs.submit(db, user, p, [generation.enhance_spec(db, p, s, t)])

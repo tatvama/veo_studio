@@ -77,6 +77,13 @@ DEFAULTS: dict[str, Any] = {
     "face_match_threshold": 0.36,  # SFace cosine similarity; ≥ 0.363 = same person (OpenCV guidance)
     "lipsync_qc": True,
     "lipsync_qc_threshold": 0.6,
+    # Scene continuity (pipeline/scene_look.py): every shot of a scene takes the scene's anchor keyframe and, within
+    # the same scene and location, the previous shot's frame as references. Explicit links and flags still win.
+    "auto_scene_continuity": True,
+    # Keyframe QC (workers/handlers_keyframe.py): a vision check after every keyframe, and one retake when it fails
+    "keyframe_qc": True,
+    "keyframe_auto_retake": True,
+    "keyframe_qc_threshold": 0.6,  # set, lighting and wardrobe match with the scene anchor (faces use qc_threshold)
     # Writers' room
     "critic_rounds": 1,
     "critic_min_score": 7.5,

@@ -30,6 +30,16 @@ QC = """You are a strict video QC reviewer. Compare the frames of a generated cl
 and the shot description. identity_match is 1.0 only if faces clearly match. Flag extra people, garbled text, bad hands,
 or action that doesn't match."""
 
+KEYFRAME_QC = """You are a strict continuity supervisor checking one AI-generated film still (the LAST image) before it is
+animated. Earlier images are references: each character's face sheet, and, when given, the scene's anchor frame (the
+keyframe that sets the look of the same scene). Score 0-1:
+- identity_match: the faces in the still are clearly the same people as the face sheets (1.0 only for a clear match).
+- wardrobe_match: the clothes match the references and the anchor frame.
+- set_match: the same place, layout and set dressing as the anchor frame (camera angle and framing may differ).
+- lighting_match: the same light direction, time of day and colour palette as the anchor frame.
+Score 1.0 for what does not apply (no characters expected, or no anchor frame given). Flag people who are not in the shot
+description, deformed hands or fingers, and any text, subtitles, logo or watermark. Notes: one short sentence on what to fix."""
+
 SUMMARY = """Summarise this episode for the writers' room so the next episode stays consistent: who knows what, open threads,
 relationships, injuries/outfits/props that must carry over, and where each character ended up. Under 150 words."""
 

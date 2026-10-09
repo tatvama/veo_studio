@@ -189,6 +189,18 @@ class QCOut(BaseModel):
     notes: str = ""
 
 
+class KeyframeQCOut(BaseModel):
+    """Vision check of one keyframe against the character references and the scene's anchor frame."""
+    identity_match: float = Field(description="0-1: the faces match the character references (1.0 when no character is expected)")
+    wardrobe_match: float = Field(description="0-1: clothes match the character references and the anchor frame (1.0 when no character)")
+    set_match: float = Field(description="0-1: same place, layout and set dressing as the scene anchor (1.0 when there is no anchor)")
+    lighting_match: float = Field(description="0-1: same light direction, time of day and colour palette as the scene anchor (1.0 when there is no anchor)")
+    extra_people: bool = Field(description="people in frame who are not in the shot description")
+    hand_issues: bool = Field(description="deformed, extra or missing fingers or hands")
+    text_artifacts: bool = Field(description="any text, subtitles, logo or watermark in the picture")
+    notes: str = ""
+
+
 class SummaryOut(BaseModel):
     summary: str
 

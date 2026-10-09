@@ -39,6 +39,7 @@ const EDITABLE = [
   "ui_default_language", "google_first", "native_dialogue_languages", "dialogue_words_qc", "dialogue_words_threshold", "outfit_qc",
   "cheapest_route", "text_provider", "openrouter_text_model", "director_engine", "quota_fallback_routes", "safety_fallback",
   "fallback_extra_limit_usd", "byteplus_auto_register",
+  "auto_scene_continuity", "keyframe_qc", "keyframe_auto_retake", "keyframe_qc_threshold",
 ] as const;
 
 type Draft = Record<string, any>;
@@ -556,6 +557,16 @@ export default function SettingsPage() {
                   checked={!!draft.lipsync_qc} disabled={ro} changed={ch("lipsync_qc")} onChange={(v) => set("lipsync_qc", v)} />
                 <SliderRow label={t("Lip-sync pass score")} value={num("lipsync_qc_threshold", 0.6)} min={0} max={1} step={0.05}
                   disabled={ro || !draft.lipsync_qc} changed={ch("lipsync_qc_threshold")} onChange={(v) => set("lipsync_qc_threshold", v)} left={t("Relaxed")} right={t("Strict")} />
+                <SwitchRow label={t("Scene continuity")} hint={t("Every shot of a scene follows the scene's anchor keyframe (its first shot unless you pin another) for set, light and wardrobe, and the shot before it in the same place. Links you set on a shot still win.")}
+                  checked={draft.auto_scene_continuity !== false} disabled={ro} changed={ch("auto_scene_continuity")} onChange={(v) => set("auto_scene_continuity", v)} />
+                <SwitchRow label={t("Keyframe check")} hint={t("A quick AI look at every new keyframe: faces, wardrobe, set and light against the scene, extra people, hands and text.")}
+                  checked={draft.keyframe_qc !== false} disabled={ro} changed={ch("keyframe_qc")} onChange={(v) => set("keyframe_qc", v)} />
+                <SwitchRow label={t("Retake a failed keyframe once")} hint={t("One new keyframe when the check fails. It costs one image.")}
+                  checked={draft.keyframe_auto_retake !== false} disabled={ro || draft.keyframe_qc === false} changed={ch("keyframe_auto_retake")}
+                  onChange={(v) => set("keyframe_auto_retake", v)} />
+                <SliderRow label={t("Scene match pass score")} hint={t("How closely set, light and wardrobe must match the scene's anchor keyframe")} value={num("keyframe_qc_threshold", 0.6)}
+                  min={0} max={1} step={0.05} disabled={ro || draft.keyframe_qc === false} changed={ch("keyframe_qc_threshold")}
+                  onChange={(v) => set("keyframe_qc_threshold", v)} left={t("Relaxed")} right={t("Strict")} />
               </Rows>
             </SettingsCard>
 
