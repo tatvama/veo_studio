@@ -1,75 +1,121 @@
 import { clsx } from "clsx";
 import {
-  ArrowRight, Bot, Check, ChevronLeft, ChevronsLeft, ChevronsRight, CirclePause, Lightbulb, ListChecks, ListMinus, Plus, Rocket, X,
+  ArrowRight, Bot, Check, ChevronLeft, ChevronsLeft, ChevronsRight, CirclePause, Compass, Ellipsis, Gauge, History, Lightbulb, Plus, Rocket, X,
 } from "lucide-react";
 import { motion } from "motion/react";
-import { useEffect, useMemo, useState } from "react";
-import { Link, NavLink } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { isTypingTarget, MOD, TOGGLE_RAIL_EVENT } from "../../components/shell/keys";
+import type { ProjectArea } from "../../components/shell/nav";
 import { PresenceBar } from "../../components/shell/PresenceBar";
-import { getProjectPhases, type ProjectTab } from "../../components/shell/nav";
-import { Badge, IconButton, ScrollStrip, Select, Tooltip } from "../../components/ui";
+import { Badge, IconButton, Menu, ScrollStrip, Select, Tooltip, type Placement } from "../../components/ui";
 import { LANG_SHORT, usd } from "../../lib/format";
 import { useT } from "../../lib/i18n";
 import { useUI } from "../../lib/store";
 import type { Episode, Project } from "../../lib/types";
 import { useProjectCtx } from "./context";
+import type { StepView } from "./flow";
 import type { NextStep } from "./nextStep";
-import type { Stage, StageState } from "./pipeline";
+import type { StageState } from "./pipeline";
 
 const COLLAPSE_KEY = "veo:pipeRail";
 
-/** The status mark at the end of a stage row. */
-export function StageMark({ state }: { state: StageState }) {
-  if (state === "none") return null;
-  if (state === "done") return <span className="grid size-4 shrink-0 place-items-center rounded-full bg-ok/15 text-ok"><Check className="size-2.5" strokeWidth={3} /></span>;
-  if (state === "progress") return <span className="size-1.5 shrink-0 rounded-full bg-accent shadow-[0_0_0_3px_color-mix(in_oklab,var(--color-accent)_22%,transparent)]" />;
-  return <span className="size-1.5 shrink-0 rounded-full border border-dim/70" />;
+/** A step's number in a circle: a tick once it is done, accent while it is under way or open. */
+function StepBadge({ n, state, active, small }: { n: number; state: StageState; active?: boolean; small?: boolean }) {
+  return (
+    <span className={clsx("mono relative z-[1] grid shrink-0 place-items-center rounded-full border font-semibold transition-colors",
+      small ? "size-5 text-2xs" : "size-7 text-xs",
+      state === "done" ? "border-ok/40 bg-ok/15 text-ok"
+        : active ? "border-accent/60 bg-accent/15 text-accent-ink"
+        : state === "progress" ? "border-accent/45 bg-panel text-accent-ink"
+        : "border-line bg-panel text-mute",
+      active && state === "done" && "ring-2 ring-accent/35")}>
+      {state === "done" ? <Check className={small ? "size-3" : "size-3.5"} strokeWidth={3} /> : n}
+    </span>
+  );
 }
 
-const chipTone: Record<StageState, string> = {
-  done: "border-ok/30 text-ok", progress: "border-accent/40 text-accent-ink", todo: "border-line text-mute", none: "border-line text-mute",
-};
-
-function PipeItem({ tab, pid, stage, collapsed }: { tab: ProjectTab; pid: number; stage?: Stage; collapsed: boolean }) {
-  const state = stage?.state ?? "none";
-  const link = (
-    <NavLink
-      to={`/p/${pid}/${tab.to}`}
-      data-tour={`tab-${tab.to}`}
-      aria-label={tab.label}
-      className={({ isActive }) => clsx(
-        "group relative flex h-9 items-center rounded-lg outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/50",
-        collapsed ? "mx-auto w-9 justify-center" : "gap-2.5 pl-2 pr-2.5",
-        isActive ? "text-ink" : "text-mute hover:bg-hover/70 hover:text-ink",
-      )}
-    >
-      {({ isActive }) => (
-        <>
-          {isActive && (
-            <motion.span layoutId={`pipe-active-${pid}`} transition={{ type: "spring", stiffness: 520, damping: 40 }}
-              className="absolute inset-0 rounded-lg border border-accent/25 bg-gradient-to-r from-accent/15 via-accent/5 to-transparent">
-              <span className="absolute -left-px bottom-2 top-2 w-[3px] rounded-r-full bg-accent shadow-[0_0_10px_var(--color-accent)]" />
-            </motion.span>
-          )}
-          <span className={clsx("relative z-[1] grid size-7 shrink-0 place-items-center rounded-md border bg-panel transition-colors", chipTone[state],
-            isActive && "border-accent/50 bg-accent/10 text-accent-ink")}>
-            <tab.icon className="size-4" />
-          </span>
-          {!collapsed && <span className="relative min-w-0 flex-1 truncate text-sm font-medium">{tab.label}</span>}
-          {!collapsed && <span className="relative"><StageMark state={state} /></span>}
-        </>
-      )}
-    </NavLink>
-  );
+/** The highlight behind the open item; it glides between items. */
+function ActivePill({ pid }: { pid: number }) {
   return (
-    <Tooltip content={`${tab.label}${stage?.hint ? ` · ${stage.hint}` : ""}`} side="right" delay={collapsed ? 150 : 700}>{link}</Tooltip>
+    <motion.span layoutId={`pipe-active-${pid}`} transition={{ type: "spring", stiffness: 520, damping: 40 }}
+      className="absolute inset-0 rounded-lg border border-accent/25 bg-gradient-to-r from-accent/15 via-accent/5 to-transparent">
+      <span className="absolute -left-px bottom-2 top-2 w-[3px] rounded-r-full bg-accent shadow-[0_0_10px_var(--color-accent)]" />
+    </motion.span>
+  );
+}
+
+const itemCls = (active: boolean, collapsed: boolean) => clsx(
+  "group relative flex items-center rounded-lg outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/50",
+  collapsed ? "mx-auto size-9 justify-center" : "gap-2.5 pl-2 pr-2.5",
+  active ? "text-ink" : "text-mute hover:bg-hover/70 hover:text-ink",
+);
+
+function HomeItem({ pid, active, collapsed }: { pid: number; active: boolean; collapsed: boolean }) {
+  const t = useT();
+  return (
+    <Tooltip content={t("Overview")} side="right" delay={collapsed ? 150 : 700}>
+      <Link to={`/p/${pid}/dashboard`} aria-current={active ? "page" : undefined} aria-label={collapsed ? t("Overview") : undefined}
+        className={clsx(itemCls(active, collapsed), !collapsed && "h-9")}>
+        {active && <ActivePill pid={pid} />}
+        <span className={clsx("relative z-[1] grid size-7 shrink-0 place-items-center rounded-md border bg-panel transition-colors",
+          active ? "border-accent/50 bg-accent/10 text-accent-ink" : "border-line text-mute")}>
+          <Gauge className="size-4" />
+        </span>
+        {!collapsed && <span className="relative min-w-0 flex-1 truncate text-sm font-medium">{t("Overview")}</span>}
+      </Link>
+    </Tooltip>
+  );
+}
+
+function StepItem({ s, pid, active, collapsed }: { s: StepView; pid: number; active: boolean; collapsed: boolean }) {
+  const t = useT();
+  const pages = s.tabs.map((x) => x.label).join(" · ");
+  const tip = collapsed ? [`${s.n}. ${s.label}`, s.stage.hint ?? pages].join(" · ") : s.stage.hint;
+  return (
+    <li>
+      <Tooltip content={tip} side="right" delay={collapsed ? 150 : 700} disabled={!tip}>
+        <Link to={`/p/${pid}/${s.to}`} data-tour={`step-${s.id}`} aria-current={active ? "step" : undefined}
+          aria-label={collapsed ? t("Step {n}: {label}", { n: s.n, label: s.label }) : undefined}
+          className={clsx(itemCls(active, collapsed), !collapsed && "min-h-11 py-1")}>
+          {active && <ActivePill pid={pid} />}
+          <StepBadge n={s.n} state={s.stage.state} active={active} />
+          {!collapsed && (
+            <span className="relative min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium">{s.label}</span>
+              <span className="block truncate text-2xs text-dim">{pages}</span>
+            </span>
+          )}
+        </Link>
+      </Tooltip>
+    </li>
+  );
+}
+
+/** The project's "⋯" menu: the pages that are not steps. */
+function ProjectMenu({ pid, area, placement, side }: { pid: number; area?: ProjectArea; placement: Placement; side: "right" | "bottom" }) {
+  const t = useT();
+  const nav = useNavigate();
+  const startTour = useUI((s) => s.startTour);
+  return (
+    <Menu placement={placement} width={208} items={[
+      { label: t("Activity log"), icon: <History className="size-4" />, active: area === "log", onClick: () => nav(`/p/${pid}/activity`) },
+      { label: t("Take the tour"), icon: <Compass className="size-4" />, onClick: () => startTour() },
+    ]} trigger={(tp) => (
+      <Tooltip content={t("Project menu")} side={side}>
+        <button type="button" {...tp} aria-label={t("Project menu")}
+          className="grid size-7 shrink-0 place-items-center rounded-md text-dim transition-colors hover:bg-hover hover:text-ink">
+          <Ellipsis className="size-4" />
+        </button>
+      </Tooltip>
+    )} />
   );
 }
 
 export interface RailProps {
   project: Project; episode?: Episode; pid: number; episodes: Episode[];
-  tabs: ProjectTab[]; stages: Record<string, Stage>; simple: boolean; ownMaterial: boolean; onToggleFull: () => void;
+  /** The five steps with this project's pages, progress and links; `area` is where the open page belongs. */
+  steps: StepView[]; area?: ProjectArea;
   step: NextStep | null; showStep: boolean; onHideStep: () => void;
   title: string; onTitle: (v: string) => void; onSaveTitle: () => void; onAddEpisode: () => void;
   autopilot: { running: boolean; paused: boolean; label: string };
@@ -77,24 +123,13 @@ export interface RailProps {
   directorOpen: boolean; onToggleDirector: () => void;
 }
 
-/** Groups the visible tabs under their phase, in pipeline order. */
-function usePhases(tabs: ProjectTab[], simple: boolean) {
-  const t = useT();
-  return useMemo(() => {
-    const phases = getProjectPhases(t);
-    const out = phases.map((p, i) => ({ ...p, index: i, tabs: tabs.filter((x) => x.phase === p.id) })).filter((p) => p.tabs.length);
-    return simple ? out.map((p) => ({ ...p, label: p.label })) : out;
-  }, [t, tabs, simple]);
-}
-
 /**
- * The project's spine: identity and controls on top, the production pipeline as a vertical flow, and the next step
- * plus the Director pinned at the bottom. Collapses to icons; the choice is remembered.
+ * The project's spine: identity and controls on top, then the Overview and the five numbered steps, and the next step plus
+ * the Director pinned at the bottom. Collapses to icons; the choice is remembered.
  */
 export function PipelineRail(p: RailProps) {
   const t = useT();
   const ctx = useProjectCtx();
-  const ui = useUI();
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem(COLLAPSE_KEY) === "1"; } catch { return false; } });
   useEffect(() => { try { localStorage.setItem(COLLAPSE_KEY, collapsed ? "1" : "0"); } catch { /* storage blocked */ } }, [collapsed]);
   useEffect(() => {
@@ -104,9 +139,10 @@ export function PipelineRail(p: RailProps) {
     window.addEventListener("keydown", key);
     return () => { window.removeEventListener(TOGGLE_RAIL_EVENT, toggle); window.removeEventListener("keydown", key); };
   }, []);
-  const phases = usePhases(p.tabs, p.simple);
   const { project, pid, episodes } = p;
   const lang = ctx.lang;
+  const counted = p.steps.filter((s) => s.stage.state !== "none");
+  const done = counted.filter((s) => s.stage.state === "done").length;
 
   const director = (
     <Tooltip content={`${t("Director")} (${MOD}+J)`} side="right" disabled={!collapsed}>
@@ -121,13 +157,14 @@ export function PipelineRail(p: RailProps) {
   );
 
   return (
-    <aside data-pipeline-rail data-collapsed={collapsed ? "1" : "0"} className={clsx("relative z-20 hidden shrink-0 flex-col border-r border-line bg-panel/70 backdrop-blur transition-[width] duration-200 ease-out lg:flex", collapsed ? "w-[3.75rem]" : "w-[15.5rem]")}
+    <aside data-pipeline-rail data-tour-rail data-collapsed={collapsed ? "1" : "0"} className={clsx("relative z-20 hidden shrink-0 flex-col border-r border-line bg-panel/70 backdrop-blur transition-[width] duration-200 ease-out lg:flex", collapsed ? "w-[3.75rem]" : "w-[15.5rem]")}
       aria-label={t("Project pipeline")}>
       {/* identity */}
       <div className={clsx("border-b border-line", collapsed ? "flex flex-col items-center gap-1.5 py-2.5" : "space-y-2.5 p-3")}>
         <div className={clsx("flex items-center gap-1", collapsed && "flex-col")}>
           <Tooltip content={t("All projects")} side="right"><Link to="/" aria-label={t("All projects")} className="grid size-7 place-items-center rounded-md text-mute transition-colors hover:bg-hover hover:text-ink"><ChevronLeft className="size-4" /></Link></Tooltip>
           {!collapsed && <span className="eyebrow flex-1">{t("Project")}</span>}
+          <ProjectMenu pid={pid} area={p.area} placement={collapsed ? "right-start" : "bottom-end"} side="right" />
           <Tooltip content={collapsed ? t("Expand pipeline") : t("Collapse pipeline")} side="right">
             <button onClick={() => setCollapsed((v) => !v)} aria-label={collapsed ? t("Expand pipeline") : t("Collapse pipeline")}
               className="grid size-7 place-items-center rounded-md text-dim transition-colors hover:bg-hover hover:text-ink">
@@ -177,28 +214,20 @@ export function PipelineRail(p: RailProps) {
         )}
       </div>
 
-      {/* pipeline */}
-      <nav aria-label={t("Project sections")} className="no-scrollbar min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 py-2">
-        {phases.map((ph) => {
-          const tracked = ph.tabs.filter((x) => p.stages[x.to] && p.stages[x.to].state !== "none");
-          const done = tracked.filter((x) => p.stages[x.to].state === "done").length;
-          const numbered = ph.id !== "mission" && ph.id !== "log";
-          return (
-            <section key={ph.id} className="mb-2">
-              {!collapsed ? (
-                <header className="flex items-center gap-2 px-2 pb-1 pt-2">
-                  <span className="eyebrow">{numbered ? `${String(ph.index).padStart(2, "0")} ` : ""}{ph.label}</span>
-                  <span aria-hidden className="h-px flex-1 bg-line" />
-                  {!p.simple && tracked.length > 0 && <span className="mono text-2xs text-dim">{done}/{tracked.length}</span>}
-                </header>
-              ) : <span aria-hidden className="mx-auto my-2 block h-px w-6 bg-line" />}
-              <div className="relative flex flex-col gap-0.5">
-                {!collapsed && ph.tabs.length > 1 && <span aria-hidden className="absolute bottom-4 left-[1.0625rem] top-4 w-px bg-line" />}
-                {ph.tabs.map((tb) => <PipeItem key={tb.to} tab={tb} pid={pid} stage={p.simple ? undefined : p.stages[tb.to]} collapsed={collapsed} />)}
-              </div>
-            </section>
-          );
-        })}
+      {/* the overview, then the five steps */}
+      <nav aria-label={t("Project steps")} className="no-scrollbar min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 py-2">
+        <HomeItem pid={pid} active={p.area === "home"} collapsed={collapsed} />
+        {!collapsed ? (
+          <header className="flex items-center gap-2 px-2 pb-1 pt-3">
+            <span className="eyebrow">{t("Steps")}</span>
+            <span aria-hidden className="h-px flex-1 bg-line" />
+            {counted.length > 0 && <span className="mono text-2xs text-dim">{done}/{counted.length}</span>}
+          </header>
+        ) : <span aria-hidden className="mx-auto my-2 block h-px w-6 bg-line" />}
+        <ol className="relative flex flex-col gap-0.5">
+          {!collapsed && <span aria-hidden className="absolute bottom-[22px] left-[21.5px] top-[22px] w-px bg-line" />}
+          {p.steps.map((s) => <StepItem key={s.id} s={s} pid={pid} active={p.area === s.id} collapsed={collapsed} />)}
+        </ol>
       </nav>
 
       {/* next step + director */}
@@ -215,23 +244,17 @@ export function PipelineRail(p: RailProps) {
           </div>
         )}
         {director}
-        {p.ownMaterial && !collapsed && (
-          <button type="button" onClick={p.onToggleFull} className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-2xs font-medium text-mute transition-colors hover:bg-hover hover:text-ink">
-            {p.simple ? <ListChecks className="size-3.5" /> : <ListMinus className="size-3.5" />}{p.simple ? t("Show all steps") : t("Simple view")}
-          </button>
-        )}
       </div>
     </aside>
   );
 }
 
-/** Below 1024 px there is no room for the rail: a compact title row and a scrolling strip of stages instead. */
+/** Below 1024 px there is no room for the rail: a compact title row and a scrolling strip of the steps instead. */
 export function PipelineStrip(p: RailProps) {
   const t = useT();
   const ctx = useProjectCtx();
-  const ui = useUI();
-  const phases = usePhases(p.tabs, p.simple);
-  const flat = phases.flatMap((ph) => ph.tabs);
+  const chip = (on: boolean) => clsx("flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/50",
+    on ? "border-accent/40 bg-accent/12 text-accent-ink" : "border-transparent text-mute hover:bg-hover hover:text-ink");
   return (
     <header className="shrink-0 border-b border-line bg-panel/80 backdrop-blur lg:hidden">
       <div className="flex items-center gap-2 px-3 pt-2">
@@ -249,18 +272,21 @@ export function PipelineStrip(p: RailProps) {
               className={clsx("mono h-6 rounded px-1.5 text-2xs font-medium", ctx.lang === l ? "bg-accent text-[var(--on-accent)]" : "text-mute")}>{LANG_SHORT[l]}</button>
           ))}
         </div>
+        <ProjectMenu pid={p.pid} area={p.area} placement="bottom-end" side="bottom" />
         <IconButton data-tour="director" title={t("Director")} active={p.directorOpen} onClick={p.onToggleDirector}><Bot className="size-4" /></IconButton>
       </div>
-      <ScrollStrip className="px-2 pb-1 pt-1.5" aria-label={t("Project sections")} role="navigation">
+      <ScrollStrip className="px-2 pb-1.5 pt-1.5" aria-label={t("Project steps")} role="navigation">
         <div className="flex items-center gap-1">
-          {flat.map((tb) => {
-            const st = p.simple ? undefined : p.stages[tb.to];
+          <Link to={`/p/${p.pid}/dashboard`} aria-current={p.area === "home" ? "page" : undefined} aria-label={t("Overview")} title={t("Overview")} className={chip(p.area === "home")}>
+            <Gauge className="size-4" />
+          </Link>
+          {p.steps.map((s) => {
+            const on = p.area === s.id;
             return (
-              <NavLink key={tb.to} to={`/p/${p.pid}/${tb.to}`} data-tour={`tab-${tb.to}`} aria-label={tb.label}
-                className={({ isActive }) => clsx("flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/50",
-                  isActive ? "border-accent/40 bg-accent/12 text-accent-ink" : "border-transparent text-mute hover:bg-hover hover:text-ink")}>
-                <tb.icon className="size-4" />{tb.label}{st && <StageMark state={st.state} />}
-              </NavLink>
+              <Link key={s.id} to={`/p/${p.pid}/${s.to}`} data-tour={`step-${s.id}`} aria-current={on ? "page" : undefined}
+                title={s.stage.hint} className={chip(on)}>
+                <StepBadge n={s.n} state={s.stage.state} active={on} small />{s.label}
+              </Link>
             );
           })}
         </div>

@@ -24,7 +24,7 @@ export function PropPicker({ pid, value, onChange, disabled, showLibrary }: {
     return (
       <p className="text-xs text-dim">
         {t("No props in this project yet.")}{" "}
-        <Link to={`/p/${pid}/world?tab=props`} className="font-medium text-accent-ink hover:underline">{t("Add props on the World page")}</Link>
+        <Link to={`/p/${pid}/world?tab=props`} className="font-medium text-accent-ink hover:underline">{t("Add props in Cast › Props & wardrobe")}</Link>
       </p>
     );
   }

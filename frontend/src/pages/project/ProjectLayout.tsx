@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import AgentPanel from "../../components/AgentPanel";
 import JobTray from "../../components/JobTray";
 import { openDirector } from "../../components/shell/keys";
-import { getProjectTabs } from "../../components/shell/nav";
+import { areaOf, getProjectTabs } from "../../components/shell/nav";
 import { Button, Empty, PageSkeleton, Skeleton, Spinner, useDocumentTitle } from "../../components/ui";
 import { api } from "../../lib/api";
 import { useReportView } from "../../lib/collab";
@@ -16,13 +16,24 @@ import { useAuthStatus, useEpisode, useProject, useSettings } from "../../lib/qu
 import { useUI } from "../../lib/store";
 import { ROLE_RANK, type AutopilotState, type Episode } from "../../lib/types";
 import { ProjectContext, type ProjectCtx } from "./context";
+import { buildSteps, continueTarget, isOwnMaterial, useLastTabs } from "./flow";
 import { nextStep } from "./nextStep";
 import { PipelineRail, PipelineStrip, type RailProps } from "./PipelineRail";
 import { usePipeline } from "./pipeline";
+import { StepBar } from "./StepBar";
 import Storyboard from "./Storyboard";
 
-/** Projects made from your own material (shot by shot, or an imported script) show just these steps. */
-const SIMPLE_TABS = ["dashboard", "studio", "bible", "shots", "export", "posters"];
+/**
+ * Step-level addresses open the step's first page. Every page keeps its old address (/p/:pid/bible, /shots, /storyboard…),
+ * which is now a page of its step, so existing links, toasts and Autopilot milestones land without a redirect.
+ */
+const STEP_ALIASES: Record<string, string> = { overview: "dashboard", cast: "bible", edit: "timeline", deliver: "export" };
+
+/** Redirects a step-level address to its page, keeping the query, hash and state. */
+function Alias({ pid, to }: { pid: number; to: string }) {
+  const loc = useLocation();
+  return <Navigate to={{ pathname: `/p/${pid}/${to}`, search: loc.search, hash: loc.hash }} state={loc.state} replace />;
+}
 
 const ActivityPage = lazy(() => import("./Activity"));
 const DashboardPage = lazy(() => import("./Dashboard"));
@@ -40,8 +51,9 @@ const StoryPage = lazy(() => import("./Story"));
 const TimelinePage = lazy(() => import("./Timeline"));
 
 /**
- * A project's workspace: the pipeline rail on the left, the current stage in the middle, the Director docked on the
- * right. The overview ("Mission") is where a project opens; the rail's next-step card says what to do next.
+ * A project's workspace: the rail on the left (the Overview and the five numbered steps), the open step in the middle under
+ * its step bar (the step's pages and "Continue to …"), the Director docked on the right. The Overview is where a project
+ * opens; projects made from your own material open on their shots.
  */
 export default function ProjectLayout() {
   const t = useT();
@@ -60,14 +72,7 @@ export default function ProjectLayout() {
   const tabs = getProjectTabs(t);
   const { data: settings } = useSettings();
   const [hiddenTip, setHiddenTip] = useState("");
-  const fullKey = `veo:fullTabs:${pid}`;
-  const [fullTabs, setFullTabs] = useState(() => { try { return localStorage.getItem(fullKey) === "1"; } catch { return false; } });
-  useEffect(() => { try { setFullTabs(localStorage.getItem(fullKey) === "1"); } catch { /* storage blocked */ } }, [fullKey]);
-  const toggleFull = () => {
-    const v = !fullTabs;
-    setFullTabs(v);
-    try { localStorage.setItem(fullKey, v ? "1" : "0"); } catch { /* storage blocked */ }
-  };
+  const lastTabs = useLastTabs(pid, tab);
 
   // Below ~1100px the Director floats over the page, so it only opens when asked (toggle or Ctrl/⌘+J), never by default.
   const [floatOpen, setFloatOpen] = useState(false);
@@ -92,7 +97,7 @@ export default function ProjectLayout() {
   }, [episodes, ui.episode, pid]);
   const lang = project && project.languages.includes(ui.language[pid]) ? ui.language[pid] : project?.primary_language ?? "en";
   const { data: episode } = useEpisode(eid || undefined, lang);
-  useReportView(pid || null, loc.pathname.split("/")[3] || "index");
+  useReportView(pid || null, tab);
   const pipeline = usePipeline(project, episode);
 
   const tabLabel = tabs.find((x) => x.to === tab)?.label;
@@ -115,7 +120,7 @@ export default function ProjectLayout() {
       <div className="flex h-full">
         <div className="hidden w-[15.5rem] shrink-0 space-y-3 border-r border-line bg-panel/70 p-3 lg:block">
           <Skeleton className="h-6 w-40" /><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-full" />
-          {Array.from({ length: 9 }, (_, i) => <Skeleton key={i} className="h-9 w-full" />)}
+          {Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-10 w-full" />)}
         </div>
         <div className="grid flex-1 grid-cols-2 gap-4 p-6 md:grid-cols-4">{Array.from({ length: 8 }, (_, i) => <Skeleton key={i} className="aspect-video" />)}</div>
       </div>
@@ -170,13 +175,19 @@ export default function ProjectLayout() {
     if (ui.agentOpen && !showAgent) { openDirector(); return; }
     ui.toggleAgent();
   };
-  const ownMaterial = project.workflow === "shots" || project.workflow === "script";
-  const simple = ownMaterial && !fullTabs;
-  const shown = simple ? tabs.filter((tb) => SIMPLE_TABS.includes(tb.to)).map((tb) => (tb.to === "bible" ? { ...tb, label: t("Characters") } : tb)) : tabs;
+  const own = isOwnMaterial(project);
+  const area = areaOf(tab);
+  const steps = buildSteps(t, project, episode, pipeline.stages, { current: tab, last: lastTabs });
+  const current = steps.find((s) => s.id === area);
+  const cont = current ? continueTarget(t, tab, steps, step) : null;
+  // The rail's next-step card: not on the Overview (its hero says the same), not for the open page, not when the step bar's
+  // "Continue" already leads there, and not for a page this project hides.
+  const stepShown = !!step && steps.some((s) => s.tabs.some((x) => x.to === step.tab));
+  const showStep = !!step && stepShown && hiddenTip !== stepKey && area !== "home" && step.tab !== tab && cont?.to !== step.tab;
 
   const rail: RailProps = {
-    project, episode, pid, episodes, tabs: shown, stages: pipeline.stages, simple, ownMaterial, onToggleFull: toggleFull,
-    step, showStep: !!step && hiddenTip !== stepKey && step.tab !== tab && (!simple || SIMPLE_TABS.includes(step.tab)), onHideStep: () => setHiddenTip(stepKey),
+    project, episode, pid, episodes, steps, area,
+    step, showStep, onHideStep: () => setHiddenTip(stepKey),
     title, onTitle: setTitle, onSaveTitle: saveTitle, onAddEpisode: addEpisode,
     autopilot: { running: apRunning, paused: apPaused, label: tr(settings?.catalog.autopilot?.labels[ap.stage ?? ""] ?? ap.stage ?? "") },
     directorOpen: showAgent, onToggleDirector: toggleDirector,
@@ -188,6 +199,7 @@ export default function ProjectLayout() {
         <PipelineRail {...rail} />
         <div className="flex min-w-0 flex-1 flex-col">
           <PipelineStrip {...rail} />
+          {current && eid > 0 && <StepBar pid={pid} step={current} tab={tab} cont={cont} total={steps.length} />}
           <div className="relative min-h-0 flex-1 overflow-hidden">
             {eid ? (
               <AnimatePresence mode="wait" initial={false}>
@@ -201,8 +213,8 @@ export default function ProjectLayout() {
                 >
                   <Suspense fallback={<div className="h-full overflow-hidden"><PageSkeleton cards={4} /></div>}>
                     <Routes location={loc}>
-                      {/* a project opens on its mission overview (own-material projects on their workspace) */}
-                      <Route index element={episode ? <Navigate to={`/p/${pid}/${simple ? ((episode.shots ?? []).length ? "studio" : "shots") : "dashboard"}`} replace /> : <div className="p-8"><Spinner /></div>} />
+                      {/* a project opens on its overview (own-material projects on their shots) */}
+                      <Route index element={episode ? <Navigate to={`/p/${pid}/${own ? ((episode.shots ?? []).length ? "studio" : "shots") : "dashboard"}`} replace /> : <div className="p-8"><Spinner /></div>} />
                       <Route path="brief" element={<BriefPage />} />
                       <Route path="story" element={<StoryPage />} />
                       <Route path="scenes" element={<ScenesPage />} />
@@ -218,6 +230,7 @@ export default function ProjectLayout() {
                       <Route path="world" element={<WorldPage />} />
                       <Route path="campaign" element={<CampaignPage />} />
                       <Route path="posters" element={<PostersGallery projectId={pid} />} />
+                      {Object.entries(STEP_ALIASES).map(([from, to]) => <Route key={from} path={from} element={<Alias pid={pid} to={to} />} />)}
                       <Route path="*" element={<Navigate to={`/p/${pid}/dashboard`} replace />} />
                     </Routes>
                   </Suspense>

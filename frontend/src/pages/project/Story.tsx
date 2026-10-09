@@ -199,7 +199,7 @@ export default function StoryPage() {
 
   return (
     <RoomPage width="wide" footer={actionBar}>
-      <RoomHeader icon={<BookOpen />} title={t("Story")} description={t("Pick a hook, write the script, then let the writers' room tighten it.")}
+      <RoomHeader icon={<BookOpen />} title={t("Hooks & script")} description={t("Pick a hook, write the script, then let the writers' room tighten it.")}
         status={canEdit ? <SaveStatus state={state} /> : undefined}
         actions={canEdit && hasScript ? (
           <Tooltip content={t("Link every @Name in the script to the cast, locations and props. Unknown names become new characters.")}>
