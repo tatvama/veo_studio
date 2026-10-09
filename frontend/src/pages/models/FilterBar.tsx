@@ -1,6 +1,6 @@
 import { LayoutGrid, SlidersHorizontal, Table2 } from "lucide-react";
 import { forwardRef, useEffect, useState, type Ref } from "react";
-import { Button, Kbd, SearchField, Segmented, Select } from "../../components/ui";
+import { Button, Kbd, SearchField, Segmented, Select, Toggle } from "../../components/ui";
 import { useT } from "../../lib/i18n";
 import { activeFilterCount, type CatalogCtl, type Sort } from "./catalogData";
 import { TaskStrip } from "./FilterRail";
@@ -26,14 +26,14 @@ function SearchBox({ value, onCommit, inputRef }: { value: string; onCommit: (v:
 }
 
 /**
- * The catalog toolbar: search, sort and layout. Below 900px the filter rail folds into a sheet, so this row also carries the
- * "Filters" button and the task chips.
+ * The catalog toolbar: search, sort, grouping and layout. Below 900px the filter rail folds into a sheet, so this row also
+ * carries the "Filters" button and the task chips.
  */
 export const FilterBar = forwardRef<HTMLInputElement, {
   ctl: CatalogCtl; counts: Record<string, number | undefined>; railOpen: boolean; onToggleRail: () => void;
 }>(function FilterBar({ ctl, counts, railOpen, onToggleRail }, searchRef) {
   const t = useT();
-  const { filters, refine, view, sort, update, setView, setSort } = ctl;
+  const { filters, refine, view, sort, group, update, setView, setSort, setGroup } = ctl;
   const active = activeFilterCount(filters, refine);
   return (
     <div className="space-y-2.5">
@@ -48,6 +48,10 @@ export const FilterBar = forwardRef<HTMLInputElement, {
             {(Object.keys(SORT_LABELS) as Sort[]).map((x) => <option key={x} value={x}>{t(SORT_LABELS[x])}</option>)}
           </Select>
         </label>
+        <span className="inline-flex items-center max-sm:h-10"
+          title={group ? t("Each model once, with its routes through every provider. Switch off to list every engine separately.") : t("Every engine on its own card. Switch on to show each model once, with its routes.")}>
+          <Toggle checked={group} onChange={setGroup} label={<span className="whitespace-nowrap text-xs text-mute">{t("One card per model")}</span>} />
+        </span>
         <Segmented value={view} onChange={setView} aria-label={t("Layout")} options={[
           { value: "grid", label: <span className="flex h-6 items-center gap-1.5 max-sm:h-8"><LayoutGrid className="size-3.5" /><span className="hidden lg:inline">{t("Cards")}</span></span>, title: t("Cards") },
           { value: "list", label: <span className="flex h-6 items-center gap-1.5 max-sm:h-8"><Table2 className="size-3.5" /><span className="hidden lg:inline">{t("Table")}</span></span>, title: t("Table") },

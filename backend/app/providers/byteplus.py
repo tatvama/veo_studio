@@ -21,12 +21,13 @@ from urllib.parse import quote
 
 import httpx
 
-from .base import ProviderBlocked, ProviderError, ProviderNotConfigured, RetryableProviderError
+from .base import ProviderBlocked, ProviderError, ProviderNotConfigured, ProviderOutOfCredit, RetryableProviderError
 from .links import looks_blocked
 
 P = "byteplus"
 ARK_BASE = "https://ark.ap-southeast.bytepluses.com/api/v3"
 OPENAPI_HOST = "ark.{region}.byteplusapi.com"
+BILLING_HOST = "open.byteplusapi.com"  # account balance (billing OpenAPI); not confirmed against a live key yet
 SERVICE = "ark"
 VERSION = "2024-01-01"
 
@@ -55,9 +56,9 @@ def _classify(code: str, message: str, status: int | None = None) -> ProviderErr
     if status in (408, 425, 429, 500, 502, 503, 504) or any(w in c for w in ("ratelimit", "rate_limit", "throttl",
                                                                                "serveroverloaded", "quotaexceeded")):
         return RetryableProviderError(text, status=429 if status == 429 or "rate" in c else status, provider=P)
-    if "overdue" in c or "balance" in message.lower():
-        return ProviderError(f"BytePlus account has no balance: top up in the BytePlus console. {message}"[:400],
-                             status=status, provider=P)
+    if "overdue" in c or "balance" in message.lower() or "arrear" in c:
+        return ProviderOutOfCredit(f"BytePlus account has no balance: top up in the BytePlus console. {message}"[:400],
+                                   status=status, provider=P)
     if "modelnotopen" in c or "not activated" in message.lower():
         return ProviderError(f"Activate this model in the BytePlus ModelArk console first. {message}"[:400],
                              status=status, provider=P)
@@ -194,15 +195,17 @@ class AssetLibrary:
         self.host = OPENAPI_HOST.format(region=region)
         self.http = http or httpx.Client(timeout=httpx.Timeout(60.0, connect=20.0))
 
-    def call(self, action: str, body: dict[str, Any]) -> dict[str, Any]:
-        query = {"Action": action, "Version": VERSION}
+    def call(self, action: str, body: dict[str, Any], *, service: str = SERVICE, version: str = VERSION,
+             host: str = "") -> dict[str, Any]:
+        host = host or self.host
+        query = {"Action": action, "Version": version}
         clean = {k: v for k, v in body.items() if v is not None}
         payload = json.dumps(clean, separators=(",", ":"), ensure_ascii=False).encode()
-        headers = sign(access_key=self.ak, secret_key=self.sk, method="POST", host=self.host, query=query,
-                       payload=payload, region=self.region, now=datetime.now(timezone.utc))
+        headers = sign(access_key=self.ak, secret_key=self.sk, method="POST", host=host, query=query,
+                       payload=payload, region=self.region, now=datetime.now(timezone.utc), service=service)
         headers["Accept"] = "application/json"
         try:
-            r = self.http.post(f"https://{self.host}/", params=query, headers=headers, content=payload)
+            r = self.http.post(f"https://{host}/", params=query, headers=headers, content=payload)
         except httpx.TimeoutException as e:
             raise RetryableProviderError(f"BytePlus asset library timed out ({action})", provider=P) from e
         except httpx.TransportError as e:
@@ -250,3 +253,28 @@ class AssetLibrary:
 
     def get_asset(self, asset_id: str) -> dict[str, Any]:
         return self.call("GetAsset", {"Id": asset_id, "ProjectName": self.project})
+
+    def delete_asset(self, asset_id: str) -> None:
+        self._delete("DeleteAsset", asset_id)
+
+    def delete_group(self, group_id: str) -> None:
+        self._delete("DeleteAssetGroup", group_id)
+
+    def _delete(self, action: str, item_id: str) -> None:
+        try:
+            self.call(action, {"Id": item_id, "ProjectName": self.project})
+        except ProviderError as e:
+            if "notfound" in str(e).lower().replace(".", "").replace(" ", ""):
+                return  # already gone: that is what was asked for
+            raise
+
+    def balance(self) -> float | None:
+        """The account's available balance in USD (billing OpenAPI). None when this key can't read it."""
+        res = self.call("QueryBalanceAcct", {}, service="billing", version="2022-01-01", host=BILLING_HOST)
+        for k in ("AvailableBalance", "CashBalance"):
+            if res.get(k) not in (None, ""):
+                try:
+                    return float(res[k])
+                except (TypeError, ValueError):
+                    continue
+        return None

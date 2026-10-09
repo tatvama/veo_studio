@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import time
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
@@ -38,6 +39,16 @@ DEFAULTS: dict[str, Any] = {
     "director_claude_effort": "medium",
     # BytePlus asset library: CreateAsset calls per minute (3 on the free Entry tier, 120 Advanced, 300 Premium)
     "byteplus_asset_qpm": 3,
+    # Register AI characters with BytePlus by themselves when their sheet is approved or the character is locked
+    # (never characters made from someone's photo: real people verify themselves in the BytePlus console)
+    "byteplus_auto_register": False,
+    # On a safety block, try another model (registered-character engines first), even with Google first on
+    "safety_fallback": False,
+    # When Google's quota is used up or rate limited, run the same model through another provider (e.g. Nano Banana
+    # on OpenRouter) instead of waiting. Off keeps Google first strict: the job waits for Google.
+    "quota_fallback_routes": False,
+    # A fallback route may cost this much (USD) more than the job was approved for; above it the job asks for approval
+    "fallback_extra_limit_usd": 0.5,
     "qc_threshold": 0.7,
     "lipsync_model": "lipsync-2",
     "make_webhook_url": "",
@@ -135,6 +146,7 @@ def _fernet() -> Fernet:
 
 
 def save_api_key(db: Session, provider: str, key: str, user_id: int | None) -> None:
+    VERSION["n"] += 1
     enc = _fernet().encrypt(key.strip().encode()).decode()
     row = db.get(ApiKey, provider)
     if row is None:
@@ -145,27 +157,26 @@ def save_api_key(db: Session, provider: str, key: str, user_id: int | None) -> N
 
 
 def delete_api_key(db: Session, provider: str) -> None:
+    VERSION["n"] += 1
     row = db.get(ApiKey, provider)
     if row:
         db.delete(row)
         db.flush()
 
 
+_KEY_TTL = 5.0  # seconds; a key saved in another process (the worker container) is seen within this
+_key_cache: dict[str, tuple[float, int, str]] = {}
+
+
 def api_key(provider: str) -> str:
-    """DB key (set from Admin page) wins over .env."""
+    """DB key (set from Admin page) wins over .env. The database lookup is cached for a few seconds: routing and
+    price lists ask for every engine's key."""
     # Model Hub engines name Google "google"; its key is stored as "gemini". Without this, Veo looked keyless (mock)
     # and every chain put fal engines ahead of it.
     provider = {"google": "gemini"}.get(provider, provider)
-    db = SessionLocal()
-    try:
-        row = db.get(ApiKey, provider)
-        if row:
-            try:
-                return _fernet().decrypt(row.encrypted.encode()).decode()
-            except InvalidToken:
-                pass
-    finally:
-        db.close()
+    saved = _saved_key(provider)
+    if saved:
+        return saved
     s = get_settings()
     return {
         "gemini": s.gemini_api_key,
@@ -178,6 +189,27 @@ def api_key(provider: str) -> str:
         "byteplus_iam": f"{s.byteplus_access_key}:{s.byteplus_secret_key}" if s.byteplus_access_key and s.byteplus_secret_key else "",
         "anthropic": s.anthropic_api_key,
     }.get(provider, "") or ""
+
+
+def _saved_key(provider: str) -> str:
+    """The key saved from the Admin page ("" when none)."""
+    hit = _key_cache.get(provider)
+    now = time.monotonic()
+    if hit and hit[1] == VERSION["n"] and now - hit[0] < _KEY_TTL:
+        return hit[2]
+    value = ""
+    db = SessionLocal()
+    try:
+        row = db.get(ApiKey, provider)
+        if row:
+            try:
+                value = _fernet().decrypt(row.encrypted.encode()).decode()
+            except InvalidToken:
+                pass
+    finally:
+        db.close()
+    _key_cache[provider] = (now, VERSION["n"], value)
+    return value
 
 
 def key_source(db: Session, provider: str) -> str:

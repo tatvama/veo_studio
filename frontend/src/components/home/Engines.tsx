@@ -8,7 +8,8 @@ import { Button, Meter, Panel, Skeleton, StatusDot, Tag } from "../ui";
 export function Engines({ index, className }: { index?: number; className?: string }) {
   const t = useT();
   const q = useSettings();
-  const list = q.data?.providers ?? [];
+  // keys that run no generation themselves (the BytePlus asset library) are not engines
+  const list = (q.data?.providers ?? []).filter((p) => p.engine !== false);
   const live = list.filter((p) => p.mode === "live").length;
   const allMock = list.length > 0 && live === 0;
 

@@ -25,6 +25,8 @@ export interface Shot {
   generating: boolean; keyframe: Take | null; video: Take | null; voice: Take | null; narration_take: Take | null;
   lipsync: Take | null; voicelock: Take | null; effective_quality: string; effective_voice_mode: string;
   active_jobs: string[]; comments: number; takes?: Take[];
+  /** A safety filter stopped the shot's last video and nothing replaced it yet (offer another engine). */
+  blocked?: ShotBlocked | null;
   engine: string; overlays: { text: string; start: number; end: number; kind: "title" | "lower_third"; anim?: string }[];
   /** transitions & effects (see lib/fx.ts) */
   fx?: import("./fx").ShotFx;
@@ -34,6 +36,17 @@ export interface Shot {
   ref_images?: ShotRef[];
 }
 export interface ShotRef { label: string; url: string; path?: string }
+export interface ShotBlocked { job_id: number; error: string; engines: string[]; engine_labels: string[]; at: string | null }
+/** Another engine for a shot, priced for this shot (GET /api/shots/{id}/alternatives). */
+export interface ShotOption {
+  id: string; display_name: string; provider: string; routes: number; provider_mode: "live" | "mock" | "missing";
+  resolution: string; seconds: number; est_usd: number;
+  /** Seedance with this shot's characters registered in BytePlus: keeps their look and isn't blocked as real people. */
+  uses_registered: boolean; asset_refs: boolean;
+}
+export interface ShotAlternatives {
+  blocked: ShotBlocked | null; options: ShotOption[]; cast: { ready: string[]; missing: string[] }; safety_fallback: boolean;
+}
 
 export interface Scene { id: number; episode_id: number; order: number; title: string; location_id: number | null; time_of_day: string; summary: string }
 
@@ -99,7 +112,12 @@ export interface Character {
     error?: string; lora_url?: string; basis?: "your_photos" | "sheet" };
   /** The character registered with outside services: BytePlus asset library entries that Seedance takes as references. */
   provider_assets?: { byteplus?: { status?: "registering" | "ready" | "failed"; group_id?: string; error?: string; registered_at?: string;
-    updated_at?: string; assets?: { asset_id: string; source_id: number; path: string; kind: string; status: "Active" | "Processing" | "Failed" | string; error?: string }[] } };
+    updated_at?: string; checked_at?: string;
+    assets?: { asset_id: string; source_id: number; path: string; kind: string; status: "Active" | "Processing" | "Failed" | "Missing" | string; error?: string }[] } };
+  /** Registered with BytePlus with at least one image accepted: Seedance keeps this character's look. */
+  seedance_ready?: boolean;
+  /** Why the character isn't registered with BytePlus by itself ("" = it will be when its sheet is approved or it is locked). */
+  byteplus_auto?: string;
   /** What a face model would be trained on now: the user's photos + approved variations (or the sheet if no photos). */
   training?: { basis: "your_photos" | "sheet"; own: number; variations_approved: number; variations_waiting: number; count: number; min: number;
     good: number; auto_fill: boolean };
@@ -130,7 +148,13 @@ export interface Estimate {
 }
 export interface TeamStatus { cap_usd: number; spent_usd: number; reserved_usd: number; remaining_usd: number | null; pct: number }
 
-export interface ProviderStatus { provider: string; label: string; mode: "live" | "mock" | "missing" }
+/** `engine` false: a key that runs no generation itself (the BytePlus asset library key); not counted as a live provider. */
+export interface ProviderStatus { provider: string; label: string; mode: "live" | "mock" | "missing"; engine?: boolean }
+/** A provider's balance as last read, and whether the router skips it for lack of credit (GET /api/providers/credit). */
+export interface ProviderCredit {
+  provider: string; usd: number | null; checked_at: string | null; error: string; detail: Record<string, any>;
+  held: boolean; hold_reason: string; hold_until: string | null;
+}
 
 export interface Catalog {
   languages: Record<string, { name: string; bcp47: string; script: string }>;
@@ -185,7 +209,9 @@ export interface AIModel {
   capabilities: { modes?: string[]; max_refs?: number; durations?: number[] | { min?: number; max?: number } | null;
     resolutions?: string[] | null; aspects?: string[] | null; native_audio?: boolean; usable?: boolean;
     // gateway flags (v3): what the engine can do for characters and dialogue
-    speech_in_video?: boolean; audio_driven?: boolean; lora_input?: boolean; lipsync_to_audio?: boolean };
+    speech_in_video?: boolean; audio_driven?: boolean; lora_input?: boolean; lipsync_to_audio?: boolean;
+    /** Seedance: takes characters registered in the BytePlus asset library as asset:// references */
+    asset_refs?: boolean; draft_resolution?: string };
   price_usd: number | null; price_unit: string; price_source: string; price_label: string; est_8s_usd: number | null;
   status: "new" | "enabled" | "disabled" | "retired"; tier: string; rating: number | null; wins: number; uses: number;
   failures: number; tags: string[]; thumbnail_url: string; released_at: string; builtin: boolean; notes: string;
@@ -193,11 +219,16 @@ export interface AIModel {
   param_map?: Record<string, any>; param_overrides?: Record<string, any>;
   /** The model behind the engine ("seedance-2"); engines with the same key run the same model through other providers. */
   route_key?: string; other_routes?: ModelRoute[];
+  /** Grouped catalog (GET /api/models?group=true): every route of this model, this row being the lead one. */
+  routes?: ModelRoute[]; routes_on?: number;
 }
 /** One provider's way to run a model. */
 export interface ModelRoute {
   id: string; provider: string; display_name: string; provider_mode: "live" | "mock" | "missing"; est_8s_usd: number | null;
   price_usd?: number | null; price_unit?: string; modes?: string[];
+  status?: AIModel["status"]; endpoint?: string; price_label?: string;
+  /** an admin set this route's key by hand */
+  route_key_set?: boolean;
 }
 /** How a video model can use a shot: characters/location by "refs" (images go to the model), "keyframe" or not at all. */
 export interface VideoFit {
@@ -207,7 +238,7 @@ export interface VideoFit {
 /** A video model for the shot picker: listed once, led by its cheapest live route; `routes` are all of them. */
 export interface VideoEngine extends AIModel { fit: VideoFit; routes?: Pick<ModelRoute, "id" | "provider" | "display_name" | "provider_mode" | "est_8s_usd">[] }
 export interface VideoEngines { engines: VideoEngine[]; auto_first: Record<string, string | null>; google_first: boolean }
-export interface ModelList { models: AIModel[]; total: number; offset: number; last_sync: { at?: string; total?: number; new?: string[]; new_count?: number; retired?: number; priced?: number };
+export interface ModelList { models: AIModel[]; total: number; offset: number; grouped?: boolean; last_sync: { at?: string; total?: number; new?: string[]; new_count?: number; retired?: number; priced?: number };
   counts: Record<string, number> }
 export interface ModelPolicy { chains: Record<string, string[]>; labels: Record<string, string>; defaults: Record<string, string[]>;
   models: Record<string, AIModel> }

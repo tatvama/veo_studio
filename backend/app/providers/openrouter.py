@@ -7,6 +7,7 @@ frames it takes, and its prices, so new models show up in the Model Hub without 
 """
 from __future__ import annotations
 
+import base64
 import json
 import re
 import time
@@ -15,7 +16,8 @@ from typing import Any, Callable
 
 import httpx
 
-from .base import ProviderBlocked, ProviderError, ProviderNotConfigured, RetryableProviderError, raise_for_status
+from .base import (ProviderBlocked, ProviderError, ProviderNotConfigured, ProviderOutOfCredit, RetryableProviderError,
+                   raise_for_status)
 from .links import looks_blocked
 
 BASE = "https://openrouter.ai/api/v1"
@@ -140,6 +142,104 @@ def list_video_models(http: httpx.Client | None = None) -> list[dict[str, Any]]:
             http.close()
 
 
+# image models (Nano Banana, Seedream …): extra routes for the keyframe and character-image chain
+_NUM = re.compile(r"^\d+(\.\d+)?$")
+
+
+def _image_price(pricing: Any) -> float | None:
+    """USD per image from an image model's pricing, when it states one ("image", "per_image", "image_output" …)."""
+    if not isinstance(pricing, dict):
+        return None
+    for k, v in pricing.items():
+        key = str(k).lower()
+        if "image" in key and "input" not in key and "token" not in key and _NUM.match(str(v).strip() or "x"):
+            val = float(v)
+            if val > 0:
+                return round(val / 100 if key.startswith("cents") else val, 5)
+    return None
+
+
+IMAGE_TOKENS = 1290  # output tokens of one 1K image on token-priced image models (Nano Banana)
+
+
+def image_model_row(m: dict[str, Any]) -> dict[str, Any]:
+    """AIModel fields for one image model (GET /images/models, or /models filtered to image output)."""
+    mid = str(m["id"])
+    arch = m.get("architecture") or {}
+    inputs = {str(x).lower() for x in (arch.get("input_modalities") or m.get("input_modalities") or ["text"])}
+    params = m.get("supported_parameters") or {}
+    if isinstance(params, list):  # the general model list writes them as names
+        params = {str(x): {} for x in params}
+    refs = params.get("input_references") or {}
+    max_refs = int(refs.get("max") or 0) if isinstance(refs, dict) and refs.get("max") is not None else (
+        8 if "image" in inputs or "input_references" in params else 0)
+    aspects = (params.get("aspect_ratio") or {}).get("values") if isinstance(params.get("aspect_ratio"), dict) else None
+    name = str(m.get("name") or mid)
+    short = name.split(": ", 1)[-1]
+    created = m.get("created")
+    price = _image_price(m.get("pricing")) or _image_price(m.get("pricing_skus"))
+    return {
+        "id": f"openrouter:{mid}", "provider": P, "endpoint": mid, "display_name": f"{short} (OpenRouter)",
+        "family": short, "maker": mid.split("/")[0], "description": str(m.get("description") or ""),
+        "category": "text-to-image", "task": "image",
+        "capabilities": {"modes": ["t2i", "i2i"] if max_refs else ["t2i"], "max_refs": max_refs,
+                         "aspects": list(aspects or m.get("supported_aspect_ratios") or []), "usable": True},
+        "thumbnail_url": "",
+        "released_at": datetime.fromtimestamp(created, timezone.utc).strftime("%Y-%m-%d") if isinstance(created, (int, float)) else "",
+        "price_usd": price, "price_unit": "image",
+    }
+
+
+def image_price(mid: str, http: httpx.Client | None = None) -> float | None:
+    """USD per output image from the model's endpoints (the cheapest provider's base price; a token price counts a
+    1K image). None when it can't be read."""
+    own = http is None
+    http = http or httpx.Client(timeout=20)
+    try:
+        r = http.get(f"{BASE}/images/models/{mid}/endpoints")
+        if r.status_code >= 400:
+            return None
+        best: float | None = None
+        for ep in (r.json() or {}).get("endpoints") or []:
+            for p in ep.get("pricing") or []:
+                if p.get("billable") != "output_image" or p.get("variant") or p.get("cost_usd") is None:
+                    continue
+                usd = float(p["cost_usd"]) * (IMAGE_TOKENS if p.get("unit") == "token" else 1)
+                best = usd if best is None else min(best, usd)
+        return round(best, 5) if best is not None else None
+    except (httpx.HTTPError, ValueError, TypeError):
+        return None
+    finally:
+        if own:
+            http.close()
+
+
+def list_image_models(http: httpx.Client | None = None) -> list[dict[str, Any]]:
+    """Image models: the image catalog, else the model list filtered to image output (no key needed)."""
+    own = http is None
+    http = http or httpx.Client(timeout=60)
+    try:
+        for path, params in (("/images/models", None), ("/models", {"output_modalities": "image"})):
+            try:
+                r = http.get(f"{BASE}{path}", params=params)
+            except httpx.HTTPError as e:
+                raise RetryableProviderError(f"OpenRouter image catalog: {e}", provider=P) from e
+            if r.status_code == 404:
+                continue
+            _check(r)
+            d = r.json()
+            items = list(d.get("data") if isinstance(d, dict) else d or [])
+            out = [x for x in items if isinstance(x, dict) and x.get("id")]
+            if path == "/models":  # keep models that really make images
+                out = [x for x in out if "image" in [str(v).lower() for v in
+                                                     ((x.get("architecture") or {}).get("output_modalities") or [])]]
+            return out
+        return []
+    finally:
+        if own:
+            http.close()
+
+
 # ── errors ───────────────────────────────────────────────────────────────────
 
 def _message(r: httpx.Response) -> str:
@@ -160,8 +260,8 @@ def _check(r: httpx.Response) -> None:
         return
     msg = _message(r)
     if r.status_code == 402:
-        raise ProviderError("OpenRouter credit is used up: add credit at openrouter.ai/settings/credits "
-                            f"(OpenRouter engines are skipped until then). {msg}"[:400], status=402, provider=P)
+        raise ProviderOutOfCredit("OpenRouter credit is used up: add credit at openrouter.ai/settings/credits "
+                                  f"(OpenRouter engines are skipped until then). {msg}"[:400], status=402, provider=P)
     if r.status_code == 401:
         raise ProviderError(f"OpenRouter rejected the API key: check it in Settings → AI services. {msg}"[:400],
                             status=401, provider=P)
@@ -233,6 +333,92 @@ class OpenRouterClient:
         if not r.content:
             raise RetryableProviderError("OpenRouter returned an empty video", provider=P)
         return r.content
+
+    # images
+    def image(self, model: str, prompt: str, refs: list[str], aspect: str = "", seed: int | None = None
+              ) -> tuple[bytes, str, float | None]:
+        """One image: (bytes, mime type, billed USD or None). The image API first; a model it doesn't serve is asked
+        through chat completions with image output instead."""
+        body: dict[str, Any] = {"model": model, "prompt": prompt, "n": 1}
+        if aspect:
+            body["aspect_ratio"] = aspect
+        if refs:
+            body["input_references"] = [{"type": "image_url", "image_url": {"url": u}} for u in refs]
+        if seed is not None:
+            body["seed"] = seed
+        try:
+            r = self.http.request("POST", f"{BASE}/images", headers=self.headers, json=body, timeout=300)
+        except httpx.TimeoutException as e:
+            raise RetryableProviderError("OpenRouter timed out (images)", provider=P) from e
+        except httpx.TransportError as e:
+            raise RetryableProviderError(f"OpenRouter connection failed: {e}", provider=P) from e
+        if r.status_code not in (404, 405):
+            _check(r)
+            d = r.json()
+            item = (d.get("data") or [{}])[0]
+            cost = (d.get("usage") or {}).get("cost")
+            billed = float(cost) if cost is not None else None
+            if item.get("b64_json"):
+                return base64.b64decode(item["b64_json"]), str(item.get("media_type") or "image/png"), billed
+            if item.get("url"):
+                return (*self._fetch_image(item["url"]), billed)
+            raise ProviderError(f"OpenRouter returned no image: {str(d)[:200]}", provider=P)
+        return self._chat_image(model, prompt, refs, aspect)
+
+    def _chat_image(self, model: str, prompt: str, refs: list[str], aspect: str) -> tuple[bytes, str, float | None]:
+        content: Any = prompt
+        if refs:
+            content = [{"type": "text", "text": prompt}] + [{"type": "image_url", "image_url": {"url": u}} for u in refs]
+        body: dict[str, Any] = {"model": model, "messages": [{"role": "user", "content": content}],
+                                "modalities": ["image", "text"]}
+        if aspect:
+            body["image_config"] = {"aspect_ratio": aspect}
+        d = self._req("POST", "/chat/completions", json=body, timeout=300).json()
+        msg = ((d.get("choices") or [{}])[0].get("message") or {})
+        images = msg.get("images") or []
+        url = ""
+        if images and isinstance(images[0], dict):
+            iu = images[0].get("image_url") or images[0].get("imageUrl") or {}
+            url = iu.get("url", "") if isinstance(iu, dict) else str(iu)
+        if not url:
+            raise ProviderError(f"OpenRouter returned no image ({str(msg.get('content') or d)[:200]})", provider=P)
+        cost = (d.get("usage") or {}).get("cost")
+        data, mime = self._fetch_image(url)
+        return data, mime, float(cost) if cost is not None else None
+
+    def _fetch_image(self, url: str) -> tuple[bytes, str]:
+        if url.startswith("data:"):
+            head, _, b64 = url.partition(",")
+            return base64.b64decode(b64), head[5:].split(";")[0] or "image/png"
+        try:
+            r = self.http.get(url, timeout=120)
+        except httpx.HTTPError as e:
+            raise RetryableProviderError(f"OpenRouter image download failed: {e}", provider=P) from e
+        if r.status_code >= 400 or not r.content:
+            raise RetryableProviderError(f"OpenRouter image download failed HTTP {r.status_code}", provider=P)
+        return r.content, r.headers.get("content-type", "image/png").split(";")[0]
+
+    # account
+    def balance(self) -> dict[str, Any]:
+        """What this key may still spend: {"usd": float | None, "limit_usd", "credits_usd", "usage_usd"}.
+        The key's own spending limit always; the account's credit too when the key may read it (a management key)."""
+        out: dict[str, Any] = {"usd": None, "limit_usd": None, "credits_usd": None, "usage_usd": None}
+        info = (self._req("GET", "/key").json() or {}).get("data") or {}
+        if info.get("limit_remaining") is not None:
+            out["limit_usd"] = float(info["limit_remaining"])
+        if info.get("usage") is not None:
+            out["usage_usd"] = float(info["usage"])
+        try:
+            r = self.http.get(f"{BASE}/credits", headers=self.headers, timeout=30)
+            if r.status_code < 400:
+                c = (r.json() or {}).get("data") or {}
+                if c.get("total_credits") is not None:
+                    out["credits_usd"] = round(float(c["total_credits"]) - float(c.get("total_usage") or 0), 4)
+        except (httpx.HTTPError, ValueError):
+            pass  # a normal key can't read the account's credit; the key limit (if any) still counts
+        known = [v for v in (out["limit_usd"], out["credits_usd"]) if v is not None]
+        out["usd"] = min(known) if known else None
+        return out
 
     # text
     def chat_json(self, model: str, system: str, content: Any, schema: dict[str, Any],

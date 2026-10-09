@@ -109,6 +109,9 @@ def lock_character(cid: int, body: LockIn, user: User = Depends(require("produce
     from ..core.audit import audit
     audit(db, user, "character.lock" if body.locked else "character.unlock", c.name, {"version": c.version}, commit=False)
     db.commit()
+    if c.locked:  # a locked AI character becomes Seedance-ready by itself when the team asked for that
+        from ..workers.handlers_hub import maybe_auto_register
+        maybe_auto_register(db, user, c)
     emit(db, None, "bible.updated", {"character_id": c.id, "locked": c.locked})
     return character_out(db, c)
 
@@ -220,6 +223,9 @@ def patch_char_asset(aid: int, body: AssetPatch, user: User = Depends(require("r
     for k, v in body.model_dump(exclude_unset=True).items():
         setattr(a, k, v)
     db.commit()
+    from ..workers.handlers_hub import REGISTER_KINDS, maybe_auto_register
+    if body.approved and a.kind in REGISTER_KINDS and not a.archived:  # an approved sheet view: register it by itself
+        maybe_auto_register(db, user, db.get(Character, a.character_id))
     emit(db, None, "bible.updated", {"character_id": a.character_id})
     return a.to_dict()
 

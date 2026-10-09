@@ -17,7 +17,7 @@ import { Alert, Button, Input, Kbd, Page, PageHeader, Select, Skeleton, Textarea
 import { api } from "../../lib/api";
 import { LANG_NAMES, QUALITY_INFO, usdPerSec } from "../../lib/format";
 import { UI_LANGUAGES, useT } from "../../lib/i18n";
-import { useAuthStatus, useIntegrations, useSettings } from "../../lib/queries";
+import { useAuthStatus, useIntegrations, useProviderCredit, useSettings } from "../../lib/queries";
 import type { Role, SettingsPayload } from "../../lib/types";
 import { UnsavedBar } from "./shared/UnsavedBar";
 import { useFlash } from "./shared/useFlash";
@@ -36,7 +36,8 @@ const EDITABLE = [
   "dialogue_method", "dub_method", "hub_auto_sync", "hub_sync_hours", "hub_auto_enable", "identity_trainer", "face_match_threshold",
   "lipsync_qc", "lipsync_qc_threshold", "critic_rounds", "critic_min_score", "caption_style", "auto_reframe", "sfx_auto",
   "ui_default_language", "google_first", "native_dialogue_languages", "dialogue_words_qc", "dialogue_words_threshold", "outfit_qc",
-  "cheapest_route", "text_provider", "openrouter_text_model", "director_engine",
+  "cheapest_route", "text_provider", "openrouter_text_model", "director_engine", "quota_fallback_routes", "safety_fallback",
+  "fallback_extra_limit_usd", "byteplus_auto_register",
 ] as const;
 
 type Draft = Record<string, any>;
@@ -49,6 +50,7 @@ const NUMERIC: Record<string, { label: string; min: number; max: number; int?: b
   hub_sync_hours: { label: "Check for new models every", min: 1, max: 720 },
   critic_rounds: { label: "Critic rounds", min: 0, max: 5, int: true },
   critic_min_score: { label: "Critic pass score", min: 0, max: 10 },
+  fallback_extra_limit_usd: { label: "Extra a backup may cost", min: 0, max: 100 },
 };
 
 const LIPSYNC_MODELS = [
@@ -146,6 +148,7 @@ export default function SettingsPage() {
   const { data, isLoading, isError, isFetching, refetch } = useSettings();
   const { data: keys, isLoading: keysLoading } = useApiKeys(isAdmin);
   const { data: integrations } = useIntegrations();
+  const { data: credit } = useProviderCredit();
   const [draft, setDraft] = useState<Draft | null>(null);
   const [active, select] = useScrollSpy(SECTION_IDS, !!data && !!draft);
   const [thresholdsText, setThresholdsText] = useState("");
@@ -344,16 +347,19 @@ export default function SettingsPage() {
   const baseTtsMap = (base.tts_provider_by_language ?? {}) as Record<string, string>;
 
   // ── health of each section (the glyph in the section list and the panel header) ──
-  const live = data.providers.filter((p) => p.mode === "live").length;
-  const mocks = data.providers.filter((p) => p.mode === "mock").length;
-  const missing = data.providers.filter((p) => p.mode === "missing").length;
+  // keys that run no generation themselves (the BytePlus asset library) are listed for editing but not counted as engines
+  const engines = data.providers.filter((p) => p.engine !== false);
+  const live = engines.filter((p) => p.mode === "live").length;
+  const mocks = engines.filter((p) => p.mode === "mock").length;
+  const missing = engines.filter((p) => p.mode === "missing").length;
+  const outOfCredit = (credit?.providers ?? []).filter((c) => c.held && providerMode[c.provider] === "live").length;
   const voicesOff = langs.filter((l) => { const m = providerMode[ttsMap[l] ?? "gemini"]; return !!m && m !== "live"; }).length;
   const overrides = Object.keys(baseModelOverrides).length + Object.keys((base.prices ?? {}) as Record<string, unknown>).length;
   const yt = (integrations?.accounts ?? []).filter((a) => a.provider === "youtube");
   const st = (tone: SectionStatus["tone"], label: string): SectionStatus => ({ tone, label });
   const status: Record<string, SectionStatus> = {
     budget: capPct >= 100 ? st("bad", t("Cap reached")) : capPct >= 80 ? st("warn", t("Near the cap")) : team.cap_usd ? st("ok", t("Within budget")) : st("idle", t("No cap set")),
-    generation: draft.google_first === false ? st("warn", t("May use fal")) : st("ok", t("Google first")),
+    generation: draft.google_first === false ? st("warn", t("May use fal")) : draft.quota_fallback_routes ? st("info", t("Google first, with backups")) : st("ok", t("Google first")),
     quality: draft.auto_retake ? st("ok", t("Retakes on")) : st("idle", t("Retakes off")),
     dialogue: String(draft.dialogue_method) === "native" && !nativeLangs.length ? st("warn", t("No native languages")) : st("ok", t("Configured")),
     delivery: st("ok", t("Configured")),
@@ -362,7 +368,8 @@ export default function SettingsPage() {
     identity: st("ok", t("Configured")),
     voices: voicesOff ? st("warn", t("{n} on placeholder", { n: voicesOff })) : st("ok", t("All voices ready")),
     integrations: !integrations ? st("idle", "") : !integrations.youtube_ready ? st("warn", t("Needs setup")) : yt.length ? st("ok", t("Connected")) : st("idle", t("Not connected")),
-    keys: missing ? st("bad", t("{n} missing", { n: missing })) : mocks ? st("warn", t("{n} on placeholder", { n: mocks })) : data.providers.length ? st("ok", t("All live")) : st("idle", ""),
+    keys: missing ? st("bad", t("{n} missing", { n: missing })) : outOfCredit ? st("warn", t("{n} out of credit", { n: outOfCredit }))
+      : mocks ? st("warn", t("{n} on placeholder", { n: mocks })) : engines.length && live === engines.length ? st("ok", t("All live")) : st("idle", ""),
     advanced: overrides ? st("info", t("{n} custom", { n: overrides })) : st("idle", t("Defaults")),
   };
   for (const sec of Object.keys(errorBy)) status[sec] = st("bad", t("Needs fixing"));
@@ -485,6 +492,46 @@ export default function SettingsPage() {
                   </div>
                 </Row>
               </Rows>
+
+              {/* backup routes: what may happen when the first choice can't make a shot, and how much more it may cost */}
+              <div className="mt-6 border-t border-line pt-5">
+                <h3 className="text-sm font-medium">{t("Backup routes and spend safety")}</h3>
+                <p className="mb-4 mt-0.5 max-w-[62ch] text-xs leading-relaxed text-mute">
+                  {t("What the studio may do when the first choice can't make a shot. A backup never spends more than the limit below without a producer's approval.")}
+                </p>
+                <Rows>
+                  <SwitchRow label={t("When Google's quota runs out, use the same model through another provider")}
+                    hint={draft.google_first === false
+                      ? t("Google first is off, so jobs already move to other providers when Google is busy.")
+                      : draft.quota_fallback_routes
+                        ? t("For example Nano Banana images through OpenRouter, so keyframes keep coming. That provider bills the work.")
+                        : t("Off: Google first stays strict, and jobs wait for Google's quota to come back.")}
+                    checked={!!draft.quota_fallback_routes} disabled={ro || draft.google_first === false} changed={ch("quota_fallback_routes")}
+                    onChange={(v) => set("quota_fallback_routes", v)} />
+                  <SwitchRow label={t("On a safety block, try another model")}
+                    hint={t("When every engine tried blocks a shot for safety, other models get a turn, starting with those that keep registered characters (Seedance). Works even with Google first on.")}
+                    checked={!!draft.safety_fallback} disabled={ro} changed={ch("safety_fallback")} onChange={(v) => set("safety_fallback", v)} />
+                  <Row label={t("Extra a backup may cost")} changed={ch("fallback_extra_limit_usd")}
+                    hint={t("How much more than the approved price a backup route may spend. Above this, the job pauses and asks a producer to approve it.")}>
+                    <Dollar label={t("Extra a backup may cost")} value={draft.fallback_extra_limit_usd} disabled={ro} invalid={bad("fallback_extra_limit_usd")}
+                      onChange={(v) => set("fallback_extra_limit_usd", v)} />
+                  </Row>
+                  <SwitchRow label={t("Register AI characters with BytePlus automatically")}
+                    hint={<>
+                      {t("When a character's sheet is approved or the character is locked, it is registered so Seedance keeps its look. Never for characters made from someone's photo: real people verify themselves in the BytePlus console.")}
+                      {providerMode.byteplus_iam && providerMode.byteplus_iam !== "live" && (
+                        <span className="mt-1 flex items-start gap-1.5 text-amber-300">
+                          <TriangleAlert aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+                          <span>
+                            {t("Needs the BytePlus asset library key.")}{" "}
+                            <a href="#keys" className="font-medium text-accent-ink hover:underline" onClick={(e) => { e.preventDefault(); select("keys"); }}>{t("Go to AI services")}</a>
+                          </span>
+                        </span>
+                      )}
+                    </>}
+                    checked={!!draft.byteplus_auto_register} disabled={ro} changed={ch("byteplus_auto_register")} onChange={(v) => set("byteplus_auto_register", v)} />
+                </Rows>
+              </div>
             </SettingsCard>
 
             {/* Quality control */}

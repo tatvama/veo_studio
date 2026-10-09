@@ -46,8 +46,9 @@ import type {
   ReviewLinkRow, ScriptVersion, ShotEngines, TableRead,
 } from "./types";
 
-export const useModels = (params: { task?: string; status?: string; q?: string; provider?: string; mode?: string; sort?: string; limit?: number; offset?: number } = {}) => {
-  const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== "" && v !== 0).map(([k, v]) => [k, String(v)])).toString();
+/** `group: true` lists one card per model, each with all its provider routes (`AIModel.routes`). */
+export const useModels = (params: { task?: string; status?: string; q?: string; provider?: string; mode?: string; sort?: string; limit?: number; offset?: number; group?: boolean } = {}) => {
+  const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v !== undefined && v !== "" && v !== 0 && v !== false).map(([k, v]) => [k, String(v)])).toString();
   return useQuery({ queryKey: ["models", qs], queryFn: () => api.get<ModelList>(`/api/models${qs ? `?${qs}` : ""}`) });
 };
 export const useModel = (id: string | null) =>
@@ -57,6 +58,13 @@ export const useVideoEngines = () =>
 export const usePolicy = () => useQuery({ queryKey: ["models", "policy"], queryFn: () => api.get<ModelPolicy>("/api/models/policy") });
 export const useShotEngines = (sid: number | null, purpose = "video") =>
   useQuery({ queryKey: ["shot-engines", sid, purpose], queryFn: () => api.get<ShotEngines>(`/api/shots/${sid}/engines?purpose=${purpose}`), enabled: !!sid });
+/** Other engines for a shot, priced for it: after a safety block ("recover") or for a 480p preview ("draft"). */
+export const useShotAlternatives = (sid: number | null, purpose: "recover" | "draft", enabled = true) =>
+  useQuery({ queryKey: ["shot-alternatives", sid, purpose], enabled: !!sid && enabled,
+    queryFn: () => api.get<import("./types").ShotAlternatives>(`/api/shots/${sid}/alternatives?purpose=${purpose}`) });
+/** OpenRouter / BytePlus balances and providers skipped for lack of credit. */
+export const useProviderCredit = () =>
+  useQuery({ queryKey: ["provider-credit"], queryFn: () => api.get<{ providers: import("./types").ProviderCredit[] }>("/api/providers/credit"), staleTime: 60_000 });
 export const useScriptVersions = (eid: number | undefined) =>
   useQuery({ queryKey: ["script-versions", eid], queryFn: () => api.get<ScriptVersion[]>(`/api/episodes/${eid}/script/versions`), enabled: !!eid });
 export const useTableRead = (eid: number | undefined) =>

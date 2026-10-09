@@ -100,7 +100,8 @@ def update_user(uid: int, body: UserPatch, admin: User = Depends(require("admin"
 @router.get("/settings")
 def get_settings_(user: User = Depends(current_user), db: Session = Depends(get_db)):
     s = settings_store.all_settings(db)
-    s.pop("alerts_sent", None)
+    for k in ("alerts_sent", "credit_holds", "credit_balances"):  # bookkeeping, not settings (see /api/providers/credit)
+        s.pop(k, None)
     return {"settings": s, "models": settings_store.models(db), "prices": settings_store.prices(db),
             "catalog": {"languages": catalog.LANGUAGES, "quality_modes": catalog.QUALITY_MODES,
                         "project_types": catalog.PROJECT_TYPES, "export_presets": catalog.EXPORT_PRESETS,
@@ -145,7 +146,10 @@ def set_key(provider: str, body: KeyIn, admin: User = Depends(require("admin")),
             raise HTTPException(400, "Enter the BytePlus Access Key ID and Secret Access Key")
     settings_store.save_api_key(db, provider, body.key, admin.id)
     audit(db, admin, "apikey.set", provider, commit=False)
+    from ..core import credit
+    credit.release(db, "byteplus" if provider == "byteplus_iam" else provider)  # a new key: try that provider again
     db.commit()
+    settings_store.VERSION["n"] += 1  # the key cache re-reads the committed key
     if provider == "openrouter":  # pull its video models and prices into the Model Hub right away
         from ..core import jobs
         jobs.submit(db, admin, None, [jobs.spec("model_sync", payload={"full": False}, label="Model Hub sync")],
@@ -158,6 +162,7 @@ def delete_key(provider: str, admin: User = Depends(require("admin")), db: Sessi
     settings_store.delete_api_key(db, provider)
     audit(db, admin, "apikey.delete", provider, commit=False)
     db.commit()
+    settings_store.VERSION["n"] += 1
     return {"ok": True, "providers": provider_status()}
 
 
