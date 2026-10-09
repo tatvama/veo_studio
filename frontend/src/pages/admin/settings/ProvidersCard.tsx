@@ -63,6 +63,12 @@ function costFacts(provider: string, prices: Record<string, any> | undefined, t:
     case "sarvam":
       add("Voice / 1k letters", price(tts.sarvam));
       break;
+    case "anthropic": {
+      const claude = Object.entries((prices.text_per_million ?? {}) as Record<string, { in?: number; out?: number }>).find(([m]) => m.startsWith("claude"))?.[1];
+      add("Chat / 1M tokens in", price(claude?.in));
+      add("Chat / 1M tokens out", price(claude?.out));
+      break;
+    }
     case "sync": {
       const l = flat(prices.lipsync_per_second);
       if (l.length) {

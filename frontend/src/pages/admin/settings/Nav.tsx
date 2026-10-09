@@ -49,7 +49,7 @@ export const SECTION_GROUP: Record<string, string> = Object.fromEntries(SETTINGS
 export const SETTING_SECTION: Record<string, string> = {
   team_monthly_cap_usd: "budget", alert_thresholds: "budget", creator_default_monthly_limit_usd: "budget",
   default_quality_mode: "generation", lipsync_model: "generation", google_first: "generation", cheapest_route: "generation",
-  text_provider: "generation", openrouter_text_model: "generation",
+  text_provider: "generation", openrouter_text_model: "generation", director_engine: "generation",
   auto_retake: "quality", max_auto_retakes: "quality", qc_threshold: "quality", face_match_threshold: "quality", lipsync_qc: "quality", lipsync_qc_threshold: "quality",
   dialogue_method: "dialogue", dub_method: "dialogue", native_dialogue_languages: "dialogue", dialogue_words_qc: "dialogue",
   dialogue_words_threshold: "dialogue", outfit_qc: "dialogue",

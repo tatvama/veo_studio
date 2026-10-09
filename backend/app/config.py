@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     byteplus_secret_key: str = ""
     byteplus_region: str = "ap-southeast-1"
     byteplus_project: str = "default"
+    # Anthropic (Claude): runs the Director chat agent when the team picks Claude (Settings → Generation)
+    anthropic_api_key: str = ""
 
     google_client_id: str = ""
     google_client_secret: str = ""
