@@ -195,7 +195,8 @@ class Worker:
         self.thread: threading.Thread | None = None
 
     def start(self) -> None:
-        from . import handlers, handlers_campaign, handlers_growth, handlers_hub, handlers_room  # noqa: F401  (registers handlers)
+        from . import (handlers, handlers_campaign, handlers_design, handlers_growth, handlers_hub,  # noqa: F401
+                       handlers_room)  # (registers handlers)
 
         self.recover()
         self.thread = threading.Thread(target=self.loop, name="worker-loop", daemon=True)

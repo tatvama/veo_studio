@@ -20,6 +20,8 @@ const TeamPage = lazy(() => import("./pages/admin/Team"));
 const BrandKitsPage = lazy(() => import("./pages/BrandKits"));
 const LibraryPage = lazy(() => import("./pages/Library"));
 const ModelHub = lazy(() => import("./pages/models/ModelHub"));
+const PostersGallery = lazy(() => import("./pages/posters/Gallery"));
+const PosterEditor = lazy(() => import("./pages/posters/Editor"));
 const ProjectLayout = lazy(() => import("./pages/project/ProjectLayout"));
 const PublicReview = lazy(() => import("./pages/PublicReview"));
 const SearchPage = lazy(() => import("./pages/SearchPage"));
@@ -96,6 +98,8 @@ function AppRoutes() {
               <Route path="/library" element={<LibraryPage />} />
               <Route path="/models" element={<ModelHub />} />
               <Route path="/brand-kits" element={<BrandKitsPage />} />
+              <Route path="/posters" element={<PostersGallery />} />
+              <Route path="/posters/:id" element={<PosterEditor />} />
               <Route path="/search" element={<SearchPage />} />
               <Route path="/approvals" element={<ApprovalsPage />} />
               <Route path="/costs" element={<CostsPage />} />

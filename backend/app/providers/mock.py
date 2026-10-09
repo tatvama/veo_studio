@@ -140,6 +140,22 @@ def _title_from(concept: str) -> str:
 def llm(task: str, ctx: dict[str, Any]) -> dict[str, Any]:
     concept = ctx.get("concept") or "A mysterious story"
     lang = ctx.get("language", "en")
+    if task == "poster_copy":
+        kind, n = ctx.get("kind", "tagline"), int(ctx.get("n", 6))
+        pool = {
+            "title": ["THE LAMP", "LAST LIGHT", "DIYA", "AFTER DUSK", "THE KEEPER", "EMBER", "SILENT FLAME", "NIGHT WATCH"],
+            "tagline": ["Some lights refuse to go out.", "Every flame remembers.", "The night is listening.",
+                        "Faith burns brightest in the dark.", "What moves when no one is watching?", "Light finds a way home."],
+            "cta": ["Watch now", "Streaming Friday", "Book tickets", "Shop the look", "Join the premiere", "Follow for part 2"],
+            "credits": ["TATVAM STUDIOS PRESENTS A FILM BY ASHA RAO  WRITTEN BY RAVI KUMAR  MUSIC BY MEERA IYER  "
+                        "CINEMATOGRAPHY BY ARJUN NAIR  PRODUCED BY TATVAM AI STUDIO"],
+        }.get(kind, [f"{concept[:40]} ({kind} option)"])
+        return {"suggestions": [f"{pool[i % len(pool)]}" for i in range(n)]}
+    if task == "poster_brief":
+        return {"template": "film_onesheet", "title": _title_from(concept).upper()[:40], "tagline": "Some lights refuse to go out.",
+                "credits": "A TATVAM STUDIOS FILM  DIRECTED BY ASHA RAO", "cta": "Coming soon", "badge": "IN CINEMAS",
+                "background_prompt": f"Moody cinematic scene for: {concept[:160]}. Dusk light, haze, depth.",
+                "palette": ["#0b0f17", "#f5b041", "#22d3ee", "#f8fafc"], "style": "cinematic, warm practical light, film grain"}
     if task == "brief":
         return {
             "title": _title_from(concept), "format": ctx.get("type", "short"),

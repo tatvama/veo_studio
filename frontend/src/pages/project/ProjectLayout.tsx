@@ -22,12 +22,13 @@ import { usePipeline } from "./pipeline";
 import Storyboard from "./Storyboard";
 
 /** Projects made from your own material (shot by shot, or an imported script) show just these steps. */
-const SIMPLE_TABS = ["dashboard", "studio", "bible", "shots", "export"];
+const SIMPLE_TABS = ["dashboard", "studio", "bible", "shots", "export", "posters"];
 
 const ActivityPage = lazy(() => import("./Activity"));
 const DashboardPage = lazy(() => import("./Dashboard"));
 const WorldPage = lazy(() => import("./World"));
 const CampaignPage = lazy(() => import("./Campaign"));
+const PostersGallery = lazy(() => import("../posters/Gallery"));
 const BiblePage = lazy(() => import("./Bible"));
 const BriefPage = lazy(() => import("./Brief"));
 const ExportPage = lazy(() => import("./Export"));
@@ -216,6 +217,7 @@ export default function ProjectLayout() {
                       <Route path="dashboard" element={<DashboardPage />} />
                       <Route path="world" element={<WorldPage />} />
                       <Route path="campaign" element={<CampaignPage />} />
+                      <Route path="posters" element={<PostersGallery projectId={pid} />} />
                       <Route path="*" element={<Navigate to={`/p/${pid}/dashboard`} replace />} />
                     </Routes>
                   </Suspense>
