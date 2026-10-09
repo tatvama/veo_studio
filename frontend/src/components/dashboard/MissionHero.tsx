@@ -1,5 +1,5 @@
 import { ArrowRight, Bot, Check, Gauge, type LucideIcon } from "lucide-react";
-import { useMemo, type CSSProperties } from "react";
+import { type CSSProperties } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { cn } from "../../lib/cn";
 import { LANG_SHORT, secs } from "../../lib/format";
@@ -7,11 +7,11 @@ import { useT } from "../../lib/i18n";
 import { useUI } from "../../lib/store";
 import type { Episode, Project } from "../../lib/types";
 import type { EpisodeDashboard } from "../../lib/v3";
+import { buildSteps } from "../../pages/project/flow";
 import type { Stage, StageState } from "../../pages/project/pipeline";
-import { getProjectTabs } from "../shell/nav";
 import { openDirector } from "../shell/keys";
 import { Badge, Button, Panel, ProgressRing, Skeleton, Tag } from "../ui";
-import { flightKeys, flightTab, stageCredit, type ActionGo, type MissionAction } from "./mission";
+import { stageCredit, type ActionGo, type MissionAction } from "./mission";
 import { TEXT, WASH } from "./tone";
 
 const EPISODE_TONE: Record<string, "neutral" | "info" | "accent" | "ok"> = { draft: "neutral", scripted: "info", in_production: "accent", approved: "ok", delivered: "ok" };
@@ -35,11 +35,11 @@ export function useGo(pid: number) {
 
 interface Waypoint { key: string; label: string; icon: LucideIcon; stage: Stage; credit: number; current: boolean; live: boolean; to: string }
 
-/** The flight path: the stages as a track of nodes. Horizontal on wide panels, a vertical list on narrow ones. */
+/** The flight path: the five steps as a track of nodes. Horizontal on wide panels, a vertical list on narrow ones. */
 function FlightPath({ items }: { items: Waypoint[] }) {
   const t = useT();
-  const word = (w: Waypoint) => (w.stage.state === "done" ? t("Done") : w.stage.state === "progress" ? t("Active") : w.current ? t("Next") : t("To do"));
-  const fallback = (w: Waypoint) => w.stage.hint ?? (w.stage.state === "done" ? t("Complete") : w.stage.state === "progress" ? t("In progress") : t("Not started"));
+  const word = (w: Waypoint) => (w.stage.state === "done" ? t("Done") : w.stage.state === "progress" ? t("Active") : w.current ? t("Next") : w.stage.state === "none" ? t("Optional") : t("To do"));
+  const fallback = (w: Waypoint) => w.stage.hint ?? (w.stage.state === "done" ? t("Complete") : w.stage.state === "progress" ? t("In progress") : w.stage.state === "none" ? t("Not needed for your own material") : t("Not started"));
   return (
     <ol aria-label={t("Production flight path")} className="grid gap-0 @2xl/hero:grid-cols-[repeat(var(--n),minmax(0,1fr))]" style={{ "--n": items.length } as CSSProperties}>
       {items.map((w, i) => {
@@ -83,7 +83,7 @@ export function MissionHeroSkeleton() {
     <Panel eyebrow="···" index={0} flush>
       <div className="space-y-5 p-5" aria-busy="true">
         <div className="flex items-center justify-between gap-4"><div className="space-y-3"><Skeleton className="h-7 w-72 max-w-[60vw]" /><Skeleton className="h-5 w-56" /></div><Skeleton className="size-[88px] rounded-full" /></div>
-        <div className="grid grid-cols-4 gap-3 sm:grid-cols-7">{Array.from({ length: 7 }, (_, i) => <Skeleton key={i} className="h-16" />)}</div>
+        <div className="grid grid-cols-5 gap-3">{Array.from({ length: 5 }, (_, i) => <Skeleton key={i} className="h-16" />)}</div>
       </div>
     </Panel>
   );
@@ -97,22 +97,22 @@ export function MissionHero({ project, episode, d, stages, action, index = 0 }: 
 }) {
   const t = useT();
   const go = useGo(project.id);
-  const keys = flightKeys(project);
-  const tabs = useMemo(() => getProjectTabs(t), [t]);
-
-  const items: Waypoint[] = keys.map((k) => {
-    const tab = tabs.find((x) => x.to === k);
-    return { key: k, label: tab?.label ?? k, icon: tab?.icon ?? Gauge, stage: stages[k] ?? { state: "todo" as StageState }, credit: stageCredit(k, stages[k], project, episode),
-      current: false, live: (k === "storyboard" && (d?.shots.generating ?? 0) > 0) || (k === "export" && (d?.queue.renders ?? 0) > 0), to: `${project.id}/${flightTab(project, k)}` };
-  });
-  const now = items.findIndex((w) => w.stage.state !== "done");
+  // The same five steps as the project rail. A step's credit is the average of the pages it tracks; a step that tracks
+  // nothing (the Story step of a project made from your own material) is optional and left out of the totals.
+  const items: Waypoint[] = buildSteps(t, project, episode, stages).map((s) => ({
+    key: s.id, label: s.label, icon: s.icon, stage: s.stage,
+    credit: s.tracked.length ? s.tracked.reduce((a, k) => a + stageCredit(k, stages[k], project, episode), 0) / s.tracked.length : 0,
+    current: false, live: (s.id === "shots" && (d?.shots.generating ?? 0) > 0) || (s.id === "deliver" && (d?.queue.renders ?? 0) > 0), to: `${project.id}/${s.to}`,
+  }));
+  const counted = items.filter((w) => w.stage.state !== "none");
+  const now = items.findIndex((w) => w.stage.state !== "done" && w.stage.state !== "none");
   if (now >= 0) items[now].current = true;
 
-  const done = items.filter((w) => w.stage.state === "done").length;
-  const active = items.filter((w) => w.stage.state === "progress").length;
-  const completion = items.length ? items.reduce((a, w) => a + w.credit, 0) / items.length : 0;
+  const done = counted.filter((w) => w.stage.state === "done").length;
+  const active = counted.filter((w) => w.stage.state === "progress").length;
+  const completion = counted.length ? counted.reduce((a, w) => a + w.credit, 0) / counted.length : 0;
   const pct = Math.round(completion * 100);
-  const allDone = items.length > 0 && done === items.length;
+  const allDone = counted.length > 0 && done === counted.length;
 
   const series = project.type === "series" || episode?.kind === "cutdown";
   const number = episode?.number ?? d?.number;
@@ -145,8 +145,8 @@ export function MissionHero({ project, episode, d, stages, action, index = 0 }: 
           <div className="row-span-2 flex items-center gap-4 self-center" role="group" aria-label={t("Overall completion")}>
             <div className="hidden text-right sm:block">
               <p className="eyebrow">{t("Completion")}</p>
-              <p className="mono mt-1.5 text-sm text-mute"><span className="text-ink">{done}</span> / {items.length} {t("stages")}</p>
-              <p className="mt-0.5 text-2xs text-dim">{active > 0 ? t("{n} in progress", { n: active }) : allDone ? t("All stages done") : t("Nothing in progress")}</p>
+              <p className="mono mt-1.5 text-sm text-mute"><span className="text-ink">{done}</span> / {counted.length} {t("steps")}</p>
+              <p className="mt-0.5 text-2xs text-dim">{active > 0 ? t("{n} in progress", { n: active }) : allDone ? t("All steps done") : t("Nothing in progress")}</p>
             </div>
             <ProgressRing value={completion} size={88} stroke={5} tone={allDone ? "var(--color-ok)" : "var(--color-accent)"}>
               <span className={cn("mono text-xl font-semibold leading-none tracking-tight", allDone ? "text-ok" : "text-gradient")}>{pct}<span className="ml-px text-xs">%</span></span>

@@ -102,8 +102,8 @@ export default function BiblePage() {
     <RoomPage width="wide" scrollRef={scroller}>
       {listing && (
         <>
-          <RoomHeader icon={<Users />} title={t("Bible")}
-            description={t("The cast, places and look of your film. Lock each one once it is approved so every shot matches.")}
+          <RoomHeader icon={<Users />} title={t("Characters & places")}
+            description={t("Your film's bible: the cast, places and look. Lock each one once it is approved so every shot matches.")}
             actions={showBuild && (
               <Button variant="primary" icon={<Sparkles className="size-4" />} loading={busy === "propose"} onClick={propose}>{t("Build from script")}</Button>
             )} />

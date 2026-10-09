@@ -6,27 +6,7 @@ import type { Stage } from "../../pages/project/pipeline";
 import { isQcFailedShot } from "./shotState";
 import type { Tone } from "./tone";
 
-/** The seven stages of the flight path, in order (the same ones the pipeline rail tracks). */
-export const FLIGHT_FULL = ["brief", "story", "scenes", "bible", "storyboard", "timeline", "export"] as const;
-/** Projects made from the user's own material skip the writing stages. */
-const FLIGHT_OWN = ["bible", "storyboard", "timeline", "export"] as const;
-
-/** Which stages this project's flight path shows. Mirrors the rail: own-material projects show the short path unless "all steps" is on. */
-export function flightKeys(project: Project): readonly string[] {
-  const own = project.workflow === "shots" || project.workflow === "script";
-  if (!own) return FLIGHT_FULL;
-  let full = false;
-  try { full = localStorage.getItem(`veo:fullTabs:${project.id}`) === "1"; } catch { /* storage blocked */ }
-  return full ? FLIGHT_FULL : FLIGHT_OWN;
-}
-
-/** Where a stage's node leads. In the short path the storyboard stage is the Studio. */
-export function flightTab(project: Project, key: string): string {
-  const own = project.workflow === "shots" || project.workflow === "script";
-  return own && key === "storyboard" && flightKeys(project) === FLIGHT_OWN ? "studio" : key;
-}
-
-/** 0..1 credit a stage earns toward overall completion: done is 1, started is a real ratio where the data has one. */
+/** 0..1 credit a page's stage earns toward overall completion: done is 1, started is a real ratio where the data has one. */
 export function stageCredit(key: string, st: Stage | undefined, project: Project, ep: Episode | undefined): number {
   if (!st || st.state === "none" || st.state === "todo") return 0;
   if (st.state === "done") return 1;

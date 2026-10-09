@@ -54,6 +54,18 @@ export function computePipeline(project: Project | undefined, ep: Episode | unde
   return out;
 }
 
+/**
+ * A step's state from the pages it tracks: done once every one is done, started once any is, "none" when it tracks nothing
+ * (an optional step). The hint joins the pages' hints ("Script written · 3 of 5 scenes approved").
+ */
+export function stepStage(stages: Record<string, Stage>, tracked: readonly string[]): Stage {
+  const list = tracked.map((k) => stages[k]).filter((s): s is Stage => !!s && s.state !== "none");
+  if (!list.length) return { state: "none" };
+  const hint = list.map((s) => s.hint).filter(Boolean).join(" · ") || undefined;
+  if (list.every((s) => s.state === "done")) return { state: "done", hint };
+  return { state: list.some((s) => s.state !== "todo") ? "progress" : "todo", hint };
+}
+
 export function usePipeline(project: Project | undefined, ep: Episode | undefined) {
   return useMemo(() => {
     const stages = computePipeline(project, ep);

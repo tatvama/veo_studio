@@ -18,9 +18,10 @@ export function MobileNav({ user }: { user: UserBrief }) {
   const { data: approvals } = useApprovals();
   const pending = (approvals ?? []).filter((a) => a.can_decide).length;
   const entries = useMemo(() => getNav(t, user.role), [t, user.role]);
-  const main = entries.filter((e) => ["/", "/library", "/models"].includes(e.to));
+  // the same main destinations as the sidebar; the Model Hub and the other rarely used pages are under "More"
+  const main = entries.filter((e) => ["/", "/library", "/posters"].includes(e.to));
   // short labels: five cells plus the account share a 375px bar
-  const short: Record<string, string> = { "/": t("Home"), "/library": t("Library"), "/models": t("Models") };
+  const short: Record<string, string> = { "/": t("Home"), "/library": t("Library"), "/posters": t("Posters") };
   const more = entries.filter((e) => !main.includes(e) && e.to !== "/search");
   const [open, setOpen] = useState(false);
   const moreRef = useRef<HTMLButtonElement>(null);
