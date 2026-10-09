@@ -16,7 +16,7 @@ export type DragData = { type: "shot"; shotId: number; sceneId: number | null } 
   | { type: "scene"; sceneId: number | null };
 
 const STATUS_DOT: Record<string, string> = {
-  draft: "bg-dim/60", keyframe_ready: "bg-info", video_ready: "bg-accent", approved: "bg-ok",
+  draft: "bg-dim/60", keyframe_ready: "bg-info", video_ready: "bg-accent shadow-[0_0_6px_0_var(--color-accent)]", approved: "bg-ok shadow-[0_0_6px_0_var(--color-ok)]",
 };
 
 /** Scenes and their shots, top to bottom. Drag shots to reorder or move them to another scene; drop a character on a shot. */
@@ -76,17 +76,17 @@ function SceneGroup({ scene, index, count, secs, onAdd, children }: {
   const [open, setOpen] = useState(true);
   const { setNodeRef, isOver } = useDroppable({ id: `scene-${scene?.id ?? "none"}`, data: { type: "scene", sceneId: scene?.id ?? null } satisfies DragData });
   return (
-    <section ref={setNodeRef} className={clsx("rounded-xl border transition-colors", isOver ? "border-accent/60 bg-accent/5" : "border-line bg-panel")}>
+    <section ref={setNodeRef} className={clsx("hud relative rounded-xl border transition-colors", isOver ? "border-accent/60 bg-accent/5" : "border-line bg-panel")}>
       <header className="flex items-center gap-1.5 px-2 py-1.5">
         <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
           <ChevronDown className={clsx("size-3.5 shrink-0 text-dim transition-transform", !open && "-rotate-90")} />
-          <span className="rounded bg-accent/12 px-1 font-mono text-2xs font-semibold text-accent-ink">{scene ? `SC${String(index).padStart(2, "0")}` : "—"}</span>
-          <span className="min-w-0 truncate text-xs font-semibold">{scene?.title || t("Unsorted shots")}</span>
+          <span className="mono rounded border border-accent/30 bg-accent/10 px-1 text-2xs font-semibold tracking-wide text-accent-ink">{scene ? `SC${String(index).padStart(2, "0")}` : "—"}</span>
+          <span className="min-w-0 truncate text-xs font-semibold tracking-tight">{scene?.title || t("Unsorted shots")}</span>
         </button>
-        <span className="shrink-0 text-2xs tabular-nums text-dim">{count} · {secs}s</span>
+        <span className="mono shrink-0 text-2xs tabular-nums text-dim">{count} · {secs}s</span>
         {onAdd && (
           <button type="button" onClick={onAdd} title={t("Add a shot to this scene")} aria-label={t("Add a shot to this scene")}
-            className="grid size-6 shrink-0 place-items-center rounded-md text-dim hover:bg-hover hover:text-ink"><Plus className="size-3.5" /></button>
+            className="grid size-6 shrink-0 place-items-center rounded-md text-dim outline-none transition-colors hover:bg-hover hover:text-ink focus-visible:ring-2 focus-visible:ring-accent/60"><Plus className="size-3.5" /></button>
         )}
       </header>
       {open && <div className="space-y-1 px-1.5 pb-1.5">{children}</div>}
@@ -108,7 +108,7 @@ function ShotItem({ shot, no, selected, onSelect, people, canEdit, linkFrom }: {
   return (
     <div ref={setNodeRef} style={{ transform: CSS.Translate.toString(transform), transition }}
       className={clsx("group flex items-center gap-1.5 rounded-lg border p-1 transition-colors", isDragging && "z-10 opacity-60 shadow-lift",
-        charOver ? "border-ok/70 bg-ok/10" : selected ? "border-accent/60 bg-accent/10" : "border-transparent hover:bg-hover/60")}>
+        charOver ? "border-ok/70 bg-ok/10" : selected ? "border-accent/50 bg-accent/10 shadow-[0_0_16px_-8px_var(--color-accent)]" : "border-transparent hover:bg-hover/60")}>
       {canEdit && (
         <span {...attributes} {...listeners} aria-label={t("Drag to move")} className="cursor-grab touch-none text-dim opacity-40 group-hover:opacity-100">
           <GripVertical className="size-3.5" />
@@ -122,8 +122,8 @@ function ShotItem({ shot, no, selected, onSelect, people, canEdit, linkFrom }: {
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1.5">
             <span className={clsx("size-1.5 shrink-0 rounded-full", STATUS_DOT[shot.status] ?? "bg-dim/60")} title={shot.status.replace("_", " ")} />
-            <span className="font-mono text-2xs font-semibold text-mute">{shot.code || `#${no}`}</span>
-            <span className="text-2xs tabular-nums text-dim">{len}s</span>
+            <span className={clsx("mono text-2xs font-semibold", selected ? "text-accent-ink" : "text-mute")}>{shot.code || `#${no}`}</span>
+            <span className="mono text-2xs tabular-nums text-dim">{len}s</span>
             {linkFrom && (
               <Tooltip content={linkFrom.mode === "extend" ? t("Extends {code}'s clip", { code: linkFrom.code }) : t("Starts from {code}'s last frame", { code: linkFrom.code })}>
                 <span role="img" aria-label={t("Continues from {code}", { code: linkFrom.code })} className="grid size-3.5 place-items-center text-accent-ink">
@@ -151,7 +151,7 @@ export function CastPanel({ cast, onOpenCharacters, canEdit }: { cast: Character
   const t = useT();
   return (
     <div className="flex h-full flex-col">
-      <p className="px-3 pt-2 text-2xs text-dim">{canEdit ? t("Drag a character onto a shot to put them in it.") : t("This project's cast.")}</p>
+      <p className="px-3 pt-2.5 text-2xs text-dim">{canEdit ? t("Drag a character onto a shot to put them in it.") : t("This project's cast.")}</p>
       <div className="grid flex-1 auto-rows-min grid-cols-[repeat(auto-fill,minmax(84px,1fr))] gap-2 overflow-y-auto p-2">
         {cast.map((c) => <CastChip key={c.id} c={c} canEdit={canEdit} />)}
         {!cast.length && <p className="col-span-full py-4 text-center text-xs text-dim">{t("No characters in this project yet.")}</p>}
@@ -169,8 +169,8 @@ function CastChip({ c, canEdit }: { c: Character; canEdit: boolean }) {
   });
   return (
     <div ref={setNodeRef} {...attributes} {...listeners}
-      className={clsx("flex touch-none flex-col items-center gap-1 rounded-xl border border-line bg-panel p-2 text-center transition-shadow",
-        canEdit && "cursor-grab hover:border-accent/50 hover:shadow-card", isDragging && "opacity-50")}>
+      className={clsx("hud relative flex touch-none flex-col items-center gap-1 rounded-xl border border-line bg-panel p-2 text-center transition-[border-color,box-shadow]",
+        canEdit && "cursor-grab hover:border-accent/45 hover:shadow-[0_0_16px_-8px_var(--color-accent)]", isDragging && "opacity-50")}>
       <Avatar name={c.name} src={c.avatar_url} size={44} />
       <span className="w-full truncate text-2xs font-medium">{c.name}</span>
       {!c.avatar_url && <Badge tone="warn">no photo</Badge>}
@@ -183,8 +183,8 @@ export function EmptyStudio({ onStart }: { onStart: () => void }) {
   return (
     <div className="grid h-full place-items-center p-6 text-center">
       <div className="max-w-sm space-y-3">
-        <span className="mx-auto grid size-12 place-items-center rounded-2xl bg-accent/12 text-accent-ink"><Clapperboard className="size-6" /></span>
-        <p className="text-sm font-semibold">{t("No shots yet")}</p>
+        <span className="hud relative mx-auto grid size-12 place-items-center rounded-xl border border-accent/30 bg-accent/10 text-accent-ink"><Clapperboard className="size-6" /></span>
+        <p className="eyebrow !text-ink">{t("No shots yet")}</p>
         <p className="text-xs text-mute">{t("Write your shots in the Shot list (or import a script), then come back here to make and cut them.")}</p>
         <Button variant="primary" size="sm" icon={<MapPin className="size-3.5" />} onClick={onStart}>{t("Open the Shot list")}</Button>
       </div>

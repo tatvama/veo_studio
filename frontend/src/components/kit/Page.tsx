@@ -7,7 +7,7 @@ import { rise } from "./Motion";
 const WIDTHS = {
   narrow: "max-w-3xl",
   default: "max-w-5xl",
-  wide: "max-w-7xl",
+  wide: "max-w-[88rem]",
   full: "max-w-none",
 } as const;
 
@@ -19,7 +19,7 @@ export function Page({ children, width = "default", className, flush }: {
   children: ReactNode; width?: keyof typeof WIDTHS; className?: string; flush?: boolean;
 }) {
   return (
-    <div className="h-full overflow-y-auto overflow-x-hidden overscroll-contain" data-page-scroller>
+    <div className="hud-bg h-full overflow-y-auto overflow-x-hidden overscroll-contain" data-page-scroller>
       <div className={cn("mx-auto w-full", WIDTHS[width], flush ? "" : "px-4 py-6 sm:px-6 sm:py-8 lg:px-8", className)}>{children}</div>
     </div>
   );
@@ -38,9 +38,9 @@ export function PageHeader({ title, subtitle, icon, actions, back, eyebrow, clas
             <ChevronLeft className="size-3.5" />{back.label}
           </Link>
         )}
-        {eyebrow && <div className="mb-1 text-2xs font-semibold uppercase tracking-[0.12em] text-accent-ink">{eyebrow}</div>}
+        {eyebrow && <div className="eyebrow mb-1.5 !text-accent-ink">{eyebrow}</div>}
         <div className="flex items-center gap-3">
-          {icon && <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-accent/12 text-accent-ink ring-1 ring-inset ring-accent/20">{icon}</span>}
+          {icon && <span className="hud grid size-10 shrink-0 place-items-center rounded-lg border border-accent/25 bg-accent/10 text-accent-ink [&>svg]:size-5">{icon}</span>}
           <div className="min-w-0">
             <h1 className="text-balance text-2xl font-semibold leading-tight tracking-tight">{title}</h1>
             {subtitle && <p className="mt-1 max-w-2xl text-sm text-mute">{subtitle}</p>}
@@ -61,7 +61,7 @@ export function Section({ title, description, actions, children, className, id }
       {(title || actions) && (
         <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
           <div className="min-w-0">
-            {title && <h2 className="text-base font-semibold tracking-tight">{title}</h2>}
+            {title && <h2 className="flex items-center gap-2 text-base font-semibold tracking-tight"><span aria-hidden className="h-4 w-0.5 rounded-full bg-accent" />{title}</h2>}
             {description && <p className="mt-0.5 text-sm text-mute">{description}</p>}
           </div>
           {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
@@ -76,7 +76,7 @@ export function Section({ title, description, actions, children, className, id }
 export function useDocumentTitle(...parts: (string | undefined | null | false)[]) {
   const title = [...parts.filter(Boolean)].join(" · ");
   useEffect(() => {
-    document.title = title ? `${title} — VEO Studio` : "VEO Studio";
+    document.title = title ? `${title} — Tatvam AI Studio` : "Tatvam AI Studio";
   }, [title]);
 }
 

@@ -79,7 +79,7 @@ export function Popover({ open, onClose, anchor, placement = "bottom-start", chi
           exit={{ opacity: 0, scale: 0.98, transition: { duration: 0.1 } }}
           transition={{ duration: 0.15, ease: [0.22, 1, 0.36, 1] }}
           style={{ position: "fixed", left: pos?.left ?? 0, top: pos?.top ?? 0, width, minWidth: pos?.minWidth, transformOrigin: pos?.origin }}
-          className={cn("z-[80] rounded-xl border border-line bg-raised shadow-pop", className)}
+          className={cn("hud z-[80] rounded-xl border border-line bg-raised shadow-pop", className)}
         >
           {children}
         </motion.div>

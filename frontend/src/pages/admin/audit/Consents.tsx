@@ -1,94 +1,24 @@
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { AudioLines, CalendarClock, FileCheck, FileText, Music, Plus, ScanFace, ShieldCheck, TriangleAlert, type LucideIcon } from "lucide-react";
-import { motion } from "motion/react";
+import { FileCheck, FileText, Plus, TriangleAlert } from "lucide-react";
 import { useMemo, useState } from "react";
-import { agoT, fmtDate } from "../../../components/growth/common";
-import { Avatar, Badge, Button, Empty, Progress, SearchField, Skeleton, rise } from "../../../components/ui";
+import { agoT, fmtDate, fmtDateTime } from "../../../components/growth/common";
+import { Avatar, Badge, Button, Empty, Metric, Panel, SearchField, Skeleton } from "../../../components/ui";
 import { api } from "../../../lib/api";
 import { useT } from "../../../lib/i18n";
 import { useConsents } from "../../../lib/queries";
-import type { Character, ConsentRow } from "../../../lib/types";
+import type { Character } from "../../../lib/types";
 import { ChipGroup } from "../shared/ChipGroup";
-import { ConsentModal } from "./ConsentModal";
-import { CONSENT_KINDS } from "./meta";
-
 import { Pill } from "../shared/Pill";
-type ExpiryState = "none" | "valid" | "soon" | "expired";
+import { ConsentDetail, ExpiryPill } from "./ConsentDetail";
+import { ConsentModal } from "./ConsentModal";
+import { CONSENT_KINDS, KIND_ICON, expiry, type ExpiryState } from "./meta";
+import "../../../styles/admin.css";
+import "../../../styles/console.css";
 
-function expiry(c: ConsentRow): { state: ExpiryState; days: number; used: number } {
-  if (!c.expires_on) return { state: "none", days: 0, used: 0 };
-  const end = new Date(`${c.expires_on}T23:59:59`).getTime();
-  if (Number.isNaN(end)) return { state: "none", days: 0, used: 0 };
-  const now = Date.now();
-  const days = Math.ceil((end - now) / 86_400_000);
-  const start = new Date(c.created_at).getTime();
-  const used = Number.isNaN(start) || end <= start ? 1 : Math.max(0, Math.min(1, (now - start) / (end - start)));
-  return { state: end < now ? "expired" : days <= 30 ? "soon" : "valid", days, used };
-}
-
-const KIND_ICON: Record<string, LucideIcon> = { voice_replication: AudioLines, likeness: ScanFace, music: Music, other: FileText };
 const STATE_RANK: Record<ExpiryState, number> = { expired: 0, soon: 1, valid: 2, none: 3 };
 
-function ConsentCard({ c, charName, index }: { c: ConsentRow; charName?: string; index: number }) {
-  const t = useT();
-  const e = expiry(c);
-  const Icon = KIND_ICON[c.kind] ?? FileText;
-  const tone = e.state === "expired" ? "bad" : e.state === "soon" ? "warn" : "ok";
-  const r = rise(index);
-  return (
-    <motion.article layout="position" whileHover={{ y: -2 }} transition={{ duration: 0.18 }}
-      className={clsx("flex flex-col rounded-xl border bg-panel p-4 transition-[border-color,box-shadow] hover:shadow-lift",
-        e.state === "expired" ? "border-bad/40" : e.state === "soon" ? "border-warn/40" : "border-line", r.className)} style={r.style}>
-      <header className="flex items-start gap-3">
-        <Avatar name={c.subject_name} size={40} />
-        <div className="min-w-0 flex-1">
-          <h3 className="truncate text-sm font-semibold" title={c.subject_name}>{c.subject_name}</h3>
-          <p className="text-2xs text-dim">{t("Recorded {when}", { when: agoT(c.created_at) })}</p>
-        </div>
-        {e.state === "expired" ? <Pill tone="bad" dot>{t("Expired")}</Pill>
-          : e.state === "soon" ? <Pill tone="warn" dot>{t("Expiring soon")}</Pill>
-            : e.state === "valid" ? <Pill tone="ok" dot>{t("Valid")}</Pill> : <Badge>{t("No expiry")}</Badge>}
-      </header>
-
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        <Badge><Icon className="size-3" />{t(CONSENT_KINDS[c.kind] ?? c.kind)}</Badge>
-        {c.character_id ? <Pill tone="info">{charName ?? `#${c.character_id}`}</Pill> : null}
-      </div>
-
-      <p className={clsx("mt-3 line-clamp-3 whitespace-pre-line text-xs leading-relaxed", c.scope ? "text-mute" : "text-dim")} title={c.scope}>{c.scope || t("No scope written down.")}</p>
-
-      <div className="mt-4">
-        {e.state === "none" ? (
-          <p className="flex items-center gap-1.5 text-xs text-dim"><ShieldCheck className="size-3.5" />{t("Doesn't expire")}</p>
-        ) : (
-          <>
-            <Progress value={e.state === "expired" ? 1 : e.used} size="sm" tone={tone} />
-            <p className={clsx("mt-1.5 flex items-center gap-1.5 text-xs", e.state === "expired" ? "text-red-300" : e.state === "soon" ? "text-amber-300" : "text-mute")}>
-              {e.state === "expired" ? <TriangleAlert className="size-3.5" /> : <CalendarClock className="size-3.5" />}
-              {e.state === "expired"
-                ? t("Expired {date}", { date: fmtDate(c.expires_on) })
-                : t("Until {date} · {n} days left", { date: fmtDate(c.expires_on), n: e.days })}
-            </p>
-          </>
-        )}
-      </div>
-
-      <footer className="mt-auto pt-4">
-        <div className="flex items-center justify-between gap-2 border-t border-line pt-3">
-          {c.file_url ? (
-            <a href={c.file_url} target="_blank" rel="noreferrer"
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line px-2.5 text-xs font-medium text-mute transition-colors hover:border-dim/50 hover:text-ink">
-              <FileText className="size-3.5" />{t("View signed file")}
-            </a>
-          ) : <span className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-300"><TriangleAlert className="size-3.5" />{t("No signed file")}</span>}
-        </div>
-      </footer>
-    </motion.article>
-  );
-}
-
-/** Signed consents as cards, most urgent first, with how long each one still runs. */
+/** Signed consents as a data grid, most urgent first, with how long each one still runs. A row opens the full record. */
 export function Consents({ canAdd }: { canAdd: boolean }) {
   const t = useT();
   const qc = useQueryClient();
@@ -96,6 +26,7 @@ export function Consents({ canAdd }: { canAdd: boolean }) {
   const [adding, setAdding] = useState(false);
   const [filter, setFilter] = useState<"all" | "valid" | "soon" | "expired">("all");
   const [text, setText] = useState("");
+  const [openId, setOpenId] = useState<number | null>(null);
   const rows = data ?? [];
   const charIds = [...new Set(rows.map((c) => c.character_id).filter((x): x is number => !!x))];
   const charQs = useQueries({
@@ -115,6 +46,7 @@ export function Consents({ canAdd }: { canAdd: boolean }) {
     else if (s === "soon") counts.soon += 1;
     else counts.valid += 1;
   }
+  const noFile = rows.filter((c) => !c.file_url).length;
   const needle = text.trim().toLowerCase();
   const shown = useMemo(() => rows.filter((c) => {
     const s = expiry(c).state;
@@ -125,35 +57,113 @@ export function Consents({ canAdd }: { canAdd: boolean }) {
     return STATE_RANK[ea.state] - STATE_RANK[eb.state] || ea.days - eb.days;
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [rows, filter, needle, charQs.map((q) => q.dataUpdatedAt).join("|")]);
+  const opened = rows.find((c) => c.id === openId) ?? null;
+
+  const recordBtn = canAdd ? <Button variant="primary" size="sm" icon={<Plus className="size-4" />} onClick={() => setAdding(true)} className="max-sm:h-10">{t("Record consent")}</Button> : undefined;
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <ChipGroup label={t("Status")} value={filter} onChange={(v) => setFilter(v as typeof filter)} className="min-w-0 flex-1"
-          items={[
-            { value: "all", label: t("All"), count: rows.length },
-            { value: "valid", label: t("Valid"), count: counts.valid },
-            { value: "soon", label: t("Expiring in 30 days"), count: counts.soon },
-            { value: "expired", label: t("Expired"), count: counts.expired },
-          ]} />
-        <SearchField value={text} onChange={setText} placeholder={t("Search consents…")} aria-label={t("Search consents")} className="w-full sm:w-60" />
-        {canAdd && <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setAdding(true)}>{t("Record consent")}</Button>}
-      </div>
+      {/* KPI strip */}
+      <Panel flush index={1} bodyClassName="rounded-xl">
+        {isLoading ? (
+          <div className="ad-kpis" aria-busy="true">
+            {Array.from({ length: 4 }, (_, i) => <div key={i}><Skeleton className="h-2.5 w-20" /><Skeleton className="mt-3 h-7 w-16" /></div>)}
+          </div>
+        ) : (
+          <div className="ad-kpis">
+            <Metric label={t("Records")} value={rows.length} sub={t("signed consents")} />
+            <Metric label={t("Valid")} value={counts.valid} sub={t("covered")} />
+            <Metric label={t("Expiring soon")} tone={counts.soon > 0 ? "warn" : "neutral"} value={counts.soon}
+              sub={counts.soon > 0 ? <span className="ad-state" data-tone="warn"><TriangleAlert aria-hidden />{t("renew soon")}</span> : t("nothing due")} />
+            <Metric label={t("Expired")} tone={counts.expired > 0 ? "bad" : "neutral"} value={counts.expired}
+              sub={counts.expired > 0 ? <span className="ad-state" data-tone="bad"><TriangleAlert aria-hidden />{t("needs renewal")}</span> : t("none expired")} />
+            <Metric label={t("No signed file")} tone={noFile > 0 ? "warn" : "neutral"} value={noFile}
+              sub={noFile > 0 ? <span className="ad-state" data-tone="warn"><FileText aria-hidden />{t("upload the release")}</span> : t("all on file")} />
+          </div>
+        )}
+      </Panel>
 
-      {isLoading ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-52 rounded-xl" />)}</div>
-      ) : !rows.length ? (
-        <Empty icon={<FileCheck className="size-8" />} title={t("No consents recorded")}
-          sub={t("Keep a signed release for every real person whose voice or likeness you clone, and for licensed music.")}
-          action={canAdd ? <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setAdding(true)}>{t("Record consent")}</Button> : undefined} />
-      ) : !shown.length ? (
-        <p className="rounded-xl border border-dashed border-line px-4 py-12 text-center text-sm text-dim">{t("No consents match these filters.")}</p>
-      ) : (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {shown.map((c, i) => <ConsentCard key={c.id} c={c} index={i} charName={c.character_id ? charName[c.character_id] : undefined} />)}
+      <Panel flush index={2} bodyClassName="overflow-hidden rounded-b-xl" icon={<FileCheck />} eyebrow={t("Records")} title={t("Consents")} actions={recordBtn}>
+        <div className="ad-bar-row mt-3 border-t border-line">
+          <ChipGroup label={t("Status")} value={filter} onChange={(v) => setFilter(v as typeof filter)} className="min-w-0 flex-1"
+            items={[
+              { value: "all", label: t("All"), count: rows.length },
+              { value: "valid", label: t("Valid"), count: counts.valid, tone: "ok" },
+              { value: "soon", label: t("Expiring in 30 days"), count: counts.soon, tone: "warn" },
+              { value: "expired", label: t("Expired"), count: counts.expired, tone: "bad" },
+            ]} />
+          <SearchField value={text} onChange={setText} placeholder={t("Search consents…")} aria-label={t("Search consents")} className="w-full sm:w-60 [&_input]:h-8 max-sm:[&_input]:h-10" />
         </div>
-      )}
 
+        {isLoading ? (
+          <div aria-busy="true" className="space-y-2 p-3">{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-8 w-full" style={{ opacity: 1 - i * 0.12 }} />)}</div>
+        ) : !rows.length ? (
+          <div className="p-4"><Empty icon={<FileCheck className="size-8" />} title={t("No consents recorded")}
+            sub={t("Keep a signed release for every real person whose voice or likeness you clone, and for licensed music.")}
+            action={canAdd ? <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => setAdding(true)}>{t("Record consent")}</Button> : undefined} /></div>
+        ) : !shown.length ? (
+          <p className="px-4 py-12 text-center text-sm text-dim">{t("No consents match these filters.")}</p>
+        ) : (
+          <div className="cx-scroll max-h-[min(72vh,46rem)]">
+            <table className="cx-table">
+              <thead>
+                <tr>
+                  <th className="cx-stick">{t("Person or rights holder")}</th><th>{t("Type")}</th><th>{t("Character")}</th><th>{t("Scope")}</th>
+                  <th>{t("Status")}</th><th>{t("Expires on")}</th><th>{t("Recorded")}</th><th>{t("Signed document")}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {shown.map((c) => {
+                  const e = expiry(c);
+                  const Icon = KIND_ICON[c.kind] ?? FileText;
+                  return (
+                    <tr key={c.id} onClick={() => setOpenId(c.id)} data-selected={openId === c.id || undefined} className="cursor-pointer">
+                      <td className="cx-stick max-w-[14rem]">
+                        <button type="button" onClick={(ev) => { ev.stopPropagation(); setOpenId(c.id); }} aria-label={t("Consent from {name}", { name: c.subject_name })}
+                          className="-my-1.5 flex min-h-8 w-full min-w-0 items-center gap-2 py-1.5 text-left font-medium hover:text-accent-ink max-sm:min-h-10">
+                          <Avatar name={c.subject_name} size={22} />
+                          <span className="truncate">{c.subject_name}</span>
+                        </button>
+                      </td>
+                      <td className="whitespace-nowrap"><Badge><Icon className="size-3" aria-hidden />{t(CONSENT_KINDS[c.kind] ?? c.kind)}</Badge></td>
+                      <td className="max-w-[10rem]">{c.character_id ? <Pill tone="info"><span className="truncate">{charName[c.character_id] ?? `#${c.character_id}`}</span></Pill> : <span className="text-dim">—</span>}</td>
+                      <td className="max-w-[12rem]"><span className={clsx("block truncate", c.scope ? "text-mute" : "text-dim")} title={c.scope}>{c.scope || t("No scope written down.")}</span></td>
+                      <td><ExpiryPill c={c} /></td>
+                      <td className="whitespace-nowrap">
+                        {e.state === "none" ? <span className="text-dim">—</span> : (
+                          <span className="flex items-center gap-2">
+                            <span className="mono text-xs text-ink">{fmtDate(c.expires_on)}</span>
+                            <span className={clsx("mono text-2xs", e.state === "expired" || e.state === "soon" ? "ad-tx" : "text-dim")} data-tone={e.state === "expired" ? "bad" : "warn"}>
+                              {e.state === "expired" ? t("expired") : t("{n}d left", { n: e.days })}
+                            </span>
+                          </span>
+                        )}
+                      </td>
+                      <td className="cx-mono whitespace-nowrap" title={fmtDateTime(c.created_at)}>{agoT(c.created_at)}</td>
+                      <td className="whitespace-nowrap">
+                        {c.file_url ? (
+                          <a href={c.file_url} target="_blank" rel="noreferrer" onClick={(ev) => ev.stopPropagation()}
+                            className="-my-1.5 inline-flex min-h-8 items-center gap-1.5 py-1.5 text-xs font-medium text-mute hover:text-accent-ink hover:underline max-sm:min-h-10">
+                            <FileText className="size-3.5" aria-hidden />{t("View signed file")}
+                          </a>
+                        ) : <span className="ad-state" data-tone="warn"><TriangleAlert aria-hidden />{t("No signed file")}</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {!!rows.length && (
+          <div className="ad-foot">
+            <span className="mono">{t("Showing {a} of {b} entries", { a: shown.length, b: rows.length })}</span>
+          </div>
+        )}
+      </Panel>
+
+      <ConsentDetail consent={opened} charName={opened?.character_id ? charName[opened.character_id] : undefined} onClose={() => setOpenId(null)} />
       {canAdd && <ConsentModal open={adding} onClose={() => setAdding(false)} onSaved={() => { void qc.invalidateQueries({ queryKey: ["consents"] }); void qc.invalidateQueries({ queryKey: ["audit"] }); }} />}
     </div>
   );

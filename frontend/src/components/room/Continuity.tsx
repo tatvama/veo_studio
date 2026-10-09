@@ -6,7 +6,8 @@ import { ago } from "../../lib/format";
 import { useT } from "../../lib/i18n";
 import type { ContinuityReport } from "../../lib/types";
 import { Badge, Button, Segmented } from "../ui";
-import { PanelHead, RoomEmpty, SectionCard } from "./kit";
+import { PanelHead, RoomEmpty } from "./kit";
+import { WorkPanel } from "./workspace";
 import { useContinuityCheck } from "./util";
 
 type Sev = "high" | "medium" | "low";
@@ -22,8 +23,8 @@ const sevOf = (s: string): Sev => (s?.toLowerCase() in SEV_STYLE ? (s.toLowerCas
  * Continuity report with severity colours and a severity filter. Shared by the Story page (inside the writers' room tabs,
  * `bare`) and the Scenes page (a card in the side column, `compact`).
  */
-export function ContinuityPanel({ eid, report, canRun, hint, className, compact, bare, index }: {
-  eid: number; report: Partial<ContinuityReport> | undefined; canRun: boolean; hint?: string; className?: string; compact?: boolean; bare?: boolean; index?: number;
+export function ContinuityPanel({ eid, report, canRun, hint, className, compact, bare, index, n }: {
+  eid: number; report: Partial<ContinuityReport> | undefined; canRun: boolean; hint?: string; className?: string; compact?: boolean; bare?: boolean; index?: number; n?: number;
 }) {
   const t = useT();
   const { run, running } = useContinuityCheck(eid);
@@ -56,7 +57,7 @@ export function ContinuityPanel({ eid, report, canRun, hint, className, compact,
                     <span className="flex items-center gap-1.5">
                       {f !== "all" && <span className={clsx("size-1.5 rounded-full", SEV_STYLE[f].bar)} />}
                       {f === "all" ? t("All") : t(SEV_STYLE[f].label)}
-                      <span className="tabular-nums text-dim">{f === "all" ? issues.length : counts[f]}</span>
+                      <span className="mono text-dim">{f === "all" ? issues.length : counts[f]}</span>
                     </span>
                   ),
                 }))} />
@@ -109,6 +110,7 @@ export function ContinuityPanel({ eid, report, canRun, hint, className, compact,
     );
   }
   return (
-    <SectionCard index={index} className={className} icon={<ScanSearch />} title={t("Continuity")} description={desc} actions={action}>{body}</SectionCard>
+    <WorkPanel index={index} n={n} kicker={t("Checks")} className={className} icon={<ScanSearch />} title={t("Continuity")} description={desc} actions={action}
+      badge={issues.length ? <Badge tone={counts.high ? "bad" : "warn"}>{issues.length}</Badge> : undefined}>{body}</WorkPanel>
   );
 }

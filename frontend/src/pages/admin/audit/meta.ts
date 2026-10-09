@@ -1,7 +1,9 @@
 import {
-  BadgeCheck, Boxes, Clapperboard, FileCheck, KeyRound, Link2, Plug, ScrollText, SlidersHorizontal, UserCog, UserRound, type LucideIcon,
+  AudioLines, BadgeCheck, Boxes, Clapperboard, FileCheck, FileText, KeyRound, Link2, Music, Plug, ScanFace, ScrollText, SlidersHorizontal, UserCog, UserRound,
+  type LucideIcon,
 } from "lucide-react";
 import { tr } from "../../../lib/i18n";
+import type { ConsentRow } from "../../../lib/types";
 
 export type Tone = "neutral" | "accent" | "ok" | "warn" | "bad" | "info";
 
@@ -48,4 +50,20 @@ export const CONSENT_KINDS: Record<string, string> = {
 export function csvCell(v: unknown): string {
   const s = typeof v === "string" ? v : JSON.stringify(v ?? "");
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+export const KIND_ICON: Record<string, LucideIcon> = { voice_replication: AudioLines, likeness: ScanFace, music: Music, other: FileText };
+
+export type ExpiryState = "none" | "valid" | "soon" | "expired";
+
+/** Where a consent stands: no expiry, valid, running out within 30 days, or expired; plus the days left and how much of its term is used. */
+export function expiry(c: ConsentRow): { state: ExpiryState; days: number; used: number } {
+  if (!c.expires_on) return { state: "none", days: 0, used: 0 };
+  const end = new Date(`${c.expires_on}T23:59:59`).getTime();
+  if (Number.isNaN(end)) return { state: "none", days: 0, used: 0 };
+  const now = Date.now();
+  const days = Math.ceil((end - now) / 86_400_000);
+  const start = new Date(c.created_at).getTime();
+  const used = Number.isNaN(start) || end <= start ? 1 : Math.max(0, Math.min(1, (now - start) / (end - start)));
+  return { state: end < now ? "expired" : days <= 30 ? "soon" : "valid", days, used };
 }

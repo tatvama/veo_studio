@@ -1,12 +1,13 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Clapperboard, Clock, Languages, Link2Off, MessageSquareOff, RefreshCw } from "lucide-react";
+import { AlertTriangle, Clock, Languages, Link2Off, MessageSquareOff, RefreshCw } from "lucide-react";
 import { motion } from "motion/react";
 import { useEffect, useState, type ReactNode } from "react";
 import { useParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ReviewWorkspace, type NewComment } from "../components/review/ReviewWorkspace";
+import { LogoMark } from "../components/shell/Brand";
 import { DEFAULT_FPS, lsGet, lsSet, type RComment } from "../components/review/utils";
-import { Badge, Button, Skeleton } from "../components/ui";
+import { Badge, Button, Panel, Skeleton, Tag } from "../components/ui";
 import { ApiError, api } from "../lib/api";
 import { LANG_NAMES, secs } from "../lib/format";
 import { UI_LANGUAGES, setUiLanguage, useT, useUiLanguage } from "../lib/i18n";
@@ -40,12 +41,10 @@ function Brand() {
   const t = useT();
   return (
     <div className="flex shrink-0 items-center gap-2.5">
-      <span className="grid size-9 place-items-center rounded-xl bg-linear-to-br from-accent to-accent-2 text-black shadow-[0_6px_18px_-6px_rgb(249_115_22/0.7)]">
-        <Clapperboard className="size-[18px]" />
-      </span>
-      <span className="hidden leading-tight sm:block">
-        <span className="block text-sm font-semibold tracking-tight">VEO Studio</span>
-        <span className="block text-2xs font-medium uppercase tracking-[0.12em] text-accent-ink">{t("Client review")}</span>
+      <LogoMark size={32} />
+      <span className="hidden leading-none sm:block">
+        <span className="text-gradient block text-sm font-semibold tracking-[0.2em]">TATVAM</span>
+        <span className="eyebrow mt-1 block !text-[0.625rem] tracking-[0.26em] !text-accent-ink">{t("Client review")}</span>
       </span>
     </div>
   );
@@ -69,9 +68,9 @@ function LangPicker() {
 function Frame({ children, title, footer = true }: { children: ReactNode; title?: ReactNode; footer?: boolean }) {
   const t = useT();
   return (
-    <div className="flex h-screen min-h-[480px] flex-col bg-bg text-ink supports-[height:100dvh]:h-dvh"
-      style={{ backgroundImage: "radial-gradient(52rem 22rem at 8% -8%, color-mix(in oklab, var(--color-accent) 11%, transparent), transparent 70%)" }}>
-      <header className="shrink-0 border-b border-line bg-panel/80 backdrop-blur-md">
+    <div className="hud-bg flex h-screen min-h-[480px] flex-col text-ink supports-[height:100dvh]:h-dvh">
+      <header className="relative shrink-0 border-b border-line bg-panel/80 backdrop-blur-md">
+        <span aria-hidden className="edge-light pointer-events-none absolute inset-x-0 bottom-0 h-px opacity-60" />
         <div className="mx-auto flex h-14 max-w-[1560px] items-center gap-3 px-3 sm:px-4">
           <Brand />
           {title && <span className="hidden h-7 w-px bg-line sm:block" />}
@@ -81,8 +80,11 @@ function Frame({ children, title, footer = true }: { children: ReactNode; title?
       </header>
       {children}
       {footer && (
-        <footer className="hidden shrink-0 border-t border-line px-4 py-2 text-center text-2xs text-dim lg:block">
-          {t("Shared privately for review — please don't forward this link.")} · VEO Studio
+        <footer className="mono hidden shrink-0 items-center justify-center gap-3 border-t border-line bg-panel/60 px-4 py-2 text-2xs text-dim lg:flex">
+          <span aria-hidden className="live-dot is-idle" />
+          {t("Shared privately for review — please don't forward this link.")}
+          <span aria-hidden>·</span>
+          Tatvam AI Studio
         </footer>
       )}
     </div>
@@ -92,19 +94,22 @@ function Frame({ children, title, footer = true }: { children: ReactNode; title?
 function StateScreen({ icon, tone = "neutral", title, sub, hint, action }: {
   icon: ReactNode; tone?: "neutral" | "warn"; title: string; sub: string; hint?: string; action?: ReactNode;
 }) {
+  const t = useT();
   return (
     <Frame footer={false}>
       <main className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-4">
         <motion.div initial={{ opacity: 0, y: 12, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-          className="w-full max-w-md rounded-2xl border border-line bg-panel px-6 py-10 text-center shadow-modal sm:px-10">
-          <div className="relative mx-auto mb-5 w-fit">
-            <span aria-hidden className="anim-glow absolute inset-0 -m-5 rounded-full bg-accent/10 blur-2xl" />
-            <div className={`anim-float relative grid size-16 place-items-center rounded-2xl border border-line bg-raised shadow-card ${tone === "warn" ? "text-warn" : "text-mute"}`}>{icon}</div>
-          </div>
-          <h1 className="text-balance text-lg font-semibold tracking-tight">{title}</h1>
-          <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-mute">{sub}</p>
-          {hint && <p className="mx-auto mt-3 max-w-sm rounded-lg bg-raised px-3 py-2 text-xs leading-relaxed text-mute">{hint}</p>}
-          {action && <div className="mt-6">{action}</div>}
+          className="w-full max-w-md">
+          <Panel tone={tone === "warn" ? "warn" : undefined} eyebrow={t("Client review")} className="text-center shadow-modal" bodyClassName="px-6 pb-9 pt-7 sm:px-10">
+            <div className="relative mx-auto mb-5 w-fit">
+              <span aria-hidden className="anim-glow absolute inset-0 -m-5 rounded-full bg-accent/10 blur-2xl" />
+              <div className={`anim-float hud relative grid size-16 place-items-center rounded-xl border border-line bg-raised ${tone === "warn" ? "text-warn" : "text-mute"}`}>{icon}</div>
+            </div>
+            <h1 className="text-balance text-lg font-semibold tracking-tight">{title}</h1>
+            <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-mute">{sub}</p>
+            {hint && <p className="mx-auto mt-3 max-w-sm rounded-lg border border-line bg-raised/60 px-3 py-2 text-xs leading-relaxed text-mute">{hint}</p>}
+            {action && <div className="mt-6">{action}</div>}
+          </Panel>
         </motion.div>
       </main>
     </Frame>
@@ -116,11 +121,11 @@ function ReviewSkeleton() {
     <Frame title={<div className="space-y-1.5"><Skeleton className="h-3.5 w-40 sm:w-56" /><Skeleton className="h-3 w-28 sm:w-44" /></div>}>
       <main className="min-h-0 flex-1 overflow-hidden">
         <div className="mx-auto flex h-full max-w-[1560px] flex-col gap-2 p-3 sm:p-4 lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(300px,380px)] lg:gap-4">
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-line bg-panel">
-            <div className="relative min-h-0 flex-1 bg-black"><div className="shimmer absolute inset-0" /></div>
+          <div className="hud flex min-h-0 flex-1 flex-col rounded-xl border border-line bg-panel">
+            <div className="relative min-h-0 flex-1 overflow-hidden rounded-t-xl bg-black"><div className="shimmer absolute inset-0" /></div>
             <div className="space-y-3 border-t border-line p-3"><Skeleton className="h-2 w-full rounded-full" /><div className="flex gap-2"><Skeleton className="size-9 rounded-full" /><Skeleton className="h-8 w-24" /></div></div>
           </div>
-          <div className="h-[44%] min-h-[220px] shrink-0 space-y-3 rounded-xl border border-line bg-panel p-3.5 lg:h-auto">
+          <div className="hud h-[44%] min-h-[220px] shrink-0 space-y-3 rounded-xl border border-line bg-panel p-3.5 lg:h-auto">
             <Skeleton className="h-6 w-32" />
             {[0, 1].map((i) => <div key={i} className="flex gap-2.5"><Skeleton className="size-7 rounded-full" /><div className="flex-1 space-y-2"><Skeleton className="h-3 w-1/3" /><Skeleton className="h-3 w-full" /></div></div>)}
           </div>
@@ -211,10 +216,13 @@ export default function PublicReview() {
           <span className="truncate">{d.episode}</span>
           {d.label ? <Badge tone="accent" className="shrink-0 max-sm:hidden">{d.label}</Badge> : null}
         </h1>
-        <p className="mt-0.5 truncate text-2xs text-mute">
-          {d.project}
-          <span className="hidden sm:inline"> · {t(LANG_NAMES[d.language] ?? d.language)} · {secs(d.duration_s)}</span>
-          {d.expires_at ? <span className="hidden lg:inline"> · <Clock className="-mt-0.5 inline size-3" /> {t("until {date}", { date: new Date(d.expires_at).toLocaleDateString() })}</span> : null}
+        <p className="mt-1 flex items-center gap-1.5 text-2xs text-mute">
+          <span className="min-w-0 truncate">{d.project}</span>
+          <span className="hidden shrink-0 items-center gap-1.5 sm:flex">
+            <Tag>{t(LANG_NAMES[d.language] ?? d.language)}</Tag>
+            <Tag>{secs(d.duration_s)}</Tag>
+          </span>
+          {d.expires_at ? <span className="mono hidden shrink-0 items-center gap-1 text-dim lg:flex"><Clock className="size-3" />{t("until {date}", { date: new Date(d.expires_at).toLocaleDateString() })}</span> : null}
         </p>
       </div>
     }>

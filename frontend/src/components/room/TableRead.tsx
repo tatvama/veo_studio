@@ -166,14 +166,14 @@ function Player({ read, nameOf, pid }: { read: TableRead; nameOf: (l: TableReadL
   const sceneStarts = lines.filter((l, i) => i === 0 || l.scene !== lines[i - 1].scene).map((l) => l.start);
 
   return (
-    <div className="overflow-hidden rounded-xl border border-line bg-bg/40">
+    <div className="overflow-hidden rounded-lg border border-line bg-bg/40">
       <audio ref={audio} src={read.url} preload="metadata"
         onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)} onEnded={() => setPlaying(false)}
         onLoadedMetadata={(e) => setDur(e.currentTarget.duration || read.duration)}
         onTimeUpdate={(e) => !playing && setTime(e.currentTarget.currentTime)} />
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-panel px-3 py-2.5">
         <button type="button" onClick={toggle} title={playing ? t("Pause") : t("Play")} aria-label={playing ? t("Pause") : t("Play")}
-          className="grid size-10 shrink-0 place-items-center rounded-full bg-accent text-black shadow-card transition-[transform,box-shadow] hover:scale-105 hover:shadow-glow active:scale-95">
+          className="grid size-10 shrink-0 place-items-center rounded-full bg-accent text-[color:var(--on-accent)] shadow-card transition-[transform,box-shadow] hover:scale-105 hover:shadow-glow active:scale-95">
           {playing ? <Pause className="size-4 fill-current" /> : <Play className="ml-0.5 size-4 fill-current" />}
         </button>
         <div className="min-w-0 flex-1 basis-40">
@@ -190,7 +190,7 @@ function Player({ read, nameOf, pid }: { read: TableRead; nameOf: (l: TableReadL
                 style={{ left: `${progress * 100}%` }} />
             </div>
           </div>
-          <div className="flex justify-between text-2xs tabular-nums text-dim">
+          <div className="mono flex justify-between text-2xs text-dim">
             <span>{clock(time)}</span><span>{clock(total)}</span>
           </div>
         </div>
@@ -208,7 +208,7 @@ function Player({ read, nameOf, pid }: { read: TableRead; nameOf: (l: TableReadL
           return (
             <div key={i}>
               {header && (
-                <div className="sticky top-0 z-[1] border-y border-line/60 bg-panel/95 px-3.5 py-1.5 text-2xs font-semibold uppercase tracking-wider text-dim backdrop-blur first:border-t-0">
+                <div className="eyebrow sticky top-0 z-[1] border-y border-line/60 bg-panel/95 px-3.5 py-1.5 backdrop-blur first:border-t-0">
                   {l.scene_title || t("Scene {n}", { n: (Number(l.scene) || 0) + 1 })}
                 </div>
               )}
@@ -216,7 +216,7 @@ function Player({ read, nameOf, pid }: { read: TableRead; nameOf: (l: TableReadL
                 className={clsx("relative grid w-full grid-cols-[2.75rem_minmax(0,1fr)] items-baseline gap-x-2 px-3.5 py-2 text-left text-sm transition-colors @md:grid-cols-[2.75rem_7.5rem_minmax(0,1fr)]",
                   on ? "bg-accent/10" : "hover:bg-hover/60")}>
                 {on && <motion.span layoutId={`tr-active-${read.at}`} aria-hidden className="absolute inset-y-0 left-0 w-0.5 bg-accent" transition={{ duration: 0.15 }} />}
-                <span className="col-start-1 row-span-2 text-2xs tabular-nums text-dim @md:row-span-1">{clock(l.start)}</span>
+                <span className="mono col-start-1 row-span-2 text-2xs text-dim @md:row-span-1">{clock(l.start)}</span>
                 <span className={clsx("col-start-2 truncate text-xs font-semibold uppercase tracking-wide", tn.className)} style={tn.style} title={name}>{name}</span>
                 <span className={clsx("col-start-2 leading-snug @md:col-start-3 @md:row-start-1", on ? "text-ink" : "text-mute")}>{l.text}</span>
               </button>

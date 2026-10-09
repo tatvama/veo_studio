@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { clsx } from "clsx";
+import { cn } from "../../lib/cn";
 import { BookMarked, Camera, Check, ChevronDown, Clock, Loader2, MapPin, Package, RefreshCw, Shirt, Swords, Target, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -13,6 +13,7 @@ import { EndStateBlock, endStateEmpty, summarizeEndState } from "../world/EndSta
 import { PropPicker } from "../world/PropPicker";
 import { WardrobeSelect } from "../world/WardrobeSelect";
 import { RField } from "./kit";
+import { Outline, pad, sceneCode, type OutlineItem } from "./workspace";
 
 /** v3 fields the scene payload carries on top of the SceneCard type: picked props and the Continuity Bible end state. */
 export type SceneCardV3 = SceneCard & { prop_ids?: number[]; end_state?: Partial<EndState> };
@@ -114,6 +115,17 @@ export function SceneCardView({ scene, index, cast, locations, canEdit, expanded
     </RField>
   );
 
+  const base = `sc${scene.id}`;
+  const endDone = !endStateEmpty(scene.end_state);
+  const outline: OutlineItem[] = [
+    { id: `${base}-story`, label: t("Story"), state: draft.goal && draft.conflict && draft.turn ? "done" : "todo" },
+    { id: `${base}-setting`, label: t("Setting & mood"), state: draft.location_id && draft.time_of_day ? "done" : "todo" },
+    { id: `${base}-cast`, label: t("Characters"), state: draft.characters.length ? "done" : "todo", meta: draft.characters.length || undefined },
+    { id: `${base}-coverage`, label: t("Coverage & props"), state: draft.coverage.length ? "done" : "todo", meta: propCount || undefined },
+    { id: `${base}-blocking`, label: t("Blocking & notes"), state: draft.blocking ? "done" : "none" },
+    { id: `${base}-end`, label: t("End of scene"), state: endDone ? "done" : "none" },
+  ];
+
   return (
     <motion.article
       ref={root}
@@ -122,14 +134,14 @@ export function SceneCardView({ scene, index, cast, locations, canEdit, expanded
       initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.97 }}
       transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
       style={expanded ? { gridColumn: "1 / -1" } : undefined}
-      className={clsx("group relative scroll-mt-20 overflow-hidden rounded-xl border bg-panel transition-[border-color,box-shadow] duration-200",
+      className={cn("hud group @container relative scroll-mt-28 overflow-hidden rounded-xl border bg-panel transition-[border-color,box-shadow] duration-200",
         draft.approved ? "border-ok/35" : "border-line", !expanded && "hover:border-dim/60 hover:shadow-lift", expanded && "shadow-lift")}
     >
-      <span aria-hidden className={clsx("absolute inset-y-0 left-0 w-[3px] transition-colors", draft.approved ? "bg-ok" : "bg-transparent")} />
+      <span aria-hidden className={cn("absolute inset-y-0 left-0 w-[3px] transition-colors", draft.approved ? "bg-ok shadow-[0_0_10px_var(--color-ok)]" : "bg-transparent")} />
 
       {/* header */}
       <div className="flex items-center gap-2 pl-4 pr-3 pt-3">
-        <span className="shrink-0 rounded-md bg-raised px-1.5 py-0.5 font-mono text-2xs font-semibold text-mute">SC{String(index + 1).padStart(2, "0")}</span>
+        <span className={cn("mono shrink-0 rounded-md border px-1.5 py-0.5 text-2xs font-semibold tracking-wider", draft.approved ? "border-ok/30 bg-ok/10 text-ok" : "border-line bg-raised/70 text-mute")}>{sceneCode(index)}</span>
         <input value={draft.title} disabled={!canEdit} aria-label={t("Scene title")} placeholder={t("Untitled scene")}
           onChange={(e) => edit("title", e.target.value)} onBlur={() => commit("title")} onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
           className="h-7 min-w-0 flex-1 truncate rounded-md bg-transparent px-1.5 text-sm font-semibold text-ink transition-colors placeholder:text-dim hover:bg-hover focus:bg-raised focus:outline-none focus:ring-1 focus:ring-accent/40 disabled:hover:bg-transparent" />
@@ -144,12 +156,12 @@ export function SceneCardView({ scene, index, cast, locations, canEdit, expanded
         </AnimatePresence>
         <button type="button" disabled={!canEdit} onClick={() => set("approved", !draft.approved)} aria-pressed={draft.approved}
           title={draft.approved ? t("Approved — click to unapprove") : t("Approve this scene card")}
-          className={clsx("inline-flex h-7 shrink-0 items-center gap-1 rounded-full border px-2.5 text-xs font-medium transition-colors disabled:cursor-not-allowed",
-            draft.approved ? "border-ok/40 bg-ok/8 text-green-300" : "border-line text-mute hover:border-ok/40 hover:text-green-300")}>
+          className={cn("inline-flex h-7 shrink-0 items-center gap-1 rounded-md border px-2.5 text-xs font-medium transition-colors disabled:cursor-not-allowed",
+            draft.approved ? "border-ok/40 bg-ok/10 text-green-300" : "border-line text-mute hover:border-ok/40 hover:text-green-300")}>
           <Check className="size-3.5" strokeWidth={draft.approved ? 3 : 2} />{draft.approved ? t("Approved") : t("Approve")}
         </button>
         <IconButton title={expanded ? t("Collapse") : t("Expand")} onClick={onToggle} aria-expanded={expanded}>
-          <ChevronDown className={clsx("size-4 transition-transform duration-200", expanded && "rotate-180")} />
+          <ChevronDown className={cn("size-4 transition-transform duration-200", expanded && "rotate-180")} />
         </IconButton>
       </div>
 
@@ -157,7 +169,7 @@ export function SceneCardView({ scene, index, cast, locations, canEdit, expanded
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-4 pr-3 pt-1.5 text-xs text-mute">
         <span className="flex min-w-0 items-center gap-1"><MapPin className="size-3 shrink-0 text-dim" /><span className="truncate">{loc?.name || t("No location")}</span></span>
         {draft.time_of_day && <span className="flex items-center gap-1"><Clock className="size-3 text-dim" />{draft.time_of_day}</span>}
-        {draft.emotion && <span className="rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 text-2xs font-medium text-accent-ink">{draft.emotion}</span>}
+        {draft.emotion && <span className="rounded-md border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-2xs font-medium text-accent-ink">{draft.emotion}</span>}
       </div>
 
       <AnimatePresence initial={false} mode="wait">
@@ -165,7 +177,7 @@ export function SceneCardView({ scene, index, cast, locations, canEdit, expanded
           <motion.div key="summary" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
             <button type="button" onClick={onToggle} className="block w-full pb-3.5 pl-4 pr-3 pt-2.5 text-left transition-colors hover:bg-hover/30">
               {hasBeats ? (
-                <dl className="space-y-1.5">
+                <dl className="divide-y divide-line overflow-hidden rounded-lg border border-line bg-bg/40 @md:grid @md:grid-cols-3 @md:divide-x @md:divide-y-0">
                   <Beat icon={<Target />} label={t("Goal")} value={draft.goal} />
                   <Beat icon={<Swords />} label={t("Conflict")} value={draft.conflict} />
                   <Beat icon={<RefreshCw />} label={t("Turn")} value={draft.turn} />
@@ -191,126 +203,131 @@ export function SceneCardView({ scene, index, cast, locations, canEdit, expanded
           </motion.div>
         ) : (
           <motion.div key="editor" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }} className="@container overflow-hidden">
-            <div className="space-y-5 pb-5 pl-4 pr-4 pt-4">
-              <Block title={t("Story")}>
-                {text("summary", t("Summary"), 2)}
-                <div className="grid gap-3 @xl:grid-cols-3">
-                  {text("goal", <Lbl icon={<Target />}>{t("Goal — what they want")}</Lbl>, 3)}
-                  {text("conflict", <Lbl icon={<Swords />}>{t("Conflict — what's in the way")}</Lbl>, 3)}
-                  {text("turn", <Lbl icon={<RefreshCw />}>{t("Turn — what changes")}</Lbl>, 3)}
-                </div>
-              </Block>
-
-              <Block title={t("Setting & mood")}>
-                <div className="grid gap-3 @xl:grid-cols-3">
-                  <RField label={t("Emotion")}>
-                    <Input value={draft.emotion} disabled={!canEdit} onChange={(e) => edit("emotion", e.target.value)} onBlur={() => commit("emotion")} />
-                  </RField>
-                  <RField label={t("Location")}>
-                    <Select value={draft.location_id ?? ""} disabled={!canEdit} onChange={(e) => set("location_id", e.target.value ? Number(e.target.value) : null)}>
-                      <option value="">{t("— none —")}</option>
-                      {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-                    </Select>
-                  </RField>
-                  <RField label={t("Time of day")}>
-                    <Input value={draft.time_of_day} disabled={!canEdit} onChange={(e) => edit("time_of_day", e.target.value)} onBlur={() => commit("time_of_day")} />
-                  </RField>
-                </div>
-              </Block>
-
-              <Block title={t("Characters in scene")}>
-                {!cast.length ? <p className="text-xs text-dim">{t("No cast yet — build the bible first.")}</p> : (
-                  <div className="flex flex-wrap gap-1.5">
-                    {cast.map((c) => {
-                      const on = draft.characters.includes(c.id);
-                      return (
-                        <button key={c.id} type="button" disabled={!canEdit} aria-pressed={on}
-                          onClick={() => set("characters", on ? draft.characters.filter((x) => x !== c.id) : [...draft.characters, c.id])}
-                          className={clsx("inline-flex items-center gap-1.5 rounded-full border py-0.5 pl-0.5 pr-3 text-xs transition-colors disabled:cursor-not-allowed",
-                            on ? "border-accent/50 bg-accent/10 text-ink" : "border-line text-mute hover:border-dim hover:text-ink")}>
-                          <Avatar c={c} size={28} />{c.name}
-                          {on && <Check className="size-3 text-accent-ink" strokeWidth={3} />}
-                        </button>
-                      );
-                    })}
+            transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }} className="overflow-hidden">
+            <div className="grid gap-x-6 pb-5 pl-4 pr-4 pt-4 @2xl:grid-cols-[minmax(0,1fr)_8.75rem]">
+              <div className="min-w-0 space-y-5">
+                <Block id={`${base}-story`} n={1} title={t("Story")}>
+                  {text("summary", t("Summary"), 2)}
+                  <div className="grid gap-3 @xl:grid-cols-3">
+                    {text("goal", <Lbl icon={<Target />}>{t("Goal — what they want")}</Lbl>, 3)}
+                    {text("conflict", <Lbl icon={<Swords />}>{t("Conflict — what's in the way")}</Lbl>, 3)}
+                    {text("turn", <Lbl icon={<RefreshCw />}>{t("Turn — what changes")}</Lbl>, 3)}
                   </div>
-                )}
-                {inScene.length > 0 && (
-                  <div className="space-y-1.5 rounded-lg border border-line bg-bg/40 p-3">
-                    <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs font-medium text-mute">
-                      <Shirt className="size-3.5 text-dim" />{t("Wardrobe — must stay consistent")}
-                      <span className="ml-auto text-2xs font-normal text-dim">{t("Named costumes come from the Bible; pick Other… for free text.")}</span>
-                    </p>
-                    <div className="grid gap-2 @xl:grid-cols-2">
-                      {inScene.map((c) => (
-                        <div key={c.id} className="@container flex items-center gap-2">
-                          <Avatar c={c} size={28} />
-                          <span className="w-20 shrink-0 truncate text-xs font-medium" title={c.name}>{c.name}</span>
-                          <WardrobeSelect characterId={c.id} characterName={c.name} disabled={!canEdit} value={draft.wardrobe[String(c.id)] ?? ""}
-                            onPick={(v) => { const w = { ...draft.wardrobe }; if (v) w[String(c.id)] = v; else delete w[String(c.id)]; set("wardrobe", w); }}
-                            onText={(v) => edit("wardrobe", { ...draft.wardrobe, [String(c.id)]: v })} onCommit={() => commit("wardrobe")} />
-                        </div>
-                      ))}
+                </Block>
+
+                <Block id={`${base}-setting`} n={2} title={t("Setting & mood")}>
+                  <div className="grid gap-3 @xl:grid-cols-3">
+                    <RField label={t("Emotion")}>
+                      <Input value={draft.emotion} disabled={!canEdit} onChange={(e) => edit("emotion", e.target.value)} onBlur={() => commit("emotion")} />
+                    </RField>
+                    <RField label={t("Location")}>
+                      <Select value={draft.location_id ?? ""} disabled={!canEdit} onChange={(e) => set("location_id", e.target.value ? Number(e.target.value) : null)}>
+                        <option value="">{t("— none —")}</option>
+                        {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                      </Select>
+                    </RField>
+                    <RField label={t("Time of day")}>
+                      <Input value={draft.time_of_day} disabled={!canEdit} onChange={(e) => edit("time_of_day", e.target.value)} onBlur={() => commit("time_of_day")} />
+                    </RField>
+                  </div>
+                </Block>
+
+                <Block id={`${base}-cast`} n={3} title={t("Characters in scene")}>
+                  {!cast.length ? <p className="text-xs text-dim">{t("No cast yet — build the bible first.")}</p> : (
+                    <div className="flex flex-wrap gap-1.5">
+                      {cast.map((c) => {
+                        const on = draft.characters.includes(c.id);
+                        return (
+                          <button key={c.id} type="button" disabled={!canEdit} aria-pressed={on}
+                            onClick={() => set("characters", on ? draft.characters.filter((x) => x !== c.id) : [...draft.characters, c.id])}
+                            className={cn("inline-flex items-center gap-1.5 rounded-full border py-0.5 pl-0.5 pr-3 text-xs transition-colors disabled:cursor-not-allowed",
+                              on ? "border-accent/50 bg-accent/10 text-ink" : "border-line text-mute hover:border-dim hover:text-ink")}>
+                            <Avatar c={c} size={28} />{c.name}
+                            {on && <Check className="size-3 text-accent-ink" strokeWidth={3} />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {inScene.length > 0 && (
+                    <div className="space-y-1.5 rounded-lg border border-line bg-bg/40 p-3">
+                      <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs font-medium text-mute">
+                        <Shirt className="size-3.5 text-dim" />{t("Wardrobe — must stay consistent")}
+                        <span className="ml-auto text-2xs font-normal text-dim">{t("Named costumes come from the Bible; pick Other… for free text.")}</span>
+                      </p>
+                      <div className="grid gap-2 @xl:grid-cols-2">
+                        {inScene.map((c) => (
+                          <div key={c.id} className="@container flex items-center gap-2">
+                            <Avatar c={c} size={28} />
+                            <span className="w-20 shrink-0 truncate text-xs font-medium" title={c.name}>{c.name}</span>
+                            <WardrobeSelect characterId={c.id} characterName={c.name} disabled={!canEdit} value={draft.wardrobe[String(c.id)] ?? ""}
+                              onPick={(v) => { const w = { ...draft.wardrobe }; if (v) w[String(c.id)] = v; else delete w[String(c.id)]; set("wardrobe", w); }}
+                              onText={(v) => edit("wardrobe", { ...draft.wardrobe, [String(c.id)]: v })} onCommit={() => commit("wardrobe")} />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  {Object.keys(draft.wardrobe).length > 0 && !inScene.length && (
+                    <p className="flex items-center gap-1.5 text-xs text-dim"><Shirt className="size-3" />{t("Wardrobe is set for characters not in this scene.")}</p>
+                  )}
+                </Block>
+
+                <Block id={`${base}-coverage`} n={4} title={t("Coverage & props")}>
+                  <div className="grid gap-3 @xl:grid-cols-2">
+                    <Group label={t("Coverage — planned shots")}>
+                      <ChipEditor value={draft.coverage} disabled={!canEdit} icon={<Camera className="size-3 text-dim" />}
+                        placeholder={t("wide master, OTS, CU reaction…")} onChange={(v) => set("coverage", v)} />
+                    </Group>
+                    <div className="space-y-3">
+                      <Group label={t("Props — from the project")}>
+                        <PropPicker pid={projectId} value={draft.prop_ids} disabled={!canEdit} onChange={(ids) => set("prop_ids", ids)} />
+                      </Group>
+                      <Group label={t("Prop notes — free text")}>
+                        <ChipEditor value={draft.props} disabled={!canEdit} icon={<Package className="size-3 text-dim" />}
+                          placeholder={t("Add a note and press Enter")} onChange={(v) => set("props", v)} />
+                      </Group>
                     </div>
                   </div>
-                )}
-                {Object.keys(draft.wardrobe).length > 0 && !inScene.length && (
-                  <p className="flex items-center gap-1.5 text-xs text-dim"><Shirt className="size-3" />{t("Wardrobe is set for characters not in this scene.")}</p>
-                )}
-              </Block>
+                </Block>
 
-              <Block title={t("Coverage & props")}>
-                <div className="grid gap-3 @xl:grid-cols-2">
-                  <Group label={t("Coverage — planned shots")}>
-                    <ChipEditor value={draft.coverage} disabled={!canEdit} icon={<Camera className="size-3 text-dim" />}
-                      placeholder={t("wide master, OTS, CU reaction…")} onChange={(v) => set("coverage", v)} />
-                  </Group>
-                  <div className="space-y-3">
-                    <Group label={t("Props — from the project")}>
-                      <PropPicker pid={projectId} value={draft.prop_ids} disabled={!canEdit} onChange={(ids) => set("prop_ids", ids)} />
-                    </Group>
-                    <Group label={t("Prop notes — free text")}>
-                      <ChipEditor value={draft.props} disabled={!canEdit} icon={<Package className="size-3 text-dim" />}
-                        placeholder={t("Add a note and press Enter")} onChange={(v) => set("props", v)} />
-                    </Group>
+                <Block id={`${base}-blocking`} n={5} title={t("Blocking & notes")}>
+                  <div className="grid gap-3 @xl:grid-cols-2">
+                    {text("blocking", t("Blocking — positions, entrances, eyelines"), 3)}
+                    {text("continuity_notes", t("Continuity notes"), 3)}
                   </div>
-                </div>
-              </Block>
+                </Block>
 
-              <Block title={t("Blocking & notes")}>
-                <div className="grid gap-3 @xl:grid-cols-2">
-                  {text("blocking", t("Blocking — positions, entrances, eyelines"), 3)}
-                  {text("continuity_notes", t("Continuity notes"), 3)}
-                </div>
-              </Block>
-
-              <Block title={t("End of scene")}>
-                <div className="rounded-lg border border-line bg-bg/40">
-                  <button type="button" onClick={() => setEndOpen((o) => !o)} aria-expanded={endOpen}
-                    className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors hover:bg-hover/40">
-                    <BookMarked className="size-3.5 shrink-0 text-dim" />
-                    <span className="min-w-0 flex-1 truncate text-xs">
-                      {endSummary ? <span className="text-mute">{endSummary}</span> : <span className="text-dim">{t("Where everyone and everything is when the scene ends — not written yet.")}</span>}
-                    </span>
-                    <ChevronDown className={clsx("size-4 shrink-0 text-dim transition-transform duration-200", endOpen && "rotate-180")} />
-                  </button>
-                  <AnimatePresence initial={false}>
-                    {endOpen && (
-                      <motion.div key="end" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-                        transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }} className="overflow-hidden">
-                        <div className="border-t border-line px-3 pb-3 pt-2.5">
-                          <EndStateBlock sceneId={scene.id} eid={scene.episode_id} state={scene.end_state} cast={cast} canEdit={canEdit} />
-                          <p className="mt-2 text-2xs text-dim">
-                            <Link to={`/p/${projectId}/world?tab=bible`} className="font-medium text-accent-ink hover:underline">{t("Open the Continuity Bible")}</Link>
-                            {" · "}{t("every scene's end state in one place, plus the wardrobe timeline.")}
-                          </p>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              </Block>
+                <Block id={`${base}-end`} n={6} title={t("End of scene")}>
+                  <div className="rounded-lg border border-line bg-bg/40">
+                    <button type="button" onClick={() => setEndOpen((o) => !o)} aria-expanded={endOpen}
+                      className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors hover:bg-hover/40">
+                      <BookMarked className="size-3.5 shrink-0 text-dim" />
+                      <span className="min-w-0 flex-1 truncate text-xs">
+                        {endSummary ? <span className="text-mute">{endSummary}</span> : <span className="text-dim">{t("Where everyone and everything is when the scene ends — not written yet.")}</span>}
+                      </span>
+                      <ChevronDown className={cn("size-4 shrink-0 text-dim transition-transform duration-200", endOpen && "rotate-180")} />
+                    </button>
+                    <AnimatePresence initial={false}>
+                      {endOpen && (
+                        <motion.div key="end" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+                          transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }} className="overflow-hidden">
+                          <div className="border-t border-line px-3 pb-3 pt-2.5">
+                            <EndStateBlock sceneId={scene.id} eid={scene.episode_id} state={scene.end_state} cast={cast} canEdit={canEdit} />
+                            <p className="mt-2 text-2xs text-dim">
+                              <Link to={`/p/${projectId}/world?tab=bible`} className="font-medium text-accent-ink hover:underline">{t("Open the Continuity Bible")}</Link>
+                              {" · "}{t("every scene's end state in one place, plus the wardrobe timeline.")}
+                            </p>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
+                </Block>
+              </div>
+              <aside className="hidden @2xl:block">
+                <div className="sticky top-28 pt-1"><Outline title={sceneCode(index)} items={outline} offset={150} /></div>
+              </aside>
             </div>
           </motion.div>
         )}
@@ -319,10 +336,10 @@ export function SceneCardView({ scene, index, cast, locations, canEdit, expanded
   );
 }
 
-function Block({ title, children }: { title: string; children: ReactNode }) {
+function Block({ id, n, title, children }: { id: string; n: number; title: string; children: ReactNode }) {
   return (
-    <section className="space-y-3 border-t border-line pt-4 first:border-0 first:pt-0">
-      <h4 className="text-2xs font-semibold uppercase tracking-wider text-dim">{title}</h4>
+    <section id={id} className="scroll-mt-28 space-y-3 border-t border-line pt-4 first:border-0 first:pt-0">
+      <h4 className="eyebrow flex items-center gap-1.5"><span className="mono text-accent-ink">{pad(n)}</span><span aria-hidden className="opacity-50">/</span>{title}</h4>
       {children}
     </section>
   );
@@ -342,19 +359,19 @@ function Group({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
+/** One cell of the beat strip: a mono label (GOAL / CONFLICT / TURN) over its text. A row on narrow cards, a column on wide ones. */
 function Beat({ icon, label, value }: { icon: ReactNode; label: string; value: string }) {
-  if (!value) return null;
   return (
-    <div className="flex items-start gap-2 text-sm">
-      <span className="mt-0.5 shrink-0 text-dim [&>svg]:size-3.5" title={label}>{icon}</span>
-      <p className="line-clamp-2 min-w-0 leading-snug"><span className="mr-1.5 text-2xs font-semibold uppercase tracking-wide text-dim">{label}</span>{value}</p>
+    <div className="grid min-w-0 grid-cols-[4.75rem_minmax(0,1fr)] items-start gap-2 p-2.5 @md:block">
+      <dt className="eyebrow flex items-center gap-1.5 [&>svg]:size-3 [&>svg]:shrink-0">{icon}{label}</dt>
+      <dd className={cn("min-w-0 text-xs leading-snug @md:mt-1.5", value ? "line-clamp-4 text-ink" : "text-dim")}>{value || "—"}</dd>
     </div>
   );
 }
 
 function Chip({ children, icon }: { children: ReactNode; icon?: ReactNode }) {
   return (
-    <span className="inline-flex max-w-[9.5rem] items-center gap-1 rounded-md border border-line bg-raised px-1.5 py-0.5 text-2xs text-mute">
+    <span className="mono inline-flex max-w-[9.5rem] items-center gap-1 rounded-md border border-line bg-raised px-1.5 py-0.5 text-2xs text-mute">
       {icon}<span className="truncate">{children}</span>
     </span>
   );
@@ -371,7 +388,7 @@ export function ChipEditor({ value, onChange, disabled, placeholder, icon }: {
     if (v && !value.includes(v)) onChange([...value, v]);
   };
   return (
-    <div className={clsx("flex min-h-9 flex-wrap items-center gap-1 rounded-lg border border-line bg-panel p-1.5 transition-[border-color,box-shadow]",
+    <div className={cn("flex min-h-9 flex-wrap items-center gap-1 rounded-lg border border-line bg-panel p-1.5 transition-[border-color,box-shadow]",
       !disabled && "hover:border-dim/40 focus-within:border-accent/70 focus-within:ring-[3px] focus-within:ring-accent/15")}>
       <AnimatePresence initial={false}>
         {value.map((v, i) => (

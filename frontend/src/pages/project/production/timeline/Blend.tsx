@@ -64,7 +64,7 @@ export function BlendLayer({ tp, clips, mainRef, frameRef }: {
       const aZ = f.bTop ? 1 : 2, bZ = f.bTop ? 2 : 1;
       applyStyle(mainRef.current, mainIsIncoming ? f.b : f.a, mainIsIncoming ? bZ : aZ);
       applyStyle(layerRef.current, mainIsIncoming ? f.a : f.b, mainIsIncoming ? aZ : bZ);
-      if (frameRef.current) frameRef.current.style.background = f.bg ?? "#000";
+      if (frameRef.current) frameRef.current.style.background = f.bg ?? "rgb(0 0 0)";
       const v = vidRef.current;
       // sound: the outgoing shot fades down as the incoming one comes up (linear, like the export's acrossfade)
       const outVol = 1 - w.p, inVol = w.p;

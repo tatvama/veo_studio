@@ -13,7 +13,7 @@ export function PropPicker({ pid, value, onChange, disabled, showLibrary }: {
 }) {
   const t = useT();
   const { data, isLoading } = useProps(pid);
-  if (isLoading) return <div className="flex gap-1.5"><Skeleton className="h-7 w-20 !rounded-full" /><Skeleton className="h-7 w-24 !rounded-full" /><Skeleton className="h-7 w-16 !rounded-full" /></div>;
+  if (isLoading) return <div className="flex gap-1.5"><Skeleton className="h-7 w-20" /><Skeleton className="h-7 w-24" /><Skeleton className="h-7 w-16" /></div>;
   const all = data ?? [];
   const inProject = all.filter((p) => p.in_project);
   const library = showLibrary ? all.filter((p) => !p.in_project) : [];
@@ -35,10 +35,10 @@ export function PropPicker({ pid, value, onChange, disabled, showLibrary }: {
         return (
           <button key={p.id} type="button" disabled={disabled} aria-pressed={on} title={p.description || p.name}
             onClick={() => onChange(on ? value.filter((x) => x !== p.id) : [...value, p.id])}
-            className={clsx("inline-flex h-7 max-w-full items-center gap-1.5 rounded-full border py-0.5 pl-0.5 pr-2.5 text-xs transition-colors disabled:cursor-not-allowed",
+            className={clsx("inline-flex h-7 max-w-full items-center gap-1.5 rounded-lg border py-0.5 pl-0.5 pr-2.5 text-xs transition-colors disabled:cursor-not-allowed pointer-coarse:h-9",
               on ? "border-accent/50 bg-accent/10 text-ink" : "border-line text-mute hover:border-dim hover:text-ink", !p.in_project && !on && "opacity-70")}>
-            {p.url ? <img src={p.url} alt="" className="size-5 shrink-0 rounded-full object-cover" loading="lazy" />
-              : <span className="grid size-5 shrink-0 place-items-center rounded-full bg-raised text-dim"><Package className="size-3" /></span>}
+            {p.url ? <img src={p.url} alt="" className="size-5 shrink-0 rounded-md object-cover" loading="lazy" />
+              : <span className="grid size-5 shrink-0 place-items-center rounded-md bg-raised text-dim"><Package className="size-3" /></span>}
             <span className="truncate">{p.name}</span>
             {on && <Check className="size-3 shrink-0 text-accent-ink" strokeWidth={3} />}
           </button>

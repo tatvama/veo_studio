@@ -7,23 +7,26 @@ import { Check, Keyboard, Pause, Play, Volume1, Volume2, VolumeX } from "lucide-
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { useT } from "../../lib/i18n";
-import { IconButton, Kbd, Tooltip } from "../ui";
+import { Kbd, Tooltip } from "../ui";
+import { BarButton, BTN_ON } from "./parts";
 import { formatTC, useClock, type Clock } from "./utils";
 
 export const RATES = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2];
 
-/** Rounded hit area used by every text/icon control on the transport bar: 40px on phones, 32px with a mouse. */
+/** Hit area used by every text/icon control on the transport bar: 40px on phones, 32px with a mouse. */
 export const BAR_BTN = "inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg text-mute transition-colors hover:bg-hover hover:text-ink max-sm:h-10";
 
 export function PlayButton({ playing, onClick }: { playing: boolean; onClick: () => void }) {
   const t = useT();
+  const label = playing ? t("Pause (Space)") : t("Play (Space)");
+  const text = label.replace(/\s*\([^()]*\)\s*$/, "") || label;
   return (
-    <Tooltip content={playing ? t("Pause (Space)") : t("Play (Space)")}>
+    <Tooltip content={text} shortcut={<Kbd>Space</Kbd>}>
       <button
         type="button"
         onClick={onClick}
-        aria-label={playing ? t("Pause (Space)") : t("Play (Space)")}
-        className="mr-1 grid size-9 shrink-0 place-items-center rounded-full bg-accent text-black shadow-[0_6px_16px_-6px_rgb(249_115_22/0.7)] transition-[transform,filter] duration-150 hover:brightness-110 active:scale-90 max-sm:size-10"
+        aria-label={label}
+        className="mr-1 grid h-9 w-12 shrink-0 place-items-center rounded-lg bg-accent text-black shadow-[0_6px_16px_-8px_var(--color-accent)] transition-[transform,filter] duration-150 hover:brightness-110 active:scale-95 max-sm:h-10 max-sm:w-11"
       >
         {playing ? <Pause className="size-4" fill="currentColor" /> : <Play className="ml-0.5 size-4" fill="currentColor" />}
       </button>
@@ -35,7 +38,7 @@ export function PlayButton({ playing, onClick }: { playing: boolean; onClick: ()
 export function TimeReadout({ clock, fps, duration, className }: { clock: Clock; fps: number; duration: number; className?: string }) {
   const time = useClock(clock);
   return (
-    <span className={clsx("select-none whitespace-nowrap rounded-md bg-raised/70 px-2 py-1 font-mono text-xs tabular-nums text-ink", className)}>
+    <span className={clsx("mono select-none whitespace-nowrap rounded-lg border border-line bg-bg/60 px-2 py-1 text-xs leading-none text-ink", className)}>
       {formatTC(time, fps, true)}
       <span className="hidden text-dim @md:inline"> / {formatTC(duration, fps, true)}</span>
     </span>
@@ -75,7 +78,7 @@ export function SpeedMenu({ rate, onPick }: { rate: number; onPick: (r: number) 
           aria-expanded={open}
           aria-label={t("Playback speed")}
           onClick={() => setOpen((o) => !o)}
-          className={clsx(BAR_BTN, "min-w-10 px-2 font-mono text-xs font-medium tabular-nums", rate !== 1 && "bg-accent/12 text-accent-ink", open && "bg-hover text-ink")}
+          className={clsx(BAR_BTN, "min-w-10 px-2 font-mono text-xs font-medium tabular-nums", rate !== 1 && BTN_ON, open && "bg-hover text-ink")}
         >
           {rate}×
         </button>
@@ -83,7 +86,7 @@ export function SpeedMenu({ rate, onPick }: { rate: number; onPick: (r: number) 
       <AnimatePresence>
         {open && (
           <motion.div role="menu" {...panelMotion} style={{ transformOrigin: "bottom right" }} className={clsx(panel, "right-0 w-36 p-1")}>
-            <p className="px-2.5 pb-1 pt-1 text-2xs font-semibold uppercase tracking-wide text-dim">{t("Speed")}</p>
+            <p className="eyebrow px-2.5 pb-1.5 pt-1.5">{t("Speed")}</p>
             {RATES.map((r) => (
               <button
                 key={r}
@@ -105,14 +108,14 @@ export function SpeedMenu({ rate, onPick }: { rate: number; onPick: (r: number) 
   );
 }
 
-export function VolumeControl({ volume, muted, onVolume, onToggleMute }: {
-  volume: number; muted: boolean; onVolume: (v: number) => void; onToggleMute: () => void;
+export function VolumeControl({ volume, muted, onVolume, onToggleMute, className }: {
+  volume: number; muted: boolean; onVolume: (v: number) => void; onToggleMute: () => void; className?: string;
 }) {
   const t = useT();
   const Icon = muted || volume === 0 ? VolumeX : volume < 0.5 ? Volume1 : Volume2;
   return (
-    <div className="flex items-center">
-      <IconButton title={t("Mute (M)")} onClick={onToggleMute} className="max-sm:size-10"><Icon className="size-4" /></IconButton>
+    <div className={clsx("flex items-center", className)}>
+      <BarButton label={t("Mute (M)")} active={muted || volume === 0} onClick={onToggleMute}><Icon className="size-4" /></BarButton>
       <input type="range" min={0} max={1} step={0.05} value={muted ? 0 : volume} aria-label={t("Volume")}
         onChange={(e) => onVolume(Number(e.target.value))} className="hidden w-16 @xl:block @4xl:w-20" />
     </div>
@@ -146,15 +149,15 @@ export function ShortcutsButton({ extra, align = "right" }: { extra?: [string, s
   useDismiss(open, () => setOpen(false), box);
   return (
     <div ref={box} className="relative @max-md:hidden max-md:hidden">
-      <IconButton title={t("Keyboard shortcuts")} active={open} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <BarButton label={t("Keyboard shortcuts")} active={open} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <Keyboard className="size-4" />
-      </IconButton>
+      </BarButton>
       <AnimatePresence>
         {open && (
           <motion.div role="dialog" aria-label={t("Keyboard shortcuts")} {...panelMotion}
             style={{ transformOrigin: align === "right" ? "bottom right" : "bottom left" }}
             className={clsx(panel, "w-72 p-3.5", align === "right" ? "right-0" : "left-0")}>
-            <p className="mb-2.5 text-xs font-semibold">{t("Keyboard shortcuts")}</p>
+            <p className="eyebrow mb-3">{t("Keyboard shortcuts")}</p>
             <PlayerShortcuts extra={extra} />
           </motion.div>
         )}

@@ -1,24 +1,26 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { clsx } from "clsx";
 import { ChevronDown, History, Pencil, RotateCcw, ScanFace, Snowflake, Trash2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { cn } from "../../lib/cn";
 import { ago } from "../../lib/format";
 import { tr, useT } from "../../lib/i18n";
 import { createVersion, deleteVersion, patchVersion, restoreVersion, useCharacterLook, useCharacterVersions, type CharacterV3, type CharacterVersion } from "../../lib/v3";
 import { Alert, Badge, Button, IconButton, Input, Modal, Skeleton, Textarea, rise } from "../ui";
-import { LoadError, RField, RoomEmpty, SectionCard } from "./kit";
+import { RangeBar, episodeTotal, rangeCode } from "./cast";
+import { LoadError, RField, RoomEmpty } from "./kit";
 import { episodeNumber, episodeRange } from "./look";
 import { useCharScope } from "./scope";
+import { WorkPanel } from "./workspace";
 
 interface FreezeForm { label: string; episode_from: string; episode_to: string; note: string; advanced: boolean; dna_text: string; voice_description: string }
 interface EditForm { label: string; episode_from: string; episode_to: string; note: string }
 
-/** Frozen looks of a character per episode range: freeze, edit the range, restore, delete. */
-export function Versions({ character, editable, index }: { character: CharacterV3; editable: boolean; index?: number }) {
+/** Frozen looks of a character per episode range, as a timeline: freeze, edit the range, restore, delete. */
+export function Versions({ character, editable, index, n }: { character: CharacterV3; editable: boolean; index?: number; n?: number }) {
   const t = useT();
   const qc = useQueryClient();
-  const { canProduce, episodeNumber: curEp } = useCharScope();
+  const { canProduce, episodeNumber: curEp, project } = useCharScope();
   const cid = character.id;
   const { data: versions, isLoading, isError, refetch } = useCharacterVersions(cid);
   const { data: look } = useCharacterLook(cid, curEp);
@@ -42,6 +44,20 @@ export function Versions({ character, editable, index }: { character: CharacterV
     dna_text: character.dna_text ?? "", voice_description: character.voice_description ?? "" });
 
   const rangeBad = (from: string, to: string) => { const a = episodeNumber(from), b = episodeNumber(to); return a != null && b != null && b < a; };
+  const ranges = list.map((v) => ({ from: v.episode_from, to: v.episode_to }));
+  const total = episodeTotal(project, ranges);
+  /** The coverage preview inside the freeze / edit dialogs: the typed range on the project's episode axis. */
+  const preview = (from: string, to: string) => {
+    const a = episodeNumber(from), b = episodeNumber(to);
+    const tot = episodeTotal(project, [...ranges, { from: a, to: b }]);
+    if (tot < 1 || rangeBad(from, to)) return null;
+    return (
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between gap-2"><span className="eyebrow">{t("Episode coverage")}</span><span className="mono text-2xs text-dim">{rangeCode(a, b)}</span></div>
+        <RangeBar total={tot} from={a} to={b} current={curEp} tone="accent" />
+      </div>
+    );
+  };
 
   const doFreeze = async () => {
     if (!freeze || rangeBad(freeze.episode_from, freeze.episode_to)) return;
@@ -78,74 +94,89 @@ export function Versions({ character, editable, index }: { character: CharacterV
   };
 
   return (
-    <SectionCard id="sec-versions" index={index} icon={<History />}
-      title={<span className="flex flex-wrap items-center gap-2">{t("Versions")}{list.length > 0 && <Badge>{list.length}</Badge>}</span>}
+    <WorkPanel id="sec-versions" index={index} n={n} kicker={t("History")} icon={<History />} title={t("Versions")}
+      badge={list.length > 0 ? <span className="mono rounded bg-raised px-1.5 text-2xs font-medium text-dim">{list.length}</span> : undefined}
       description={t("Freeze the look (DNA, voice, lock, approved references, trained identity) for a range of episodes, so {name} can age or change hairstyle later while earlier episodes keep the old look.", { name: character.name })}
       actions={editable && <Button size="sm" variant="primary" icon={<Snowflake className="size-3.5" />} onClick={openFreeze}>{t("Freeze current look")}</Button>}>
-      <div className="space-y-4">
-        {/* what applies now */}
-        {curEp !== undefined && (
-          <div className={clsx("flex flex-wrap items-center gap-2 rounded-xl border px-3.5 py-2.5 text-sm", applied ? "border-info/30 bg-info/5" : "border-line bg-bg/30")}>
-            <History className={clsx("size-4 shrink-0", applied ? "text-info" : "text-dim")} />
-            <span className="min-w-0 flex-1">
-              {applied
-                ? t("Episode {n} uses {label} (frozen {when}).", { n: curEp, label: applied.label, when: ago(applied.created_at) })
-                : t("Episode {n} uses the live look — no frozen version covers it.", { n: curEp })}
-            </span>
-          </div>
-        )}
+      {isLoading ? (
+        <div className="space-y-2" aria-busy="true"><Skeleton className="h-12" /><Skeleton className="h-24" /><Skeleton className="h-24" /></div>
+      ) : isError ? (
+        <LoadError what={t("Couldn't load the versions")} onRetry={() => refetch()} />
+      ) : (
+        <ol className="relative">
+          {list.length > 0 && <span aria-hidden className="cs-spine absolute bottom-4 left-[13px] top-4 w-px" />}
 
-        {isLoading ? (
-          <div className="space-y-2" aria-busy="true"><Skeleton className="h-20" /><Skeleton className="h-20" /></div>
-        ) : isError ? (
-          <LoadError what={t("Couldn't load the versions")} onRetry={() => refetch()} />
-        ) : !list.length ? (
-          <RoomEmpty icon={<Snowflake />} title={t("No frozen versions")}
-            sub={t("Once the look is approved, freeze it for the episodes it belongs to. Later changes won't touch those episodes, and you can always roll back.")}
-            action={editable ? <Button size="sm" variant="outline" icon={<Snowflake className="size-3.5" />} onClick={openFreeze}>{t("Freeze current look")}</Button> : undefined} />
-        ) : (
-          <ol className="relative space-y-3 before:absolute before:bottom-3 before:left-[11px] before:top-3 before:w-px before:bg-line">
-            {list.map((v, i) => {
-              const r = rise(i);
-              const current = applied?.id === v.id;
-              const identityOk = v.identity?.status === "ready" || !!v.identity?.lora_url;
-              return (
-                <li key={v.id} {...r} className={clsx("relative pl-8", r.className)}>
-                  <span aria-hidden className={clsx("absolute left-0 top-3.5 grid size-6 place-items-center rounded-full border text-2xs font-semibold tabular-nums",
-                    current ? "border-info/60 bg-info/15 text-sky-300" : "border-line bg-raised text-mute")}>{v.version}</span>
-                  <div className={clsx("rounded-xl border p-3", current ? "border-info/40 bg-info/5" : "border-line bg-bg/30")}>
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="flex flex-wrap items-center gap-1.5">
-                          <span className="truncate text-sm font-semibold" title={v.label}>{v.label}</span>
-                          <Badge>{episodeRange(v.episode_from, v.episode_to)}</Badge>
-                          {current && <Badge tone="info" dot>{curEp !== undefined ? t("Applies to Ep {n}", { n: curEp }) : t("Applies now")}</Badge>}
-                        </p>
-                        <p className="mt-0.5 text-2xs text-dim" title={new Date(v.created_at).toLocaleString()}>{t("Frozen {when}", { when: ago(v.created_at) })} · {t("{n} approved references", { n: v.asset_ids?.length ?? 0 })}</p>
-                      </div>
-                      {editable && (
-                        <div className="flex shrink-0 items-center">
-                          <IconButton title={t("Edit label, range, note")} className="!size-7" onClick={() => setEdit({ v, form: { label: v.label, episode_from: v.episode_from?.toString() ?? "", episode_to: v.episode_to?.toString() ?? "", note: v.note } })}><Pencil className="size-3.5" /></IconButton>
-                          <IconButton title={t("Restore this version")} className="!size-7" onClick={() => setConfirm({ kind: "restore", v })}><RotateCcw className="size-3.5" /></IconButton>
-                          {canProduce && <IconButton title={t("Delete version")} className="!size-7 hover:!bg-bad/10 hover:!text-bad" onClick={() => setConfirm({ kind: "delete", v })}><Trash2 className="size-3.5" /></IconButton>}
-                        </div>
-                      )}
+          {/* the live look: what applies to the current episode when no frozen version covers it */}
+          {curEp !== undefined && (
+            <li className="relative pb-3 pl-10">
+              <span aria-hidden className={cn("absolute left-0 top-2.5 grid size-7 place-items-center rounded-md border", applied ? "border-line bg-raised" : "border-accent/60 bg-accent/15")}>
+                <span className={cn("live-dot", applied && "is-idle")} />
+              </span>
+              <div className={cn("flex flex-wrap items-center gap-2 rounded-lg border px-3 py-2 text-sm", applied ? "border-line bg-bg/30" : "border-accent/40 bg-accent/[0.05]")}>
+                <span className="eyebrow shrink-0">{t("Live")}</span>
+                <span className="min-w-0 flex-1 text-xs leading-relaxed">
+                  {applied
+                    ? t("Episode {n} uses {label} (frozen {when}).", { n: curEp, label: applied.label, when: ago(applied.created_at) })
+                    : t("Episode {n} uses the live look — no frozen version covers it.", { n: curEp })}
+                </span>
+              </div>
+            </li>
+          )}
+
+          {!list.length ? (
+            <li className="relative pl-10">
+              <RoomEmpty icon={<Snowflake />} title={t("No frozen versions")}
+                sub={t("Once the look is approved, freeze it for the episodes it belongs to. Later changes won't touch those episodes, and you can always roll back.")}
+                action={editable ? <Button size="sm" variant="outline" icon={<Snowflake className="size-3.5" />} onClick={openFreeze}>{t("Freeze current look")}</Button> : undefined} />
+            </li>
+          ) : list.map((v, i) => {
+            const r = rise(i);
+            const current = applied?.id === v.id;
+            const identityOk = v.identity?.status === "ready" || !!v.identity?.lora_url;
+            return (
+              <li key={v.id} {...r} className={cn("relative pb-3 pl-10 last:pb-0", r.className)}>
+                <span aria-hidden className={cn("mono absolute left-0 top-3.5 grid size-7 place-items-center rounded-md border text-2xs font-semibold",
+                  current ? "border-accent bg-accent/20 text-accent-ink shadow-[0_0_12px_-3px_var(--color-accent)]" : "border-line bg-raised text-mute")}>v{v.version}</span>
+                <div className={cn("hud relative rounded-xl border p-3 @md:p-3.5", current ? "border-accent/50 bg-accent/[0.05]" : "border-line bg-bg/30")}>
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="flex flex-wrap items-center gap-1.5">
+                        <span className="truncate text-sm font-semibold" title={v.label}>{v.label}</span>
+                        <Badge>{episodeRange(v.episode_from, v.episode_to)}</Badge>
+                        {current && <Badge tone="accent" dot>{curEp !== undefined ? t("Applies to Ep {n}", { n: curEp }) : t("Applies now")}</Badge>}
+                      </p>
+                      <p className="mt-1 text-2xs text-dim" title={new Date(v.created_at).toLocaleString()}>{t("Frozen {when}", { when: ago(v.created_at) })} · {t("{n} approved references", { n: v.asset_ids?.length ?? 0 })}</p>
                     </div>
-                    {v.note && <p className="mt-2 text-xs leading-relaxed text-mute">{v.note}</p>}
-                    <dl className="mt-2 grid gap-x-4 gap-y-1.5 text-xs @lg:grid-cols-[1fr_1fr_auto]">
-                      <div className="min-w-0"><dt className="text-2xs text-dim">{t("DNA")}</dt><dd className="line-clamp-2 text-mute" title={v.dna_text}>{v.dna_text || "—"}</dd></div>
-                      <div className="min-w-0"><dt className="text-2xs text-dim">{t("Voice")}</dt><dd className="line-clamp-2 text-mute" title={v.voice_description}>{v.voice_description || "—"}</dd></div>
-                      <div><dt className="sr-only">{t("Identity")}</dt><dd>
-                        {identityOk ? <Badge tone="ok"><ScanFace className="size-3" />{t("Identity snapshot")}</Badge> : <Badge><ScanFace className="size-3" />{t("No identity snapshot")}</Badge>}
-                      </dd></div>
-                    </dl>
+                    {editable && (
+                      <div className="flex shrink-0 items-center">
+                        <IconButton title={t("Edit label, range, note")} className="size-9 sm:size-7" onClick={() => setEdit({ v, form: { label: v.label, episode_from: v.episode_from?.toString() ?? "", episode_to: v.episode_to?.toString() ?? "", note: v.note } })}><Pencil className="size-3.5" /></IconButton>
+                        <IconButton title={t("Restore this version")} className="size-9 sm:size-7" onClick={() => setConfirm({ kind: "restore", v })}><RotateCcw className="size-3.5" /></IconButton>
+                        {canProduce && <IconButton title={t("Delete version")} className="size-9 hover:bg-bad/10! hover:text-bad! sm:size-7" onClick={() => setConfirm({ kind: "delete", v })}><Trash2 className="size-3.5" /></IconButton>}
+                      </div>
+                    )}
                   </div>
-                </li>
-              );
-            })}
-          </ol>
-        )}
-      </div>
+
+                  {total >= 1 && (
+                    <div className="mt-2.5 flex items-center gap-2.5">
+                      <RangeBar total={total} from={v.episode_from} to={v.episode_to} current={curEp} tone={current ? "now" : "neutral"} className="flex-1" />
+                      <span className="mono w-16 shrink-0 text-right text-2xs text-dim">{rangeCode(v.episode_from, v.episode_to)}</span>
+                    </div>
+                  )}
+
+                  {v.note && <p className="mt-2.5 text-xs leading-relaxed text-mute">{v.note}</p>}
+                  <dl className="mt-2.5 grid gap-x-4 gap-y-2 border-t border-dashed border-line pt-2.5 text-xs @lg:grid-cols-[1fr_1fr_auto]">
+                    <div className="min-w-0"><dt className="eyebrow">{t("DNA")}</dt><dd className="mt-1 line-clamp-2 text-mute" title={v.dna_text}>{v.dna_text || "—"}</dd></div>
+                    <div className="min-w-0"><dt className="eyebrow">{t("Voice")}</dt><dd className="mt-1 line-clamp-2 text-mute" title={v.voice_description}>{v.voice_description || "—"}</dd></div>
+                    <div><dt className="sr-only">{t("Identity")}</dt><dd>
+                      {identityOk ? <Badge tone="ok"><ScanFace className="size-3" />{t("Identity snapshot")}</Badge> : <Badge><ScanFace className="size-3" />{t("No identity snapshot")}</Badge>}
+                    </dd></div>
+                  </dl>
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      )}
 
       {/* freeze */}
       <Modal open={!!freeze} onClose={() => busy !== "freeze" && setFreeze(null)} title={t("Freeze the current look of {name}", { name: character.name })}
@@ -159,16 +190,17 @@ export function Versions({ character, editable, index }: { character: CharacterV
             <RField label={t("Label")} htmlFor="ver-label"><Input id="ver-label" data-autofocus value={freeze.label} placeholder={t("Season 1 look")} onChange={(e) => setFreeze({ ...freeze, label: e.target.value })} /></RField>
             <div className="grid grid-cols-2 gap-3">
               <RField label={t("From episode")} htmlFor="ver-from" hint={t("Blank = from the start")}>
-                <Input id="ver-from" type="number" min={1} inputMode="numeric" value={freeze.episode_from} onChange={(e) => setFreeze({ ...freeze, episode_from: e.target.value })} />
+                <Input id="ver-from" type="number" min={1} inputMode="numeric" className="mono" value={freeze.episode_from} onChange={(e) => setFreeze({ ...freeze, episode_from: e.target.value })} />
               </RField>
               <RField label={t("To episode")} htmlFor="ver-to" hint={rangeBad(freeze.episode_from, freeze.episode_to) ? <span className="text-amber-300">{t("Must not be before the first episode")}</span> : t("Blank = open-ended")}>
-                <Input id="ver-to" type="number" min={1} inputMode="numeric" value={freeze.episode_to} onChange={(e) => setFreeze({ ...freeze, episode_to: e.target.value })} />
+                <Input id="ver-to" type="number" min={1} inputMode="numeric" className="mono" value={freeze.episode_to} onChange={(e) => setFreeze({ ...freeze, episode_to: e.target.value })} />
               </RField>
             </div>
+            {preview(freeze.episode_from, freeze.episode_to)}
             <RField label={t("Note")} htmlFor="ver-note"><Input id="ver-note" value={freeze.note} placeholder={t("Before the time jump: short hair, no beard")} onChange={(e) => setFreeze({ ...freeze, note: e.target.value })} /></RField>
             <button type="button" aria-expanded={freeze.advanced} onClick={() => setFreeze({ ...freeze, advanced: !freeze.advanced })}
-              className="inline-flex items-center gap-1 text-xs font-medium text-mute transition-colors hover:text-ink">
-              <ChevronDown className={clsx("size-3.5 transition-transform duration-200", freeze.advanced && "rotate-180")} />{t("Advanced: change the DNA and voice for this version")}
+              className="inline-flex min-h-8 items-center gap-1 text-xs font-medium text-mute transition-colors hover:text-ink">
+              <ChevronDown className={cn("size-3.5 transition-transform duration-200", freeze.advanced && "rotate-180")} />{t("Advanced: change the DNA and voice for this version")}
             </button>
             {freeze.advanced && (
               <div className="space-y-3 rounded-xl border border-line bg-bg/40 p-3">
@@ -192,12 +224,13 @@ export function Versions({ character, editable, index }: { character: CharacterV
             <RField label={t("Label")} htmlFor="vedit-label"><Input id="vedit-label" data-autofocus value={edit.form.label} onChange={(e) => setEdit({ ...edit, form: { ...edit.form, label: e.target.value } })} /></RField>
             <div className="grid grid-cols-2 gap-3">
               <RField label={t("From episode")} htmlFor="vedit-from" hint={t("Blank = from the start")}>
-                <Input id="vedit-from" type="number" min={1} inputMode="numeric" value={edit.form.episode_from} onChange={(e) => setEdit({ ...edit, form: { ...edit.form, episode_from: e.target.value } })} />
+                <Input id="vedit-from" type="number" min={1} inputMode="numeric" className="mono" value={edit.form.episode_from} onChange={(e) => setEdit({ ...edit, form: { ...edit.form, episode_from: e.target.value } })} />
               </RField>
               <RField label={t("To episode")} htmlFor="vedit-to" hint={rangeBad(edit.form.episode_from, edit.form.episode_to) ? <span className="text-amber-300">{t("Must not be before the first episode")}</span> : t("Blank = open-ended")}>
-                <Input id="vedit-to" type="number" min={1} inputMode="numeric" value={edit.form.episode_to} onChange={(e) => setEdit({ ...edit, form: { ...edit.form, episode_to: e.target.value } })} />
+                <Input id="vedit-to" type="number" min={1} inputMode="numeric" className="mono" value={edit.form.episode_to} onChange={(e) => setEdit({ ...edit, form: { ...edit.form, episode_to: e.target.value } })} />
               </RField>
             </div>
+            {preview(edit.form.episode_from, edit.form.episode_to)}
             <RField label={t("Note")} htmlFor="vedit-note"><Input id="vedit-note" value={edit.form.note} onChange={(e) => setEdit({ ...edit, form: { ...edit.form, note: e.target.value } })} /></RField>
           </div>
         )}
@@ -221,6 +254,6 @@ export function Versions({ character, editable, index }: { character: CharacterV
           <p className="text-sm text-mute">{t("Episodes in its range fall back to the live look (or to another version that covers them). You can't undo this.")}</p>
         )}
       </Modal>
-    </SectionCard>
+    </WorkPanel>
   );
 }

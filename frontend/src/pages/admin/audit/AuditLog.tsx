@@ -1,20 +1,21 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import { ChevronRight, Download, FilterX, RefreshCw, ScrollText } from "lucide-react";
-import { AnimatePresence, motion } from "motion/react";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { agoT, CopyButton, fmtDateTime } from "../../../components/growth/common";
-import { Button, Card, Empty, IconButton, SearchField, Skeleton } from "../../../components/ui";
+import { Button, Empty, IconButton, Metric, Panel, SearchField, Skeleton } from "../../../components/ui";
 import { api } from "../../../lib/api";
 import { useT } from "../../../lib/i18n";
 import type { AuditRow } from "../../../lib/types";
 import { ChipGroup } from "../shared/ChipGroup";
 import { FilterSelect } from "../shared/FilterSelect";
 import { MiniAvatar } from "../shared/MiniAvatar";
-import { JsonView, flatEntries } from "./JsonView";
-import { CATEGORIES, TONE_SOFT, actionLabel, categoryOf, catInfo, csvCell } from "./meta";
-
 import { Pill } from "../shared/Pill";
+import { JsonView, flatEntries } from "./JsonView";
+import { CATEGORIES, actionLabel, categoryOf, catInfo, csvCell } from "./meta";
+import "../../../styles/admin.css";
+import "../../../styles/console.css";
+
 function useMedia(query: string) {
   const [match, setMatch] = useState(() => typeof matchMedia !== "undefined" && matchMedia(query).matches);
   useEffect(() => {
@@ -27,9 +28,19 @@ function useMedia(query: string) {
   return match;
 }
 
-function ActionIcon({ action }: { action: string }) {
-  const { icon: Icon, tone } = catInfo(action);
-  return <span aria-hidden className={clsx("grid size-8 shrink-0 place-items-center rounded-lg", TONE_SOFT[tone])}><Icon className="size-4" /></span>;
+const SENSITIVE = new Set(["settings", "apikey", "integration"]);
+
+const stamp = (iso: string) => {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+};
+
+/** The action as a toned chip: the category's icon and the readable name. */
+function ActionChip({ action }: { action: string }) {
+  const t = useT();
+  const { icon: Icon, tone, label } = catInfo(action);
+  return <Pill tone={tone} title={`${t(label)} · ${action}`}><Icon aria-hidden /><span className="truncate">{actionLabel(action)}</span></Pill>;
 }
 
 /** What changed: readable fields on the left, the raw JSON (with a copy button) on the right. */
@@ -38,19 +49,19 @@ function Detail({ row }: { row: AuditRow }) {
   const flat = flatEntries(row.detail);
   const json = JSON.stringify(row.detail, null, 2);
   return (
-    <div className="grid gap-4 border-t border-line bg-raised/30 px-4 py-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
+    <div className="ad-detail anim-fade grid gap-4 px-4 py-4 md:grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)]">
       <div className="min-w-0">
-        <h4 className="mb-2 text-2xs font-semibold uppercase tracking-wider text-dim">{t("Summary")}</h4>
-        <dl className="grid grid-cols-[84px_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-xs">
-          <dt className="text-dim">{t("When")}</dt><dd className="text-ink">{fmtDateTime(row.created_at)}</dd>
-          <dt className="text-dim">{t("Action")}</dt><dd className="font-mono text-ink">{row.action}</dd>
-          {row.user && <><dt className="text-dim">{t("User")}</dt><dd className="truncate text-ink">{row.user.name} · {row.user.email}</dd></>}
-          {row.ip && <><dt className="text-dim">{t("IP address")}</dt><dd className="font-mono text-ink">{row.ip}</dd></>}
-          {flat.map(([k, v]) => <Fragment key={k}><dt className="truncate text-dim" title={k}>{k}</dt><dd className="break-words text-ink">{v}</dd></Fragment>)}
+        <p className="eyebrow mb-2.5">{t("Summary")}</p>
+        <dl className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-xs">
+          <dt className="text-dim">{t("When")}</dt><dd className="mono text-ink">{fmtDateTime(row.created_at)}</dd>
+          <dt className="text-dim">{t("Action")}</dt><dd className="mono break-all text-ink">{row.action}</dd>
+          {row.user && <><dt className="text-dim">{t("User")}</dt><dd className="truncate text-ink">{row.user.name} · <span className="mono">{row.user.email}</span></dd></>}
+          {row.ip && <><dt className="text-dim">{t("IP address")}</dt><dd className="mono text-ink">{row.ip}</dd></>}
+          {flat.map(([k, v]) => <Fragment key={k}><dt className="mono truncate text-dim" title={k}>{k}</dt><dd className="break-words text-ink">{v}</dd></Fragment>)}
         </dl>
       </div>
       <div className="relative min-w-0">
-        <JsonView value={row.detail} className="max-h-72 overflow-auto rounded-lg border border-line bg-bg p-3 pr-10 font-mono text-2xs leading-relaxed text-mute" />
+        <JsonView value={row.detail} className="cx-scroll max-h-72 rounded-lg border border-line bg-bg p-3 pr-10 font-mono text-2xs leading-relaxed text-mute" />
         <div className="absolute right-1.5 top-1.5"><CopyButton size="icon" text={json} what={t("Details")} className="bg-bg/80 backdrop-blur" /></div>
       </div>
     </div>
@@ -94,6 +105,11 @@ export function AuditLog() {
   const filtered = !!(category || action || userId || needle);
   const clear = () => { setCategory(""); setAction(""); setUserId(""); setText(""); };
 
+  // the strip counts what is loaded (the latest N entries)
+  const last24h = useMemo(() => rows.filter((r) => Date.now() - new Date(r.created_at).getTime() < 86_400_000).length, [rows]);
+  const sensitive = useMemo(() => rows.filter((r) => SENSITIVE.has(categoryOf(r.action))).length, [rows]);
+  const hasSystem = rows.some((r) => !r.user);
+
   const downloadCsv = () => {
     const head = ["time", "action", "target", "user", "email", "ip", "detail"];
     const lines = shown.map((r) => [r.created_at, r.action, r.target, r.user?.name ?? "", r.user?.email ?? "", r.ip, r.detail].map(csvCell).join(","));
@@ -110,55 +126,70 @@ export function AuditLog() {
 
   return (
     <div className="space-y-4">
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center gap-2">
-          <SearchField value={text} onChange={setText} placeholder={t("Search target, IP, details…")} aria-label={t("Search the audit log")} className="min-w-[220px] flex-1 sm:max-w-sm" />
-          <FilterSelect label={t("Action")} value={action} active={!!action} onChange={setAction}>
+      {/* KPI strip */}
+      <Panel flush index={1} bodyClassName="rounded-xl">
+        {isLoading ? (
+          <div className="ad-kpis" aria-busy="true">
+            {Array.from({ length: 4 }, (_, i) => <div key={i}><Skeleton className="h-2.5 w-20" /><Skeleton className="mt-3 h-7 w-16" /></div>)}
+          </div>
+        ) : (
+          <div className="ad-kpis">
+            <Metric label={t("Entries loaded")} value={rows.length} sub={<span className="mono">{t("Last {n}", { n: limit })}</span>} />
+            <Metric label={t("Last 24 hours")} value={last24h} sub={t("recorded actions")} />
+            <Metric label={t("People")} value={users.length} sub={hasSystem ? t("plus system and guests") : t("who made changes")} />
+            <Metric label={t("Sensitive changes")} tone={sensitive > 0 ? "warn" : "neutral"} value={sensitive} sub={t("settings, keys, integrations")} />
+          </div>
+        )}
+      </Panel>
+
+      <Panel flush index={2} bodyClassName="overflow-hidden rounded-b-xl" icon={<ScrollText />} eyebrow={t("Log")} title={t("Audit log")}
+        actions={(
+          <>
+            <IconButton title={t("Refresh")} onClick={() => qc.invalidateQueries({ queryKey: ["audit"] })} className="max-sm:size-10"><RefreshCw className={clsx("size-4", isFetching && "animate-spin")} /></IconButton>
+            <Button variant="outline" size="sm" icon={<Download className="size-3.5" />} disabled={!shown.length} onClick={downloadCsv} className="max-sm:h-10">{t("Export CSV")}</Button>
+          </>
+        )}>
+        <div className="ad-bar-row mt-3 border-t border-line">
+          <SearchField value={text} onChange={setText} placeholder={t("Search target, IP, details…")} aria-label={t("Search the audit log")} className="min-w-[200px] flex-1 sm:max-w-sm [&_input]:h-8 max-sm:[&_input]:h-10" />
+          <FilterSelect compact label={t("Action")} value={action} active={!!action} onChange={setAction}>
             <option value="">{t("All")}</option>
             {actions.map((a) => <option key={a} value={a}>{actionLabel(a)}</option>)}
           </FilterSelect>
-          <FilterSelect label={t("User")} value={userId} active={!!userId} onChange={setUserId}>
+          <FilterSelect compact label={t("User")} value={userId} active={!!userId} onChange={setUserId}>
             <option value="">{t("Everyone")}</option>
             <option value="system">{t("System / guest")}</option>
             {users.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
           </FilterSelect>
-          <FilterSelect label={t("Show")} value={String(limit)} onChange={(v) => setLimit(Number(v))}>
+          <FilterSelect compact label={t("Show")} value={String(limit)} onChange={(v) => setLimit(Number(v))}>
             {[300, 1000, 2000].map((n) => <option key={n} value={n}>{t("Last {n}", { n })}</option>)}
           </FilterSelect>
-          {filtered && <Button size="sm" variant="ghost" icon={<FilterX className="size-3.5" />} onClick={clear}>{t("Clear filters")}</Button>}
-          <div className="ml-auto flex items-center gap-1.5">
-            <IconButton title={t("Refresh")} onClick={() => qc.invalidateQueries({ queryKey: ["audit"] })}><RefreshCw className={clsx("size-4", isFetching && "animate-spin")} /></IconButton>
-            <Button variant="outline" icon={<Download className="size-4" />} disabled={!shown.length} onClick={downloadCsv}>{t("Export CSV")}</Button>
-          </div>
+          {filtered && <Button size="sm" variant="ghost" icon={<FilterX className="size-3.5" />} onClick={clear} className="max-sm:h-10">{t("Clear filters")}</Button>}
         </div>
-
         {cats.length > 1 && (
-          <ChipGroup label={t("Category")} value={category} onChange={(v) => { setCategory(v); setAction(""); }}
-            items={[{ value: "", label: t("All"), icon: ScrollText, count: rows.length },
-              ...cats.map(([key, n]) => ({ value: key, label: t(CATEGORIES[key]?.label ?? key), icon: CATEGORIES[key]?.icon ?? ScrollText, count: n }))]} />
+          <div className="border-b border-line px-3 py-2">
+            <ChipGroup label={t("Category")} value={category} onChange={(v) => { setCategory(v); setAction(""); }}
+              items={[{ value: "", label: t("All"), icon: ScrollText, count: rows.length },
+                ...cats.map(([key, n]) => ({ value: key, label: t(CATEGORIES[key]?.label ?? key), icon: CATEGORIES[key]?.icon ?? ScrollText, count: n }))]} />
+          </div>
         )}
-      </div>
 
-      {isLoading ? (
-        <Card className="overflow-hidden">
-          <div className="space-y-2.5 p-4">{Array.from({ length: 9 }, (_, i) => <Skeleton key={i} className="h-11 w-full" style={{ opacity: 1 - i * 0.08 }} />)}</div>
-        </Card>
-      ) : isError ? (
-        <Empty icon={<ScrollText className="size-8" />} title={t("Couldn't load the audit log")} sub={t("Check your connection and try again.")}
-          action={<Button icon={<RefreshCw className="size-4" />} onClick={() => refetch()}>{t("Try again")}</Button>} />
-      ) : !rows.length ? (
-        <Empty icon={<ScrollText className="size-8" />} title={t("Nothing logged yet")}
-          sub={t("Sensitive actions — settings, API keys, users, publishing, consents — are recorded here.")} />
-      ) : (
-        <Card className="overflow-clip">
-          {!shown.length ? (
-            <p className="px-4 py-14 text-center text-sm text-dim">{t("No entries match these filters.")}</p>
-          ) : wide ? (
-            <table className="w-full border-separate border-spacing-0 text-sm">
-              <thead className="sticky top-0 z-[2]">
-                <tr className="text-left text-xs font-medium text-mute [&>th]:border-b [&>th]:border-line [&>th]:bg-panel/95 [&>th]:px-3 [&>th]:py-2.5 [&>th]:backdrop-blur">
-                  <th className="w-10" />
-                  <th className="w-32">{t("When")}</th>
+        {isLoading ? (
+          <div aria-busy="true" className="space-y-2 p-3">{Array.from({ length: 9 }, (_, i) => <Skeleton key={i} className="h-8 w-full" style={{ opacity: 1 - i * 0.08 }} />)}</div>
+        ) : isError ? (
+          <div className="p-4"><Empty icon={<ScrollText className="size-8" />} title={t("Couldn't load the audit log")} sub={t("Check your connection and try again.")}
+            action={<Button icon={<RefreshCw className="size-4" />} onClick={() => refetch()}>{t("Try again")}</Button>} /></div>
+        ) : !rows.length ? (
+          <div className="p-4"><Empty icon={<ScrollText className="size-8" />} title={t("Nothing logged yet")}
+            sub={t("Sensitive actions — settings, API keys, users, publishing, consents — are recorded here.")} /></div>
+        ) : !shown.length ? (
+          <p className="px-4 py-14 text-center text-sm text-dim">{t("No entries match these filters.")}</p>
+        ) : wide ? (
+          <div className="cx-scroll max-h-[min(72vh,46rem)]">
+            <table className="cx-table">
+              <thead>
+                <tr>
+                  <th className="w-10"><span className="sr-only">{t("Details")}</span></th>
+                  <th>{t("When")}</th>
                   <th>{t("Action")}</th>
                   <th>{t("Target")}</th>
                   <th>{t("User")}</th>
@@ -171,80 +202,72 @@ export function AuditLog() {
                   const detail = hasDetail(r);
                   return (
                     <Fragment key={r.id}>
-                      <tr onClick={() => toggle(r)} className={clsx("transition-colors [&>td]:border-b [&>td]:border-line/70 [&>td]:px-3 [&>td]:py-2.5", detail && "cursor-pointer", isOpen ? "bg-hover/50" : "hover:bg-hover/30")}>
-                        <td className="w-10 pl-3">
+                      <tr onClick={() => toggle(r)} data-selected={isOpen || undefined} className={clsx(detail && "cursor-pointer")}>
+                        <td className="w-10 !pr-0">
                           {detail && (
                             <button type="button" aria-expanded={isOpen} aria-label={isOpen ? t("Hide details") : t("Show details")} onClick={(e) => { e.stopPropagation(); toggle(r); }}
-                              className="grid size-7 place-items-center rounded-md text-dim transition-colors hover:bg-hover hover:text-ink">
-                              <ChevronRight className={clsx("size-4 transition-transform duration-200", isOpen && "rotate-90")} />
+                              className="-my-1 grid size-7 place-items-center rounded-md text-dim transition-colors hover:bg-hover hover:text-ink">
+                              <ChevronRight className={clsx("size-4 transition-transform duration-150", isOpen && "rotate-90")} />
                             </button>
                           )}
                         </td>
                         <td className="whitespace-nowrap" title={fmtDateTime(r.created_at)}>
-                          <span className="block text-ink">{agoT(r.created_at)}</span>
-                          <span className="block text-2xs text-dim">{new Date(r.created_at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}</span>
+                          <span className="mono text-xs text-ink">{stamp(r.created_at)}</span>
+                          <span className="mono ml-2 text-2xs text-dim">{agoT(r.created_at)}</span>
                         </td>
-                        <td>
-                          <span className="flex items-center gap-2.5">
-                            <ActionIcon action={r.action} />
-                            <span className="min-w-0">
-                              <span className="block truncate font-medium">{actionLabel(r.action)}</span>
-                              <span className="block truncate font-mono text-2xs text-dim">{r.action}</span>
-                            </span>
+                        <td className="max-w-[17rem]">
+                          <span className="flex min-w-0 items-center gap-2">
+                            <ActionChip action={r.action} />
+                            <span className="cx-mono hidden truncate 2xl:inline">{r.action}</span>
                           </span>
                         </td>
-                        <td className="max-w-[240px]"><span className="block truncate" title={r.target}>{r.target || <span className="text-dim">—</span>}</span></td>
+                        <td className="max-w-[18rem]"><span className="block truncate" title={r.target}>{r.target || <span className="text-dim">—</span>}</span></td>
                         <td className="whitespace-nowrap">
                           {r.user
-                            ? <span className="inline-flex items-center gap-2" title={r.user.email}><MiniAvatar name={r.user.name || r.user.email} size={24} />{r.user.name || r.user.email}</span>
+                            ? <span className="inline-flex items-center gap-2" title={r.user.email}><MiniAvatar name={r.user.name || r.user.email} size={22} />{r.user.name || r.user.email}</span>
                             : <span className="text-dim">{t("System / guest")}</span>}
                         </td>
-                        <td className="hidden whitespace-nowrap font-mono text-xs text-mute lg:table-cell">{r.ip || "—"}</td>
+                        <td className="cx-mono hidden whitespace-nowrap lg:table-cell">{r.ip || "—"}</td>
                       </tr>
-                      <AnimatePresence initial={false}>
-                        {isOpen && (
-                          <tr key={`d${r.id}`}>
-                            <td colSpan={6} className="border-b border-line/70 p-0">
-                              <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }}
-                                transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }} className="overflow-hidden"><Detail row={r} /></motion.div>
-                            </td>
-                          </tr>
-                        )}
-                      </AnimatePresence>
+                      {isOpen && (
+                        <tr key={`d${r.id}`}>
+                          <td colSpan={6} className="!h-auto !border-b !p-0"><Detail row={r} /></td>
+                        </tr>
+                      )}
                     </Fragment>
                   );
                 })}
               </tbody>
             </table>
-          ) : (
-            <ul className="divide-y divide-line">
-              {shown.map((r) => {
-                const isOpen = open === r.id;
-                return (
-                  <li key={r.id}>
-                    <button type="button" onClick={() => toggle(r)} aria-expanded={hasDetail(r) ? isOpen : undefined} className="flex w-full items-start gap-3 px-4 py-3 text-left">
-                      <ActionIcon action={r.action} />
-                      <span className="min-w-0 flex-1">
-                        <span className="block text-sm font-medium">{actionLabel(r.action)}</span>
-                        {r.target && <span className="block truncate text-xs text-mute">{r.target}</span>}
-                        <span className="mt-0.5 block text-2xs text-dim">{agoT(r.created_at)} · {r.user?.name || r.user?.email || t("System / guest")}</span>
-                      </span>
-                      {hasDetail(r) && <ChevronRight className={clsx("mt-1 size-4 shrink-0 text-dim transition-transform", isOpen && "rotate-90")} />}
-                    </button>
-                    <AnimatePresence initial={false}>
-                      {isOpen && <motion.div initial={{ height: 0 }} animate={{ height: "auto" }} exit={{ height: 0 }} className="overflow-hidden"><Detail row={r} /></motion.div>}
-                    </AnimatePresence>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-          <div className="flex items-center justify-between border-t border-line bg-raised/30 px-4 py-2.5 text-xs text-dim">
-            <span>{t("Showing {a} of {b} entries", { a: shown.length, b: rows.length })}</span>
+          </div>
+        ) : (
+          <ul className="max-h-[min(72vh,46rem)] divide-y divide-line overflow-auto overscroll-contain">
+            {shown.map((r) => {
+              const isOpen = open === r.id;
+              return (
+                <li key={r.id}>
+                  <button type="button" onClick={() => toggle(r)} aria-expanded={hasDetail(r) ? isOpen : undefined} className="flex min-h-11 w-full items-start gap-3 px-4 py-3 text-left">
+                    <span className="min-w-0 flex-1">
+                      <span className="flex min-w-0 items-center justify-between gap-2"><ActionChip action={r.action} /><span className="mono shrink-0 text-2xs text-dim">{agoT(r.created_at)}</span></span>
+                      {r.target && <span className="mt-1.5 block truncate text-xs text-mute">{r.target}</span>}
+                      <span className="mt-1 block text-2xs text-dim">{r.user?.name || r.user?.email || t("System / guest")}</span>
+                    </span>
+                    {hasDetail(r) && <ChevronRight className={clsx("mt-1 size-4 shrink-0 text-dim transition-transform duration-150", isOpen && "rotate-90")} aria-hidden />}
+                  </button>
+                  {isOpen && <Detail row={r} />}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+
+        {!!rows.length && (
+          <div className="ad-foot">
+            <span className="mono">{t("Showing {a} of {b} entries", { a: shown.length, b: rows.length })}</span>
             {filtered && <Pill tone="accent">{t("filtered")}</Pill>}
           </div>
-        </Card>
-      )}
+        )}
+      </Panel>
     </div>
   );
 }

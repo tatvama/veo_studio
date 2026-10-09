@@ -1,15 +1,17 @@
 import { clsx } from "clsx";
-import { AlertTriangle, Loader2, Maximize, Minimize, Play, Rewind, StepBack, StepForward } from "lucide-react";
+import { AlertTriangle, AudioWaveform, Loader2, Maximize, Minimize, Pause, Play, Repeat, Rewind, StepBack, StepForward } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
 import { useT } from "../../lib/i18n";
-import { IconButton } from "../ui";
+import { BarButton } from "./parts";
 import { ScrubBar } from "./ScrubBar";
 import { PlayButton, ShortcutsButton, SpeedMenu, TimeReadout, VolumeControl } from "./Transport";
 import { peaksFromList } from "./Waveform";
 import {
-  DEFAULT_FPS, clamp, frameOf, frameTime, lsGet, lsSet, shortcutAllowed, type Clock, type Marker,
+  DEFAULT_FPS, clamp, formatTC, frameOf, frameTime, lsGet, lsSet, shortcutAllowed, useClock, type Clock, type Marker,
 } from "./utils";
+import "../../styles/console.css";
+import "../../styles/review.css";
 
 export { PlayerShortcuts } from "./Transport";
 
@@ -26,23 +28,28 @@ export interface PlayerHandle {
 export interface ContentRect { left: number; top: number; width: number; height: number }
 
 /**
- * Pro review player: custom transport (Space, ←/→ frame step, Shift = 1 s, J/K/L shuttle, K+J/L = single frame),
- * HH:MM:SS:FF timecode, scrub bar with comment markers + waveform, speed menu, volume and fullscreen.
+ * Pro review player: a broadcast-style monitor (dark bed with a slim overlay HUD: version label, transport state, timecode)
+ * over a scrub bar and a compact transport. Keyboard: Space, ←/→ frame step, Shift = 1 s, J/K/L shuttle, K+J/L = single frame.
  *   • `fill`   – the picture area grows to fill the parent (parent must have a height); otherwise it follows the video's
  *                aspect ratio, capped at `stageMax`.
  *   • `overlay` renders over the exact picture rect (letterbox aware) — used for frame drawings.
- *   • `dock`   renders between the picture and the controls (e.g. the pen toolbar).
+ *   • `dock`   is the pen palette. A function receives `side`: true when there is room to put it as a vertical rail beside
+ *              the picture (it then never covers the frame), false to render it as a bar between the picture and the controls.
  */
 export function ReviewPlayer({
   src, poster, fps = DEFAULT_FPS, peaks, clock, markers, activeMarker, onMarker, overlay, stageOverlay, dock, toolbar,
   onPlayingChange, keyboard = true, fill = false, stageMax = "60vh", aspectHint, stageClassName, handleRef, stageClickable = true,
-  className, durationHint, simple = false, shortcutsExtra,
+  className, durationHint, simple = false, shortcutsExtra, label, onVideoRatio,
 }: {
   src: string; poster?: string; fps?: number; peaks?: number[]; clock: Clock; markers?: Marker[]; activeMarker?: number | null;
-  onMarker?: (id: number) => void; overlay?: (rect: ContentRect) => ReactNode; stageOverlay?: ReactNode; dock?: ReactNode; toolbar?: ReactNode;
+  onMarker?: (id: number) => void; overlay?: (rect: ContentRect) => ReactNode; stageOverlay?: ReactNode; dock?: ReactNode | ((side: boolean) => ReactNode); toolbar?: ReactNode;
   onPlayingChange?: (playing: boolean) => void; keyboard?: boolean; fill?: boolean; stageMax?: string; aspectHint?: number;
   stageClassName?: string; handleRef?: React.Ref<PlayerHandle>; stageClickable?: boolean; className?: string; durationHint?: number;
   simple?: boolean; shortcutsExtra?: [string, string][];
+  /** Version label shown in the monitor HUD (e.g. "Final EN · 9:16 · #12"). */
+  label?: string;
+  /** Reports the real picture shape (width / height) once the video knows it. */
+  onVideoRatio?: (ratio: number) => void;
 }) {
   const t = useT();
   const vref = useRef<HTMLVideoElement>(null);
@@ -64,6 +71,9 @@ export function ReviewPlayer({
   const [waiting, setWaiting] = useState(false);
   const [error, setError] = useState(false);
   const [started, setStarted] = useState(false);
+  const [loop, setLoop] = useState(false);
+  const [wave, setWave] = useState(() => lsGet("veo-review-wave") !== "0");
+  const [box, setBox] = useState({ w: 0, h: 0 });
   const resumeAfterScrub = useRef(false);
   const kHeld = useRef(false);
 
@@ -87,6 +97,15 @@ export function ReviewPlayer({
     if (!el) return;
     const ro = new ResizeObserver(() => setStage({ w: el.clientWidth, h: el.clientHeight }));
     ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  // card size → whether the pen palette fits as a vertical rail beside the picture
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setBox({ w: el.clientWidth, h: el.clientHeight }));
+    ro.observe(el);
+    setBox({ w: el.clientWidth, h: el.clientHeight });
     return () => ro.disconnect();
   }, []);
   const rect: ContentRect = useMemo(() => {
@@ -287,87 +306,111 @@ export function ReviewPlayer({
   }, [keyboard]);
 
   const ratio = vsize ? vsize.w / vsize.h : aspectHint ?? 16 / 9;
+  const sideDock = (fill || fs) && box.w >= 640 && box.h >= 540;
+  const dockNode = typeof dock === "function" ? dock(sideDock) : dock;
+  const busy = playing || reverse > 0;
 
   return (
-    <div ref={rootRef} className={clsx("flex min-h-0 flex-col overflow-hidden bg-panel", fs ? "h-full bg-black" : "rounded-xl border border-line", className)}>
-      <div
-        ref={stageRef}
-        className={clsx("relative w-full select-none overflow-hidden bg-black", fs ? "min-h-0 flex-1" : fill ? "min-h-[96px] flex-1" : "shrink-0", stageClassName)}
-        style={!fs && !fill ? { aspectRatio: String(ratio), maxHeight: stageMax } : undefined}
-        onClick={() => stageClickable && toggle()}
-        onDoubleClick={toggleFs}
-      >
-        <video
-          ref={vref}
-          src={src}
-          poster={poster}
-          playsInline
-          preload="metadata"
-          className="absolute inset-0 h-full w-full object-contain"
-          onLoadedMetadata={(e) => {
-            const v = e.currentTarget;
-            setDuration(v.duration || durationHint || 0);
-            if (v.videoWidth && v.videoHeight) setVsize({ w: v.videoWidth, h: v.videoHeight });
-            v.volume = volume;
-            v.muted = muted;
-            clock.set(v.currentTime);
-          }}
-          onResize={(e) => { const v = e.currentTarget; if (v.videoWidth && v.videoHeight) setVsize({ w: v.videoWidth, h: v.videoHeight }); }}
-          onDurationChange={(e) => e.currentTarget.duration && setDuration(e.currentTarget.duration)}
-          onPlay={() => setPlaying(true)}
-          onPause={(e) => { setPlaying(false); if (!reverse) clock.set(e.currentTarget.currentTime); }}
-          onEnded={() => setPlaying(false)}
-          onSeeked={(e) => { if (!playing && !reverse) clock.set(e.currentTarget.currentTime); }}
-          onTimeUpdate={(e) => { if (!playing && !reverse) clock.set(e.currentTarget.currentTime); }}
-          onWaiting={() => setWaiting(true)}
-          onPlaying={() => setWaiting(false)}
-          onCanPlay={() => setWaiting(false)}
-          onRateChange={(e) => setRate(e.currentTarget.playbackRate)}
-          onError={() => { setError(true); setPlaying(false); }}
-        />
-        {overlay && rect.width > 0 && (
-          <div className="absolute" style={{ left: rect.left, top: rect.top, width: rect.width, height: rect.height }}>
-            {overlay(rect)}
-          </div>
-        )}
-        {stageOverlay}
-        <AnimatePresence>
-          {!started && !playing && !error && (
-            <motion.button
-              key="big-play"
-              type="button"
-              aria-label={t("Play")}
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 1.12 }}
-              transition={{ duration: 0.2 }}
-              onClick={(e) => { e.stopPropagation(); play(); }}
-              className="group/play absolute left-1/2 top-1/2 z-10 grid size-16 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-black/55 text-white ring-1 ring-white/25 backdrop-blur-md transition-colors hover:bg-accent hover:text-black max-sm:size-14"
-            >
-              <Play className="ml-1 size-7 transition-transform group-hover/play:scale-110" fill="currentColor" />
-            </motion.button>
+    <div ref={rootRef} className={clsx("flex min-h-0 flex-col bg-panel", fs ? "h-full bg-black" : "hud rounded-xl border border-line", className)}>
+      <div className={clsx(fs ? "flex min-h-0 flex-1" : fill ? "flex min-h-0 flex-1 gap-2 p-2 pb-0" : "p-2 pb-0")}>
+        {sideDock && dockNode}
+        <div
+          ref={stageRef}
+          className={clsx("cx-monitor select-none", fs ? "min-w-0 flex-1 rounded-none border-0" : fill ? "min-h-[96px] min-w-0 flex-1" : "w-full", stageClassName)}
+          style={!fs && !fill ? { aspectRatio: String(ratio), maxHeight: stageMax } : undefined}
+          onClick={() => stageClickable && toggle()}
+          onDoubleClick={toggleFs}
+        >
+          <video
+            ref={vref}
+            src={src}
+            poster={poster}
+            playsInline
+            preload="metadata"
+            loop={loop}
+            className="absolute inset-0 h-full w-full object-contain"
+            onLoadedMetadata={(e) => {
+              const v = e.currentTarget;
+              setDuration(v.duration || durationHint || 0);
+              if (v.videoWidth && v.videoHeight) { setVsize({ w: v.videoWidth, h: v.videoHeight }); onVideoRatio?.(v.videoWidth / v.videoHeight); }
+              v.volume = volume;
+              v.muted = muted;
+              clock.set(v.currentTime);
+            }}
+            onResize={(e) => { const v = e.currentTarget; if (v.videoWidth && v.videoHeight) { setVsize({ w: v.videoWidth, h: v.videoHeight }); onVideoRatio?.(v.videoWidth / v.videoHeight); } }}
+            onDurationChange={(e) => e.currentTarget.duration && setDuration(e.currentTarget.duration)}
+            onPlay={() => setPlaying(true)}
+            onPause={(e) => { setPlaying(false); if (!reverse) clock.set(e.currentTarget.currentTime); }}
+            onEnded={() => setPlaying(false)}
+            onSeeked={(e) => { if (!playing && !reverse) clock.set(e.currentTarget.currentTime); }}
+            onTimeUpdate={(e) => { if (!playing && !reverse) clock.set(e.currentTarget.currentTime); }}
+            onWaiting={() => setWaiting(true)}
+            onPlaying={() => setWaiting(false)}
+            onCanPlay={() => setWaiting(false)}
+            onRateChange={(e) => setRate(e.currentTarget.playbackRate)}
+            onError={() => { setError(true); setPlaying(false); }}
+          />
+          {overlay && rect.width > 0 && (
+            <div className="absolute" style={{ left: rect.left, top: rect.top, width: rect.width, height: rect.height }}>
+              {overlay(rect)}
+            </div>
           )}
-        </AnimatePresence>
-        {waiting && playing && (
-          <div className="pointer-events-none absolute inset-0 flex items-center justify-center"><Loader2 className="size-8 animate-spin text-white/80" /></div>
-        )}
-        {error && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/85 p-6 text-center text-white">
-            <AlertTriangle className="size-7 text-warn" />
-            <p className="text-sm font-medium">{t("This video couldn't be loaded.")}</p>
-            <p className="text-xs text-white/70">{t("The file may still be processing or was removed.")}</p>
+          {/* HUD: version label + frame rate on the left, transport state + timecode on the right (decorative: the controls below carry the real state) */}
+          <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 z-[6] flex items-start justify-between gap-2 p-2">
+            <div className="flex min-w-0 items-center gap-1.5">
+              {label && <span className="rv-chip min-w-0"><span className="truncate">{label}</span></span>}
+              <span className="rv-chip max-sm:hidden"><span className="rv-dim">{t("FPS")}</span>{fps}</span>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {(busy || rate !== 1) && (
+                <span className="rv-chip" data-tone={busy ? "live" : undefined}>
+                  {reverse ? <Rewind fill="currentColor" /> : busy ? <Play fill="currentColor" /> : <Pause fill="currentColor" />}
+                  {reverse ? `${reverse}×` : `${rate}×`}
+                </span>
+              )}
+              <HudTime clock={clock} fps={fps} live={busy} />
+            </div>
           </div>
-        )}
+          {stageOverlay}
+          <AnimatePresence>
+            {!started && !playing && !error && (
+              <motion.button
+                key="big-play"
+                type="button"
+                aria-label={t("Play")}
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                exit={{ opacity: 0, scale: 1.12 }}
+                transition={{ duration: 0.2 }}
+                onClick={(e) => { e.stopPropagation(); play(); }}
+                className="group/play absolute left-1/2 top-1/2 z-10 grid size-16 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-xl bg-black/55 text-white ring-1 ring-white/25 backdrop-blur-md transition-colors hover:bg-accent hover:text-black max-sm:size-14"
+              >
+                <Play className="ml-1 size-7 transition-transform group-hover/play:scale-110" fill="currentColor" />
+              </motion.button>
+            )}
+          </AnimatePresence>
+          {waiting && playing && (
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center"><Loader2 className="size-8 animate-spin text-white/80" /></div>
+          )}
+          {error && (
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-black/85 p-6 text-center text-white">
+              <AlertTriangle className="size-7 text-warn" />
+              <p className="text-sm font-medium">{t("This video couldn't be loaded.")}</p>
+              <p className="text-xs text-white/70">{t("The file may still be processing or was removed.")}</p>
+            </div>
+          )}
+        </div>
       </div>
 
-      {dock}
+      {!sideDock && dockNode}
 
-      <div className="@container shrink-0 border-t border-line bg-panel px-2.5 pb-2 pt-1 sm:px-3.5">
+      <div className="@container shrink-0 rounded-b-[0.5625rem] bg-panel px-3 pb-2.5 pt-2">
         <ScrubBar
           clock={clock}
           duration={duration}
           fps={fps}
           peaks={peakData}
+          showWave={wave}
           markers={markers}
           activeMarker={activeMarker}
           onMarker={onMarker}
@@ -382,36 +425,34 @@ export function ReviewPlayer({
             }
           }}
         />
-        <div className="flex items-center gap-0.5">
-          <PlayButton playing={playing || reverse > 0} onClick={toggle} />
-          <IconButton title={t("Previous frame (←)")} onClick={() => step(-1)} className="@max-sm:hidden"><StepBack className="size-4" /></IconButton>
-          <IconButton title={t("Next frame (→)")} onClick={() => step(1)} className="@max-sm:hidden"><StepForward className="size-4" /></IconButton>
-          <TimeReadout clock={clock} fps={fps} duration={duration} className="ml-1" />
-          <AnimatePresence>
-            {(reverse > 0 || rate !== 1) && (
-              <motion.span
-                key={reverse ? `r${reverse}` : `f${rate}`}
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.15 }}
-                className="ml-1.5 inline-flex items-center gap-0.5 rounded bg-accent/15 px-1.5 py-0.5 font-mono text-2xs font-semibold text-accent-ink"
-                title={t("Shuttle: J / K / L")}
-              >
-                {reverse ? <><Rewind className="size-3" fill="currentColor" />{reverse}×</> : `${rate}×`}
-              </motion.span>
+        <div className="mt-1 flex flex-wrap items-center gap-x-0.5 gap-y-1">
+          <PlayButton playing={busy} onClick={toggle} />
+          <BarButton label={t("Previous frame (←)")} onClick={() => step(-1)}><StepBack className="size-4" /></BarButton>
+          <BarButton label={t("Next frame (→)")} onClick={() => step(1)}><StepForward className="size-4" /></BarButton>
+          <TimeReadout clock={clock} fps={fps} duration={duration} className="ml-1.5" />
+          <div className="ml-auto flex items-center gap-0.5">
+            {toolbar}
+            <BarButton label={t("Loop")} active={loop} aria-pressed={loop} onClick={() => setLoop((l) => !l)} className="@max-sm:hidden"><Repeat className="size-4" /></BarButton>
+            {peakData && (
+              <BarButton label={t("Waveform")} active={wave} aria-pressed={wave} className="@max-sm:hidden"
+                onClick={() => setWave((w) => { lsSet("veo-review-wave", w ? "0" : "1"); return !w; })}><AudioWaveform className="size-4" /></BarButton>
             )}
-          </AnimatePresence>
-          <div className="flex-1" />
-          {toolbar}
-          <SpeedMenu rate={rate} onPick={(r) => { setBaseRate(r); if (vref.current) vref.current.playbackRate = r; }} />
-          <VolumeControl volume={volume} muted={muted} onVolume={(v) => { setVolume(v); setMuted(false); }} onToggleMute={() => setMuted((m) => !m)} />
-          {!simple && <ShortcutsButton extra={shortcutsExtra} />}
-          <IconButton title={fs ? t("Exit fullscreen (F)") : t("Fullscreen (F)")} onClick={toggleFs} className="max-sm:size-10">
-            {fs ? <Minimize className="size-4" /> : <Maximize className="size-4" />}
-          </IconButton>
+            <span aria-hidden className="mx-1 hidden h-5 w-px bg-line @sm:block" />
+            <SpeedMenu rate={rate} onPick={(r) => { setBaseRate(r); if (vref.current) vref.current.playbackRate = r; }} />
+            <VolumeControl className="@max-sm:hidden" volume={volume} muted={muted} onVolume={(v) => { setVolume(v); setMuted(false); }} onToggleMute={() => setMuted((m) => !m)} />
+            {!simple && <ShortcutsButton extra={shortcutsExtra} />}
+            <BarButton label={fs ? t("Exit fullscreen (F)") : t("Fullscreen (F)")} onClick={toggleFs}>
+              {fs ? <Minimize className="size-4" /> : <Maximize className="size-4" />}
+            </BarButton>
+          </div>
         </div>
       </div>
     </div>
   );
+}
+
+/** Timecode chip in the monitor HUD (its own component so only it re-renders at 60 fps). */
+function HudTime({ clock, fps, live }: { clock: Clock; fps: number; live: boolean }) {
+  const time = useClock(clock);
+  return <span className="rv-chip" data-tone={live ? "live" : undefined}>{formatTC(time, fps, true)}</span>;
 }

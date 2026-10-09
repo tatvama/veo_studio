@@ -12,6 +12,8 @@ import { Badge, Button, Segmented, Tooltip } from "../ui";
 import { QcBadges } from "./Qc";
 import { capturePointer, releasePointer, takeEngine } from "./util";
 
+import "../../styles/console.css";
+
 /** Pick a shootout winner: selects the take and credits its engine's win count. */
 export function usePickWinner(shotId: number) {
   const qc = useQueryClient();
@@ -125,20 +127,20 @@ export function SyncedCompare({ takes, shotId, canReview, action = "winner", asp
   return (
     <div className="space-y-2.5">
       {videos.length > 0 && (
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-line bg-raised px-2 py-1.5">
+        <div className="cx-block flex flex-wrap items-center gap-x-2 gap-y-1 px-2 py-1.5">
           <Tooltip content={playing ? t("Pause all") : t("Play all")}>
             <button type="button" onClick={playing ? pause : play} aria-label={playing ? t("Pause all") : t("Play all")}
-              className="grid size-8 shrink-0 place-items-center rounded-lg bg-accent text-black shadow-sm transition-[transform,filter] hover:brightness-110 active:scale-95">
+              className="grid size-8 shrink-0 place-items-center rounded-lg bg-accent text-black transition-[transform,filter] hover:brightness-110 active:scale-95 max-sm:size-10">
               {playing ? <Pause className="size-4" fill="currentColor" /> : <Play className="size-4 translate-x-px" fill="currentColor" />}
             </button>
           </Tooltip>
           <Tooltip content={t("Restart")}>
-            <button type="button" onClick={restart} aria-label={t("Restart")} className="grid size-8 shrink-0 place-items-center rounded-lg text-mute transition-colors hover:bg-hover hover:text-ink">
+            <button type="button" onClick={restart} aria-label={t("Restart")} className="grid size-8 shrink-0 place-items-center rounded-lg text-mute transition-colors hover:bg-hover hover:text-ink max-sm:size-10">
               <RotateCcw className="size-4" />
             </button>
           </Tooltip>
           <Scrubber value={Math.min(time, dur || 1)} max={dur || 1} onChange={seek} label={t("Scrub all clips")} />
-          <span className="w-[4.5rem] shrink-0 text-right font-mono text-2xs tabular-nums text-mute">{time.toFixed(1)} / {(dur || 0).toFixed(1)}s</span>
+          <span className="mono w-[4.5rem] shrink-0 text-right text-2xs text-mute">{time.toFixed(1)} / {(dur || 0).toFixed(1)}s</span>
           <Segmented value={rate} onChange={setRate} aria-label={t("Playback speed")}
             options={[{ value: 0.5, label: "0.5×" }, { value: 1, label: "1×" }]} />
         </div>
@@ -151,9 +153,9 @@ export function SyncedCompare({ takes, shotId, canReview, action = "winner", asp
             return (
               <motion.div key={x.id} layout initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.97 }}
                 transition={{ duration: 0.18, ease: "easeOut" }}
-                className={clsx("flex flex-col overflow-hidden rounded-xl border bg-panel", x.selected ? "border-accent shadow-glow" : "border-line")}>
+                className={clsx("hud flex flex-col rounded-xl border bg-panel", x.selected ? "border-accent shadow-glow" : "border-line")}>
                 <div className="flex items-center gap-2 px-2.5 py-1.5">
-                  <span className="grid size-5 shrink-0 place-items-center rounded-md bg-accent text-2xs font-bold text-black">{L}</span>
+                  <span className="mono grid size-5 shrink-0 place-items-center rounded-md bg-accent text-2xs font-bold text-black">{L}</span>
                   <p className="min-w-0 flex-1 truncate text-xs font-semibold" title={x.params?.engine || x.model}>{takeEngine(x) || x.provider}</p>
                   {x.selected && (
                     <motion.span initial={{ scale: 0.5, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: "spring", stiffness: 520, damping: 20 }}>
@@ -161,7 +163,7 @@ export function SyncedCompare({ takes, shotId, canReview, action = "winner", asp
                     </motion.span>
                   )}
                 </div>
-                <div className={clsx("relative w-full bg-black", ratio, "max-h-[42vh]")}>
+                <div className={clsx("relative w-full overflow-hidden bg-black", ratio, "max-h-[42vh]")}>
                   {isVideo(x) ? (
                     <video
                       ref={(el) => { refs.current[vi] = el; }}
@@ -187,15 +189,15 @@ export function SyncedCompare({ takes, shotId, canReview, action = "winner", asp
                   )}
                 </div>
                 <div className="flex flex-1 flex-col gap-1.5 p-2.5">
-                  <div className="flex flex-wrap items-center gap-1 text-2xs tabular-nums text-dim">
+                  <div className="mono flex flex-wrap items-center gap-1 text-2xs text-dim">
                     <span>#{x.id}</span>
-                    {x.cost_usd > 0 && <span>· {usd(x.cost_usd)}</span>}
+                    {x.cost_usd > 0 && <span>· <span className="text-money">{usd(x.cost_usd)}</span></span>}
                     {x.duration_s > 0 && <span>· {secs(x.duration_s)}</span>}
                     {x.params?.mode && <Badge>{String(x.params.mode)}</Badge>}
                   </div>
                   <QcBadges take={x} />
                   {canReview && !x.selected && (
-                    <Button size="sm" variant={action === "winner" ? "primary" : "secondary"} className="mt-auto w-full" loading={busy === x.id}
+                    <Button size="sm" variant="secondary" className="mt-auto w-full max-sm:h-10" loading={busy === x.id}
                       icon={action === "winner" ? <Trophy className="size-3.5" /> : undefined} onClick={() => pick(x, action)}>
                       {action === "winner" ? t("Pick {letter} as winner", { letter: L }) : t("Use take {letter}", { letter: L })}
                     </Button>

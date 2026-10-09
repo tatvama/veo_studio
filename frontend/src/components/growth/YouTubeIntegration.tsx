@@ -1,24 +1,27 @@
-/** Settings → Integrations: connect / disconnect YouTube channels for publishing + analytics. */
+/** Settings → Integrations: connect / disconnect YouTube channels for publishing + analytics. Also the Export page's channel panel. */
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { CircleCheck, ExternalLink, MonitorPlay, Plug, Unplug } from "lucide-react";
+import { BarChart3, ExternalLink, Eye, MonitorPlay, Plug, Unplug } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
+import "../../styles/console.css";
 import { ConfirmDialog } from "../../pages/admin/shared/ConfirmDialog";
 import { api } from "../../lib/api";
 import { useT } from "../../lib/i18n";
 import { useIntegrations } from "../../lib/queries";
 import { ROLE_RANK, type Role } from "../../lib/types";
-import { Avatar, Badge, Button, Skeleton } from "../ui";
-import { agoT, CopyButton, fmtDateTime, listItem } from "./common";
+import { Avatar, Badge, Button, Panel, Skeleton, StatusDot } from "../ui";
+import { agoT, CopyButton, fmtDateTime, listItem, platformLabel } from "./common";
+import type { ExportMetrics, RenderRow } from "./ExportCard";
 
 import { Pill } from "../../pages/admin/shared/Pill";
 function Step({ n, last, children }: { n: number; last?: boolean; children: React.ReactNode }) {
   return (
     <li className="relative flex gap-3 pb-4 last:pb-0">
       {!last && <span aria-hidden className="absolute left-[11px] top-6 h-[calc(100%-1.25rem)] w-px bg-line" />}
-      <span className="relative grid size-6 shrink-0 place-items-center rounded-full border border-line bg-raised text-2xs font-semibold tabular-nums text-mute">{n}</span>
+      <span className="mono relative grid size-6 shrink-0 place-items-center rounded-md border border-line bg-raised text-2xs font-medium text-mute">{n}</span>
       <div className="min-w-0 flex-1 pt-0.5 text-sm text-mute">{children}</div>
     </li>
   );
@@ -67,7 +70,7 @@ export default function YouTubeIntegration({ role }: { role: Role }) {
   if (isLoading) {
     return (
       <div className="flex items-center gap-3">
-        <Skeleton className="size-10 rounded-xl" />
+        <Skeleton className="size-10 rounded-lg" />
         <div className="flex-1 space-y-2"><Skeleton className="h-4 w-40" /><Skeleton className="h-3 w-72 max-w-full" /></div>
       </div>
     );
@@ -76,7 +79,7 @@ export default function YouTubeIntegration({ role }: { role: Role }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
-        <span className="grid size-10 shrink-0 place-items-center rounded-xl bg-bad/12 text-bad ring-1 ring-inset ring-bad/20"><MonitorPlay className="size-5" /></span>
+        <span className="hud grid size-10 shrink-0 place-items-center rounded-lg border border-accent/25 bg-accent/10 text-accent-ink"><MonitorPlay className="size-5" /></span>
         <div className="min-w-0 flex-1 basis-60">
           <p className="flex flex-wrap items-center gap-2 text-sm font-semibold">
             YouTube
@@ -86,14 +89,14 @@ export default function YouTubeIntegration({ role }: { role: Role }) {
           <p className="mt-0.5 text-xs text-mute">{t("Upload finished renders and pull views and retention back into the hook writer.")}</p>
         </div>
         {data?.youtube_ready && canConnect && (
-          <Button size="sm" variant={accounts.length ? "outline" : "primary"} icon={<Plug className="size-3.5" />} loading={connecting} onClick={connect}>
+          <Button size="sm" variant={accounts.length ? "outline" : "primary"} className="max-sm:h-10" icon={<Plug className="size-3.5" />} loading={connecting} onClick={connect}>
             {accounts.length ? t("Connect another channel") : t("Connect channel")}
           </Button>
         )}
       </div>
 
       {!data?.youtube_ready && (
-        <div className="rounded-xl border border-warn/30 bg-warn/6 p-4">
+        <div className="cx-block p-4" data-tone="money">
           <p className="mb-3 text-sm font-medium">{t("YouTube needs a Google OAuth client on the server first.")}</p>
           <ol>
             <Step n={1}>{t("In Google Cloud Console, enable the YouTube Data API v3 and the YouTube Analytics API.")}</Step>
@@ -116,7 +119,7 @@ export default function YouTubeIntegration({ role }: { role: Role }) {
       )}
 
       {!!accounts.length && (
-        <ul className="divide-y divide-line overflow-hidden rounded-xl border border-line">
+        <ul className="cx-block divide-y divide-line overflow-hidden">
           <AnimatePresence initial={false}>
             {[...accounts, ...others].map((a) => {
               const name = a.account_name || a.account_id || a.provider;
@@ -124,20 +127,20 @@ export default function YouTubeIntegration({ role }: { role: Role }) {
                 <motion.li key={a.id} layout {...listItem} className="flex items-center gap-3 bg-panel px-3.5 py-2.5">
                   <span className="relative shrink-0">
                     <Avatar name={name} size={34} />
-                    <CircleCheck className="absolute -bottom-1 -right-1 size-4 rounded-full bg-panel text-ok" />
+                    <StatusDot tone="ok" live className="absolute -bottom-0.5 -right-0.5 rounded-full ring-2 ring-panel" />
                   </span>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{name}</p>
-                    <p className="truncate text-2xs text-dim" title={fmtDateTime(a.created_at)}>
+                    <p className="mono truncate text-2xs text-dim" title={fmtDateTime(a.created_at)}>
                       {a.provider} · {a.account_id ? `${a.account_id} · ` : ""}{t("connected {when}", { when: agoT(a.created_at) })}
                     </p>
                   </div>
                   {a.provider === "youtube" && a.account_id && (
                     <a href={`https://www.youtube.com/channel/${a.account_id}`} target="_blank" rel="noreferrer" aria-label={t("Open the channel on YouTube")} title={t("Open the channel on YouTube")}
-                      className="grid size-8 place-items-center rounded-lg text-mute transition-colors hover:bg-hover hover:text-ink"><ExternalLink className="size-4" /></a>
+                      className="grid size-8 place-items-center rounded-lg text-mute transition-colors hover:bg-hover hover:text-ink max-sm:size-10"><ExternalLink className="size-4" /></a>
                   )}
                   {canRemove && (
-                    <Button size="sm" variant="ghost" icon={<Unplug className="size-3.5" />} loading={removing === a.id} className={clsx("hover:text-bad")}
+                    <Button size="sm" variant="ghost" icon={<Unplug className="size-3.5" />} loading={removing === a.id} className={clsx("hover:text-bad max-sm:h-10")}
                       onClick={() => setConfirm({ id: a.id, name: a.account_name || a.provider })}>{t("Disconnect")}</Button>
                   )}
                 </motion.li>
@@ -152,5 +155,101 @@ export default function YouTubeIntegration({ role }: { role: Role }) {
         {confirm && t("Disconnect {name}? Publishing and analytics for this channel stop until it's connected again.", { name: confirm.name })}
       </ConfirmDialog>
     </div>
+  );
+}
+
+/** The Export page's channel panel: connection state, the connected channel(s) and a publish history with views. */
+export function YouTubePanel({ exports, metrics, canProduce, refreshing, onRefreshMetrics, className }: {
+  exports: RenderRow[]; metrics: Record<number, ExportMetrics>; canProduce: boolean; refreshing?: boolean; onRefreshMetrics?: () => void; className?: string;
+}) {
+  const t = useT();
+  const { data, isLoading } = useIntegrations();
+  const accounts = (data?.accounts ?? []).filter((a) => a.provider === "youtube");
+  const connected = !!data?.youtube_ready && accounts.length > 0;
+
+  const history = exports
+    .flatMap((x) => Object.entries(x.published ?? {}).map(([platform, v]) => ({ x, platform, v })))
+    .sort((a, b) => (b.v.at ?? "").localeCompare(a.v.at ?? ""));
+  const anyYouTube = exports.some((x) => x.published?.youtube?.video_id);
+
+  return (
+    <Panel index={4} className={className} eyebrow={t("Channel")} icon={<MonitorPlay />} title={t("YouTube")}
+      actions={canProduce && anyYouTube && onRefreshMetrics ? (
+        <Button size="sm" variant="outline" className="max-sm:h-10" icon={<BarChart3 className="size-3.5" />} loading={refreshing} onClick={onRefreshMetrics}>{t("Refresh metrics")}</Button>
+      ) : undefined}>
+      {isLoading ? (
+        <div className="space-y-2.5" aria-hidden><Skeleton className="h-4 w-32" /><Skeleton className="h-10 rounded-lg" /></div>
+      ) : (
+        <div className="@container">
+        <div className="grid gap-x-6 gap-y-4 @xl:grid-cols-2">
+          <div className="min-w-0 space-y-4">
+          <div className="flex items-center gap-2 text-xs font-medium">
+            <StatusDot tone={connected ? "ok" : data?.youtube_ready ? "neutral" : "warn"} live={connected} />
+            <span className={connected ? "text-ok" : data?.youtube_ready ? "text-mute" : "text-warn"}>
+              {connected ? t("Connected") : data?.youtube_ready ? t("Not connected") : t("Needs setup")}
+            </span>
+          </div>
+
+          {connected ? (
+            <ul className="cx-block divide-y divide-line overflow-hidden">
+              {accounts.map((a) => {
+                const name = a.account_name || a.account_id || "YouTube";
+                return (
+                  <li key={a.id} className="flex items-center gap-2.5 px-3 py-2">
+                    <Avatar name={name} size={26} />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium">{name}</p>
+                      <p className="mono truncate text-2xs text-dim" title={fmtDateTime(a.created_at)}>{t("connected {when}", { when: agoT(a.created_at) })}</p>
+                    </div>
+                    {a.account_id && (
+                      <a href={`https://www.youtube.com/channel/${a.account_id}`} target="_blank" rel="noreferrer" aria-label={t("Open the channel on YouTube")} title={t("Open the channel on YouTube")}
+                        className="grid size-8 shrink-0 place-items-center rounded-lg text-mute transition-colors hover:bg-hover hover:text-ink max-sm:size-10"><ExternalLink className="size-3.5" /></a>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <div className="cx-block flex items-start gap-3 px-3.5 py-3">
+              <MonitorPlay className="mt-0.5 size-4 shrink-0 text-mute" />
+              <div className="min-w-0 flex-1 text-xs leading-relaxed text-mute">
+                <p>{t("Publish finished renders straight to your channel.")}</p>
+                {canProduce
+                  ? <Link to="/settings#integrations" className="mt-1.5 inline-flex font-medium text-accent-ink hover:underline max-sm:min-h-10 max-sm:items-center">{t("Connect YouTube to publish")}</Link>
+                  : <p className="mt-1 text-dim">{t("A producer or admin can connect a channel.")}</p>}
+              </div>
+            </div>
+          )}
+          </div>
+
+          <div className="min-w-0">
+            <p className="eyebrow mb-2 flex items-center gap-2">{t("Publish history")}<span className="mono text-dim">{history.length}</span></p>
+            {history.length ? (
+              <ul className="cx-block cx-scroll max-h-56 divide-y divide-line">
+                {history.map(({ x, platform, v }) => {
+                  const m = platform === "youtube" ? metrics[x.id] : undefined;
+                  return (
+                    <li key={`${x.id}-${platform}`} className="flex items-center gap-2.5 px-3 py-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-xs font-medium" title={v.title}>{v.title || (platform === "youtube" ? t("YouTube video") : platformLabel(platform))}</p>
+                        <p className="mono truncate text-2xs text-dim">#{x.id} · {platform === "youtube" ? "" : `${platformLabel(platform)} · `}{v.status === "uploaded" ? t("Uploaded") : v.status}{v.at ? ` · ${agoT(v.at)}` : ""}</p>
+                      </div>
+                      {m && <span className="mono inline-flex shrink-0 items-center gap-1 text-2xs text-mute" title={t("Views")}><Eye className="size-3" />{m.views.toLocaleString()}</span>}
+                      {v.url && (
+                        <a href={v.url} target="_blank" rel="noreferrer" aria-label={t("Open")} title={v.url}
+                          className="grid size-7 shrink-0 place-items-center rounded-md text-mute transition-colors hover:bg-hover hover:text-ink max-sm:size-10"><ExternalLink className="size-3.5" /></a>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <p className="text-xs text-dim">{t("Nothing published yet.")}</p>
+            )}
+          </div>
+        </div>
+        </div>
+      )}
+    </Panel>
   );
 }

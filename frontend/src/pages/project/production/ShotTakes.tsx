@@ -87,7 +87,7 @@ export function Takes({ shot, canEdit, canReview, refresh, aspect, onShootout, o
   return (
     <div className="space-y-5">
       {staleCount > 0 && (
-        <div role="status" className="flex flex-wrap items-center gap-2 rounded-lg border border-warn/30 bg-warn/8 px-3 py-2 text-xs text-amber-300">
+        <div role="status" className="flex flex-wrap items-center gap-2 rounded-lg border border-warn/30 bg-warn/8 px-3 py-2 text-xs text-warn">
           <History className="size-4 shrink-0" />
           <span className="min-w-0 flex-1">
             {staleCount === 1 ? t("1 take is stale: the shot changed after it was made.") : t("{n} takes are stale: the shot changed after they were made.", { n: staleCount })}
@@ -96,12 +96,12 @@ export function Takes({ shot, canEdit, canReview, refresh, aspect, onShootout, o
         </div>
       )}
       {shoot.length > 0 && (
-        <section className="overflow-hidden rounded-xl border border-accent/30 bg-accent/5">
+        <section className="hud relative overflow-hidden rounded-xl border border-accent/30 bg-accent/5">
           <header className="flex flex-wrap items-center gap-2 px-3 py-2.5">
             <span className="grid size-6 shrink-0 place-items-center rounded-md bg-accent/15 text-accent-ink"><Swords className="size-3.5" /></span>
             <div className="min-w-0 flex-1">
-              <h4 className="text-sm font-semibold tracking-tight">{t("Shootout")}</h4>
-              <p className="truncate text-2xs text-mute">{t("{n} takes · pick the one that goes in the cut", { n: shoot.length })}</p>
+              <h4 className="eyebrow !text-ink">{t("Shootout")}</h4>
+              <p className="mt-1.5 truncate text-2xs text-mute">{t("{n} takes · pick the one that goes in the cut", { n: shoot.length })}</p>
             </div>
             {canEdit && <Button size="sm" variant="ghost" onClick={onShootout}>{t("New shootout")}</Button>}
             <IconButton title={t("Compare full size")} onClick={() => setBig(true)}><Maximize2 className="size-4" /></IconButton>
@@ -112,8 +112,8 @@ export function Takes({ shot, canEdit, canReview, refresh, aspect, onShootout, o
                 const on = shootPicked.some((p) => p.id === x.id);
                 return (
                   <button key={x.id} type="button" onClick={() => toggleShoot(x.id)} aria-pressed={on}
-                    className={clsx("max-w-[190px] truncate rounded-full border px-2.5 py-0.5 text-2xs transition-colors",
-                      on ? "border-accent/60 bg-accent/15 text-ink" : "border-line text-mute hover:border-dim/60 hover:text-ink")}
+                    className={clsx("mono max-w-[190px] truncate rounded-md border px-2 py-0.5 text-2xs transition-colors",
+                      on ? "border-accent/50 bg-accent/12 text-ink" : "border-line text-mute hover:border-dim/60 hover:text-ink")}
                     title={t("Show / hide in the comparison")}>
                     {takeEngine(x)} <span className="text-dim">#{x.id}</span>
                   </button>
@@ -131,7 +131,7 @@ export function Takes({ shot, canEdit, canReview, refresh, aspect, onShootout, o
       <AnimatePresence initial={false}>
         {compare.length > 0 && (
           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.2 }} className="overflow-hidden">
-            <div className="flex items-center gap-2 rounded-lg bg-info/10 px-3 py-2 text-xs text-info">
+            <div className="flex items-center gap-2 rounded-lg border border-info/25 bg-info/10 px-3 py-2 text-xs text-info">
               <Columns2 className="size-4" /> {compare.length < 2 ? t("Pick one more take to compare") : t("{n} takes side by side", { n: compare.length })}
               <div className="flex-1" />
               <Button size="sm" variant="ghost" icon={<X className="size-3.5" />} onClick={() => setCompare([])}>{t("Clear")}</Button>
@@ -147,10 +147,11 @@ export function Takes({ shot, canEdit, canReview, refresh, aspect, onShootout, o
 
       {groups.map((g) => (
         <section key={g.kind}>
-          <h4 className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-mute">
-            {g.kind === "keyframe" ? <ImageIcon className="size-3.5" /> : isAudio(g.kind) ? <Mic className="size-3.5" /> : <Film className="size-3.5" />}
+          <h4 className="eyebrow mb-2 flex items-center gap-2">
+            <span className="text-mute [&>svg]:size-3.5">{g.kind === "keyframe" ? <ImageIcon /> : isAudio(g.kind) ? <Mic /> : <Film />}</span>
             {t(KIND_LABELS[g.kind] ?? g.kind)}
-            <span className="rounded-full bg-raised px-1.5 text-2xs font-semibold tabular-nums text-dim">{g.items.length}</span>
+            <span className="mono text-dim">{g.items.length}</span>
+            <span aria-hidden className="h-px flex-1 bg-line" />
           </h4>
           <div className={clsx("grid gap-2.5", row ? "grid-cols-1" : "grid-cols-1 @md:grid-cols-2")}>
             <AnimatePresence initial={false}>
@@ -192,8 +193,8 @@ function TakeCard({ x, aspect, row, showing, canEdit, canReview, comparing, qcOp
   const engine = !isAudio(x.kind) ? takeEngine(x) : "";
   const poster = visual ? (
     <button type="button" onClick={onView} aria-label={t("Show in the viewer")} aria-pressed={showing}
-      className={clsx("group/th relative block shrink-0 overflow-hidden bg-black outline-none focus-visible:ring-2 focus-visible:ring-accent/70",
-        row ? "w-[84px] self-start rounded-lg" : "w-full", showing && "ring-2 ring-inset ring-info")}
+      className={clsx("scr [--scr-l:7px] group/th block shrink-0 outline-none focus-visible:ring-2 focus-visible:ring-accent/70",
+        row ? "w-[84px] self-start" : "w-full", showing && "is-lit")}
       style={{ aspectRatio: thumbRatio(aspect) }}>
       {src ? <img src={src} alt="" loading="lazy" className="size-full object-cover" /> : <span className="grid size-full place-items-center text-dim"><Film className="size-5" /></span>}
       <span className="absolute inset-0 grid place-items-center bg-black/10 transition-colors group-hover/th:bg-black/35">
@@ -202,11 +203,11 @@ function TakeCard({ x, aspect, row, showing, canEdit, canReview, comparing, qcOp
         </span>
       </span>
       {x.selected && (
-        <span className="pointer-events-none absolute left-1 top-1 inline-flex items-center gap-1 rounded-md bg-accent px-1 py-0.5 text-2xs font-semibold text-black shadow">
+        <span className="mono pointer-events-none absolute left-1.5 top-1.5 z-[5] inline-flex items-center gap-1 rounded bg-accent px-1 py-0.5 text-2xs font-semibold text-[var(--on-accent)] shadow">
           <Crown className="size-3" />{!row && t("in use")}
         </span>
       )}
-      {showing && <span className="pointer-events-none absolute bottom-1 right-1 rounded bg-info px-1 text-2xs font-semibold leading-4 text-black">{t("Viewing")}</span>}
+      {showing && <span className="mono pointer-events-none absolute bottom-1.5 right-1.5 z-[5] rounded bg-accent px-1 text-2xs font-semibold leading-4 text-[var(--on-accent)]">{t("Viewing")}</span>}
     </button>
   ) : (
     <span className="grid size-10 shrink-0 place-items-center self-start rounded-lg bg-raised text-mute"><Mic className="size-4" /></span>
@@ -214,7 +215,7 @@ function TakeCard({ x, aspect, row, showing, canEdit, canReview, comparing, qcOp
   return (
     <motion.div layout="position" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, scale: 0.97 }} transition={{ duration: 0.18, ease: "easeOut" }}
       className={clsx("overflow-hidden rounded-xl border bg-panel transition-colors",
-        x.selected ? "border-accent/70" : stale ? "border-warn/40" : q.passed === false ? "border-bad/40" : "border-line hover:border-dim/50", row ? "flex gap-3 p-2.5" : "")}>
+        x.selected ? "border-accent/60 shadow-[0_0_16px_-8px_var(--color-accent)]" : stale ? "border-warn/40" : q.passed === false ? "border-bad/40" : "border-line hover:border-dim/50", row ? "flex gap-3 p-2.5" : "")}>
       {poster}
       <div className={clsx("min-w-0 flex-1 space-y-1.5 text-2xs", !row && "p-2.5")}>
         <div className="flex flex-wrap items-center gap-1">
@@ -228,10 +229,10 @@ function TakeCard({ x, aspect, row, showing, canEdit, canReview, comparing, qcOp
           <QcBadges take={x} />
           {x.params?.warning && <Badge tone="warn">{t(x.params.warning)}</Badge>}
         </div>
-        {engine && <p className="flex items-center gap-1 truncate text-mute" title={x.params?.engine || x.model}><Cpu className="size-3 shrink-0" />{engine}</p>}
-        <p className="truncate tabular-nums text-dim">#{x.id} · {usd(x.cost_usd)} · {ago(x.created_at)}</p>
+        {engine && <p className="mono flex items-center gap-1 truncate text-mute" title={x.params?.engine || x.model}><Cpu className="size-3 shrink-0" />{engine}</p>}
+        <p className="mono truncate tabular-nums text-dim">#{x.id} · <span className="text-money">{usd(x.cost_usd)}</span> · {ago(x.created_at)}</p>
         {stale && (
-          <p className="flex items-start gap-1 text-amber-300" title={staleReason || undefined}>
+          <p className="flex items-start gap-1 text-warn" title={staleReason || undefined}>
             <History className="mt-px size-3 shrink-0" />
             <span className="line-clamp-2">{staleReason ? t("Stale: {reason}", { reason: staleReason }) : t("Stale: the shot changed after this take was made")}</span>
           </p>

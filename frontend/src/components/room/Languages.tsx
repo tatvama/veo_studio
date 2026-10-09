@@ -67,10 +67,10 @@ export function LanguagesPanel({ ep }: { ep: Episode }) {
             const pct = st.total ? st.done / st.total : 0;
             const complete = st.total > 0 && st.done >= st.total;
             return (
-              <li key={l} className={clsx("grid items-center gap-x-4 gap-y-3 rounded-xl border p-3 @2xl:grid-cols-[10rem_minmax(0,1fr)_auto]",
+              <li key={l} className={clsx("grid items-center gap-x-4 gap-y-3 rounded-lg border p-3 @2xl:grid-cols-[10rem_minmax(0,1fr)_auto]",
                 l === working ? "border-accent/40 bg-accent/5" : "border-line bg-bg/40")}>
                 <div className="flex min-w-0 items-center gap-2.5">
-                  <span className={clsx("grid size-9 shrink-0 place-items-center rounded-lg text-xs font-semibold", complete ? "bg-ok/15 text-green-300" : "bg-raised text-mute")}>
+                  <span className={clsx("mono grid size-9 shrink-0 place-items-center rounded-lg text-xs font-semibold", complete ? "bg-ok/15 text-green-300" : "bg-raised text-mute")}>
                     {complete ? <Check className="size-4" strokeWidth={2.75} /> : LANG_SHORT[l] ?? l.toUpperCase()}
                   </span>
                   <div className="min-w-0">
@@ -80,7 +80,7 @@ export function LanguagesPanel({ ep }: { ep: Episode }) {
                 </div>
                 <div className="min-w-0">
                   <Progress value={pct} tone={complete ? "ok" : "accent"} />
-                  <p className="mt-1.5 text-2xs tabular-nums text-dim">{t("{done}/{total} shots translated", { done: st.done, total: st.total })}</p>
+                  <p className="mono mt-1.5 text-2xs text-dim">{t("{done}/{total} shots translated", { done: st.done, total: st.total })}</p>
                 </div>
                 {canEdit && (
                   <div className="flex flex-wrap gap-1.5">

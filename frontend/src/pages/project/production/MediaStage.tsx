@@ -25,7 +25,7 @@ function StageButton({ title, onClick, active, children, className }: { title: s
     <Tooltip content={title}>
       <button type="button" aria-label={title} aria-pressed={active} onClick={(e) => { e.stopPropagation(); onClick(); }}
         className={clsx("grid size-7 shrink-0 place-items-center rounded-md transition-colors hover:bg-white/15 hover:text-white",
-          active ? "text-accent-2" : "text-white/85", className)}>
+          active ? "text-accent" : "text-white/85", className)}>
         {children}
       </button>
     </Tooltip>
@@ -57,7 +57,7 @@ function Scrub({ fill, dur, onSeek }: { fill: React.RefObject<HTMLDivElement | n
       }}
     >
       <div className="relative h-1 w-full overflow-hidden rounded-full bg-white/25 transition-[height] group-hover/scrub:h-1.5">
-        <div ref={fill} data-t="0" className="h-full origin-left rounded-full bg-accent" style={{ transform: "scaleX(0)" }} />
+        <div ref={fill} data-t="0" className="h-full origin-left rounded-full bg-accent shadow-[0_0_8px_var(--color-accent)]" style={{ transform: "scaleX(0)" }} />
       </div>
     </div>
   );
@@ -137,7 +137,7 @@ function Player({ src, poster, autoPlay, box }: { src: string; poster?: string; 
         {!playing && (
           <motion.button type="button" key="big" aria-label={t("Play")} onClick={toggle}
             initial={{ opacity: 0, scale: 0.85 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 1.1 }} transition={{ duration: 0.16 }}
-            className="absolute left-1/2 top-1/2 grid size-14 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full bg-black/55 text-white shadow-lg backdrop-blur-md transition-colors hover:bg-accent hover:text-black">
+            className="absolute left-1/2 top-1/2 grid size-14 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-white/25 bg-black/55 text-white shadow-lg backdrop-blur-md transition-colors hover:border-accent hover:bg-accent hover:text-[var(--on-accent)]">
             <Play className="size-6 translate-x-0.5" fill="currentColor" />
           </motion.button>
         )}
@@ -149,7 +149,7 @@ function Player({ src, poster, autoPlay, box }: { src: string; poster?: string; 
           {playing ? <Pause className="size-4" fill="currentColor" /> : <Play className="size-4 translate-x-px" fill="currentColor" />}
         </StageButton>
         {/* small stages (a portrait clip in a narrow drawer) drop the secondary controls instead of clipping them */}
-        <span className="hidden w-[5.5rem] shrink-0 text-center font-mono text-2xs tabular-nums text-white/85 @min-[300px]/stage:block">{fmt(time)} / {fmt(dur)}</span>
+        <span className="mono hidden w-[5.5rem] shrink-0 text-center text-2xs tabular-nums text-white/85 @min-[300px]/stage:block">{fmt(time)} <span className="text-white/45">/ {fmt(dur)}</span></span>
         <Scrub fill={fill} dur={dur} onSeek={seek} />
         <StageButton title={muted ? t("Unmute") : t("Mute")} onClick={() => setMuted((m) => !m)} active={muted}>
           {muted ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
@@ -187,8 +187,8 @@ export function MediaStage({ id, kind, src, poster, aspect, label, emptyLabel, a
       }}
       style={{ aspectRatio: r.css, maxWidth: stageWidth(aspect) }}
       className={clsx(
-        "group/stage @container/stage relative isolate mx-auto w-full overflow-hidden rounded-xl bg-black outline-none ring-1 ring-inset ring-white/10 focus-visible:ring-2 focus-visible:ring-accent/70",
-        "[&:fullscreen]:max-w-none [&:fullscreen]:rounded-none", className)}
+        "scr group/stage @container/stage mx-auto w-full outline-none focus-visible:ring-2 focus-visible:ring-accent/70",
+        "[&:fullscreen]:max-w-none [&:fullscreen]:rounded-none", !src && kind !== "image" && "scr-empty", className)}
     >
       <motion.div key={id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.18 }} className="absolute inset-0">
         {kind === "video" && src ? (
@@ -196,14 +196,14 @@ export function MediaStage({ id, kind, src, poster, aspect, label, emptyLabel, a
         ) : kind === "image" && src ? (
           <img src={src} alt="" className="h-full w-full object-contain" />
         ) : (
-          <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center text-sm text-white/60">
+          <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center text-white/60">
             <ImageIcon className="size-8" />
-            {emptyLabel ?? t("No keyframe yet")}
+            <span className="eyebrow !text-white/60">{emptyLabel ?? t("No keyframe yet")}</span>
           </div>
         )}
       </motion.div>
       {label && (
-        <span className="pointer-events-none absolute left-2 top-2 max-w-[70%] truncate rounded-md bg-black/60 px-1.5 py-0.5 text-2xs font-medium text-white backdrop-blur-sm">{label}</span>
+        <span className="mono pointer-events-none absolute left-3 top-3 z-[5] max-w-[70%] truncate rounded border border-white/15 bg-black/60 px-1.5 py-0.5 text-2xs font-medium uppercase tracking-wider text-white backdrop-blur-sm">{label}</span>
       )}
     </div>
   );

@@ -7,8 +7,8 @@ import { useId, useState, type ReactNode } from "react";
 const remembered = new Map<string, boolean>();
 
 /**
- * A titled block that folds. Used for the drawer's sections so a long shot form stays scannable:
- * the header says what is inside (count / summary) even when closed.
+ * A titled instrument block that folds. Used for the inspector's sections so a long shot form stays scannable:
+ * the header (an eyebrow title, an icon chip, a count and a one-line summary) says what is inside even when closed.
  * `memo` is a stable name: when given, the open / closed choice is remembered.
  */
 export function Collapse({ title, icon, badge, summary, actions, defaultOpen = true, children, className, flush, memo }: {
@@ -19,15 +19,18 @@ export function Collapse({ title, icon, badge, summary, actions, defaultOpen = t
   const id = useId();
   const toggle = () => setOpen((o) => { if (memo) remembered.set(memo, !o); return !o; });
   return (
-    <section className={clsx("rounded-xl border border-line bg-raised/35", className)}>
+    <section className={clsx("hud relative rounded-xl border bg-panel/70 transition-colors", open ? "border-line" : "border-line/80", className)}>
+      <span aria-hidden className={clsx("edge-light pointer-events-none absolute inset-x-4 top-0 h-px transition-opacity duration-300", open ? "opacity-60" : "opacity-0")} />
       <div className="flex items-center gap-1 pr-2">
         <button type="button" aria-expanded={open} aria-controls={id} onClick={toggle}
-          className="flex min-w-0 flex-1 items-center gap-2 rounded-xl px-3 py-2.5 text-left">
-          {icon && <span className="grid size-6 shrink-0 place-items-center rounded-md bg-raised text-mute [&>svg]:size-3.5">{icon}</span>}
-          <span className="shrink-0 text-sm font-semibold tracking-tight">{title}</span>
+          className="flex min-w-0 flex-1 items-center gap-2.5 rounded-xl px-3 py-2.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-accent/60">
+          {icon && (
+            <span className={clsx("grid size-6 shrink-0 place-items-center rounded-md border transition-colors [&>svg]:size-3.5",
+              open ? "border-accent/30 bg-accent/10 text-accent-ink" : "border-line bg-raised text-mute")}>{icon}</span>
+          )}
+          <span className="eyebrow shrink-0 !text-ink">{title}</span>
           {badge}
-          {summary && <span className="min-w-0 flex-1 truncate text-2xs text-dim">{summary}</span>}
-          {!summary && <span className="flex-1" />}
+          {summary ? <span className="min-w-0 flex-1 truncate text-2xs text-dim">{summary}</span> : <span className="flex-1" />}
           <ChevronDown className={clsx("size-4 shrink-0 text-dim transition-transform duration-200", open && "rotate-180")} />
         </button>
         {actions}

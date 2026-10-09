@@ -1,0 +1,150 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   Production instruments: the storyboard monitors, the shot inspector and the timeline.
+   Plain CSS on the Command tokens (var(--color-*)): it follows the light theme and reduced motion by itself.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* ── Screens (monitor bezel + four corner brackets) ───────────────────────── */
+.scr {
+  position: relative;
+  isolation: isolate;
+  background: rgb(0 0 0);
+  overflow: hidden;
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-line) 80%, transparent), inset 0 0 0 1px rgb(255 255 255 / 0.05);
+  --scr-b: rgb(255 255 255 / 0.5);
+  --scr-l: 9px;
+  --scr-w: 1.5px;
+}
+.scr::before {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  z-index: 4;
+  pointer-events: none;
+  opacity: 0.8;
+  background:
+    linear-gradient(var(--scr-b), var(--scr-b)) top left / var(--scr-l) var(--scr-w) no-repeat,
+    linear-gradient(var(--scr-b), var(--scr-b)) top left / var(--scr-w) var(--scr-l) no-repeat,
+    linear-gradient(var(--scr-b), var(--scr-b)) top right / var(--scr-l) var(--scr-w) no-repeat,
+    linear-gradient(var(--scr-b), var(--scr-b)) top right / var(--scr-w) var(--scr-l) no-repeat,
+    linear-gradient(var(--scr-b), var(--scr-b)) bottom left / var(--scr-l) var(--scr-w) no-repeat,
+    linear-gradient(var(--scr-b), var(--scr-b)) bottom left / var(--scr-w) var(--scr-l) no-repeat,
+    linear-gradient(var(--scr-b), var(--scr-b)) bottom right / var(--scr-l) var(--scr-w) no-repeat,
+    linear-gradient(var(--scr-b), var(--scr-b)) bottom right / var(--scr-w) var(--scr-l) no-repeat;
+  transition: inset var(--dur) var(--ease-out-expo), opacity var(--dur) ease;
+}
+.mon:hover .scr::before, .scr:focus-within::before { inset: 3px; opacity: 1; }
+.mon[data-selected="true"] .scr, .scr.is-lit { --scr-b: var(--color-accent); }
+.mon[data-selected="true"] .scr::before, .scr.is-lit::before { opacity: 1; }
+.mon[data-picked="true"] .scr { --scr-b: var(--color-info); }
+/* a very faint scan texture on empty screens */
+.scr:fullscreen { border-radius: 0; }
+.scr-empty {
+  background-image: repeating-linear-gradient(0deg, rgb(255 255 255 / 0.025) 0 1px, transparent 1px 3px);
+}
+
+/* ── Monitor tile (storyboard card) ───────────────────────────────────────── */
+.mon-frame {
+  transition: border-color var(--dur) ease, box-shadow var(--dur) ease;
+}
+.mon[data-selected="true"] .mon-frame {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-accent) 55%, transparent), 0 0 26px -6px color-mix(in oklab, var(--color-accent) 70%, transparent);
+}
+.mon[data-picked="true"] .mon-frame {
+  border-color: var(--color-info);
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-info) 50%, transparent), 0 0 20px -8px var(--color-info);
+}
+.mon:not([data-selected="true"]):hover .mon-frame { border-color: color-mix(in oklab, var(--color-dim) 70%, transparent); }
+
+/* a stage segment: icon over a small lit bar */
+.seg-bar {
+  display: block;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--color-line);
+  transition: background-color var(--dur) ease, box-shadow var(--dur) ease;
+}
+.seg[data-s="done"] .seg-bar { background: var(--color-ok); box-shadow: 0 0 6px -1px var(--color-ok); }
+.seg[data-s="bad"] .seg-bar { background: var(--color-bad); box-shadow: 0 0 6px -1px var(--color-bad); }
+.seg[data-s="live"] .seg-bar { background: var(--color-accent); box-shadow: 0 0 6px -1px var(--color-accent); }
+.seg[data-s="na"] .seg-bar { background: transparent; border-top: 1px dashed var(--color-line); height: 0; margin-top: 1px; }
+
+/* ── Sliders with a lit fill (--fill is set by <Rng>) ─────────────────────── */
+.rng {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 16px;
+  background: transparent;
+  cursor: pointer;
+}
+.rng:disabled { cursor: not-allowed; opacity: 0.5; }
+.rng:focus-visible { outline: none; }
+.rng::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--color-accent) var(--fill, 0%), var(--color-line) var(--fill, 0%));
+}
+.rng::-moz-range-track { height: 3px; border-radius: 2px; background: var(--color-line); }
+.rng::-moz-range-progress { height: 3px; border-radius: 2px; background: var(--color-accent); }
+.rng::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 11px;
+  height: 11px;
+  margin-top: -4px;
+  border-radius: 3px;
+  background: var(--color-panel);
+  border: 1.5px solid var(--color-accent);
+  box-shadow: 0 0 0 3px transparent, 0 0 8px -1px var(--color-accent);
+  transition: box-shadow var(--dur-fast) ease, transform var(--dur-fast) ease;
+}
+.rng::-moz-range-thumb {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  background: var(--color-panel);
+  border: 1.5px solid var(--color-accent);
+  box-shadow: 0 0 8px -1px var(--color-accent);
+}
+.rng:hover:not(:disabled)::-webkit-slider-thumb { transform: scale(1.12); }
+.rng:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-accent) 30%, transparent), 0 0 8px -1px var(--color-accent); }
+.rng:focus-visible::-moz-range-thumb { box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-accent) 30%, transparent); }
+
+/* ── Timeline ─────────────────────────────────────────────────────────────── */
+/* lanes carry a faint grid aligned to the ruler's major ticks (--tl-major is set on the scrolling content) */
+.tl-lane {
+  background-image: linear-gradient(90deg, color-mix(in oklab, var(--color-line) 60%, transparent) 1px, transparent 1px);
+  background-size: var(--tl-major, 120px) 100%;
+}
+.tl-playhead {
+  background: var(--color-accent);
+  box-shadow: 0 0 10px 0 color-mix(in oklab, var(--color-accent) 75%, transparent), 0 0 0 1px color-mix(in oklab, var(--color-accent) 25%, transparent);
+}
+.tl-flag {
+  background: linear-gradient(180deg, color-mix(in oklab, var(--color-accent) 82%, white), var(--color-accent));
+  color: var(--on-accent);
+  box-shadow: 0 0 14px -2px color-mix(in oklab, var(--color-accent) 80%, transparent);
+}
+/* the clip body: filmstrip + a soft gradient, a hairline highlight on top */
+.tl-clip {
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12), 0 1px 2px rgb(0 0 0 / 0.35);
+}
+.tl-clip.is-sel {
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.18), 0 0 0 1.5px var(--color-accent), 0 0 18px -3px color-mix(in oklab, var(--color-accent) 75%, transparent);
+}
+
+/* transport LED */
+.led {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--color-line);
+  transition: background-color var(--dur) ease, box-shadow var(--dur) ease;
+}
+.led.is-on { background: var(--color-accent); box-shadow: 0 0 8px 0 var(--color-accent); }
+
+/* ── Small bits ───────────────────────────────────────────────────────────── */
+.hair-t { border-top: 1px solid var(--color-line); }
+.tick-v { width: 1px; flex: none; background: var(--color-line); }

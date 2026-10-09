@@ -38,11 +38,12 @@ export function HookInsights({ onUse, limit = 5 }: { onUse?: (hook: HookInsight)
   if (!rows.length) return null;
 
   return (
-    <div className="mb-4 overflow-hidden rounded-xl border border-line bg-bg/40">
+    <div className="mb-4 overflow-hidden rounded-lg border border-line bg-bg/40">
       <button type="button" onClick={() => setOpen(!open)} aria-expanded={open}
         className="flex w-full items-center gap-3 px-3.5 py-2.5 text-left transition-colors hover:bg-hover/50">
-        <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-accent/12 text-accent-ink"><ChartLine className="size-4" /></span>
+        <span className="grid size-7 shrink-0 place-items-center rounded-md bg-accent/12 text-accent-ink"><ChartLine className="size-4" /></span>
         <span className="min-w-0 flex-1">
+          <span className="eyebrow mb-1 block">{t("Retention")}</span>
           <span className="block text-sm font-medium">{t("What kept viewers watching")}</span>
           <span className="block truncate text-xs text-mute">{t("Your top {n} hooks by average view %", { n: rows.length })}</span>
         </span>
@@ -55,11 +56,11 @@ export function HookInsights({ onUse, limit = 5 }: { onUse?: (hook: HookInsight)
             <ul className="divide-y divide-line/60 border-t border-line">
               {rows.map((r, i) => (
                 <li key={`${r.export_id}-${i}`} className="flex flex-wrap items-center gap-x-3 gap-y-2 px-3.5 py-2.5">
-                  <span className="grid size-5 shrink-0 place-items-center rounded-full bg-raised text-2xs font-semibold tabular-nums text-mute">{i + 1}</span>
+                  <span className="mono grid size-5 shrink-0 place-items-center rounded bg-raised text-2xs font-semibold text-mute">{i + 1}</span>
                   <p className="min-w-0 flex-1 basis-48 text-sm leading-snug">{r.hook}</p>
                   <RetentionSparkline points={r.retention} className="hidden @lg:block" />
                   <div className="w-16 shrink-0 text-right">
-                    <p className="text-sm font-semibold tabular-nums text-accent-ink">{(r.avg_view_pct ?? 0).toFixed(0)}%</p>
+                    <p className="mono text-sm font-semibold text-accent-ink">{(r.avg_view_pct ?? 0).toFixed(0)}%</p>
                     <p className="flex items-center justify-end gap-0.5 text-2xs text-dim"><Eye className="size-3" />{r.views.toLocaleString()}</p>
                   </div>
                   {onUse && <Button size="sm" variant="ghost" onClick={() => onUse(r)}>{t("Use as angle")}</Button>}

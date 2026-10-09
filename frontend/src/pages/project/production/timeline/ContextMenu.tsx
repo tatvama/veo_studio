@@ -101,7 +101,7 @@ export function ContextMenu({ open, anchor, onClose, items, width = 248, label, 
         <div ref={panel} role="menu" aria-label={label} tabIndex={-1} onKeyDown={key} className="flex max-h-[min(70vh,440px)] flex-col overflow-y-auto outline-none">
           {trail.length > 0 && (
             <button type="button" role="menuitem" onClick={back} onMouseEnter={() => setCursor(-1)}
-              className="mb-1 flex w-full items-center gap-2 rounded-lg border-b border-line px-2 py-1.5 text-left text-xs font-semibold text-mute hover:bg-hover hover:text-ink">
+              className="eyebrow mb-1 flex w-full items-center gap-2 rounded-md border-b border-line px-2 py-1.5 text-left !text-mute hover:bg-hover hover:!text-ink">
               <ChevronLeft className="size-3.5" />
               <span className="min-w-0 flex-1 truncate">{trail[trail.length - 1].label}</span>
               <span className="text-2xs font-normal text-dim">{t("Back")}</span>
@@ -112,11 +112,11 @@ export function ContextMenu({ open, anchor, onClose, items, width = 248, label, 
               {it.separator && i > 0 && <div className="my-1 h-px bg-line" />}
               <button type="button" role="menuitem" tabIndex={-1} disabled={it.disabled} aria-disabled={it.disabled || undefined}
                 aria-haspopup={it.children ? "menu" : undefined} onMouseEnter={() => setCursor(i)} onClick={() => enter(i)}
-                className={clsx("flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors disabled:opacity-40",
+                className={clsx("flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors disabled:opacity-40",
                   i === cursor && "bg-hover", it.danger ? "text-bad" : it.active ? "text-accent-ink" : "text-ink")}>
                 {it.icon && <span className="grid size-4 shrink-0 place-items-center text-mute">{it.icon}</span>}
                 <span className="min-w-0 flex-1 truncate">{it.label}</span>
-                {it.hint && <span className="shrink-0 text-2xs tabular-nums text-dim">{it.hint}</span>}
+                {it.hint && <span className="mono shrink-0 text-2xs tabular-nums text-dim">{it.hint}</span>}
                 {it.children && <ChevronRight className="size-3.5 shrink-0 text-dim" />}
               </button>
             </div>

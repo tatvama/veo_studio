@@ -104,23 +104,23 @@ export function MainClip({ clip, pps, selected, canEdit, trimMode, hasPrev, hold
           if (isMenuKey(e)) { e.preventDefault(); e.stopPropagation(); onClick(); onMenu(e.currentTarget, e.currentTarget); return; }
           dndKey?.(e);
         }}
-        className={clsx("group cursor-pointer overflow-hidden rounded-md border bg-raised outline-none transition-[box-shadow,border-color,opacity] duration-150",
+        className={clsx("tl-clip group cursor-pointer overflow-hidden rounded-md border bg-raised outline-none transition-[box-shadow,border-color,opacity] duration-150",
           "focus-visible:ring-2 focus-visible:ring-accent/70",
-          selected || menuOpen ? "z-[3] border-accent ring-2 ring-accent/50" : "z-[1] border-black/50 hover:z-[2] hover:border-dim",
+          selected || menuOpen ? "is-sel z-[3] border-accent" : "z-[1] border-white/10 hover:z-[2] hover:border-dim",
           clip.kind === "still" && "opacity-70", isDragging && "z-20 opacity-90 shadow-lift")}>
-        <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/55 via-transparent to-black/45" />
-        <span className="absolute left-2 top-0.5 rounded bg-black/65 px-1 font-mono text-2xs font-semibold leading-4 text-white">{code}</span>
-        {fxOn && w > 76 && <span className={clsx("absolute top-0.5 rounded bg-accent/85 px-1 text-2xs font-bold leading-4 text-black", w > 40 ? "right-7" : "right-2")}>fx</span>}
-        {w > 70 && <span className="absolute bottom-0.5 right-2 font-mono text-2xs font-medium tabular-nums leading-4 text-white/90">{clip.duration.toFixed(1)}s</span>}
-        {kindTag && w > 90 && <span className="absolute bottom-0.5 left-2 rounded bg-black/65 px-1 text-2xs font-medium leading-4 text-white/90">{t(kindTag)}</span>}
-        {live && <span className="absolute left-1/2 top-1/2 z-[5] -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded bg-black/80 px-1.5 py-0.5 font-mono text-2xs text-white">{live}</span>}
+        <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/60 via-transparent to-black/50" />
+        <span className="mono absolute left-2 top-0.5 rounded-[3px] bg-black/70 px-1 text-2xs font-semibold leading-4 tracking-wide text-white">{code}</span>
+        {fxOn && w > 76 && <span className={clsx("mono absolute top-0.5 rounded-[3px] bg-accent px-1 text-2xs font-bold leading-4 text-[var(--on-accent)]", w > 40 ? "right-7" : "right-2")}>fx</span>}
+        {w > 70 && <span className="mono absolute bottom-0.5 right-2 text-2xs font-medium tabular-nums leading-4 text-white/90">{clip.duration.toFixed(1)}s</span>}
+        {kindTag && w > 90 && <span className="mono absolute bottom-0.5 left-2 rounded-[3px] bg-black/70 px-1 text-2xs font-medium leading-4 text-white/90">{t(kindTag)}</span>}
+        {live && <span className="mono absolute left-1/2 top-1/2 z-[5] -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded border border-accent/40 bg-black/85 px-1.5 py-0.5 text-2xs text-white">{live}</span>}
         {w > 40 && (
           <Tooltip content={t("Clip actions")} side="top">
             <button type="button" aria-label={t("Clip actions")} aria-haspopup="menu" aria-expanded={menuOpen} tabIndex={-1}
               onPointerDown={(e) => e.stopPropagation()}
               onClick={(e) => { e.stopPropagation(); onClick(); onMenu(e.currentTarget, e.currentTarget.parentElement as HTMLElement); }}
               className={clsx("absolute right-1 top-0.5 z-[5] grid size-5 place-items-center rounded bg-black/65 text-white transition-opacity",
-                "before:absolute before:-inset-1.5 before:content-[''] hover:bg-accent hover:text-black focus-visible:opacity-100 group-hover:opacity-100",
+                "before:absolute before:-inset-1.5 before:content-[''] hover:bg-accent hover:text-[var(--on-accent)] focus-visible:opacity-100 group-hover:opacity-100",
                 menuOpen || selected ? "opacity-100" : "opacity-0")}>
               <Ellipsis className="size-3.5" />
             </button>
@@ -181,9 +181,9 @@ export function RollHandle({ left, right, pps, onRoll, onRollEnd }: {
           const r = rollTrims(left, right, (dir * (e.shiftKey ? FPS : 1)) / FPS);
           if (Math.abs(r.d) > 1e-4) onRollEnd(r.l, r.r);
         }}>
-        <span aria-hidden className={clsx("absolute inset-y-1 left-1/2 w-1 -translate-x-1/2 rounded-full bg-white/80 shadow transition-opacity",
+        <span aria-hidden className={clsx("absolute inset-y-1 left-1/2 w-1 -translate-x-1/2 rounded-full bg-accent shadow-[0_0_8px_var(--color-accent)] transition-opacity",
           live ? "opacity-100" : "opacity-0 group-hover/track:opacity-70 group-hover/roll:!opacity-100 group-focus-visible/roll:opacity-100")} />
-        {live && <span className="absolute left-1/2 top-1/2 z-[8] -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded bg-black/80 px-1.5 py-0.5 font-mono text-2xs text-white">{live}</span>}
+        {live && <span className="mono absolute left-1/2 top-1/2 z-[8] -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded border border-accent/40 bg-black/85 px-1.5 py-0.5 text-2xs text-white">{live}</span>}
       </div>
     </Tooltip>
   );
@@ -204,7 +204,7 @@ export function HoldBlock({ clip, pps, canEdit, selected, onClick, onClear }: {
         className={clsx("group/hold z-[2] flex items-center gap-1 overflow-hidden rounded-md border border-dashed border-warn/70 px-1 text-warn outline-none focus-visible:ring-2 focus-visible:ring-accent/70",
           selected && "ring-2 ring-accent/50")}>
         {w > 22 && <Snowflake className="size-3 shrink-0" />}
-        {w > 72 && <span className="truncate text-2xs font-semibold">{t("Freeze {n}s", { n: clip.hold.toFixed(1) })}</span>}
+        {w > 72 && <span className="mono truncate text-2xs font-semibold">{t("Freeze {n}s", { n: clip.hold.toFixed(1) })}</span>}
         {canEdit && w > 40 && (
           <button type="button" aria-label={t("Remove the freeze")} title={t("Remove the freeze")}
             onClick={(e) => { e.stopPropagation(); onClear(); }} onPointerDown={(e) => e.stopPropagation()}
@@ -231,10 +231,10 @@ export function TransitionBlock({ clip, pps, canEdit, onResize, onResizeEnd, onC
     <Tooltip content={`${tr.type} · ${clip.overlap.toFixed(2)}s — ${t("the two shots overlap here")}`} side="top" delay={300}>
       <div role="button" tabIndex={0} onClick={onClick} aria-label={t("Transition {name}", { name: tr.type })}
         style={{ position: "absolute", left: clip.start * pps, width: w, top: 2, bottom: 2,
-          background: "repeating-linear-gradient(135deg, rgb(249 115 22 / 0.55) 0 6px, rgb(249 115 22 / 0.28) 6px 12px)" }}
-        className="z-[5] flex items-center justify-center overflow-hidden rounded-md border-2 border-accent text-black shadow-lift">
+          background: "repeating-linear-gradient(135deg, color-mix(in srgb, var(--color-accent) 55%, transparent) 0 6px, color-mix(in srgb, var(--color-accent) 28%, transparent) 6px 12px)" }}
+        className="z-[5] flex items-center justify-center overflow-hidden rounded-md border-2 border-accent text-[var(--on-accent)] shadow-[0_0_14px_-3px_var(--color-accent)]">
         {w > 22 && <Blend className="size-3.5 shrink-0" />}
-        {w > 70 && <span className="ml-1 truncate text-2xs font-bold">{tr.type}</span>}
+        {w > 70 && <span className="mono ml-1 truncate text-2xs font-bold uppercase tracking-wider">{tr.type}</span>}
         {canEdit && (
           <span aria-hidden title={t("Drag to change the transition length")}
             onPointerDown={(e) => { start.current = tr.duration; dragX(e, (dx) => onResize(set(dx)), (dx) => onResizeEnd(set(dx))); }}
@@ -252,7 +252,7 @@ export function CutButton({ clip, pps, onAdd }: { clip: Clip; pps: number; onAdd
     <Tooltip content={t("Add a transition here")} side="top">
       <button type="button" onClick={onAdd} aria-label={t("Add a transition here")}
         style={{ position: "absolute", left: clip.start * pps - 9, top: 3 }}
-        className="z-[8] grid size-[18px] place-items-center rounded-full border border-white/70 bg-panel text-mute opacity-0 shadow transition-opacity hover:bg-accent hover:text-black group-hover/track:opacity-100 focus:opacity-100">
+        className="z-[8] grid size-[18px] place-items-center rounded-md border border-dim/60 bg-panel text-mute opacity-0 shadow transition-opacity hover:border-accent hover:bg-accent hover:text-[var(--on-accent)] group-hover/track:opacity-100 focus:opacity-100">
         <Plus className="size-3" strokeWidth={3} />
       </button>
     </Tooltip>

@@ -2,13 +2,18 @@ import "dockview-react/dist/styles/dockview.css";
 import "./studio.css";
 import { DndContext, DragOverlay, PointerSensor, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from "@dnd-kit/core";
 import { useQueryClient } from "@tanstack/react-query";
-import { DockviewReact, type DockviewApi, type DockviewReadyEvent, type DockviewTheme, type IDockviewHeaderActionsProps, type IDockviewPanelProps } from "dockview-react";
-import { Clapperboard, ExternalLink, Film, LayoutGrid, ListTree, Maximize2, PanelsTopLeft, RotateCcw, Sparkles, UsersRound, Workflow } from "lucide-react";
-import { lazy, Suspense, useCallback, useMemo, useRef, useState } from "react";
+import {
+  DockviewReact, type DockviewApi, type DockviewReadyEvent, type DockviewTheme, type IDockviewHeaderActionsProps, type IDockviewPanelHeaderProps,
+  type IDockviewPanelProps,
+} from "dockview-react";
+import { Clapperboard, ExternalLink, Film, ListTree, Maximize2, PanelsTopLeft, Plus, RotateCcw, Sparkles, UsersRound, Workflow, X } from "lucide-react";
+import { clsx } from "clsx";
+import { lazy, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { useGenerate } from "../../../components/Generate";
-import { Avatar, Button, Menu, PageSkeleton, Tooltip } from "../../../components/ui";
+import { Avatar, Button, PageSkeleton, Tooltip } from "../../../components/ui";
+import { secs } from "../../../lib/format";
 import { api } from "../../../lib/api";
 import { tr, useT } from "../../../lib/i18n";
 import { useCharacters, useEpisode } from "../../../lib/queries";
@@ -19,6 +24,7 @@ import ShotDrawer from "../ShotDrawer";
 import { linkOf, type LinkMode } from "./continuity";
 import { CastPanel, EmptyStudio, Outline, outlineOrder, type DragData } from "./Outline";
 import { StudioCtx, useStudio, type StudioState } from "./state";
+import "../../../styles/production.css";
 
 const TimelinePage = lazy(() => import("../Timeline"));
 const FilmMap = lazy(() => import("./FilmMap"));
@@ -55,10 +61,11 @@ function ShotPanel() {
   const i = s.selected != null ? order.indexOf(s.selected) : -1;
   if (s.selected == null || i < 0) {
     return (
-      <div className="grid h-full place-items-center p-6 text-center text-sm text-mute">
+      <div className="scr-empty grid h-full place-items-center p-6 text-center text-sm text-mute">
         <div className="space-y-2">
           <Clapperboard className="mx-auto size-8 text-dim" />
-          <p>{t("Pick a shot on the left to see it here: its takes, prompt, characters and the buttons to make it.")}</p>
+          <p className="eyebrow">{t("No shot selected")}</p>
+          <p className="max-w-xs">{t("Pick a shot on the left to see it here: its takes, prompt, characters and the buttons to make it.")}</p>
         </div>
       </div>
     );
@@ -91,13 +98,60 @@ const COMPONENTS: Record<string, React.FunctionComponent<IDockviewPanelProps>> =
   outline: OutlinePanel, map: MapPanel, cast: CastPanelView, shot: ShotPanel, fx: FxPanel, timeline: TimelinePanel,
 };
 
-/** Group header buttons: send the group to another window (second monitor) or float it. */
+/** A mono readout for the active panel of a group: how many of what it holds. */
+function panelReadout(id: string, s: StudioState | null, t: (k: string, v?: Record<string, string | number>) => string): string {
+  if (!s?.episode) return "";
+  const shots = (s.episode.shots ?? []).filter((x) => x.include);
+  const code = s.selected != null ? shots.find((x) => x.id === s.selected)?.code : undefined;
+  switch (id) {
+    case "outline": return t("{n} shots", { n: shots.length });
+    case "map": return t("{n} scenes", { n: s.episode.scenes?.length ?? 0 });
+    case "cast": return t("{n} characters", { n: s.cast.length });
+    case "shot": case "fx": return code ?? "";
+    case "timeline": return t("{n} clips", { n: shots.length });
+    default: return "";
+  }
+}
+
+/** The tab of a panel: its icon, a mono label and a close button. Same anatomy (and middle-click to close) as dockview's own tab. */
+function PanelTab({ api }: IDockviewPanelHeaderProps) {
+  const t = useT();
+  const [title, setTitle] = useState(api.title);
+  const middle = useRef(false);
+  useEffect(() => {
+    setTitle(api.title);
+    const d = api.onDidTitleChange((e) => setTitle(e.title));
+    return () => d.dispose();
+  }, [api]);
+  const Icon = PANELS[api.id]?.icon;
+  return (
+    <div className="dv-default-tab"
+      onPointerDown={(e) => { middle.current = e.button === 1; }}
+      onPointerUp={(e) => { if (middle.current && e.button === 1) { middle.current = false; api.close(); } }}
+      onPointerLeave={() => { middle.current = false; }}>
+      <span className="dv-default-tab-content">
+        {Icon && <span className="dv-default-tab-icon"><Icon className="size-3.5" /></span>}
+        {title}
+      </span>
+      <button type="button" className="dv-default-tab-action" aria-label={t("Close panel")}
+        onPointerDown={(e) => e.preventDefault()} onClick={(e) => { e.preventDefault(); api.close(); }}>
+        <X className="size-3" />
+      </button>
+    </div>
+  );
+}
+
+/** Group header: a readout for the active panel, then send the group to another window (second monitor) or float it. */
 function HeaderActions({ containerApi, group, activePanel, location }: IDockviewHeaderActionsProps) {
   const t = useT();
+  const st = useContext(StudioCtx);
   if (!activePanel) return null;
   const popped = location?.type === "popout";
+  const ro = panelReadout(activePanel.id, st, t);
+  const btn = "grid size-6 place-items-center rounded-md text-dim outline-none transition-colors hover:bg-hover hover:text-ink focus-visible:ring-2 focus-visible:ring-accent/60";
   return (
-    <div className="flex h-full items-center gap-0.5 px-1">
+    <div className="flex h-full items-center gap-0.5 px-1.5">
+      {ro && <span className="studio-ro mr-1 max-w-[9rem] truncate" title={ro}>{ro}</span>}
       {!popped && (
         <Tooltip content={t("Open in its own window (e.g. on a second screen)")}>
           <button type="button" aria-label={t("Open in its own window")}
@@ -105,13 +159,13 @@ function HeaderActions({ containerApi, group, activePanel, location }: IDockview
               popoutUrl: "/popout.html",
               onDidOpen: ({ window: w }) => { w.document.documentElement.dataset.theme = document.documentElement.dataset.theme ?? ""; },
             }).then((ok) => { if (!ok) toast.error(tr("The browser blocked the new window — allow pop-ups for this site and try again.")); })}
-            className="grid size-6 place-items-center rounded-md text-dim hover:bg-hover hover:text-ink"><ExternalLink className="size-3.5" /></button>
+            className={btn}><ExternalLink className="size-3.5" /></button>
         </Tooltip>
       )}
       {location?.type === "grid" && (
         <Tooltip content={t("Float this panel over the others")}>
           <button type="button" aria-label={t("Float this panel")} onClick={() => containerApi.addFloatingGroup(group)}
-            className="grid size-6 place-items-center rounded-md text-dim hover:bg-hover hover:text-ink"><Maximize2 className="size-3.5" /></button>
+            className={btn}><Maximize2 className="size-3.5" /></button>
         </Tooltip>
       )}
     </div>
@@ -317,35 +371,61 @@ export default function StudioPage() {
   };
 
   const dragChar = dragging?.type === "character" ? (cast ?? []).find((c) => c.id === dragging.characterId) : undefined;
-  const closed = Object.keys(PANELS).filter((id) => !open.includes(id));
+  const filmShots = (episode?.shots ?? []).filter((x) => x.include);
+  const shotCount = filmShots.length;
+  const runtime = filmShots.reduce((a, x) => a + Math.max(x.extend_to || 0, x.duration_s), 0);
+  const selCode = selected != null ? filmShots.find((x) => x.id === selected)?.code : undefined;
 
   return (
     <StudioCtx.Provider value={state}>
       <DndContext sensors={sensors} onDragStart={(e: DragStartEvent) => setDragging((e.active.data.current as DragData) ?? null)}
         onDragCancel={() => setDragging(null)} onDragEnd={(e) => void onDragEnd(e)}>
-        <div className="flex h-full flex-col">
-          <div className="flex shrink-0 items-center gap-2 border-b border-line bg-panel/60 px-3 py-1.5 text-xs">
-            <PanelsTopLeft className="size-4 text-accent-ink" />
-            <span className="font-semibold">{t("Studio")}</span>
-            <span className="hidden text-dim md:inline">{t("Drag panel tabs to rearrange · ↗ opens a panel on another screen · drag characters onto shots")}</span>
+        <div className="hud-bg @container flex h-full flex-col">
+          {/* workspace bar: what is open, the dock (every panel is one click away), and the layout reset */}
+          <div className="relative flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-line bg-panel/75 px-3 py-1.5 backdrop-blur">
+            <span aria-hidden className="edge-light pointer-events-none absolute inset-x-6 top-0 h-px opacity-70" />
+            <div className="flex items-center gap-2">
+              <span className="grid size-6 place-items-center rounded-md border border-accent/30 bg-accent/10 text-accent-ink"><PanelsTopLeft className="size-3.5" /></span>
+              <span className="eyebrow !text-ink">{t("Studio")}</span>
+            </div>
+            <span aria-hidden className="tick-v h-4" />
+            <div className="mono flex items-center gap-x-3 text-2xs tabular-nums text-mute">
+              <span className="flex items-center gap-1.5"><span className="eyebrow">{t("Shots")}</span><span className="text-ink">{shotCount}</span></span>
+              <span className="flex items-center gap-1.5"><span className="eyebrow">{t("Length")}</span><span className="text-ink">{secs(runtime)}</span></span>
+              {selCode && <span className="flex items-center gap-1.5"><span className="eyebrow">{t("Selected")}</span><span className="text-accent-ink">{selCode}</span></span>}
+            </div>
+            <span className="hidden min-w-0 truncate text-2xs text-dim @4xl:inline">{t("Drag panel tabs to rearrange · ↗ opens a panel on another screen · drag characters onto shots")}</span>
             <div className="flex-1" />
-            {closed.length > 0 && (
-              <Menu trigger={(p) => <Button {...p} size="sm" variant="ghost" icon={<LayoutGrid className="size-3.5" />}>{t("Show panel")}</Button>}
-                items={closed.map((id) => ({ label: t(PANELS[id].title), onClick: () => reopen(id) }))} />
-            )}
+            <div role="group" aria-label={t("Panels")} className="flex items-center gap-0.5 rounded-lg border border-line bg-panel/70 p-0.5">
+              {Object.keys(PANELS).map((id) => {
+                const on = open.includes(id);
+                const P = PANELS[id];
+                return (
+                  <Tooltip key={id} content={on ? t(P.title) : `${t("Show panel")}: ${t(P.title)}`}>
+                    <button type="button" aria-pressed={on} aria-label={t(P.title)} onClick={() => (on ? apiRef.current?.getPanel(id)?.api.setActive() : reopen(id))}
+                      className={clsx("inline-flex h-6 items-center gap-1.5 rounded-md px-1.5 text-2xs font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/60",
+                        on ? "text-ink hover:bg-hover" : "text-dim hover:bg-hover hover:text-ink")}>
+                      <span className={clsx("[&>svg]:size-3.5", on && "text-accent-ink")}>{on ? <P.icon /> : <Plus />}</span>
+                      <span className={clsx("hidden @3xl:inline", !on && "opacity-70")}>{t(P.title)}</span>
+                      <span aria-hidden className={clsx("led", on && "is-on")} />
+                    </button>
+                  </Tooltip>
+                );
+              })}
+            </div>
             <Tooltip content={t("Back to the standard arrangement")}>
               <Button size="sm" variant="ghost" icon={<RotateCcw className="size-3.5" />}
                 onClick={() => { if (apiRef.current) defaultLayout(apiRef.current); }}>{t("Reset layout")}</Button>
             </Tooltip>
           </div>
           <div className="min-h-0 flex-1 p-1.5">
-            <DockviewReact className="h-full" theme={THEME} components={COMPONENTS} onReady={onReady}
+            <DockviewReact className="h-full" theme={THEME} components={COMPONENTS} defaultTabComponent={PanelTab} onReady={onReady}
               rightHeaderActionsComponent={HeaderActions} />
           </div>
         </div>
         <DragOverlay dropAnimation={null}>
           {dragChar ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full border border-accent/60 bg-panel px-2 py-1 text-xs shadow-lift">
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-accent/60 bg-panel px-2 py-1 text-xs shadow-lift">
               <Avatar name={dragChar.name} src={dragChar.avatar_url} size={20} />{dragChar.name}
             </span>
           ) : null}

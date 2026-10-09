@@ -1,6 +1,7 @@
 import { animate, motion, useInView, useReducedMotion } from "motion/react";
 import { useEffect, useRef, useState, type CSSProperties, type ElementType, type ReactNode } from "react";
 import { cn } from "../../lib/cn";
+import { MoneyText } from "./Money";
 
 /**
  * Entrance animation, CSS-only so it stays cheap on big grids.
@@ -57,5 +58,5 @@ export function AnimatedNumber({ value, format = (n) => Math.round(n).toLocaleSt
     return () => { from.current = shown; controls.stop(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value, duration, reduce]);
-  return <span className={cn("tabular-nums", className)}>{format(shown)}</span>;
+  return <span className={cn("tabular-nums", className)}><MoneyText text={format(shown)} /></span>;
 }

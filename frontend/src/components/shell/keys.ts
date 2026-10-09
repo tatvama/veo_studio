@@ -21,23 +21,24 @@ export function isTypingTarget(el: EventTarget | null): boolean {
 export function openDirector() {
   const ui = useUI.getState();
   ui.setAgentOpen(true);
+  window.dispatchEvent(new Event("veo:director-open"));
   if (window.innerWidth < 1760) ui.setSelectedShot(null);
   setTimeout(() => document.getElementById("agent-input")?.focus(), 80);
 }
 
-/** The sidebar is a slide-over (opened by the Shell) below this width; above it can be expanded or collapsed. */
-export const SIDEBAR_RAIL_MIN = 1100;
+/** The project's pipeline rail collapses to icons below this width it is replaced by a strip. */
+export const SIDEBAR_RAIL_MIN = 1024;
 
-/** True when the desktop sidebar currently shows labels (same rule as the Shell: saved choice, else wide screens). */
-export function sidebarExpanded(): boolean {
-  const s = useUI.getState();
-  return window.innerWidth >= SIDEBAR_RAIL_MIN && (s.railExpanded ?? window.innerWidth >= 1440);
+export const TOGGLE_RAIL_EVENT = "veo:toggle-rail";
+
+/** Collapse / expand the project pipeline rail (the "[" key). Returns false when there is no rail on screen. */
+export function toggleSidebar(): boolean {
+  if (window.innerWidth < SIDEBAR_RAIL_MIN || !document.querySelector("[aria-label][data-pipeline-rail]")) return false;
+  window.dispatchEvent(new CustomEvent(TOGGLE_RAIL_EVENT));
+  return true;
 }
 
-/** Expand / collapse the desktop sidebar like the "[" key does. Returns false when the viewport is too narrow for it. */
-export function toggleSidebar(): boolean {
-  if (window.innerWidth < SIDEBAR_RAIL_MIN) return false;
-  const s = useUI.getState();
-  s.setRailExpanded(!(s.railExpanded ?? window.innerWidth >= 1440));
-  return true;
+/** True when the pipeline rail currently shows labels. */
+export function sidebarExpanded(): boolean {
+  return document.querySelector("[data-pipeline-rail]")?.getAttribute("data-collapsed") !== "1";
 }

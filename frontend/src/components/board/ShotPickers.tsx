@@ -7,6 +7,7 @@ import { usd } from "../../lib/format";
 import { useT } from "../../lib/i18n";
 import type { Character, VideoEngine, VideoEngines, VideoFit } from "../../lib/types";
 import { Avatar, Badge, Button, Popover, Toggle } from "../ui";
+import { TONE_TEXT_SM } from "../room/util";
 import { providerName } from "../hub/Chips";
 
 // ── characters ───────────────────────────────────────────────────────────────
@@ -45,7 +46,7 @@ export function CharacterPicker({ selected, projectCast, library, onToggle, onCr
         className={clsx("flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm transition-colors", on ? "bg-accent/10" : "hover:bg-hover")}>
         <Avatar name={c.name} src={c.avatar_url} size={24} />
         <span className="min-w-0 flex-1 truncate">{c.name}</span>
-        {!c.avatar_url && <span className="text-2xs text-warn">{t("no photo")}</span>}
+        {!c.avatar_url && <span className={clsx("text-2xs", TONE_TEXT_SM.warn)}>{t("no photo")}</span>}
         {on && <Check className="size-4 text-accent-ink" strokeWidth={3} />}
       </button>
     );
@@ -54,7 +55,7 @@ export function CharacterPicker({ selected, projectCast, library, onToggle, onCr
   return (
     <>
       <button ref={ref} type="button" disabled={disabled} onClick={() => setOpen((o) => !o)} aria-expanded={open}
-        className="inline-flex items-center gap-1 rounded-full border border-dashed border-accent/50 px-2 py-0.5 text-2xs font-medium text-accent-ink transition-colors hover:bg-accent/10 disabled:opacity-50">
+        className="inline-flex h-6 items-center gap-1 rounded-md border border-dashed border-accent/50 px-2 text-2xs font-medium text-accent-ink transition-colors hover:bg-accent/10 disabled:opacity-50 pointer-coarse:h-8">
         <Plus className="size-3" />{t("Character")}
       </button>
       <Popover open={open} onClose={() => setOpen(false)} anchor={ref} width={300} className="p-2">
@@ -65,9 +66,9 @@ export function CharacterPicker({ selected, projectCast, library, onToggle, onCr
             className="h-8 min-w-0 flex-1 bg-transparent text-sm outline-none" aria-label={t("Find or name a new character…")} />
         </label>
         <div className="max-h-64 space-y-0.5 overflow-y-auto" role="listbox" aria-multiselectable>
-          {projectCast.filter(match).length > 0 && <p className="px-2 pb-0.5 pt-1 text-2xs font-semibold uppercase tracking-wider text-dim">{t("In this project")}</p>}
+          {projectCast.filter(match).length > 0 && <p className="eyebrow px-2 pb-1 pt-1.5">{t("In this project")}</p>}
           {projectCast.filter(match).map(row)}
-          {others.filter(match).length > 0 && <p className="px-2 pb-0.5 pt-2 text-2xs font-semibold uppercase tracking-wider text-dim">{t("From your library")}</p>}
+          {others.filter(match).length > 0 && <p className="eyebrow px-2 pb-1 pt-2.5">{t("From your library")}</p>}
           {others.filter(match).slice(0, 30).map(row)}
           {!projectCast.length && !others.length && !needle && <p className="px-2 py-3 text-center text-xs text-dim">{t("No characters yet — type a name to make one.")}</p>}
         </div>
@@ -97,16 +98,16 @@ const VIA_LABEL: Record<VideoFit["characters"], string> = {
 /** Small icons for what a model can use from the shot. */
 export function FitChips({ fit, className }: { fit: VideoFit; className?: string }) {
   const t = useT();
-  const tone = fit.characters === "none" ? "text-bad" : fit.characters === "refs" ? "text-ok" : "text-mute";
+  const tone = fit.characters === "none" ? TONE_TEXT_SM.bad : fit.characters === "refs" ? TONE_TEXT_SM.ok : "text-mute";
   return (
     <span className={clsx("inline-flex flex-wrap items-center gap-x-2 gap-y-0.5 text-2xs", className)}>
-      <span className={clsx("inline-flex items-center gap-0.5", tone)}
+      <span className={clsx("mono inline-flex items-center gap-0.5", tone)}
         title={t("Characters: {how}", { how: t(VIA_LABEL[fit.characters]) })}>
         <UserRound className="size-3" />{fit.characters === "refs" ? `${fit.max_refs}` : fit.characters === "keyframe" ? t("via keyframe") : "✕"}
       </span>
-      <span className={clsx("inline-flex items-center gap-0.5", fit.location === "none" ? "text-bad" : "text-mute")}
+      <span className={clsx("inline-flex items-center gap-0.5", fit.location === "none" ? TONE_TEXT_SM.bad : "text-mute")}
         title={t("Location: {how}", { how: t(VIA_LABEL[fit.location]) })}><MapPin className="size-3" />{fit.location === "none" ? "✕" : "✓"}</span>
-      <span className={clsx("inline-flex items-center gap-0.5", fit.sound ? "text-ok" : "text-dim")}
+      <span className={clsx("mono inline-flex items-center gap-0.5", fit.sound ? TONE_TEXT_SM.ok : "text-dim")}
         title={fit.sound ? t("Makes its own sound and speech") : t("Silent — voices are added afterwards")}><Volume2 className="size-3" />{fit.sound ? "✓" : "✕"}</span>
     </span>
   );
@@ -134,14 +135,16 @@ export function ModelPicker({ value, data, quality, onChange, disabled, needsCha
 
   return (
     <>
-      <button ref={ref} type="button" disabled={disabled} onClick={() => setOpen((o) => !o)} aria-expanded={open}
-        className="flex min-w-0 max-w-full items-center gap-1.5 rounded-lg border border-line bg-panel px-2 py-1 text-left text-xs transition-colors hover:border-dim/60 disabled:opacity-60">
-        {auto ? <Wand2 className="size-3.5 shrink-0 text-mute" /> : <Cpu className="size-3.5 shrink-0 text-accent-ink" />}
-        <span className="text-dim">{t("Model")}:</span>
-        <span className="min-w-0 truncate font-medium">{auto ? `${t("Auto")}${cur ? ` · ${cur.display_name}` : ""}` : cur?.display_name ?? value}</span>
-        {cur && <FitChips fit={cur.fit} className="hidden shrink-0 @lg:inline-flex" />}
-        <ChevronDown className="size-3.5 shrink-0 text-dim" />
-      </button>
+      <div className="min-w-0 max-w-full">
+        <button ref={ref} type="button" disabled={disabled} onClick={() => setOpen((o) => !o)} aria-expanded={open}
+          className="flex h-8 w-full min-w-0 items-center gap-1.5 rounded-lg border border-line bg-raised/40 px-2 text-left text-xs transition-colors hover:border-dim/60 disabled:opacity-60 pointer-coarse:h-10">
+          {auto ? <Wand2 className="size-3.5 shrink-0 text-mute" /> : <Cpu className="size-3.5 shrink-0 text-accent-ink" />}
+          <span className="eyebrow shrink-0">{t("Model")}</span>
+          <span className="min-w-0 flex-1 truncate font-medium">{auto ? `${t("Auto")}${cur ? ` · ${cur.display_name}` : ""}` : cur?.display_name ?? value}</span>
+          <ChevronDown className="size-3.5 shrink-0 text-dim" />
+        </button>
+        {cur && <FitChips fit={cur.fit} className="mt-1 px-0.5" />}
+      </div>
       <Popover open={open} onClose={() => setOpen(false)} anchor={ref} width={380} className="p-2">
         <div className="mb-1.5 flex items-center justify-between gap-2 px-1">
           <span className="text-xs font-semibold">{t("Video model for this shot")}</span>
@@ -176,10 +179,10 @@ function ModelRow({ selected, onClick, title, sub, fit, price, warn }: {
       className={clsx("flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition-colors", selected ? "bg-accent/10" : "hover:bg-hover")}>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm">{title}</span>
-        <span className={clsx("block text-2xs", warn ? "text-bad" : "text-dim")}>{sub}</span>
+        <span className={clsx("block text-2xs", warn ? TONE_TEXT_SM.bad : "text-dim")}>{sub}</span>
         {fit && <FitChips fit={fit} className="mt-0.5" />}
       </span>
-      {price != null && <span className="shrink-0 text-xs tabular-nums text-mute">{price > 0 ? `~${usd(price)}` : "—"}</span>}
+      {price != null && <span className="mono shrink-0 text-xs text-money">{price > 0 ? `~${usd(price)}` : "—"}</span>}
       {selected && <Check className="mt-0.5 size-4 shrink-0 text-accent-ink" strokeWidth={3} />}
     </button>
   );
@@ -214,7 +217,7 @@ export function FitNotes({ engine, auto, characters, hasLocation, refCount, hasL
     <div className="space-y-1">
       {notes.map((n, i) => (
         <p key={i} className={clsx("flex items-start gap-1.5 rounded-md px-2 py-1 text-2xs",
-          n.tone === "bad" ? "bg-bad/10 text-bad" : n.tone === "warn" ? "bg-warn/10 text-warn" : "bg-raised/60 text-mute")}>
+          n.tone === "bad" ? `bg-bad/10 ${TONE_TEXT_SM.bad}` : n.tone === "warn" ? `bg-warn/10 ${TONE_TEXT_SM.warn}` : "bg-raised/60 text-mute")}>
           {n.tone === "info" ? <Images className="mt-px size-3 shrink-0" /> : <AlertTriangle className="mt-px size-3 shrink-0" />}
           <span>{n.text}</span>
         </p>

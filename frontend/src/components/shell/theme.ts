@@ -11,7 +11,7 @@ export type MotionPref = "full" | "reduced";
 
 export const THEME_KEY = "veo-theme";
 export const MOTION_KEY = "veo-motion";
-export const THEME_COLORS: Record<ResolvedTheme, string> = { dark: "#0a0b0f", light: "#f5f3ee" };
+export const THEME_COLORS: Record<ResolvedTheme, string> = { dark: "#05070b", light: "#e9edf4" };
 
 function read<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
   try {

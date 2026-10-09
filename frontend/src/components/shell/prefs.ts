@@ -6,6 +6,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef } from "react";
 import { api } from "../../lib/api";
+import { useCurrency, type CurrencyMode } from "../../lib/currency";
 import { getUiLanguage, setUiLanguage, UI_LANGUAGES } from "../../lib/i18n";
 import type { Prefs } from "../../lib/types";
 import { applyMotionPref, applyThemePref, getMotionPref, getThemePref, type MotionPref, type ThemePref } from "./theme";
@@ -49,6 +50,7 @@ export function usePrefActions(signedIn: boolean) {
     setTheme: (theme: ThemePref) => { applyThemePref(theme); void save({ theme }); },
     setLanguage: (ui_language: string) => { setUiLanguage(ui_language); void save({ ui_language }); },
     setMotion: (motion: MotionPref) => { applyMotionPref(motion); void save({ motion }); },
+    setCurrency: (currency: CurrencyMode) => { useCurrency.getState().setMode(currency); void save({ currency }); },
     setOnboardingDone: (onboarding_done: boolean) => save({ onboarding_done }),
   };
 }
@@ -72,6 +74,7 @@ export function PrefsSync() {
       setUiLanguage(data.ui_language);
     }
     if (!pending.motion && data.motion && data.motion !== getMotionPref()) applyMotionPref(data.motion);
+    if (!pending.currency && data.currency && data.currency !== useCurrency.getState().mode) useCurrency.getState().setMode(data.currency);
   }, [data, save]);
   return null;
 }

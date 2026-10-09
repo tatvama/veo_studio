@@ -57,7 +57,7 @@ export function QualityMenu({ value, onChange, defaultKey, defaultLabel, joined,
             className,
           )}
         >
-          <span>{t(info?.label ?? eff)}</span>
+          <span className="mono text-2xs uppercase tracking-wider">{t(info?.label ?? eff)}</span>
           {value && <span aria-hidden className={clsx("size-1.5 rounded-full", joined && tone === "primary" ? "bg-black/70" : "bg-accent")} />}
           <ChevronDown className="size-3.5 opacity-70" />
         </button>

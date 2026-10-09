@@ -451,6 +451,7 @@ class PrefsIn(BaseModel):
     theme: Literal["dark", "light", "system"] | None = None
     onboarding_done: bool | None = None
     motion: Literal["full", "reduced"] | None = None
+    currency: Literal["both", "usd", "inr"] | None = None
 
 
 @router.get("/me/prefs")

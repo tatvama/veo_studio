@@ -14,6 +14,8 @@ import { SearchField, Segmented, Spinner } from "../ui";
 import { CapChips, NewTag, ProviderBadge } from "./Chips";
 import { engineShort, isAutoEngine } from "./util";
 
+import "../../styles/console.css";
+
 export type EnginePurpose = "video" | "dialogue" | "lipsync";
 
 /** Purpose for a shot's main video engine: audio-driven speaking shots list talking-clip (a2v) engines. */
@@ -93,15 +95,15 @@ export default function EnginePicker({ shot, purpose: purposeProp, canEdit, valu
   const autoPrice = autoFirst && allById[autoFirst]?.estimate_usd != null ? `~${usd(allById[autoFirst].estimate_usd)}` : undefined;
 
   return (
-    <div className={clsx("overflow-hidden rounded-xl border transition-colors", open ? "border-dim/50" : "border-line", embedded ? "bg-panel" : "bg-raised/35")}>
+    <div className={clsx("overflow-hidden rounded-xl border transition-colors", open ? "border-accent/40" : "border-line", embedded ? "bg-panel" : "bg-raised/35")}>
       <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
         className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-hover/50">
         <span className={clsx("grid size-8 shrink-0 place-items-center rounded-lg", current === "auto" ? "bg-raised text-mute" : "bg-accent/12 text-accent-ink")}>
           {current === "auto" ? <Wand2 className="size-4" /> : <Cpu className="size-4" />}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block text-2xs font-medium text-dim">{label ?? t("Engine")}</span>
-          <span className="flex min-w-0 items-center gap-1.5 text-sm">
+          <span className="eyebrow block">{label ?? t("Engine")}</span>
+          <span className="mt-1.5 flex min-w-0 items-center gap-1.5 text-sm">
             {current === "auto" ? (
               <span className="min-w-0 truncate">
                 <span className="font-semibold">{t("Auto")}</span>
@@ -115,8 +117,8 @@ export default function EnginePicker({ shot, purpose: purposeProp, canEdit, valu
             )}
           </span>
         </span>
-        {chosen?.estimate_usd != null && <span className="shrink-0 text-sm font-medium tabular-nums">{usd(chosen.estimate_usd)}</span>}
-        {current === "auto" && autoPrice && <span className="shrink-0 text-xs tabular-nums text-dim">{autoPrice}</span>}
+        {chosen?.estimate_usd != null && <span className="mono shrink-0 text-sm font-medium text-money">{usd(chosen.estimate_usd)}</span>}
+        {current === "auto" && autoPrice && <span className="mono shrink-0 text-xs text-money">{autoPrice}</span>}
         {pinnedMissing && <AlertTriangle className="size-4 shrink-0 text-warn" aria-label={t("Pinned engine unavailable")} />}
         <ChevronDown className={clsx("size-4 shrink-0 text-dim transition-transform duration-200", open && "rotate-180")} />
       </button>
@@ -136,7 +138,7 @@ export default function EnginePicker({ shot, purpose: purposeProp, canEdit, valu
                 </div>
               )}
               {pinnedMissing && (
-                <p className="flex items-start gap-1.5 rounded-lg bg-warn/10 px-2 py-1.5 text-2xs text-warn">
+                <p className="cx-block flex items-start gap-1.5 px-2 py-1.5 text-2xs text-warn">
                   <AlertTriangle className="mt-px size-3 shrink-0" />
                   {t("The pinned engine isn't enabled or can't make this shot right now. Pick another or go back to Auto.")}
                 </p>
@@ -146,7 +148,7 @@ export default function EnginePicker({ shot, purpose: purposeProp, canEdit, valu
               )}
               <div className="max-h-72 space-y-0.5 overflow-y-auto pr-0.5" role="listbox" aria-label={label ?? t("Engine")}>
                 <Row selected={current === "auto"} disabled={!canEdit} busy={saving === "auto"} onClick={() => pick("auto")}
-                  lead={<span className="grid size-8 place-items-center rounded-lg bg-raised text-mute"><Wand2 className="size-4" /></span>}
+                  lead={<span className="grid size-8 place-items-center rounded-lg border border-line bg-raised text-mute"><Wand2 className="size-4" /></span>}
                   title={<span className="font-medium">{t("Auto")} <span className="font-normal text-dim">· {t(chainLabel)}</span></span>}
                   sub={autoChain.length ? (
                     <span className="flex flex-wrap items-center gap-x-1 gap-y-0.5">
@@ -204,8 +206,8 @@ function Row({ selected, disabled, busy, onClick, lead, title, sub, price, price
       </span>
       {price && (
         <span className="shrink-0 text-right" title={priceHint}>
-          <span className="block text-sm font-medium tabular-nums">{price}</span>
-          {priceSub && <span className="block text-2xs text-dim">{priceSub}</span>}
+          <span className="mono block text-sm font-medium text-money">{price}</span>
+          {priceSub && <span className="mono block text-2xs text-dim">{priceSub}</span>}
         </span>
       )}
     </button>

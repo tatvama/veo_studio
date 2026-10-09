@@ -27,16 +27,16 @@ export function PronunciationTable({ rows, onChange, disabled }: { rows: PronRow
   return (
     <div ref={root} className="space-y-2">
       {rows.length ? (
-        <div className="overflow-hidden rounded-xl border border-line">
+        <div className="overflow-hidden rounded-lg border border-line">
           <table className="w-full text-sm">
-            <thead className="bg-raised text-2xs uppercase tracking-wider text-dim">
+            <thead className="border-b border-line bg-raised/60">
               <tr>
-                <th scope="col" className="px-3 py-1.5 text-left font-semibold">{t("Term")}</th>
-                <th scope="col" className="px-3 py-1.5 text-left font-semibold">{t("Say it as")}</th>
+                <th scope="col" className="eyebrow px-3 py-2 text-left font-medium">{t("Term")}</th>
+                <th scope="col" className="eyebrow px-3 py-2 text-left font-medium">{t("Say it as")}</th>
                 {!disabled && <th scope="col" className="w-10"><span className="sr-only">{t("Remove")}</span></th>}
               </tr>
             </thead>
-            <tbody className="divide-y divide-line">
+            <tbody className="divide-y divide-line/70">
               {rows.map((r, i) => (
                 <tr key={i}>
                   <td className="p-1.5">
@@ -44,7 +44,7 @@ export function PronunciationTable({ rows, onChange, disabled }: { rows: PronRow
                       onChange={(e) => set(i, { term: e.target.value })} />
                   </td>
                   <td className="p-1.5">
-                    <Input value={r.say} aria-label={t("Say it as")} placeholder={t("Shree Raa-ma")} className="h-8" disabled={disabled}
+                    <Input value={r.say} aria-label={t("Say it as")} placeholder={t("Shree Raa-ma")} className="mono h-8 text-accent-ink" disabled={disabled}
                       onChange={(e) => set(i, { say: e.target.value })}
                       onKeyDown={(e) => { if (e.key === "Enter" && !disabled && i === rows.length - 1 && r.term.trim()) { e.preventDefault(); add(); } }} />
                   </td>

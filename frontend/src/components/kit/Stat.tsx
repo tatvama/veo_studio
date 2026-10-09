@@ -1,6 +1,7 @@
 import { cn } from "../../lib/cn";
 import { motion } from "motion/react";
 import { useId, type ReactNode } from "react";
+import { MoneyText } from "./Money";
 import { AnimatedNumber, rise } from "./Motion";
 
 type Tone = "neutral" | "accent" | "ok" | "warn" | "bad" | "info";
@@ -19,13 +20,14 @@ export function Stat({ label, value, format, sub, icon, tone = "neutral", index 
 }) {
   const r = rise(index);
   return (
-    <div {...r} className={cn("rounded-xl border border-line bg-panel p-4", r.className, className)}>
-      <div className="flex items-center gap-2 text-xs font-medium text-mute">
-        {icon && <span className={cn("grid size-7 place-items-center rounded-lg", toneIcon[tone])}>{icon}</span>}
-        <span className="min-w-0 truncate">{label}</span>
+    <div {...r} className={cn("hud group relative overflow-hidden rounded-xl border border-line bg-panel p-4", r.className, className)}>
+      <span aria-hidden className="edge-light pointer-events-none absolute inset-x-0 top-0 h-px opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
+      <div className="flex items-center gap-2">
+        {icon && <span className={cn("grid size-7 shrink-0 place-items-center rounded-md", toneIcon[tone])}>{icon}</span>}
+        <span className="eyebrow min-w-0 truncate">{label}</span>
       </div>
-      <div className={cn("mt-3 text-2xl font-semibold leading-none tracking-tight", toneText[tone])}>
-        {typeof value === "number" ? <AnimatedNumber value={value} format={format} /> : value}
+      <div className={cn("mono mt-3 text-[1.65rem] font-medium leading-none tracking-tight", toneText[tone])}>
+        {typeof value === "number" ? <AnimatedNumber value={value} format={format} /> : <MoneyText text={value} />}
       </div>
       {sub && <p className="mt-1.5 text-2xs text-dim">{sub}</p>}
       {children}

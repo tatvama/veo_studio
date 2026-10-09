@@ -41,8 +41,8 @@ export function ScoreRing({ value, size = 88, bar = 7.5, label }: { value: numbe
         <line x1={tx1} y1={ty1} x2={tx2} y2={ty2} className="stroke-mute" strokeWidth={2} strokeLinecap="round" opacity={0.7} />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className={clsx("font-semibold tabular-nums leading-none", TONE_TEXT[tone], size >= 100 ? "text-3xl" : "text-xl")}><AnimatedNumber value={value} format={(n) => n.toFixed(1)} duration={0.8} /></span>
-        {label && <span className="mt-1 text-2xs text-dim">{label}</span>}
+        <span className={clsx("mono font-semibold leading-none", TONE_TEXT[tone], size >= 100 ? "text-3xl" : "text-2xl")}><AnimatedNumber value={value} format={(n) => n.toFixed(1)} duration={0.8} /></span>
+        {label && <span className="eyebrow mt-1.5">{label}</span>}
       </div>
     </div>
   );
@@ -120,42 +120,42 @@ export function CriticPanel({ ep, onUseNotes }: { ep: Episode; onUseNotes?: (not
         <RoomEmpty icon={<Gauge className="size-7" />} title={t("No critique yet")} sub={hasScript ? t("Run a quick critique for scores and notes, or the loop to auto-revise.") : t("Write the script first.")} />
       ) : (
         <div className="space-y-5">
-          <div className="grid gap-x-8 gap-y-5 @2xl:grid-cols-[11rem_minmax(0,1fr)]">
-            <div className="flex flex-col items-center gap-2.5 text-center">
-              <ScoreRing value={r.overall!} bar={bar} size={112} label={t("overall")} />
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+            <ScoreRing value={r.overall!} bar={bar} size={104} label={t("overall")} />
+            <div className="flex min-w-0 flex-1 basis-40 flex-col items-start gap-2.5">
               <Fact tone={passed ? "ok" : "warn"} icon={passed ? <CheckCircle2 /> : <AlertCircle />}>{passed ? t("Clears the bar") : t("Below the bar")}</Fact>
-              <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-2xs text-dim">
+              <div className="mono flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-dim">
                 {typeof r.round === "number" && <Badge>{t("Round {n}", { n: r.round + 1 })}</Badge>}
                 {r.at && <span title={new Date(r.at).toLocaleString()}>{ago(r.at)}</span>}
               </div>
               {history.length > 1 && (
-                <div className="flex flex-wrap items-center justify-center gap-1 text-xs" aria-label={t("Score by round")}>
+                <div className="mono flex flex-wrap items-center gap-1 text-xs" aria-label={t("Score by round")}>
                   {history.map((h, i) => (
                     <span key={i} className="flex items-center gap-1">
                       {i > 0 && <ArrowRight className="size-3 text-dim" />}
-                      <span className={clsx("font-medium tabular-nums", TONE_TEXT_SM[scoreTone(h.overall, bar)])}>{h.overall.toFixed(1)}</span>
+                      <span className={clsx("font-medium", TONE_TEXT_SM[scoreTone(h.overall, bar)])}>{h.overall.toFixed(1)}</span>
                     </span>
                   ))}
                 </div>
               )}
-            </div>
-            <div className="grid content-start gap-x-8 gap-y-3.5 @xl:grid-cols-2">
-              {scores.map(([k, v], i) => (
-                <ScoreBar key={k} label={t(DIMENSIONS[k] ?? human(k))} value={v} tone={scoreTone(v, bar)} delay={i * 0.04} marker={bar} />
-              ))}
-              <p className="col-span-full flex items-center gap-1.5 text-2xs text-dim"><span aria-hidden className="h-3 w-px bg-mute/60" />{t("Tick = the pass bar ({bar})", { bar: bar.toFixed(1) })}</p>
+              <p className="flex items-center gap-1.5 text-2xs text-dim"><span aria-hidden className="h-3 w-px bg-mute/60" />{t("Tick = the pass bar ({bar})", { bar: bar.toFixed(1) })}</p>
             </div>
           </div>
+          <div className="grid content-start gap-x-8 gap-y-3 @xl:grid-cols-2">
+            {scores.map(([k, v], i) => (
+              <ScoreBar key={k} label={t(DIMENSIONS[k] ?? human(k))} value={v} tone={scoreTone(v, bar)} delay={i * 0.04} marker={bar} />
+            ))}
+          </div>
 
-          <div className="grid gap-4 @2xl:grid-cols-2">
+          <div className="grid gap-3 @xl:grid-cols-2">
             <NoteList title={t("What works")} items={r.strengths ?? []} tone="ok" icon={<CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-ok" />} />
             <NoteList title={t("Problems to fix")} items={r.problems ?? []} tone="warn" icon={<AlertCircle className="mt-0.5 size-3.5 shrink-0 text-warn" />} />
           </div>
 
           {r.rewrite_instructions && (
-            <div className="rounded-xl border border-accent/25 bg-accent/6 p-3.5">
+            <div className="rounded-lg border border-ai/30 bg-ai/6 p-3.5">
               <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2">
-                <p className="flex items-center gap-1.5 text-xs font-semibold text-accent-ink"><Wand2 className="size-3.5" />{t("Suggested fixes for the next draft")}</p>
+                <p className="eyebrow flex items-center gap-1.5 !text-ai"><Wand2 className="size-3.5" />{t("Suggested fixes for the next draft")}</p>
                 {canEdit && onUseNotes && (
                   <Button size="sm" variant="outline" icon={<Wand2 className="size-3.5" />} onClick={() => onUseNotes(r.rewrite_instructions!)}>
                     {t("Use as rewrite instructions")}
@@ -174,8 +174,8 @@ export function CriticPanel({ ep, onUseNotes }: { ep: Episode; onUseNotes?: (not
 function NoteList({ title, items, icon, tone }: { title: string; items: string[]; icon: ReactNode; tone: "ok" | "warn" }) {
   const t = useT();
   return (
-    <div className={clsx("rounded-xl border p-3.5", tone === "warn" && items.length ? "border-warn/25 bg-warn/5" : "border-line bg-bg/40")}>
-      <p className="mb-2 text-xs font-semibold text-mute">{title}</p>
+    <div className={clsx("rounded-lg border p-3.5", tone === "warn" && items.length ? "border-warn/25 bg-warn/5" : "border-line bg-bg/40")}>
+      <p className="eyebrow mb-2.5">{title}</p>
       {!items.length ? <p className="text-xs text-dim">{t("None noted.")}</p> : (
         <ul className="space-y-2">
           {items.map((s, i) => (

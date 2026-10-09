@@ -7,6 +7,7 @@ import { api } from "../../lib/api";
 import { tr, useT } from "../../lib/i18n";
 import type { Character } from "../../lib/types";
 import { Button, Input, Modal, Select, Textarea } from "../ui";
+import "../../styles/room.css";
 
 const IMAGES = ["image/png", "image/jpeg", "image/webp"];
 
@@ -57,54 +58,62 @@ export function NewCharacterModal({ open, onClose, projectId, onCreated, initial
           {photos.length ? t("Create with {n} photo(s)", { n: photos.length }) : t("Create character")}
         </Button>
       </>}>
-      <div className="grid gap-5 @2xl:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
-        <div className="space-y-3">
-          <label className="block space-y-1">
-            <span className="text-xs font-medium text-mute">{t("Name")}</span>
-            <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder={t("e.g. Ajji")} />
-          </label>
-          <label className="block space-y-1">
-            <span className="text-xs font-medium text-mute">{t("Role")}</span>
-            <Input value={role} onChange={(e) => setRole(e.target.value)} placeholder={t("e.g. grandmother, brand ambassador")} />
-          </label>
-          <div className="grid grid-cols-2 gap-3">
+      {/* the modal is not a size container: this makes the two-column layout answer to the dialog's own width */}
+      <div className="@container">
+        <div className="grid gap-4 @2xl:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
+          <section className="space-y-3 rounded-xl border border-line bg-bg/30 p-3.5">
+            <p className="eyebrow flex items-center gap-1.5"><span className="mono text-accent-ink">01</span><span aria-hidden className="opacity-50">/</span>{t("Who they are")}</p>
             <label className="block space-y-1">
-              <span className="text-xs font-medium text-mute">{t("Gender")}</span>
-              <Select value={gender} onChange={(e) => setGender(e.target.value)}>
-                <option value="">—</option><option value="male">{t("male")}</option><option value="female">{t("female")}</option><option value="neutral">{t("neutral")}</option>
-              </Select>
+              <span className="text-xs font-medium text-mute">{t("Name")}</span>
+              <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder={t("e.g. Ajji")} />
             </label>
             <label className="block space-y-1">
-              <span className="text-xs font-medium text-mute">{t("Age")}</span>
-              <Input value={age} onChange={(e) => setAge(e.target.value)} placeholder="65" />
+              <span className="text-xs font-medium text-mute">{t("Role")}</span>
+              <Input value={role} onChange={(e) => setRole(e.target.value)} placeholder={t("e.g. grandmother, brand ambassador")} />
             </label>
-          </div>
-          <label className="block space-y-1">
-            <span className="text-xs font-medium text-mute">{t("Look (optional)")}</span>
-            <Textarea rows={4} value={look} onChange={(e) => setLook(e.target.value)}
-              placeholder={t("Face, hair, build, signature outfit, marks — e.g. silver hair in a low bun, round gold-rim glasses, green cotton saree")} />
-            <span className="text-2xs text-dim">{t("Your photos matter most; this text helps keep details consistent.")}</span>
-          </label>
-        </div>
-        <div className="space-y-2">
-          <DropZone accept={IMAGES} maxMb={15} multiple onFiles={(fs) => setPhotos([...photos, ...fs].slice(0, 8))}
-            icon={<ImagePlus className="size-5" />} title={t("Add photos of this person")}
-            hint={t("Clear face (front, ¾ side) and one full body. Up to 8. These become the look reference for every shot.")} />
-          {photos.length > 0 && (
-            <div className="grid grid-cols-4 gap-2">
-              {previews.map((u, i) => (
-                <div key={u} className="group relative aspect-[3/4] overflow-hidden rounded-lg border border-line">
-                  <img src={u} alt="" className="size-full object-cover" />
-                  {i === 0 && <span className="absolute left-1 top-1 rounded bg-black/60 px-1 text-2xs text-white">{t("main")}</span>}
-                  <button type="button" aria-label={t("Remove photo")} onClick={() => setPhotos(photos.filter((_, k) => k !== i))}
-                    className="absolute right-1 top-1 grid size-6 place-items-center rounded bg-black/60 text-white opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100">
-                    <Trash2 className="size-3.5" />
-                  </button>
-                </div>
-              ))}
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block space-y-1">
+                <span className="text-xs font-medium text-mute">{t("Gender")}</span>
+                <Select value={gender} onChange={(e) => setGender(e.target.value)}>
+                  <option value="">—</option><option value="male">{t("male")}</option><option value="female">{t("female")}</option><option value="neutral">{t("neutral")}</option>
+                </Select>
+              </label>
+              <label className="block space-y-1">
+                <span className="text-xs font-medium text-mute">{t("Age")}</span>
+                <Input value={age} onChange={(e) => setAge(e.target.value)} placeholder="65" className="mono" />
+              </label>
             </div>
-          )}
-          <p className="text-2xs text-dim">{t("Using a real person's face? Record their consent on the character page (Consent section).")}</p>
+            <label className="block space-y-1">
+              <span className="text-xs font-medium text-mute">{t("Look (optional)")}</span>
+              <Textarea rows={4} value={look} onChange={(e) => setLook(e.target.value)}
+                placeholder={t("Face, hair, build, signature outfit, marks — e.g. silver hair in a low bun, round gold-rim glasses, green cotton saree")} />
+              <span className="text-2xs text-dim">{t("Your photos matter most; this text helps keep details consistent.")}</span>
+            </label>
+          </section>
+
+          <section className="space-y-2.5 rounded-xl border border-line bg-bg/30 p-3.5">
+            <p className="eyebrow flex items-center gap-1.5"><span className="mono text-accent-ink">02</span><span aria-hidden className="opacity-50">/</span>{t("Reference photos")}</p>
+            <DropZone accept={IMAGES} maxMb={15} multiple onFiles={(fs) => setPhotos([...photos, ...fs].slice(0, 8))}
+              icon={<ImagePlus className="size-5" />} title={t("Add photos of this person")}
+              hint={t("Clear face (front, ¾ side) and one full body. Up to 8. These become the look reference for every shot.")} />
+            {photos.length > 0 && (
+              <div className="grid grid-cols-4 gap-2">
+                {previews.map((u, i) => (
+                  <div key={u} className="group hud relative aspect-[3/4] rounded-lg">
+                    <div className="rm-scan size-full overflow-hidden rounded-lg border border-line bg-raised">
+                      <img src={u} alt="" className="size-full object-cover" />
+                    </div>
+                    {i === 0 && <span className="mono absolute left-1 top-1 rounded bg-black/60 px-1 text-2xs uppercase text-white">{t("main")}</span>}
+                    <button type="button" aria-label={t("Remove photo")} onClick={() => setPhotos(photos.filter((_, k) => k !== i))}
+                      className="absolute right-1 top-1 grid size-8 place-items-center rounded bg-black/60 text-white opacity-0 transition-opacity focus:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100 sm:size-6">
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <p className="text-2xs text-dim">{t("Using a real person's face? Record their consent on the character page (Consent section).")}</p>
+          </section>
         </div>
       </div>
     </Modal>

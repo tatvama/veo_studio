@@ -1,15 +1,17 @@
+import { LogoMark } from "../components/shell/Brand";
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import {
-  CircleAlert, Clapperboard, Eye, EyeOff, Languages, LockKeyhole, Monitor, Moon, ShieldCheck, Sparkles, Sun, Wand2, Link2, ArrowRight, TriangleAlert,
+  CircleAlert, Eye, EyeOff, Languages, LockKeyhole, Monitor, Moon, ShieldCheck, Sun, Wand2, Link2, ArrowRight, TriangleAlert,
 } from "lucide-react";
 import { AnimatePresence, motion, useAnimate } from "motion/react";
-import { useRef, useState, type FormEvent, type ReactNode } from "react";
+import { Fragment, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
 import { usePrefActions } from "../components/shell/prefs";
 import { nextTheme, useThemePref } from "../components/shell/theme";
-import { Badge, Button, IconButton, Input, rise } from "../components/ui";
+import { Button, IconButton, Input, Meter, Panel, rise } from "../components/ui";
 import { api, ApiError } from "../lib/api";
 import { UI_LANGUAGES, useT, useUiLanguage } from "../lib/i18n";
+import { useAuthStatus } from "../lib/queries";
 
 type Field = "name" | "email" | "password";
 type Errors = Partial<Record<Field, string>>;
@@ -17,14 +19,22 @@ type Errors = Partial<Record<Field, string>>;
 const EMAIL_RE = /^\S+@\S+\.\S+$/;
 
 /** Rough strength estimate for the first-time admin password (the server only enforces the 8-character minimum). */
-function strength(pw: string): { score: number; tone: string } {
+function strength(pw: string): { score: number; tone: "bad" | "warn" | "ok" } {
   let score = 0;
   if (pw.length >= 8) score++;
   if (pw.length >= 12) score++;
   if (/[a-z]/.test(pw) && /[A-Z]/.test(pw)) score++;
   if (/\d/.test(pw) || /[^A-Za-z0-9]/.test(pw)) score++;
   if (pw.length < 8) score = Math.min(score, 1);
-  return { score, tone: ["bg-bad", "bg-bad", "bg-warn", "bg-ok", "bg-ok"][score] };
+  return { score, tone: (["bad", "bad", "warn", "ok", "ok"] as const)[score] };
+}
+
+function useOnline() {
+  return useSyncExternalStore(
+    (cb) => { window.addEventListener("online", cb); window.addEventListener("offline", cb); return () => { window.removeEventListener("online", cb); window.removeEventListener("offline", cb); }; },
+    () => navigator.onLine,
+    () => true,
+  );
 }
 
 /** Google's multi-colour "G" — a third-party brand mark, so these fills are the one place we use literal colours. */
@@ -44,58 +54,102 @@ function Brand({ className, compact }: { className?: string; compact?: boolean }
   return (
     <div className={clsx("flex items-center gap-3", className)}>
       <motion.span
-        initial={{ rotate: -14, scale: 0.7 }}
-        animate={{ rotate: 0, scale: 1 }}
-        transition={{ type: "spring", stiffness: 300, damping: 16, delay: 0.1 }}
-        className="grid size-10 shrink-0 place-items-center rounded-xl bg-gradient-to-b from-orange-400 to-orange-500 text-black shadow-lg shadow-accent/30"
+        initial={{ rotate: -30, scale: 0.6, opacity: 0 }}
+        animate={{ rotate: 0, scale: 1, opacity: 1 }}
+        transition={{ type: "spring", stiffness: 260, damping: 16, delay: 0.1 }}
+        className="grid size-11 shrink-0 place-items-center"
       >
-        <Clapperboard className="size-5" />
+        <LogoMark size={44} />
       </motion.span>
       {/* the wordmark drops away below 360px so the language and theme switchers always fit */}
-      <span className={clsx("leading-tight", compact && "max-[359px]:hidden")}>
-        <span className="block text-[15px] font-semibold tracking-tight">VEO Studio</span>
-        <span className="block text-2xs text-dim">{t("AI video studio")}</span>
+      <span className={clsx("leading-none", compact && "max-[359px]:hidden")}>
+        <span className="text-gradient block text-lg font-semibold tracking-[0.22em]">TATVAM</span>
+        <span className="eyebrow mt-1.5 block tracking-[0.32em]">{t("AI STUDIO")}</span>
       </span>
     </div>
   );
 }
 
-/** Left-hand story shown beside the form on wide screens. */
-function Showcase() {
+/** Connection, server and sign-in method, as a row of tiny mono telemetry. All of it is read from the real state. */
+function StatusRow({ setupNeeded, googleEnabled, className }: { setupNeeded: boolean; googleEnabled: boolean; className?: string }) {
+  const t = useT();
+  const online = useOnline();
+  const status = useAuthStatus();
+  const server = status.isError ? "bad" : status.data ? "ok" : "warn";
+  return (
+    <ul aria-label={t("System status")} className={clsx("mono flex flex-wrap items-center gap-x-4 gap-y-1.5 text-2xs text-dim", className)}>
+      <li className="flex items-center gap-1.5">
+        <span aria-hidden className={clsx("live-dot", !online && "is-bad")} />
+        <span className={online ? "text-mute" : "text-bad"}>{online ? t("Online") : t("Offline")}</span>
+      </li>
+      <li className="flex items-center gap-1.5">
+        <span aria-hidden className={clsx("live-dot", server === "bad" && "is-bad", server === "warn" && "is-warn")} />
+        <span className={server === "bad" ? "text-bad" : "text-mute"}>{server === "bad" ? t("Server unreachable") : server === "warn" ? t("Connecting…") : t("Server ready")}</span>
+      </li>
+      <li className="flex items-center gap-1.5 text-mute">
+        <span aria-hidden>◆</span>{setupNeeded ? t("Setup pending") : googleEnabled ? t("Email or Google") : t("Email sign-in")}
+      </li>
+      <li className="ml-auto hidden sm:block">TATVAM · v3</li>
+    </ul>
+  );
+}
+
+/** Left-hand "access terminal": what the studio does, laid out as labelled rows, then a status footer. Wide screens only. */
+function Showcase({ setupNeeded, googleEnabled }: { setupNeeded: boolean; googleEnabled: boolean }) {
   const t = useT();
   const steps = [t("Concept"), t("Hook"), t("Script"), t("Scenes"), t("Shots"), t("Video")];
-  const points: { icon: ReactNode; text: string }[] = [
-    { icon: <Wand2 className="size-4" />, text: t("The Director writes the hooks, script, cast and shots — you approve.") },
-    { icon: <ShieldCheck className="size-4" />, text: t("Every cost is shown and approved before it is spent.") },
-    { icon: <Link2 className="size-4" />, text: t("Share review links with clients — no account needed.") },
+  const rows: { icon: ReactNode; k: string; text: string; ai?: boolean }[] = [
+    { icon: <Wand2 className="size-3.5" />, k: t("Director"), text: t("The Director writes the hooks, script, cast and shots — you approve."), ai: true },
+    { icon: <ShieldCheck className="size-3.5" />, k: t("Budget"), text: t("Every cost is shown and approved before it is spent.") },
+    { icon: <Link2 className="size-3.5" />, k: t("Review"), text: t("Share review links with clients — no account needed.") },
   ];
   return (
     <section className="hidden lg:block">
       <div {...rise(0)} className={rise(0).className}><Brand /></div>
-      <h2 {...rise(1)} className={clsx("mt-10 max-w-lg text-balance text-4xl font-semibold leading-[1.1] tracking-tight", rise(1).className)}>
+      <p {...rise(1)} className={clsx("eyebrow mt-10 flex items-center gap-2 !text-accent-ink", rise(1).className)}>
+        <span aria-hidden className="live-dot" />{t("Access terminal")}
+      </p>
+      <h2 {...rise(2)} className={clsx("mt-3 max-w-lg text-balance text-4xl font-semibold leading-[1.1] tracking-tight", rise(2).className)}>
         {t("From one idea to a finished video.")}{" "}
-        <span className="bg-gradient-to-r from-accent to-accent-2 bg-clip-text text-transparent">{t("In five languages.")}</span>
+        <span className="text-gradient">{t("In five languages.")}</span>
       </h2>
-      <ol {...rise(2)} className={clsx("mt-8 flex flex-wrap items-center gap-y-2", rise(2).className)} aria-label={t("How it works")}>
-        {steps.map((s, i) => (
-          <li key={s} className="flex items-center">
-            <span className="rounded-full border border-line bg-panel/70 px-2.5 py-1 text-xs font-medium backdrop-blur">{s}</span>
-            {i < steps.length - 1 && <ArrowRight className="mx-1 size-3.5 text-dim" />}
-          </li>
-        ))}
-      </ol>
-      <ul className="mt-9 max-w-md space-y-3.5">
-        {points.map((p, i) => (
-          <li key={i} {...rise(3 + i)} className={clsx("flex items-start gap-3 text-sm text-mute", rise(3 + i).className)}>
-            <span className="mt-px grid size-7 shrink-0 place-items-center rounded-lg bg-accent/12 text-accent-ink ring-1 ring-inset ring-accent/20">{p.icon}</span>
-            <span className="pt-0.5">{p.text}</span>
-          </li>
-        ))}
-      </ul>
-      <div {...rise(6)} className={clsx("mt-9 flex flex-wrap gap-2", rise(6).className)}>
-        {Object.entries(UI_LANGUAGES).map(([code, label]) => (
-          <span key={code} lang={code} className="rounded-lg border border-line bg-panel/60 px-2.5 py-1 text-xs text-mute backdrop-blur">{label}</span>
-        ))}
+
+      <Panel index={3} flush eyebrow={t("What you get")} className="mt-8 max-w-xl bg-panel/80 backdrop-blur" bodyClassName="pt-3">
+        <dl className="grid grid-cols-[max-content_minmax(0,1fr)] border-t border-line">
+          {rows.map((r) => (
+            <div key={r.k} className="col-span-2 grid grid-cols-subgrid items-baseline gap-x-5 border-b border-line px-4 py-3">
+              <dt className={clsx("eyebrow flex items-center gap-1.5", r.ai && "!text-ai")}>{r.icon}{r.k}</dt>
+              <dd className="text-sm leading-relaxed text-mute">{r.text}</dd>
+            </div>
+          ))}
+          <div className="col-span-2 grid grid-cols-subgrid items-baseline gap-x-5 border-b border-line px-4 py-3">
+            <dt className="eyebrow">{t("How it works")}</dt>
+            <dd>
+              <ol aria-label={t("How it works")} className="flex flex-wrap items-center gap-y-1.5">
+                {steps.map((s, i) => (
+                  <Fragment key={s}>
+                    <li className="mono rounded-md border border-line bg-raised/60 px-2 py-1 text-2xs"><span className="text-dim">{String(i + 1).padStart(2, "0")}</span> {s}</li>
+                    {i < steps.length - 1 && <ArrowRight aria-hidden className="mx-1 size-3 text-dim" />}
+                  </Fragment>
+                ))}
+              </ol>
+            </dd>
+          </div>
+          <div className="col-span-2 grid grid-cols-subgrid items-baseline gap-x-5 px-4 py-3">
+            <dt className="eyebrow">{t("Languages")}</dt>
+            <dd className="flex flex-wrap gap-1.5">
+              {Object.entries(UI_LANGUAGES).map(([code, label]) => (
+                <span key={code} lang={code} className="inline-flex items-center gap-1.5 rounded-md border border-line bg-raised/60 px-2 py-1 text-xs text-mute">
+                  <span className="mono text-2xs uppercase text-dim">{code}</span>{label}
+                </span>
+              ))}
+            </dd>
+          </div>
+        </dl>
+      </Panel>
+
+      <div {...rise(4)} className={clsx("mt-5 max-w-xl", rise(4).className)}>
+        <StatusRow setupNeeded={setupNeeded} googleEnabled={googleEnabled} />
       </div>
     </section>
   );
@@ -107,9 +161,9 @@ function FieldRow({ id, label, hint, error, optional, children }: {
   const t = useT();
   return (
     <div>
-      <label htmlFor={id} className="mb-1.5 flex items-baseline justify-between gap-2 text-xs font-medium text-mute">
+      <label htmlFor={id} className="eyebrow mb-2 flex items-baseline justify-between gap-2">
         <span>{label}</span>
-        {optional && <span className="text-2xs font-normal text-dim">{t("optional")}</span>}
+        {optional && <span className="font-sans text-2xs font-normal normal-case tracking-normal text-dim">{t("optional")}</span>}
       </label>
       {children}
       <AnimatePresence initial={false} mode="wait">
@@ -131,6 +185,7 @@ export default function Login({ setupNeeded, googleEnabled }: { setupNeeded: boo
   const qc = useQueryClient();
   const uiLang = useUiLanguage();
   const theme = useThemePref();
+  const online = useOnline();
   // Signed out: choices apply now and are saved to the account right after sign-in.
   const prefs = usePrefActions(false);
   const [email, setEmail] = useState("");
@@ -229,7 +284,7 @@ export default function Login({ setupNeeded, googleEnabled }: { setupNeeded: boo
 
       <main className="relative z-10 flex flex-1 items-center justify-center px-4 pb-8 pt-2 sm:px-6">
         <div className="grid w-full max-w-5xl items-center gap-12 lg:grid-cols-[minmax(0,1fr)_26rem] lg:gap-14 xl:gap-20">
-          <Showcase />
+          <Showcase setupNeeded={setupNeeded} googleEnabled={googleEnabled} />
 
           <motion.div
             initial={{ opacity: 0, y: 16, scale: 0.98 }}
@@ -238,123 +293,124 @@ export default function Login({ setupNeeded, googleEnabled }: { setupNeeded: boo
             className="mx-auto w-full max-w-[26rem]"
           >
             <div ref={card}>
-              <form
-                onSubmit={submit}
-                noValidate
-                className="space-y-4 rounded-2xl border border-line bg-panel/90 p-5 shadow-modal backdrop-blur-xl sm:p-7"
+              <Panel
+                tone="accent"
+                eyebrow={setupNeeded ? t("First-time setup") : t("Sign in")}
+                icon={<LockKeyhole />}
+                actions={<span className="eyebrow flex items-center gap-1.5"><span aria-hidden className={clsx("live-dot", !online && "is-bad")} />{online ? t("Online") : t("Offline")}</span>}
+                className="bg-panel/90 shadow-modal backdrop-blur-xl"
+                bodyClassName="p-5 sm:p-6"
               >
-                <div {...rise(0)} className={rise(0).className}>
-                  {setupNeeded && (
-                    <Badge tone="accent" className="mb-3"><Sparkles className="size-3" />{t("First-time setup")}</Badge>
-                  )}
-                  <h1 className="text-balance text-2xl font-semibold tracking-tight">
-                    {setupNeeded ? t("Set up your studio") : t("Welcome back")}
-                  </h1>
-                  <p className="mt-1 text-sm text-mute">
-                    {setupNeeded ? t("First-time setup — create the admin account") : t("Sign in to your studio")}
-                  </p>
-                  {setupNeeded && (
-                    <p className="mt-3 flex items-start gap-2 rounded-lg border border-line bg-raised/60 px-3 py-2 text-xs leading-relaxed text-mute">
-                      <LockKeyhole className="mt-px size-3.5 shrink-0 text-accent-ink" />
-                      {t("You'll be the admin: you can add teammates, set budgets and add API keys.")}
+                <form onSubmit={submit} noValidate className="space-y-4">
+                  <div {...rise(0)} className={rise(0).className}>
+                    <h1 className="text-balance text-2xl font-semibold tracking-tight">
+                      {setupNeeded ? t("Set up your studio") : t("Welcome back")}
+                    </h1>
+                    <p className="mt-1 text-sm text-mute">
+                      {setupNeeded ? t("First-time setup — create the admin account") : t("Sign in to your studio")}
                     </p>
-                  )}
-                </div>
+                    {setupNeeded && (
+                      <p className="mt-3 flex items-start gap-2 rounded-lg border border-line bg-raised/60 px-3 py-2 text-xs leading-relaxed text-mute">
+                        <LockKeyhole className="mt-px size-3.5 shrink-0 text-accent-ink" />
+                        {t("You'll be the admin: you can add teammates, set budgets and add API keys.")}
+                      </p>
+                    )}
+                  </div>
 
-                {setupNeeded && (
-                  <div {...rise(1)} className={rise(1).className}>
-                    <FieldRow id="login-name" label={t("Your name")} optional>
-                      <Input id="login-name" ref={refs.name} className="h-11 max-sm:text-base!" value={name} onChange={(e) => setName(e.target.value)}
-                        autoComplete="name" autoFocus={!touch} placeholder={t("e.g. Asha Rao")} />
+                  {setupNeeded && (
+                    <div {...rise(1)} className={rise(1).className}>
+                      <FieldRow id="login-name" label={t("Your name")} optional>
+                        <Input id="login-name" ref={refs.name} className="h-11 max-sm:text-base!" value={name} onChange={(e) => setName(e.target.value)}
+                          autoComplete="name" autoFocus={!touch} placeholder={t("e.g. Asha Rao")} />
+                      </FieldRow>
+                    </div>
+                  )}
+
+                  <div {...rise(2)} className={rise(2).className}>
+                    <FieldRow id="login-email" label={t("Email")} error={errors.email}>
+                      <Input
+                        id="login-email" ref={refs.email} type="email" inputMode="email" value={email} className={fieldCls("email")}
+                        onChange={(e) => onChange("email", e.target.value, setEmail)} onBlur={() => email && setError("email", check("email", email))}
+                        autoComplete="username" autoCapitalize="none" spellCheck={false} autoFocus={!touch && !setupNeeded} placeholder="name@example.com"
+                        aria-invalid={!!errors.email} aria-describedby={errors.email ? "login-email-msg" : undefined}
+                      />
                     </FieldRow>
                   </div>
-                )}
 
-                <div {...rise(2)} className={rise(2).className}>
-                  <FieldRow id="login-email" label={t("Email")} error={errors.email}>
-                    <Input
-                      id="login-email" ref={refs.email} type="email" inputMode="email" value={email} className={fieldCls("email")}
-                      onChange={(e) => onChange("email", e.target.value, setEmail)} onBlur={() => email && setError("email", check("email", email))}
-                      autoComplete="username" autoCapitalize="none" spellCheck={false} autoFocus={!touch && !setupNeeded} placeholder="name@example.com"
-                      aria-invalid={!!errors.email} aria-describedby={errors.email ? "login-email-msg" : undefined}
-                    />
-                  </FieldRow>
-                </div>
-
-                <div {...rise(3)} className={rise(3).className}>
-                  <FieldRow id="login-password" label={t("Password")} error={errors.password}
-                    hint={setupNeeded && !password ? t("At least 8 characters") : undefined}>
-                    <div className="relative">
-                      <Input
-                        id="login-password" ref={refs.password} type={show ? "text" : "password"} value={password} className={clsx(fieldCls("password"), "pr-11")}
-                        onChange={(e) => onChange("password", e.target.value, setPassword)} onBlur={() => { setCaps(false); if (password) setError("password", check("password", password)); }}
-                        onKeyDown={(e) => setCaps(e.getModifierState?.("CapsLock") ?? false)} onKeyUp={(e) => setCaps(e.getModifierState?.("CapsLock") ?? false)}
-                        autoComplete={setupNeeded ? "new-password" : "current-password"}
-                        aria-invalid={!!errors.password} aria-describedby={errors.password ? "login-password-msg" : undefined}
-                      />
-                      <IconButton type="button" title={show ? t("Hide password") : t("Show password")} onClick={() => setShow((v) => !v)} tipSide="left"
-                        className="absolute right-1.5 top-1/2 size-8 -translate-y-1/2">
-                        {show ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                      </IconButton>
-                    </div>
-                    <AnimatePresence initial={false}>
-                      {caps && (
-                        <motion.p key="caps" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-                          className="overflow-hidden text-xs text-amber-300">
-                          <span className="mt-1.5 flex items-center gap-1.5"><TriangleAlert className="size-3.5" />{t("Caps Lock is on")}</span>
-                        </motion.p>
-                      )}
-                    </AnimatePresence>
-                    {setupNeeded && password && (
-                      <div className="mt-2 flex items-center gap-2" aria-live="polite">
-                        <div className="flex flex-1 gap-1" aria-hidden>
-                          {[1, 2, 3, 4].map((n) => <span key={n} className={clsx("h-1 flex-1 rounded-full transition-colors duration-200", str.score >= n ? str.tone : "bg-line")} />)}
+                  <div {...rise(3)} className={rise(3).className}>
+                    <FieldRow id="login-password" label={t("Password")} error={errors.password}
+                      hint={setupNeeded && !password ? t("At least 8 characters") : undefined}>
+                      <div className="relative">
+                        <Input
+                          id="login-password" ref={refs.password} type={show ? "text" : "password"} value={password} className={clsx(fieldCls("password"), "pr-11")}
+                          onChange={(e) => onChange("password", e.target.value, setPassword)} onBlur={() => { setCaps(false); if (password) setError("password", check("password", password)); }}
+                          onKeyDown={(e) => setCaps(e.getModifierState?.("CapsLock") ?? false)} onKeyUp={(e) => setCaps(e.getModifierState?.("CapsLock") ?? false)}
+                          autoComplete={setupNeeded ? "new-password" : "current-password"}
+                          aria-invalid={!!errors.password} aria-describedby={errors.password ? "login-password-msg" : undefined}
+                        />
+                        <IconButton type="button" title={show ? t("Hide password") : t("Show password")} onClick={() => setShow((v) => !v)} tipSide="left"
+                          className="absolute right-1.5 top-1/2 size-8 -translate-y-1/2">
+                          {show ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                        </IconButton>
+                      </div>
+                      <AnimatePresence initial={false}>
+                        {caps && (
+                          <motion.p key="caps" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+                            className="overflow-hidden text-xs text-warn">
+                            <span className="mt-1.5 flex items-center gap-1.5"><TriangleAlert className="size-3.5" />{t("Caps Lock is on")}</span>
+                          </motion.p>
+                        )}
+                      </AnimatePresence>
+                      {setupNeeded && password && (
+                        <div className="mt-2 flex items-center gap-2" aria-live="polite">
+                          <Meter filled={str.score} total={4} tone={str.tone} className="flex-1" />
+                          <span className="mono w-16 text-right text-2xs text-dim">{strengthLabels[str.score]}</span>
                         </div>
-                        <span className="w-16 text-right text-2xs text-dim">{strengthLabels[str.score]}</span>
-                      </div>
+                      )}
+                    </FieldRow>
+                  </div>
+
+                  <AnimatePresence initial={false}>
+                    {formError && (
+                      <motion.div key="form-error" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.18 }} className="overflow-hidden" role="alert">
+                        <div className="flex items-start gap-2.5 rounded-lg border border-bad/30 bg-bad/10 px-3 py-2.5 text-sm text-ink">
+                          <CircleAlert className="mt-0.5 size-4 shrink-0 text-bad" />
+                          <span className="min-w-0 flex-1">{formError}</span>
+                        </div>
+                      </motion.div>
                     )}
-                  </FieldRow>
-                </div>
+                  </AnimatePresence>
 
-                <AnimatePresence initial={false}>
-                  {formError && (
-                    <motion.div key="form-error" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-                      transition={{ duration: 0.18 }} className="overflow-hidden" role="alert">
-                      <div className="flex items-start gap-2.5 rounded-lg border border-bad/30 bg-bad/10 px-3 py-2.5 text-sm text-ink">
-                        <CircleAlert className="mt-0.5 size-4 shrink-0 text-bad" />
-                        <span className="min-w-0 flex-1">{formError}</span>
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+                  <div {...rise(4)} className={clsx("space-y-4", rise(4).className)}>
+                    <Button type="submit" variant="primary" size="lg" block loading={busy} className="h-11" iconRight={<ArrowRight className="size-4" />}>
+                      {setupNeeded ? t("Create admin & start") : t("Sign in")}
+                    </Button>
 
-                <div {...rise(4)} className={clsx("space-y-4", rise(4).className)}>
-                  <Button type="submit" variant="primary" size="lg" block loading={busy} className="h-11" iconRight={<ArrowRight className="size-4" />}>
-                    {setupNeeded ? t("Create admin & start") : t("Sign in")}
-                  </Button>
+                    {googleEnabled && !setupNeeded && (
+                      <>
+                        <div className="eyebrow flex items-center gap-3">
+                          <span className="h-px flex-1 bg-line" />{t("or")}<span className="h-px flex-1 bg-line" />
+                        </div>
+                        <a href="/api/auth/google/start"
+                          className="flex h-11 w-full items-center justify-center gap-2.5 rounded-lg border border-line bg-panel text-sm font-medium transition-[background-color,border-color,transform] hover:border-dim/50 hover:bg-hover active:scale-[0.98]">
+                          <GoogleMark />{t("Continue with Google")}
+                        </a>
+                      </>
+                    )}
 
-                  {googleEnabled && !setupNeeded && (
-                    <>
-                      <div className="flex items-center gap-3 text-2xs uppercase tracking-wide text-dim">
-                        <span className="h-px flex-1 bg-line" />{t("or")}<span className="h-px flex-1 bg-line" />
-                      </div>
-                      <a href="/api/auth/google/start"
-                        className="flex h-11 w-full items-center justify-center gap-2.5 rounded-lg border border-line bg-panel text-sm font-medium transition-[background-color,border-color,transform] hover:border-dim/50 hover:bg-hover active:scale-[0.98]">
-                        <GoogleMark />{t("Continue with Google")}
-                      </a>
-                    </>
-                  )}
-
-                  {!setupNeeded && (
-                    <p className="text-center text-2xs leading-relaxed text-dim">{t("Forgot your password? Ask a studio admin to set a new one for you.")}</p>
-                  )}
-                </div>
-              </form>
+                    {!setupNeeded && (
+                      <p className="text-center text-2xs leading-relaxed text-dim">{t("Forgot your password? Ask a studio admin to set a new one for you.")}</p>
+                    )}
+                  </div>
+                </form>
+              </Panel>
             </div>
 
             <p className="mt-5 text-balance text-center text-xs leading-relaxed text-dim lg:hidden">
               {t("Concept → hook → script → scenes → shots → video, in English, Hindi, Kannada, Telugu and Tamil.")}
             </p>
+            <StatusRow setupNeeded={setupNeeded} googleEnabled={googleEnabled} className="mt-4 justify-center lg:hidden" />
           </motion.div>
         </div>
       </main>

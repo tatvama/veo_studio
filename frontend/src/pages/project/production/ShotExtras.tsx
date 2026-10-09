@@ -23,15 +23,15 @@ function PromptBlock({ title, text, refsLabel, refs, empty }: { title: string; t
     } catch { /* clipboard blocked */ }
   };
   return (
-    <section className="overflow-hidden rounded-xl border border-line bg-raised/35">
+    <section className="hud relative overflow-hidden rounded-xl border border-line bg-panel/70">
       <header className="flex items-center gap-2 px-3 py-2">
-        <h4 className="flex-1 text-sm font-semibold tracking-tight">{title}</h4>
-        <span className="text-2xs tabular-nums text-dim">{t("{n} characters", { n: text.length.toLocaleString() })}</span>
+        <h4 className="eyebrow flex-1 !text-ink">{title}</h4>
+        <span className="mono text-2xs tabular-nums text-dim">{t("{n} characters", { n: text.length.toLocaleString() })}</span>
         <IconButton title={copied ? t("Copied") : t("Copy prompt")} onClick={copy} className="!size-7">
           {copied ? <Check className="size-3.5 text-ok" /> : <Copy className="size-3.5" />}
         </IconButton>
       </header>
-      <pre className="max-h-64 overflow-auto whitespace-pre-wrap border-t border-line/70 bg-bg/60 p-3 font-mono text-xs leading-relaxed text-mute">{text}</pre>
+      <pre className="max-h-64 overflow-auto whitespace-pre-wrap border-t border-line/70 bg-bg/60 p-3 font-mono text-xs leading-relaxed text-mute selection:bg-accent/30">{text}</pre>
       <p className="border-t border-line/70 px-3 py-2 text-2xs text-dim">
         {refsLabel}: {refs.length ? <span className="text-mute">{refs.join(" · ")}</span> : empty}
       </p>
@@ -48,7 +48,7 @@ export function PromptView({ shotId, lang }: { shotId: number; lang: string }) {
   if (!data) return <div className="space-y-4"><SkeletonText lines={2} /><div className="skeleton h-40 rounded-xl" /><div className="skeleton h-32 rounded-xl" /></div>;
   return (
     <div className="space-y-3">
-      <p className="flex items-start gap-2 rounded-lg bg-accent/8 px-3 py-2 text-xs leading-relaxed text-mute">
+      <p className="flex items-start gap-2 rounded-lg border border-accent/20 bg-accent/8 px-3 py-2 text-xs leading-relaxed text-mute">
         <Sparkles className="mt-0.5 size-3.5 shrink-0 text-accent-ink" />
         {t("Compiled automatically from the Bible + this shot. Character DNA is pasted word for word so faces don't drift.")}
       </p>
@@ -102,7 +102,7 @@ export function Comments({ projectId, shotId, targetType = "shot" }: { projectId
               <div className="min-w-0 flex-1">
                 <div className="mb-0.5 flex items-center gap-2 text-xs">
                   <span className="font-semibold">{c.user?.name}</span>
-                  <span className="text-dim">{ago(c.created_at)}</span>
+                  <span className="mono text-2xs text-dim">{ago(c.created_at)}</span>
                   {c.resolved && <span className="inline-flex items-center gap-0.5 text-2xs text-ok"><Check className="size-3" />{t("Resolved")}</span>}
                   <div className="flex-1" />
                   {canReview && (

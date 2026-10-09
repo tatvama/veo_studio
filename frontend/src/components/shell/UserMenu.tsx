@@ -8,6 +8,7 @@ import { useUI } from "../../lib/store";
 import type { UserBrief } from "../../lib/types";
 import { Avatar, Kbd, Popover, Segmented, Toggle, Tooltip, type Placement } from "../ui";
 import { MOD } from "./keys";
+import { CurrencySwitch } from "./money";
 import { usePrefActions } from "./prefs";
 import { useMotionPref, useThemePref, type ThemePref } from "./theme";
 
@@ -56,7 +57,7 @@ export function LanguageList({ signedIn, onPicked }: { signedIn: boolean; onPick
   );
 }
 
-export function UserMenu({ user, expanded = false, placement = "right-end" }: { user: UserBrief; expanded?: boolean; placement?: Placement }) {
+export function UserMenu({ user, expanded = false, placement = "right-end", dense = false }: { user: UserBrief; expanded?: boolean; placement?: Placement; dense?: boolean }) {
   const t = useT();
   const qc = useQueryClient();
   const ui = useUI();
@@ -89,15 +90,15 @@ export function UserMenu({ user, expanded = false, placement = "right-end" }: { 
       onClick={() => setOpen((v) => !v)}
       aria-label={t("Account and preferences")}
       aria-expanded={open}
-      className={clsx("mt-1 flex size-10 items-center justify-center self-center rounded-full outline-none ring-2 transition focus-visible:ring-accent/60", open ? "ring-accent/50" : "ring-transparent hover:ring-line")}
+      className={clsx("flex items-center justify-center self-center rounded-full outline-none ring-2 transition focus-visible:ring-accent/60", dense ? "size-8" : "mt-1 size-10", open ? "ring-accent/60" : "ring-transparent hover:ring-line")}
     >
-      <Avatar name={name} size={34} />
+      <Avatar name={name} size={dense ? 28 : 34} />
     </button>
   );
 
   return (
     <>
-      {open || expanded ? trigger : <Tooltip content={name} side="right">{trigger}</Tooltip>}
+      {open || expanded ? trigger : <Tooltip content={name} side={dense ? "bottom" : "right"}>{trigger}</Tooltip>}
       <Popover open={open} onClose={() => setOpen(false)} anchor={ref} placement={placement} width={296} className="p-2">
         <div className="flex items-center gap-3 px-2 pb-2 pt-1">
           <Avatar name={name} size={36} />
@@ -110,6 +111,10 @@ export function UserMenu({ user, expanded = false, placement = "right-end" }: { 
           <div>
             <p className="mb-1.5 text-2xs font-semibold uppercase tracking-wide text-dim">{t("Theme")}</p>
             <ThemeSwitch signedIn />
+          </div>
+          <div>
+            <p className="mb-1.5 text-2xs font-semibold uppercase tracking-wide text-dim">{t("Currency")}</p>
+            <CurrencySwitch />
           </div>
           <div>
             <p className="mb-1.5 flex items-center gap-1 text-2xs font-semibold uppercase tracking-wide text-dim"><Languages className="size-3.5" />{t("Interface language")}</p>

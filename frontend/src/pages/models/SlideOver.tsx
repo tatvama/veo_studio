@@ -1,4 +1,4 @@
-import { clsx } from "clsx";
+import { cn } from "../../lib/cn";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -35,7 +35,7 @@ function useFocusTrap(active: boolean, ref: React.RefObject<HTMLElement | null>)
 }
 
 /**
- * Right-hand drawer that springs in over a dimmed backdrop. Escape and a click on the backdrop call `onClose`
+ * Right-hand spec sheet that springs in over a dimmed backdrop. Escape and a click on the backdrop call `onClose`
  * (the caller decides whether to confirm). On phones it fills the screen.
  */
 export function SlideOver({ open, onClose, label, children, width = 600 }: {
@@ -63,8 +63,9 @@ export function SlideOver({ open, onClose, label, children, width = 600 }: {
             initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }}
             transition={{ type: "spring", stiffness: 380, damping: 40, mass: 0.9 }}
             style={{ maxWidth: width }}
-            className={clsx("relative flex h-full w-full flex-col border-l border-line bg-panel shadow-modal outline-none")}
+            className={cn("relative flex h-full w-full flex-col border-l border-line bg-panel outline-none")}
           >
+            <span aria-hidden className="edge-light pointer-events-none absolute inset-x-0 top-0 z-30 h-px" />
             <span id={labelId} className="sr-only">{label}</span>
             {children}
           </motion.aside>

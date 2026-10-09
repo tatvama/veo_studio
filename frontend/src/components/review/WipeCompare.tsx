@@ -5,11 +5,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useT } from "../../lib/i18n";
 import { IconButton, Select, Segmented, Tooltip } from "../ui";
 import { ScrubBar } from "./ScrubBar";
+import { BarButton } from "./parts";
 import { PlayButton, ShortcutsButton, TimeReadout } from "./Transport";
 import { peaksFromList } from "./Waveform";
 import {
   clamp, createClock, formatTC, frameOf, frameTime, lsGet, lsSet, shortcutAllowed, useElementWidth,
 } from "./utils";
+import "../../styles/console.css";
+import "../../styles/review.css";
 
 export interface CompareSource { id: number; src: string; label: string; short: string; peaks?: number[]; duration?: number }
 type Mode = "wipe" | "side" | "blend";
@@ -20,9 +23,9 @@ function Slot({ letter, tone, value, onChange, sources, label }: {
   letter: string; tone: "accent" | "info"; value: number; onChange: (id: number) => void; sources: CompareSource[]; label: string;
 }) {
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-2 rounded-xl border border-line bg-panel p-1.5 pr-2">
-      <span className={clsx("grid size-8 shrink-0 place-items-center rounded-lg text-sm font-bold",
-        tone === "accent" ? "bg-accent/15 text-accent-ink" : "bg-info/15 text-sky-300")}>{letter}</span>
+    <div className="cx-block flex min-w-0 flex-1 items-center gap-2 p-1.5 pr-2" data-tone={tone === "accent" ? "accent" : undefined}>
+      <span className={clsx("mono grid size-7 shrink-0 place-items-center rounded-lg text-xs font-bold",
+        tone === "accent" ? "bg-accent/15 text-accent-ink" : "bg-info/15 text-info")}>{letter}</span>
       <Select value={value} onChange={(e) => onChange(Number(e.target.value))} aria-label={label}
         className="!h-8 min-w-0 flex-1 !border-transparent !bg-transparent !px-1.5 text-xs hover:!border-line">
         {sources.map((s) => <option key={s.id} value={s.id} title={s.label}>{s.short}</option>)}
@@ -203,24 +206,25 @@ export function WipeCompare({ sources, initialA, initialB, fps, className, layou
     { value: "side" as const, label: <span className="flex items-center gap-1.5 whitespace-nowrap"><Columns2 className="size-3.5" /><span className="max-sm:hidden">{t("Side by side")}</span></span>, title: t("Side by side (2)") },
     { value: "blend" as const, label: <span className="flex items-center gap-1.5 whitespace-nowrap"><Blend className="size-3.5" /><span className="max-sm:hidden">{t("Blend")}</span></span>, title: t("Opacity blend (3)") },
   ];
+  const modeLabel = mode === "wipe" ? t("Wipe") : mode === "side" ? t("Side by side") : t("Blend");
 
   return (
     <div ref={rootRef} className={clsx("flex min-h-0 flex-col gap-3", wide && "h-full", className)}>
-      {/* what is being compared */}
+      {/* what is being compared + how */}
       <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2">
         <div className="flex min-w-[260px] flex-[1_1_420px] items-center gap-1.5">
           <Slot letter="A" tone="accent" value={A.id} onChange={setAId} sources={sources} label={t("Version A")} />
-          <IconButton title={t("Swap A and B (X)")} onClick={swap} className="shrink-0 !rounded-full border border-line bg-panel"><ArrowLeftRight className="size-4" /></IconButton>
+          <IconButton title={t("Swap A and B (X)")} onClick={swap} className="shrink-0 border border-line bg-panel max-sm:!size-10"><ArrowLeftRight className="size-4" /></IconButton>
           <Slot letter="B" tone="info" value={B.id} onChange={setBId} sources={sources} label={t("Version B")} />
         </div>
-        <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
+        <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">
           <AnimatePresence initial={false}>
             {mode === "blend" && (
               <motion.label initial={{ opacity: 0, width: 0 }} animate={{ opacity: 1, width: "auto" }} exit={{ opacity: 0, width: 0 }}
                 transition={{ duration: 0.18 }} className="flex items-center gap-2 overflow-hidden text-xs text-mute">
                 <span className="whitespace-nowrap">{t("B opacity")}</span>
                 <input type="range" min={0} max={1} step={0.01} value={opacity} onChange={(e) => setOpacity(Number(e.target.value))} className="w-24" />
-                <span className="w-9 font-mono tabular-nums text-ink">{Math.round(opacity * 100)}%</span>
+                <span className="mono w-9 text-ink">{Math.round(opacity * 100)}%</span>
               </motion.label>
             )}
           </AnimatePresence>
@@ -234,66 +238,80 @@ export function WipeCompare({ sources, initialA, initialB, fps, className, layou
         </div>
       </div>
 
-      {/* picture */}
-      <div ref={wrap} className={clsx("flex min-h-0 items-center justify-center", wide ? "flex-1" : "h-[min(60vh,520px)]")}>
-        <div
-          ref={stage}
-          className={clsx("relative select-none overflow-hidden rounded-xl border border-line bg-black shadow-card", mode === "wipe" && "cursor-ew-resize touch-none")}
-          style={{ width: size.w || "100%", height: size.h || 240 }}
-          onPointerDown={(e) => {
-            if (mode !== "wipe" || e.button !== 0) return;
-            dragging.current = true;
-            e.currentTarget.setPointerCapture(e.pointerId);
-            posFrom(e.clientX);
-          }}
-          onPointerMove={(e) => { if (dragging.current) posFrom(e.clientX); }}
-          onPointerUp={(e) => {
-            dragging.current = false;
-            if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
-          }}
-          onClick={() => mode !== "wipe" && toggle()}
-        >
-          <div className={layer} style={side ? { left: 0, width: half } : { left: 0, width: "100%" }}>
-            <video ref={va} src={A.src} playsInline preload="auto" className="h-full w-full object-contain"
-              onLoadedMetadata={onMeta("a")} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
-              onEnded={() => { setPlaying(false); vb.current?.pause(); }}
-              onSeeked={(e) => { if (!playing) clock.set(e.currentTarget.currentTime); }} />
-          </div>
+      {/* picture: the monitor bed */}
+      <div className={clsx("hud flex min-h-0 rounded-xl border border-line bg-panel p-2", wide && "flex-1")}>
+        <div ref={wrap} className={clsx("flex min-h-0 min-w-0 flex-1 items-center justify-center", !wide && "h-[min(60vh,520px)]")}>
           <div
-            className={layer}
-            style={side ? { left: `calc(50% + ${gap / 2}px)`, width: half }
-              : mode === "wipe" ? { left: 0, width: "100%", clipPath: `inset(0 0 0 ${pos * 100}%)` }
-                : { left: 0, width: "100%", opacity }}
+            ref={stage}
+            className={clsx("cx-monitor select-none", mode === "wipe" && "cursor-ew-resize touch-none")}
+            style={{ width: size.w || "100%", height: size.h || 240 }}
+            onPointerDown={(e) => {
+              if (mode !== "wipe" || e.button !== 0) return;
+              dragging.current = true;
+              e.currentTarget.setPointerCapture(e.pointerId);
+              posFrom(e.clientX);
+            }}
+            onPointerMove={(e) => { if (dragging.current) posFrom(e.clientX); }}
+            onPointerUp={(e) => {
+              dragging.current = false;
+              if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId);
+            }}
+            onClick={() => mode !== "wipe" && toggle()}
           >
-            <video ref={vb} src={B.src} playsInline preload="auto" className="h-full w-full object-contain" onLoadedMetadata={onMeta("b")} />
-          </div>
-          {mode === "wipe" && (
-            <div className="pointer-events-none absolute inset-y-0 z-10" style={{ left: `${pos * 100}%` }}>
-              <div className="absolute inset-y-0 -left-px w-0.5 bg-white shadow-[0_0_8px_rgb(0_0_0/0.6)]" />
-              <div className="absolute left-1/2 top-1/2 flex h-9 w-9 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-white text-black shadow-[0_4px_14px_rgb(0_0_0/0.5)]">
-                <ArrowLeftRight className="size-4" />
-              </div>
+            <div className={layer} style={side ? { left: 0, width: half } : { left: 0, width: "100%" }}>
+              <video ref={va} src={A.src} playsInline preload="auto" className="h-full w-full object-contain"
+                onLoadedMetadata={onMeta("a")} onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
+                onEnded={() => { setPlaying(false); vb.current?.pause(); }}
+                onSeeked={(e) => { if (!playing) clock.set(e.currentTarget.currentTime); }} />
             </div>
-          )}
-          <span className="pointer-events-none absolute left-2 top-2 z-10 inline-flex max-w-[46%] items-center gap-1.5 rounded-md bg-black/70 px-1.5 py-1 text-2xs font-medium text-white backdrop-blur-sm">
-            <b className="grid size-4 shrink-0 place-items-center rounded bg-accent text-black">A</b><span className="truncate">{A.short}</span>
-          </span>
-          <span className="pointer-events-none absolute right-2 top-2 z-10 inline-flex max-w-[46%] items-center gap-1.5 rounded-md bg-black/70 px-1.5 py-1 text-2xs font-medium text-white backdrop-blur-sm">
-            <b className="grid size-4 shrink-0 place-items-center rounded bg-info text-black">B</b><span className="truncate">{B.short}</span>
-          </span>
+            <div
+              className={layer}
+              style={side ? { left: `calc(50% + ${gap / 2}px)`, width: half }
+                : mode === "wipe" ? { left: 0, width: "100%", clipPath: `inset(0 0 0 ${pos * 100}%)` }
+                  : { left: 0, width: "100%", opacity }}
+            >
+              <video ref={vb} src={B.src} playsInline preload="auto" className="h-full w-full object-contain" onLoadedMetadata={onMeta("b")} />
+            </div>
+            {/* the wipe divider: a hairline with diamond ends and a grab handle you can't miss */}
+            {mode === "wipe" && (
+              <div className="pointer-events-none absolute inset-y-0 z-10" style={{ left: `${pos * 100}%` }}>
+                <div className="absolute inset-y-0 -left-px w-0.5 bg-white shadow-[0_0_0_1px_rgb(0_0_0/0.5),0_0_10px_rgb(0_0_0/0.6)]" />
+                <span aria-hidden className="absolute -left-[5px] top-0 size-2.5 rotate-45 bg-white shadow-[0_0_0_1px_rgb(0_0_0/0.5)]" />
+                <span aria-hidden className="absolute -left-[5px] bottom-0 size-2.5 rotate-45 bg-white shadow-[0_0_0_1px_rgb(0_0_0/0.5)]" />
+                <div className="absolute left-1/2 top-1/2 grid h-11 w-9 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-xl border-2 border-accent bg-white text-black shadow-[0_4px_14px_rgb(0_0_0/0.55)]">
+                  <ArrowLeftRight className="size-4" />
+                </div>
+              </div>
+            )}
+            <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-between gap-2 p-2">
+              <span className="rv-chip min-w-0 max-w-[46%]">
+                <b className="grid size-4 shrink-0 place-items-center rounded bg-accent text-black">A</b><span className="truncate">{A.short}</span>
+              </span>
+              <span className="rv-chip min-w-0 max-w-[46%]">
+                <b className="grid size-4 shrink-0 place-items-center rounded bg-info text-black">B</b><span className="truncate">{B.short}</span>
+              </span>
+            </div>
+            <div aria-hidden className="pointer-events-none absolute bottom-2 left-2 z-10">
+              <span className="rv-chip" data-tone="live">
+                {modeLabel}
+                {mode === "wipe" && <span className="rv-dim">{Math.round(pos * 100)}%</span>}
+                {mode === "blend" && <span className="rv-dim">{Math.round(opacity * 100)}%</span>}
+              </span>
+            </div>
+          </div>
         </div>
       </div>
 
       {/* transport */}
-      <div className="@container shrink-0 rounded-xl border border-line bg-panel px-2.5 pb-2 pt-1 sm:px-3.5">
+      <div className="@container hud shrink-0 rounded-xl border border-line bg-panel px-3 pb-2.5 pt-2">
         <ScrubBar clock={clock} duration={duration} fps={fps} peaks={peakData} onSeek={seek} />
-        <div className="flex flex-wrap items-center gap-0.5">
+        <div className="mt-1 flex flex-wrap items-center gap-0.5">
           <PlayButton playing={playing} onClick={toggle} />
-          <IconButton title={t("Previous frame (←)")} onClick={() => step(-1)}><StepBack className="size-4" /></IconButton>
-          <IconButton title={t("Next frame (→)")} onClick={() => step(1)}><StepForward className="size-4" /></IconButton>
-          <TimeReadout clock={clock} fps={fps} duration={duration} className="ml-1" />
+          <BarButton label={t("Previous frame (←)")} onClick={() => step(-1)}><StepBack className="size-4" /></BarButton>
+          <BarButton label={t("Next frame (→)")} onClick={() => step(1)}><StepForward className="size-4" /></BarButton>
+          <TimeReadout clock={clock} fps={fps} duration={duration} className="ml-1.5" />
           {lengthsDiffer ? (
-            <span className="ml-2 inline-flex items-center rounded-md border border-warn/30 bg-warn/12 px-1.5 py-0.5 text-2xs font-medium text-amber-300" title={t("B holds its last frame past its end")}>
+            <span className="mono ml-2 inline-flex items-center rounded-md border border-warn/30 bg-warn/12 px-1.5 py-0.5 text-2xs font-medium text-warn" title={t("B holds its last frame past its end")}>
               {t("Different lengths: A {a} · B {b}", { a: formatTC(dur.a, fps, true), b: formatTC(dur.b, fps, true) })}
             </span>
           ) : null}

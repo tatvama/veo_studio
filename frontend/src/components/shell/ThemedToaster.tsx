@@ -22,7 +22,7 @@ export function ThemedToaster() {
       }}
       toastOptions={{
         classNames: {
-          toast: "!rounded-xl !border !border-line !bg-raised !text-ink !shadow-pop !font-sans !text-sm !gap-3 !py-3",
+          toast: "!rounded-lg !border !border-line !bg-raised !text-ink !shadow-pop !font-sans !text-sm !gap-3 !py-3",
           title: "!font-medium !text-ink",
           description: "!text-mute !text-xs",
           closeButton: "!border-line !bg-raised !text-mute hover:!bg-hover hover:!text-ink",
@@ -30,7 +30,7 @@ export function ThemedToaster() {
           error: "!border-l-[3px] !border-l-bad",
           warning: "!border-l-[3px] !border-l-warn",
           info: "!border-l-[3px] !border-l-info",
-          actionButton: "!bg-accent !text-black !font-medium !rounded-lg",
+          actionButton: "!bg-accent !text-[var(--on-accent)] !font-medium !rounded-md",
           cancelButton: "!bg-hover !text-ink !rounded-lg",
         },
       }}

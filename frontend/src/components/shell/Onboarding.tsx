@@ -51,10 +51,10 @@ function useSteps(): Step[] {
 function buildSteps(t: (s: string, v?: Record<string, string | number>) => string): Step[] {
   const menu = headerButton(t("Menu"));
   return [
-    { icon: Clapperboard, title: t("Welcome to VEO Studio"), next: t("Let's go"),
+    { icon: Clapperboard, title: t("Welcome to Tatvam AI Studio"), next: t("Let's go"),
       body: t("Turn a concept into a finished video — hook, script, scenes, shots and video — in English, Hindi, Kannada, Telugu and Tamil. Here's a one-minute tour.") },
-    { anchor: "nav-projects", fallback: menu, icon: FolderOpen, title: t("Projects"),
-      body: t("Every video starts as a project. Describe a concept or start from a template; your team's projects are listed here.") },
+    { anchor: "nav-projects", fallback: menu, icon: FolderOpen, title: t("Command center"),
+      body: t("Every video starts as a project. Describe a concept or start from a template; your team's projects, live queue and approvals are listed here.") },
     { anchor: "nav-search", fallback: menu, icon: Search, title: t("Search everything"),
       body: t("Find shots, takes, characters and renders by what's in them — in plain words.") },
     { anchor: "tab-brief", projectOnly: true, icon: FileText, title: t("Brief"),

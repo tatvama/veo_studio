@@ -1,6 +1,6 @@
 /** Small shared building blocks for the growth / publishing / admin pages. */
 import { clsx } from "clsx";
-import { Check, Coins, Copy, Info, ShieldAlert, TriangleAlert } from "lucide-react";
+import { Check, Coins, Copy, Info, RotateCcw, ShieldAlert, TriangleAlert } from "lucide-react";
 import { motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
@@ -9,6 +9,7 @@ import { usd } from "../../lib/format";
 import { useJobs } from "../../lib/queries";
 import type { Job, SettingsPayload } from "../../lib/types";
 import { Button, Modal } from "../ui";
+import "../../styles/console.css";
 
 // ── time ─────────────────────────────────────────────────────────────────────
 
@@ -106,7 +107,7 @@ export function CopyButton({ text, what, label, size = "sm", className, toast: w
     return (
       <button type="button" onClick={copy} title={copied ? t("Copied") : t("Copy")} aria-label={copied ? t("Copied") : t("Copy")}
         className={clsx("relative inline-flex size-7 shrink-0 items-center justify-center rounded-md transition-colors hover:bg-hover max-sm:size-10",
-          copied ? "text-green-300" : "text-mute hover:text-ink", className)}>
+          copied ? "text-ok" : "text-mute hover:text-ink", className)}>
         <motion.span key={copied ? "ok" : "copy"} initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ duration: 0.16 }} className="grid place-items-center">
           {copied ? <Check className="size-3.5" strokeWidth={2.6} /> : <Copy className="size-3.5" />}
         </motion.span>
@@ -115,7 +116,7 @@ export function CopyButton({ text, what, label, size = "sm", className, toast: w
     );
   }
   return (
-    <Button type="button" size="sm" variant="outline" onClick={copy} className={clsx("max-sm:h-10", copied && "!border-ok/40 !text-green-300", className)}
+    <Button type="button" size="sm" variant="outline" onClick={copy} className={clsx("max-sm:h-10", copied && "!border-ok/40 !text-ok", className)}
       icon={<motion.span key={copied ? "ok" : "copy"} initial={{ scale: 0.6, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ duration: 0.16 }} className="grid place-items-center">
         {copied ? <Check className="size-3.5" strokeWidth={2.6} /> : <Copy className="size-3.5" />}</motion.span>}>
       {copied ? t("Copied") : label ?? t("Copy")}
@@ -167,43 +168,37 @@ export function LoadError({ title, onRetry, retrying, className }: { title?: str
   const t = useT();
   return (
     <div className={clsx("mx-auto max-w-xl", className)}>
-      <div role="alert" className="flex flex-col items-center rounded-2xl border border-bad/30 bg-bad/[0.06] px-6 py-10 text-center">
-        <span className="mb-3 grid size-12 place-items-center rounded-2xl bg-bad/12 text-bad"><TriangleAlert className="size-6" /></span>
-        <p className="font-semibold">{title ?? t("We couldn't load this page")}</p>
+      <div role="alert" className="cx-block hud flex flex-col items-center px-6 py-10 text-center" data-tone="bad">
+        <span className="mb-3 grid size-11 place-items-center rounded-xl border border-bad/30 bg-bad/10 text-bad"><TriangleAlert className="size-5" /></span>
+        <p className="font-semibold tracking-tight">{title ?? t("We couldn't load this page")}</p>
         <p className="mt-1 max-w-sm text-sm text-mute">{t("The server didn't respond. Check your connection and try again.")}</p>
-        <Button className="mt-5" variant="outline" loading={retrying} onClick={onRetry}>{t("Try again")}</Button>
+        <Button className="mt-5" variant="outline" loading={retrying} icon={<RotateCcw className="size-3.5" />} onClick={onRetry}>{t("Try again")}</Button>
       </div>
     </div>
   );
 }
 
-/** Toggleable filter pill. */
-export function Chip({ active, onClick, children, count, title, icon }: {
-  active: boolean; onClick: () => void; children: ReactNode; count?: number; title?: string; icon?: ReactNode;
+/** Toggleable filter chip (the console `cx-chip`; `aria-pressed` lights it). */
+export function Chip({ active, onClick, children, count, title, icon, tone }: {
+  active: boolean; onClick: () => void; children: ReactNode; count?: number; title?: string; icon?: ReactNode; tone?: "ai" | "money" | "ok" | "warn" | "bad";
 }) {
   return (
-    <button
-      type="button"
-      title={title}
-      onClick={onClick}
-      aria-pressed={active}
-      className={clsx("inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-[color,background-color,border-color,transform] duration-150 active:scale-95 max-sm:h-9",
-        active ? "border-accent/50 bg-accent/15 text-ink" : "border-line text-mute hover:border-dim/60 hover:bg-hover hover:text-ink")}
-    >
-      {icon && <span className={active ? "text-accent-ink" : "text-dim"}>{icon}</span>}
+    <button type="button" title={title} onClick={onClick} aria-pressed={active} data-tone={tone} className="cx-chip active:scale-[0.97]">
+      {icon}
       {children}
-      {count !== undefined && <span className={clsx("tabular-nums", active ? "text-accent-ink" : "text-dim")}>{count}</span>}
+      {count !== undefined && <span className="cx-n">{count}</span>}
     </button>
   );
 }
 
+/** Icon chip + title + one-line purpose + actions: the head of a card that is not a Panel. */
 export function CardHeader({ icon, title, sub, actions, className }: { icon: ReactNode; title: ReactNode; sub?: ReactNode; actions?: ReactNode; className?: string }) {
   return (
     <div className={clsx("mb-4 flex flex-wrap items-start gap-x-3 gap-y-2", className)}>
-      <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-accent/12 text-accent-ink ring-1 ring-inset ring-accent/20">{icon}</div>
+      <div className="hud grid size-9 shrink-0 place-items-center rounded-lg border border-accent/25 bg-accent/10 text-accent-ink">{icon}</div>
       <div className="min-w-0 flex-1 basis-48">
-        <h3 className="text-base font-semibold leading-tight tracking-tight">{title}</h3>
-        {sub && <p className="mt-0.5 text-xs leading-relaxed text-mute sm:text-sm">{sub}</p>}
+        <h3 className="text-sm font-semibold leading-tight tracking-tight">{title}</h3>
+        {sub && <p className="mt-0.5 text-xs leading-relaxed text-mute">{sub}</p>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
     </div>
@@ -214,10 +209,10 @@ export function CardHeader({ icon, title, sub, actions, className }: { icon: Rea
 export function SettingRow({ icon, label, hint, children, className }: { icon?: ReactNode; label: ReactNode; hint?: ReactNode; children: ReactNode; className?: string }) {
   return (
     <div className={clsx("flex flex-wrap items-center gap-x-3 gap-y-2 px-3.5 py-3", className)}>
-      {icon && <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-raised text-mute @max-sm:hidden">{icon}</span>}
+      {icon && <span className="grid size-8 shrink-0 place-items-center rounded-lg border border-line bg-raised text-mute @max-sm:hidden">{icon}</span>}
       <div className="min-w-0 flex-1 basis-20">
         <p className="text-sm font-medium leading-tight">{label}</p>
-        {hint && <p className="mt-0.5 text-xs leading-snug text-mute">{hint}</p>}
+        {hint && <p className="mt-0.5 text-2xs leading-snug text-mute">{hint}</p>}
       </div>
       <div className="ml-auto shrink-0">{children}</div>
     </div>
@@ -230,13 +225,34 @@ export function CharCount({ n, limit, soft, className }: { n: number; limit: num
   const over = n > limit;
   const warn = !over && soft !== undefined && n > soft;
   return (
-    <span className={clsx("inline-flex items-center gap-1.5 font-mono text-2xs tabular-nums", over ? "text-red-300" : warn ? "text-amber-300" : "text-dim", className)}
+    <span className={clsx("inline-flex items-center gap-1.5 font-mono text-2xs tabular-nums", over ? "text-bad" : warn ? "text-warn" : "text-dim", className)}
       title={over ? t("Over the {n} character limit", { n: limit }) : warn ? t("Recommended: under {n} characters", { n: soft ?? limit }) : t("{a} of {b} characters", { a: n, b: limit })}>
       <span aria-hidden className="relative h-1 w-8 overflow-hidden rounded-full bg-line">
         <span className={clsx("absolute inset-y-0 left-0 rounded-full transition-[width] duration-200", over ? "bg-bad" : warn ? "bg-warn" : "bg-ok/80")}
           style={{ width: `${Math.min(100, (n / limit) * 100)}%` }} />
       </span>
       {n}/{limit}
+    </span>
+  );
+}
+
+/** Four equaliser bars: "work is running" (`idle` freezes them). */
+export function EqBars({ idle, className }: { idle?: boolean; className?: string }) {
+  return <span aria-hidden className={clsx("eq", idle && "is-idle", className)}><i /><i /><i /><i /></span>;
+}
+
+/** A thin progress track. `value` (0-1) null = indeterminate: a light sweeps across it. */
+export function SweepBar({ value, tone = "accent", dim, label, className }: {
+  value: number | null; tone?: "accent" | "info" | "ok"; dim?: boolean; label: string; className?: string;
+}) {
+  const fill = tone === "info" ? "bg-info" : tone === "ok" ? "bg-ok" : "bg-accent";
+  const pct = value === null ? null : Math.max(2, Math.min(100, Math.round(value * 100)));
+  return (
+    <span role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct ?? undefined}
+      className={clsx("relative block h-1.5 w-full min-w-16 overflow-hidden rounded-full bg-line", className)}>
+      <span className="absolute inset-y-0 left-0 block rounded-full transition-[width] duration-500" style={{ width: pct === null ? "100%" : `${pct}%` }}>
+        <span className={clsx("sweep block h-full w-full rounded-full", fill, dim && "opacity-35")} />
+      </span>
     </span>
   );
 }
@@ -272,6 +288,34 @@ export function useActiveJobs(match: (j: Job) => boolean, pid?: number, onDone?:
     prev.current = n;
   }, [n]);
   return active;
+}
+
+/** Re-renders every second while `on` (for elapsed / time-left readouts). */
+export function useNow(on: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!on) return;
+    setNow(Date.now());
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [on]);
+  return now;
+}
+
+/** Rough time left (seconds) for a running job from how far it got and how long that took. */
+export function etaSeconds(j: Job, now: number): number | null {
+  if (j.status !== "running" || !j.started_at || j.progress < 0.06 || j.progress >= 1) return null;
+  const elapsed = (now - new Date(j.started_at).getTime()) / 1000;
+  if (!Number.isFinite(elapsed) || elapsed < 2) return null;
+  return Math.max(1, Math.round(elapsed / j.progress - elapsed));
+}
+
+/** 83 -> "1:23", 3725 -> "1:02:05" (a stopwatch readout). */
+export function clock(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), r = s % 60;
+  const two = (n: number) => String(n).padStart(2, "0");
+  return h ? `${h}:${two(m)}:${two(r)}` : `${m}:${two(r)}`;
 }
 
 // ── cost estimates for single-endpoint paid actions ──────────────────────────
@@ -313,7 +357,7 @@ export function CostConfirm({ open, onClose, title, amount, lines, note, confirm
     <Modal
       open={open}
       onClose={onClose}
-      title={<span className="flex items-center gap-2"><span className="grid size-7 place-items-center rounded-lg bg-accent/12 text-accent-ink"><Coins className="size-4" /></span>{title}</span>}
+      title={<span className="flex items-center gap-2"><span className="grid size-7 place-items-center rounded-lg border border-money/30 bg-money/10 text-money"><Coins className="size-4" /></span>{title}</span>}
       footer={<>
         <Button variant="ghost" onClick={onClose}>{t("Cancel")}</Button>
         <Button variant="primary" loading={busy} disabled={disabled} onClick={go}>
@@ -323,17 +367,17 @@ export function CostConfirm({ open, onClose, title, amount, lines, note, confirm
     >
       <div className="space-y-4">
         {children}
-        <div className="rounded-xl border border-line bg-raised/40">
+        <div className="cx-block" data-tone="money">
           <div className="flex items-baseline justify-between gap-3 px-4 py-3">
-            <span className="text-sm text-mute">{t("Estimated cost")}</span>
-            <span className={clsx("text-2xl font-semibold tabular-nums tracking-tight", amount === 0 && "text-green-300")}>{amount > 0 ? `~${usd(amount)}` : t("Free")}</span>
+            <span className="eyebrow">{t("Estimated cost")}</span>
+            <span className="mono text-2xl font-medium tracking-tight text-money">{amount > 0 ? `~${usd(amount)}` : t("Free")}</span>
           </div>
           {!!lines.length && (
             <div className="border-t border-line">
               {lines.map((l, i) => (
-                <div key={i} className="flex justify-between gap-3 border-b border-line/60 px-4 py-2 text-sm last:border-0">
-                  <span className="text-mute">{l.label}</span>
-                  <span className="shrink-0 tabular-nums">{l.usd > 0 ? usd(l.usd) : t("free")}</span>
+                <div key={i} className="flex justify-between gap-3 border-b border-line px-4 py-2 text-sm last:border-0">
+                  <span className="min-w-0 text-mute">{l.label}</span>
+                  <span className="mono shrink-0 text-money">{l.usd > 0 ? usd(l.usd) : t("free")}</span>
                 </div>
               ))}
             </div>

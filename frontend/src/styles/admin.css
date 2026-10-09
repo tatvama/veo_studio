@@ -1,0 +1,96 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   Admin screens (Costs, Approvals, Team, Audit): the few extra patterns on top of console.css.
+   Plain CSS on theme tokens only, so dark, light and reduced motion all work by themselves.
+   ════════════════════════════════════════════════════════════════════════════ */
+@layer theme, base, components, utilities;
+
+@layer components {
+  /* ── Pill ─────────────────────────────────────────────────────────────────
+     <span class="ad-pill" data-tone="ok">…</span>. The text is the tone mixed with ink, so it keeps contrast in both
+     themes at 11px. `.ad-ctl` makes it a 32px form control (a select dressed as a role badge). */
+  .ad-pill {
+    --c: var(--color-dim);
+    display: inline-flex; align-items: center; gap: 0.25rem; max-width: 100%; white-space: nowrap;
+    border: 1px solid color-mix(in oklab, var(--c) 32%, transparent); border-radius: 0.375rem;
+    background: color-mix(in oklab, var(--c) 9%, transparent);
+    padding: 0.125rem 0.375rem; font-size: 0.6875rem; font-weight: 500; line-height: 1;
+    color: color-mix(in oklab, var(--c) 68%, var(--color-ink));
+  }
+  .ad-pill[data-tone="neutral"] { --c: var(--color-dim); border-color: var(--color-line); background: var(--color-raised); color: var(--color-mute); }
+  .ad-pill[data-tone="accent"] { --c: var(--color-accent); }
+  .ad-pill[data-tone="money"] { --c: var(--color-money); }
+  .ad-pill[data-tone="ai"] { --c: var(--color-ai); }
+  .ad-pill[data-tone="ok"] { --c: var(--color-ok); }
+  .ad-pill[data-tone="warn"] { --c: var(--color-warn); }
+  .ad-pill[data-tone="bad"] { --c: var(--color-bad); }
+  .ad-pill[data-tone="info"] { --c: var(--color-info); }
+  .ad-pill > svg { width: 0.75rem; height: 0.75rem; flex-shrink: 0; }
+  .ad-pill-dot { width: 0.375rem; height: 0.375rem; flex-shrink: 0; border-radius: 9999px; background: var(--c); }
+  .ad-ctl { position: relative; height: 2rem; gap: 0.375rem; padding: 0 0.5rem; font-size: 0.75rem; border-radius: 0.5rem; transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease; }
+  .ad-ctl:hover { border-color: color-mix(in oklab, var(--c) 55%, transparent); }
+  .ad-ctl:focus-within { border-color: var(--color-accent); box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-accent) 16%, transparent); }
+  .ad-ctl[data-disabled="true"] { opacity: 0.6; }
+  .ad-ctl > select {
+    appearance: none; -webkit-appearance: none; min-width: 0; flex: 1; height: 100%; padding: 0 1rem 0 0; background: transparent; border: 0;
+    color: inherit; font: inherit; font-weight: 500; cursor: pointer; outline: none;
+  }
+  .ad-ctl > select:disabled { cursor: not-allowed; }
+  .ad-ctl > select::-ms-expand { display: none; }
+  .ad-ctl > .ad-ctl-chev { position: absolute; right: 0.375rem; top: 50%; width: 0.875rem; height: 0.875rem; transform: translateY(-50%); pointer-events: none; opacity: 0.7; }
+  @media (max-width: 640px) { .ad-ctl { height: 2.5rem; } }
+
+  /* ── Share bar ────────────────────────────────────────────────────────────
+     <span class="ad-bar" style="--p:42%; --c:var(--color-money)"><i></i></span> : a 4px hairline track with a fill. */
+  .ad-bar { --p: 0%; --c: var(--color-money); display: block; height: 0.25rem; min-width: 2rem; overflow: hidden; border-radius: 9999px; background: var(--color-line); }
+  .ad-bar > i { display: block; height: 100%; width: var(--p); border-radius: inherit; background: var(--c); transition: width 0.4s var(--ease-out-expo, ease-out); }
+  .ad-bar.is-lg { height: 0.375rem; }
+
+  /* ── Segmented budget meter ───────────────────────────────────────────────
+     Cells lit for what is spent, dimmer cells for what is reserved by running jobs, then empty cells.
+     <div class="ad-seg" style="--c:…"><i class="is-spent"/>…<i class="is-held"/>…<i/></div> */
+  .ad-seg { --c: var(--color-accent); display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 3px; height: 0.875rem; }
+  .ad-seg > i { display: block; border-radius: 2px; background: var(--color-line); transition: background-color 0.3s ease; }
+  .ad-seg > i.is-spent { background: var(--c); box-shadow: 0 0 8px -2px var(--c); }
+  .ad-seg > i.is-held { background: color-mix(in oklab, var(--c) 38%, var(--color-line)); }
+  .ad-seg > i.is-mark { outline: 1px solid color-mix(in oklab, var(--color-ink) 28%, transparent); outline-offset: 1px; }
+
+  /* ── Tone text and tone dot helpers for state words (icon + word, never colour alone) ─ */
+  .ad-state { display: inline-flex; align-items: center; gap: 0.3125rem; font-size: 0.75rem; font-weight: 500; line-height: 1; color: color-mix(in oklab, var(--c, var(--color-mute)) 70%, var(--color-ink)); }
+  .ad-state > svg { width: 0.875rem; height: 0.875rem; flex-shrink: 0; }
+  .ad-state[data-tone="ok"] { --c: var(--color-ok); }
+  .ad-state[data-tone="warn"] { --c: var(--color-warn); }
+  .ad-state[data-tone="bad"] { --c: var(--color-bad); }
+  .ad-state[data-tone="info"] { --c: var(--color-info); }
+  .ad-state[data-tone="neutral"] { --c: var(--color-dim); }
+
+  /* Small state text (a sentence, not a chip): the tone mixed with ink so 11-12px text keeps contrast in both themes. */
+  .ad-tx { color: color-mix(in oklab, var(--c, var(--color-mute)) 70%, var(--color-ink)); }
+  .ad-tx[data-tone="warn"] { --c: var(--color-warn); }
+  .ad-tx[data-tone="bad"] { --c: var(--color-bad); }
+  .ad-tx[data-tone="ok"] { --c: var(--color-ok); }
+
+  /* ── KPI strip, wrapping flavour ──────────────────────────────────────────────
+     Like .cx-kpis but a wrapping flex row: the cells of an incomplete last row grow to fill it, so no empty grid slot shows the
+     hairline colour. Put inside <Panel flush>. */
+  .ad-kpis { display: flex; flex-wrap: wrap; gap: 1px; overflow: hidden; border-radius: 0.5625rem; background: var(--color-line); }
+  .ad-kpis > * { flex: 1 1 11rem; min-width: 0; padding: 0.875rem 1rem; background: var(--color-panel); }
+
+  /* ── Toolbar above a data grid: search + filters on one wrapping row, hairline below ─ */
+  .ad-bar-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; padding: 0.625rem 0.75rem; border-bottom: 1px solid var(--color-line); }
+
+  /* ── Footer under a data grid ─ */
+  .ad-foot {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem;
+    border-top: 1px solid var(--color-line); background: color-mix(in oklab, var(--color-raised) 40%, transparent);
+    padding: 0.5rem 0.75rem; font-size: 0.75rem; color: var(--color-mute); border-radius: 0 0 0.625rem 0.625rem;
+  }
+
+  /* ── Detail strip under an expanded table row ─ */
+  .ad-detail { border-top: 1px solid var(--color-line); background: color-mix(in oklab, var(--color-raised) 45%, var(--color-panel)); }
+
+  /* ── JSON view colours (keys, strings, true/false/null, numbers): tokens mixed with ink so they keep contrast in both themes ─ */
+  .ad-jk { color: color-mix(in oklab, var(--color-info) 72%, var(--color-ink)); }
+  .ad-js { color: color-mix(in oklab, var(--color-ok) 72%, var(--color-ink)); }
+  .ad-jw { color: color-mix(in oklab, var(--color-ai) 72%, var(--color-ink)); }
+  .ad-jn { color: var(--color-accent-ink); }
+}

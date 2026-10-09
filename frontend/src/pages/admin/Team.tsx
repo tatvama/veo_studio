@@ -1,22 +1,25 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
+import { RupeeHint } from "../../components/kit/Money";
 import {
-  BadgeCheck, Check, Copy, Eye, EyeOff, KeyRound, MessageSquare, RefreshCw, ShieldCheck, Sparkles, UserPlus, Users, type LucideIcon,
+  BadgeCheck, Check, ChevronDown, Copy, Eye, EyeOff, FilterX, KeyRound, MessageSquare, RefreshCw, ShieldCheck, Sparkles, UserPlus, Users, type LucideIcon,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { toast } from "sonner";
 import { agoT, copyText, fmtDateTime } from "../../components/growth/common";
-import { FilterChip } from "../../components/home/Chips";
 import {
-  Alert, Avatar, Badge, Button, Empty, IconButton, Input, Modal, Page, PageHeader, Progress, ScrollStrip, SearchField, Section, Select,
-  Skeleton, Toggle, rise,
+  Alert, Avatar, Badge, Button, Empty, IconButton, Input, Metric, Modal, Page, PageHeader, Panel, ScrollStrip, SearchField, Skeleton, Toggle, rise,
 } from "../../components/ui";
 import { api } from "../../lib/api";
 import { usd } from "../../lib/format";
 import { tr, useT } from "../../lib/i18n";
 import { useAuthStatus, useSettings, useUsers } from "../../lib/queries";
 import { ROLE_RANK, type Role, type User, type UserBrief } from "../../lib/types";
+import "../../styles/admin.css";
+import "../../styles/console.css";
+import { ChipGroup } from "./shared/ChipGroup";
+import { Pill } from "./shared/Pill";
 
 type Tone = "neutral" | "accent" | "ok" | "warn" | "bad" | "info";
 
@@ -44,34 +47,48 @@ function makePassword(): string {
 function RoleBadge({ role }: { role: Role }) {
   const t = useT();
   const info = ROLE_INFO[role] ?? ROLE_INFO.viewer;
-  return <Badge tone={info.tone}>{t(info.label)}</Badge>;
+  const Icon = info.icon;
+  return <Pill tone={info.tone}><Icon aria-hidden />{t(info.label)}</Pill>;
+}
+
+/** A native select dressed as the role badge: the tone and icon of the role, the picker of the platform. */
+function RoleSelect({ value, name, disabled, title, onChange }: { value: Role; name: string; disabled?: boolean; title?: string; onChange: (r: Role) => void }) {
+  const t = useT();
+  const info = ROLE_INFO[value] ?? ROLE_INFO.viewer;
+  const Icon = info.icon;
+  return (
+    <span className="ad-pill ad-ctl w-full" data-tone={info.tone} data-disabled={disabled ? "true" : undefined} title={title}>
+      <Icon className="shrink-0" aria-hidden />
+      <select value={value} disabled={disabled} aria-label={t("Role for {name}", { name })} onChange={(e) => onChange(e.target.value as Role)}>
+        {ROLE_ORDER.map((rl) => <option key={rl} value={rl}>{t(ROLE_INFO[rl].label)}</option>)}
+      </select>
+      <ChevronDown className="ad-ctl-chev" aria-hidden />
+    </span>
+  );
 }
 
 // ── "what each role can do" ──────────────────────────────────────────────────────────────────────────────────────
 
-function RoleLegend() {
+function RoleLegend({ counts }: { counts: Record<Role, number> }) {
   const t = useT();
   return (
-    <Section title={t("What each role can do")} className="mt-8">
+    <Panel index={3} className="mt-4" icon={<ShieldCheck />} eyebrow={t("Roles")} title={t("What each role can do")}>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        {ROLE_ORDER.map((r, i) => {
+        {ROLE_ORDER.map((r) => {
           const info = ROLE_INFO[r];
           const Icon = info.icon;
-          const a = rise(i);
           return (
-            <div key={r} className={a.className} style={a.style}>
-              <div className="h-full rounded-xl border border-line bg-panel p-3.5">
-                <div className="flex items-center gap-2">
-                  <span className="grid size-7 place-items-center rounded-lg bg-raised text-mute"><Icon className="size-4" /></span>
-                  <RoleBadge role={r} />
-                </div>
-                <p className="mt-2.5 text-xs leading-relaxed text-mute">{t(info.desc)}</p>
+            <div key={r} className="cx-block p-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="flex items-center gap-2"><span className="grid size-6 place-items-center rounded-md bg-raised text-mute"><Icon className="size-3.5" aria-hidden /></span><RoleBadge role={r} /></span>
+                <span className="mono text-2xs text-dim" aria-hidden>{counts[r]}</span>
               </div>
+              <p className="mt-2 text-xs leading-relaxed text-mute">{t(info.desc)}</p>
             </div>
           );
         })}
       </div>
-    </Section>
+    </Panel>
   );
 }
 
@@ -101,9 +118,9 @@ function LimitInput({ u, disabled, onSave }: { u: User; disabled?: boolean; onSa
 
   return (
     <div className="relative">
-      <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-dim">$</span>
+      <span className="mono pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-dim">$</span>
       <Input
-        className="pl-6"
+        className="h-8 pl-6 font-mono text-xs max-sm:h-10"
         inputMode="decimal"
         aria-label={t("Monthly limit for {name}", { name: displayName(u) })}
         placeholder={t("Default")}
@@ -129,25 +146,34 @@ function limitHint(u: User): string {
 }
 
 // ── one member ───────────────────────────────────────────────────────────────────────────────────────────────────
-// One DOM structure, two layouts chosen by the width of the list (container query): stacked card below ~940px, table row above.
+// One DOM structure, two layouts chosen by the width of the list (container query): stacked block below ~940px, table row above.
 
-const COLS = "@min-[940px]:grid-cols-[minmax(0,1.7fr)_8.5rem_8.5rem_minmax(0,1.2fr)_4.5rem_6.5rem_2.25rem]";
+const COLS = "@min-[1040px]:grid-cols-[minmax(0,1.8fr)_9.5rem_9rem_minmax(0,1.1fr)_6.5rem_7rem_4.75rem]";
 
 function Cell({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
   return (
     <div className={clsx("min-w-0", className)}>
-      <p className="mb-1.5 text-2xs font-semibold uppercase tracking-[0.08em] text-dim @min-[940px]:hidden">{label}</p>
+      <p className="eyebrow mb-1.5 @min-[1040px]:hidden">{label}</p>
       {children}
     </div>
   );
 }
 
-function UserRow({ u, index, isMe, onSetPassword }: { u: User; index: number; isMe: boolean; onSetPassword: (u: User) => void }) {
+function PersonActions({ u, onSetPassword, className }: { u: User; onSetPassword: (u: User) => void; className?: string }) {
+  const t = useT();
+  return (
+    <div className={clsx("flex shrink-0 items-center gap-0.5", className)}>
+      <IconButton title={t("Copy email")} onClick={() => void copyText(u.email, t("Email"))} className="max-sm:size-10"><Copy className="size-4" /></IconButton>
+      <IconButton title={t("Set a new password")} onClick={() => onSetPassword(u)} className="max-sm:size-10"><KeyRound className="size-4" /></IconButton>
+    </div>
+  );
+}
+
+function UserRow({ u, isMe, onSetPassword }: { u: User; isMe: boolean; onSetPassword: (u: User) => void }) {
   const t = useT();
   const qc = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null);
   const name = displayName(u);
-  const r = rise(index);
 
   const patch = async (field: string, body: Record<string, unknown>, msg: string) => {
     setBusy(field);
@@ -168,73 +194,65 @@ function UserRow({ u, index, isMe, onSetPassword }: { u: User; index: number; is
   const pct = showBar ? spent / (limit as number) : 0;
 
   return (
-    <li className={r.className} style={r.style}>
-      <div className={clsx("rounded-xl border border-line bg-panel shadow-card transition-colors hover:border-dim/40", !u.active && "bg-panel/60")}>
-        <div className={clsx("grid grid-cols-2 gap-x-4 gap-y-4 p-4 @min-[520px]:grid-cols-3 @min-[760px]:grid-cols-5 @min-[940px]:items-center @min-[940px]:gap-y-0 @min-[940px]:py-3", COLS)}>
-          {/* person */}
-          <div className="col-span-full flex min-w-0 items-center gap-3 @min-[940px]:col-span-1">
-            <span className={clsx(!u.active && "opacity-50")}><Avatar name={name} size={38} /></span>
-            <div className="min-w-0 flex-1">
-              <p className="flex min-w-0 items-center gap-1.5 font-medium">
-                <span className="truncate">{name}</span>
-                {isMe && <Badge tone="accent">{t("You")}</Badge>}
-                {!u.active && <Badge tone="bad">{t("Turned off")}</Badge>}
-              </p>
-              <p className="truncate text-xs text-mute">{u.email}</p>
-            </div>
-            <IconButton title={t("Set a new password")} onClick={() => onSetPassword(u)} className="@min-[940px]:hidden"><KeyRound className="size-4" /></IconButton>
-          </div>
-
-          <Cell label={t("Role")}>
-            <Select
-              value={u.role}
-              aria-label={t("Role for {name}", { name })}
-              disabled={isMe || busy === "role"}
-              title={isMe ? t("You can't change your own role") : undefined}
-              onChange={(e) => {
-                const role = e.target.value as Role;
-                void patch("role", { role }, t("{name} is now {role}", { name, role: t(ROLE_INFO[role].label) }));
-              }}
-            >
-              {ROLE_ORDER.map((rl) => <option key={rl} value={rl}>{t(ROLE_INFO[rl].label)}</option>)}
-            </Select>
-          </Cell>
-
-          <Cell label={t("Monthly limit")}>
-            <LimitInput u={u} disabled={busy === "limit"} onSave={(body, msg) => void patch("limit", body, msg)} />
-            <p className="mt-1 truncate text-2xs text-dim" title={limitHint(u)}>{limitHint(u)}</p>
-          </Cell>
-
-          <Cell label={t("Spent this month")} className="col-span-2 @min-[520px]:col-span-1">
-            <p className="text-sm tabular-nums">
-              <span className="font-medium">{usd(spent)}</span>
-              {showBar && <span className="text-dim"> {t("of {limit}", { limit: usd(limit) })}</span>}
+    <li className={clsx("border-b border-line transition-colors last:border-b-0 hover:bg-hover/40", !u.active && "bg-raised/30")}>
+      <div className={clsx("grid grid-cols-2 gap-x-4 gap-y-3.5 px-4 py-3.5 @min-[520px]:grid-cols-3 @min-[760px]:grid-cols-5 @min-[1040px]:items-center @min-[1040px]:gap-y-0 @min-[1040px]:py-2.5", COLS)}>
+        {/* person */}
+        <div className="col-span-full flex min-w-0 items-center gap-3 @min-[1040px]:col-span-1">
+          <span className={clsx("relative shrink-0", !u.active && "opacity-60")}>
+            <Avatar name={name} size={34} />
+            <span aria-hidden className={clsx("absolute -bottom-0.5 -right-0.5 size-2.5 rounded-full ring-2 ring-panel", u.active ? "bg-ok" : "bg-dim")} />
+            <span className="sr-only">{u.active ? t("Can sign in") : t("Turned off")}</span>
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
+              <span className="truncate">{name}</span>
+              {isMe && <Badge tone="accent">{t("You")}</Badge>}
+              {!u.active && <Badge tone="bad">{t("Turned off")}</Badge>}
             </p>
-            {showBar && <Progress className="mt-1.5" size="sm" value={pct} tone={pct >= 0.9 ? "bad" : pct >= 0.7 ? "warn" : "accent"} />}
-          </Cell>
-
-          <Cell label={t("Can sign in")} className="@min-[940px]:flex @min-[940px]:justify-center">
-            <div className="flex items-center gap-2.5">
-              <Toggle
-                checked={u.active}
-                disabled={isMe || busy === "active"}
-                label={<span className="sr-only">{t("Can sign in")}: {name}</span>}
-                onChange={(v) => void patch("active", { active: v }, v ? t("{name} can sign in again", { name }) : t("{name} can no longer sign in", { name }))}
-              />
-              <span className="text-xs text-mute @min-[940px]:sr-only">{u.active ? t("Yes") : t("No")}</span>
-            </div>
-          </Cell>
-
-          <Cell label={t("Last sign-in")}>
-            <p className="whitespace-nowrap text-sm text-mute" title={u.last_login_at ? fmtDateTime(u.last_login_at) : undefined}>
-              {u.last_login_at ? agoT(u.last_login_at) : <span className="text-dim">{t("Never")}</span>}
-            </p>
-          </Cell>
-
-          <div className="hidden justify-end @min-[940px]:flex">
-            <IconButton title={t("Set a new password")} onClick={() => onSetPassword(u)}><KeyRound className="size-4" /></IconButton>
+            <p className="mono truncate text-2xs text-mute" title={u.email}>{u.email}</p>
           </div>
+          <PersonActions u={u} onSetPassword={onSetPassword} className="@min-[1040px]:hidden" />
         </div>
+
+        <Cell label={t("Role")}>
+          <RoleSelect value={u.role} name={name} disabled={isMe || busy === "role"} title={isMe ? t("You can't change your own role") : undefined}
+            onChange={(role) => void patch("role", { role }, t("{name} is now {role}", { name, role: t(ROLE_INFO[role].label) }))} />
+        </Cell>
+
+        <Cell label={t("Monthly limit")}>
+          <LimitInput u={u} disabled={busy === "limit"} onSave={(body, msg) => void patch("limit", body, msg)} />
+          <p className="mt-1 truncate text-2xs text-dim" title={limitHint(u)}>{limitHint(u)}</p>
+        </Cell>
+
+        <Cell label={t("Spent this month")} className="col-span-2 @min-[520px]:col-span-1">
+          <p className="mono text-sm">
+            <span className="font-medium text-money">{usd(spent)}</span>
+            {showBar && <span className="text-2xs text-dim"> {t("of {limit}", { limit: usd(limit) })}</span>}
+          </p>
+          {showBar && (
+            <span className="ad-bar mt-1.5" style={{ ["--p" as string]: `${Math.min(100, pct * 100)}%`, ["--c" as string]: pct >= 0.9 ? "var(--color-bad)" : pct >= 0.7 ? "var(--color-warn)" : "var(--color-money)" }}><i /></span>
+          )}
+        </Cell>
+
+        <Cell label={t("Can sign in")} className="@min-[1040px]:flex @min-[1040px]:justify-center">
+          <div className="flex items-center gap-2.5">
+            <Toggle
+              checked={u.active}
+              disabled={isMe || busy === "active"}
+              label={<span className="sr-only">{t("Can sign in")}: {name}</span>}
+              onChange={(v) => void patch("active", { active: v }, v ? t("{name} can sign in again", { name }) : t("{name} can no longer sign in", { name }))}
+            />
+            <span className="text-xs text-mute @min-[1040px]:sr-only">{u.active ? t("Yes") : t("No")}</span>
+          </div>
+        </Cell>
+
+        <Cell label={t("Last sign-in")}>
+          <p className="mono whitespace-nowrap text-xs text-mute" title={u.last_login_at ? fmtDateTime(u.last_login_at) : undefined}>
+            {u.last_login_at ? agoT(u.last_login_at) : <span className="text-dim">{t("Never")}</span>}
+          </p>
+        </Cell>
+
+        <div className="hidden justify-end @min-[1040px]:flex"><PersonActions u={u} onSetPassword={onSetPassword} /></div>
       </div>
     </li>
   );
@@ -243,17 +261,17 @@ function UserRow({ u, index, isMe, onSetPassword }: { u: User; index: number; is
 function TableHead() {
   const t = useT();
   return (
-    <div className={clsx("mb-2 hidden gap-x-4 px-[calc(1rem+1px)] text-2xs font-semibold uppercase tracking-[0.08em] text-dim @min-[940px]:grid", COLS)} aria-hidden>
-      <span>{t("Person")}</span><span>{t("Role")}</span><span>{t("Monthly limit")}</span><span>{t("Spent this month")}</span><span className="text-center">{t("Can sign in")}</span><span>{t("Last sign-in")}</span><span />
+    <div className={clsx("eyebrow hidden gap-x-4 border-y border-line bg-raised/30 px-4 py-2 @min-[1040px]:grid", COLS)} aria-hidden>
+      <span className="truncate">{t("Person")}</span><span className="truncate">{t("Role")}</span><span className="truncate">{t("Monthly limit")}</span><span className="truncate">{t("Spent this month")}</span><span className="truncate text-center">{t("Can sign in")}</span><span className="truncate">{t("Last sign-in")}</span><span />
     </div>
   );
 }
 
 function RowSkeleton() {
   return (
-    <div aria-hidden className="rounded-xl border border-line bg-panel p-4">
-      <div className="flex items-center gap-3"><Skeleton className="size-9 rounded-full" /><div className="space-y-2"><Skeleton className="h-4 w-32" /><Skeleton className="h-3 w-44" /></div></div>
-      <div className="mt-4 grid grid-cols-2 gap-3 @min-[760px]:grid-cols-5"><Skeleton className="h-9" /><Skeleton className="h-9" /><Skeleton className="h-9" /><Skeleton className="h-9" /><Skeleton className="h-9" /></div>
+    <div aria-hidden className="border-b border-line px-4 py-3.5 last:border-b-0">
+      <div className="flex items-center gap-3"><Skeleton className="size-9 rounded-full" /><div className="space-y-2"><Skeleton className="h-3.5 w-32" /><Skeleton className="h-3 w-44" /></div></div>
+      <div className="mt-3 grid grid-cols-2 gap-3 @min-[760px]:grid-cols-5"><Skeleton className="h-8" /><Skeleton className="h-8" /><Skeleton className="h-8" /><Skeleton className="h-8" /><Skeleton className="h-8" /></div>
     </div>
   );
 }
@@ -381,7 +399,7 @@ function AddTeammateModal({ open, onClose, defaultLimit, googleEnabled }: {
         <div className="grid gap-4 sm:grid-cols-2">
           <FieldBlock label={t("Email")} htmlFor="tm-email" error={errors.email}>
             <Input id="tm-email" ref={emailRef} type="email" autoFocus value={form.email} onChange={(e) => set("email", e.target.value)} placeholder="name@example.com"
-              aria-invalid={!!errors.email} className={clsx(errors.email && "border-bad/60!")} />
+              aria-invalid={!!errors.email} className={clsx("font-mono text-xs", errors.email && "border-bad/60!")} />
           </FieldBlock>
           <FieldBlock label={t("Name")} htmlFor="tm-name" optional>
             <Input id="tm-name" value={form.name} onChange={(e) => set("name", e.target.value)} placeholder={t("Full name")} />
@@ -396,16 +414,16 @@ function AddTeammateModal({ open, onClose, defaultLimit, googleEnabled }: {
               const on = form.role === rl;
               return (
                 <button key={rl} type="button" role="radio" aria-checked={on} onClick={() => set("role", rl)}
-                  className={clsx("flex items-center justify-center gap-2 rounded-xl border px-2 py-2.5 text-xs font-medium transition-[color,background-color,border-color,transform] duration-150 active:scale-95 sm:flex-col sm:gap-1.5",
-                    on ? "border-accent/60 bg-accent/10 text-ink" : "border-line bg-panel text-mute hover:border-dim/50 hover:bg-hover hover:text-ink")}>
-                  <Icon className={clsx("size-4", on && "text-accent-ink")} />{t(info.label)}
+                  className={clsx("flex min-h-11 items-center justify-center gap-2 rounded-lg border px-2 py-2.5 text-xs font-medium transition-[color,background-color,border-color,transform] duration-150 active:scale-95 sm:flex-col sm:gap-1.5",
+                    on ? "border-accent/60 bg-accent/10 text-ink" : "border-line bg-raised text-mute hover:border-dim/50 hover:bg-hover hover:text-ink")}>
+                  <Icon className={clsx("size-4", on && "text-accent-ink")} aria-hidden />{t(info.label)}
                 </button>
               );
             })}
           </div>
           <AnimatePresence mode="wait" initial={false}>
             <motion.p key={form.role} initial={{ opacity: 0, y: -3 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.14 }}
-              className="mt-2 rounded-lg bg-raised/60 px-3 py-2 text-xs leading-relaxed text-mute">
+              className="cx-block mt-2 px-3 py-2 text-xs leading-relaxed text-mute">
               {t(ROLE_INFO[form.role].desc)}
             </motion.p>
           </AnimatePresence>
@@ -426,13 +444,16 @@ function AddTeammateModal({ open, onClose, defaultLimit, googleEnabled }: {
           hint={defaultLimit != null ? t("Leave blank to use the team default ({usd} for creators).", { usd: usd(defaultLimit) }) : t("Leave blank to use the team default.")}
         >
           <div className="relative">
-            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-dim">$</span>
-            <Input id="tm-limit" className="pl-6" inputMode="decimal" value={form.limit} onChange={(e) => set("limit", e.target.value)} placeholder={t("Default")} aria-invalid={!!errors.limit} />
+            <span className="mono pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-dim">$</span>
+            <Input id="tm-limit" className="pl-6 font-mono" inputMode="decimal" value={form.limit} onChange={(e) => set("limit", e.target.value)} placeholder={t("Default")} aria-invalid={!!errors.limit} />
           </div>
+          <RupeeHint v={form.limit} className="mt-1 pl-1" />
           <ScrollStrip className="mt-2 -mx-1 px-1">
             <div className="flex gap-1.5 pr-4">
-              <FilterChip active={form.limit.trim() === ""} onClick={() => set("limit", "")}>{t("Team default")}</FilterChip>
-              {LIMIT_PRESETS.map((n) => <FilterChip key={n} active={form.limit.trim() === String(n)} onClick={() => set("limit", String(n))}>${n}</FilterChip>)}
+              <button type="button" className="cx-chip" aria-pressed={form.limit.trim() === ""} onClick={() => set("limit", "")}>{t("Team default")}</button>
+              {LIMIT_PRESETS.map((n) => (
+                <button key={n} type="button" className="cx-chip" data-tone="money" aria-pressed={form.limit.trim() === String(n)} onClick={() => set("limit", String(n))}><span className="mono">${n}</span></button>
+              ))}
             </div>
           </ScrollStrip>
         </FieldBlock>
@@ -517,6 +538,9 @@ export default function TeamPage() {
   const shown = sorted.filter((u) => (role === "all" || u.role === role) && (!needle || `${u.name} ${u.email}`.toLowerCase().includes(needle)));
   const filterable = list.length >= 6;
   const roleCounts = ROLE_ORDER.map((rl) => [rl, list.filter((u) => u.role === rl).length] as const).filter(([, n]) => n > 0);
+  const countsByRole = Object.fromEntries(ROLE_ORDER.map((rl) => [rl, list.filter((u) => u.role === rl).length])) as Record<Role, number>;
+  const approvers = list.filter((u) => u.active && ROLE_RANK[u.role] >= ROLE_RANK.producer).length;
+  const teamSpend = list.reduce((n, u) => n + (u.spent_month_usd ?? 0), 0);
 
   const addBtn = (
     <Button variant="primary" icon={<UserPlus className="size-4" />} onClick={() => setAdding(true)} className="h-10 w-[calc(100vw-2rem)] max-w-full sm:h-9 sm:w-auto">{t("Add teammate")}</Button>
@@ -532,7 +556,9 @@ export default function TeamPage() {
       />
 
       {isLoading ? (
-        <div aria-busy="true" className="@container space-y-3">{Array.from({ length: 3 }, (_, i) => <RowSkeleton key={i} />)}</div>
+        <Panel flush bodyClassName="overflow-hidden rounded-b-xl">
+          <div aria-busy="true" className="@container">{Array.from({ length: 4 }, (_, i) => <RowSkeleton key={i} />)}</div>
+        </Panel>
       ) : isError ? (
         <Alert tone="bad" title={t("Couldn't load the team")} action={<Button size="sm" variant="outline" onClick={() => void refetch()}>{t("Try again")}</Button>}>
           {t("Check your connection and try again.")}
@@ -540,59 +566,85 @@ export default function TeamPage() {
       ) : !list.length ? (
         <Empty icon={<Users className="size-7" />} title={t("No teammates yet")} sub={t("Add the people who will write, review and approve videos.")}
           action={isAdmin ? <Button variant="primary" icon={<UserPlus className="size-4" />} onClick={() => setAdding(true)}>{t("Add teammate")}</Button> : undefined} />
-      ) : isAdmin ? (
-        <>
-          {filterable && (
-            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
-              <SearchField value={q} onChange={setQ} placeholder={t("Search people…")} aria-label={t("Search people")} className="w-full sm:w-64" />
-              <ScrollStrip className="-mx-4 px-4 sm:mx-0 sm:min-w-0 sm:flex-1 sm:px-0">
-                <div className="flex gap-2 pr-6">
-                  <FilterChip active={role === "all"} onClick={() => setRole("all")} count={list.length}>{t("Everyone")}</FilterChip>
-                  {roleCounts.map(([rl, n]) => <FilterChip key={rl} active={role === rl} onClick={() => setRole(rl)} count={n}>{t(ROLE_INFO[rl].label)}</FilterChip>)}
-                </div>
-              </ScrollStrip>
-            </div>
-          )}
-          <div className="@container">
-            <TableHead />
-            {shown.length ? (
-              <ul className="space-y-2.5">
-                {shown.map((u, i) => <UserRow key={u.id} u={u} index={i} isMe={u.id === me?.id} onSetPassword={setPwFor} />)}
-              </ul>
-            ) : (
-              <Empty title={t("No one matches")} sub={t("Try a different name or clear the filters.")} action={<Button variant="outline" onClick={() => { setQ(""); setRole("all"); }}>{t("Clear filters")}</Button>} />
-            )}
-          </div>
-        </>
       ) : (
         <>
-          <Alert tone="info" icon={<ShieldCheck className="size-4" />} className="mb-4">
-            {t("Only admins can add people, change roles or set spending limits. Ask an admin if something needs to change.")}
-          </Alert>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {sorted.map((u, i) => {
-              const a = rise(i);
-              return (
-                <div key={u.id} className={a.className} style={a.style}>
-                  <div className={clsx("flex items-center gap-3 rounded-xl border border-line bg-panel p-3.5", !u.active && "opacity-60")}>
-                    <Avatar name={displayName(u)} size={38} />
-                    <div className="min-w-0 flex-1">
-                      <p className="flex min-w-0 items-baseline gap-1.5 font-medium">
-                        <span className="truncate">{displayName(u)}</span>
-                        {u.id === me?.id && <span className="shrink-0 text-xs font-normal text-dim">{t("(you)")}</span>}
-                      </p>
-                      <p className="truncate text-xs text-mute">{u.email}</p>
-                    </div>
-                    <RoleBadge role={u.role} />
-                  </div>
+          {/* KPI strip */}
+          <Panel flush index={1} className="mb-4" bodyClassName="rounded-xl">
+            <div className="ad-kpis">
+              <Metric label={t("People")} value={list.length} sub={<span className="mono">{t("{n} can sign in", { n: activeCount })}</span>} />
+              <Metric label={t("Approvers")} value={approvers} sub={t("producers and admins")} />
+              <Metric label={t("Turned off")} value={list.length - activeCount} sub={list.length - activeCount > 0 ? t("can't sign in") : t("everyone can sign in")} />
+              {isAdmin && <Metric label={t("Spend this month")} tone="money" value={teamSpend} format={(n) => usd(n)} sub={t("across all members")} />}
+            </div>
+          </Panel>
+
+          {isAdmin ? (
+            <Panel flush index={2} bodyClassName="overflow-hidden rounded-b-xl" icon={<Users />} eyebrow={t("Members")}>
+              {filterable && (
+                <div className="ad-bar-row mt-3 border-t border-line">
+                  <SearchField value={q} onChange={setQ} placeholder={t("Search people…")} aria-label={t("Search people")} className="w-full sm:w-64 [&_input]:h-8 max-sm:[&_input]:h-10" />
+                  <ChipGroup label={t("Role")} value={role} onChange={(v) => setRole(v as Role | "all")} className="min-w-0 flex-1"
+                    items={[
+                      { value: "all", label: t("Everyone"), count: list.length },
+                      ...roleCounts.map(([rl, n]) => ({ value: rl as string, label: t(ROLE_INFO[rl].label), count: n })),
+                    ]} />
                 </div>
-              );
-            })}
-          </div>
+              )}
+              <div className={clsx("@container", !filterable && "mt-3")}>
+                <TableHead />
+                {shown.length ? (
+                  <ul>
+                    {shown.map((u) => <UserRow key={u.id} u={u} isMe={u.id === me?.id} onSetPassword={setPwFor} />)}
+                  </ul>
+                ) : (
+                  <div className="p-4">
+                    <Empty title={t("No one matches")} sub={t("Try a different name or clear the filters.")}
+                      action={<Button variant="outline" icon={<FilterX className="size-4" />} onClick={() => { setQ(""); setRole("all"); }}>{t("Clear filters")}</Button>} />
+                  </div>
+                )}
+              </div>
+            </Panel>
+          ) : (
+            <>
+              <Alert tone="info" icon={<ShieldCheck className="size-4" />} className="mb-4">
+                {t("Only admins can add people, change roles or set spending limits. Ask an admin if something needs to change.")}
+              </Alert>
+              <Panel flush index={2} bodyClassName="overflow-hidden rounded-b-xl" icon={<Users />} eyebrow={t("Members")}>
+                <div className="cx-scroll mt-3 max-h-[36rem] border-t border-line">
+                  <table className="cx-table">
+                    <thead><tr><th className="cx-stick">{t("Person")}</th><th>{t("Email")}</th><th>{t("Role")}</th><th>{t("Status")}</th></tr></thead>
+                    <tbody>
+                      {sorted.map((u) => {
+                        const a = rise(0);
+                        return (
+                          <tr key={u.id} className={clsx(a.className, !u.active && "opacity-70")} style={a.style}>
+                            <td className="cx-stick">
+                              <span className="flex min-w-0 items-center gap-2.5">
+                                <Avatar name={displayName(u)} size={26} />
+                                <span className="truncate font-medium">{displayName(u)}</span>
+                                {u.id === me?.id && <span className="shrink-0 text-xs text-dim">{t("(you)")}</span>}
+                              </span>
+                            </td>
+                            <td className="cx-mono">{u.email}</td>
+                            <td><RoleBadge role={u.role} /></td>
+                            <td>
+                              {u.active
+                                ? <span className="ad-state" data-tone="ok"><Check aria-hidden />{t("Can sign in")}</span>
+                                : <span className="ad-state" data-tone="neutral"><EyeOff aria-hidden />{t("Turned off")}</span>}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </Panel>
+            </>
+          )}
         </>
       )}
 
-      <RoleLegend />
+      {!isLoading && !isError && <RoleLegend counts={countsByRole} />}
 
       {isAdmin && (
         <>

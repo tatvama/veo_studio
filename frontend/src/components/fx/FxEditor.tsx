@@ -16,6 +16,7 @@ import {
 import { tr, useT } from "../../lib/i18n";
 import { useEpisode } from "../../lib/queries";
 import type { Shot } from "../../lib/types";
+import { Rng } from "../../pages/project/production/instruments";
 import { Badge, Button, Menu, Segmented, Spinner, Toggle, Tooltip } from "../ui";
 
 const SPEEDS = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
@@ -97,13 +98,14 @@ export function FxEditor({ shotId }: { shotId: number }) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex shrink-0 items-center gap-2 border-b border-line px-3 py-2">
-        <Sparkles className="size-4 text-accent-ink" />
-        <span className="font-mono text-sm font-semibold">{shot.code}</span>
-        <span className="text-xs text-mute">{t("Transitions & effects")}</span>
+      <div className="relative flex shrink-0 items-center gap-2 border-b border-line bg-raised/30 px-3 py-2">
+        <span aria-hidden className="edge-light pointer-events-none absolute inset-x-4 top-0 h-px opacity-70" />
+        <span className="grid size-6 place-items-center rounded-md border border-accent/30 bg-accent/10 text-accent-ink"><Sparkles className="size-3.5" /></span>
+        <span className="mono text-sm font-semibold tracking-wide">{shot.code}</span>
+        <span className="eyebrow">{t("Transitions & effects")}</span>
         {active > 0 && <Badge tone="accent">{t("{n} on", { n: active })}</Badge>}
         <div className="flex-1" />
-        <span className="text-2xs text-dim">{state === "saving" ? t("Saving…") : state === "saved" ? t("Saved") : ""}</span>
+        <span className="mono text-2xs text-dim">{state === "saving" ? t("Saving…") : state === "saved" ? t("Saved") : ""}</span>
         {editable && (
           <Menu width={240} items={[
             { icon: <Blend className="size-4" />, label: t("Use this transition on every shot"), disabled: !fx.transition, onClick: () => void applyAll(["transition"], t("Transition")) },
@@ -132,7 +134,7 @@ export function FxEditor({ shotId }: { shotId: number }) {
               </div>
               {cat.transitions.map((g) => (
                 <div key={g.group}>
-                  <p className="mb-1 text-2xs font-semibold uppercase tracking-wider text-dim">{t(g.group)}</p>
+                  <p className="eyebrow mb-1.5">{t(g.group)}</p>
                   <div className="grid grid-cols-[repeat(auto-fill,minmax(92px,1fr))] gap-1.5">
                     {g.items.map((it) => (
                       <TransitionTile key={it.id} id={it.id} label={t(it.label)} selected={fx.transition?.type === it.id} disabled={!editable}
@@ -162,7 +164,7 @@ export function FxEditor({ shotId }: { shotId: number }) {
             ))}
             {editable && (
               <button type="button" onClick={() => lutInput.current?.click()}
-                className="flex aspect-[4/3] flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-line text-2xs text-mute hover:border-accent/50 hover:text-ink">
+                className="flex aspect-[4/3] flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-line text-2xs text-mute transition-colors hover:border-accent/50 hover:text-ink">
                 <Upload className="size-4" />{t("Add .cube LUT")}
               </button>
             )}
@@ -192,8 +194,8 @@ export function FxEditor({ shotId }: { shotId: number }) {
               <div className="flex flex-wrap gap-1">
                 {SPEEDS.map((s) => (
                   <button key={s} type="button" disabled={!editable} onClick={() => set("speed", s === 1 ? undefined : s)}
-                    className={clsx("rounded-md border px-2 py-0.5 text-xs tabular-nums transition-colors disabled:opacity-50",
-                      (fx.speed ?? 1) === s ? "border-accent bg-accent/12 font-semibold" : "border-line hover:bg-hover")}>{s}×</button>
+                    className={clsx("mono rounded-md border px-2 py-0.5 text-xs tabular-nums transition-colors disabled:opacity-50",
+                      (fx.speed ?? 1) === s ? "border-accent/60 bg-accent/12 font-semibold text-accent-ink shadow-[0_0_12px_-6px_var(--color-accent)]" : "border-line hover:bg-hover")}>{s}×</button>
                 ))}
               </div>
             </div>
@@ -241,10 +243,12 @@ function Section({ icon, title, summary, children }: { icon: ReactNode; title: s
   const [open, setOpen] = useState(true);
   return (
     <section className="border-t border-line">
-      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open} className="flex w-full items-center gap-2 px-4 py-2.5 text-left hover:bg-hover/40">
-        <span className="text-accent-ink [&>svg]:size-4">{icon}</span>
-        <span className="text-sm font-semibold">{title}</span>
-        {summary && <span className="min-w-0 truncate text-2xs text-dim">· {summary}</span>}
+      <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
+        className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left outline-none transition-colors hover:bg-hover/40 focus-visible:bg-hover/40">
+        <span className={clsx("grid size-6 shrink-0 place-items-center rounded-md border transition-colors [&>svg]:size-3.5",
+          open ? "border-accent/30 bg-accent/10 text-accent-ink" : "border-line bg-raised text-mute")}>{icon}</span>
+        <span className="eyebrow !text-ink">{title}</span>
+        {summary && <span className="mono min-w-0 truncate text-2xs text-dim">{summary}</span>}
         <ChevronDown className={clsx("ml-auto size-4 text-dim transition-transform", !open && "-rotate-90")} />
       </button>
       {open && <div className="px-4 pb-4">{children}</div>}
@@ -257,17 +261,17 @@ function Range({ min, max, step, value, onChange, disabled, suffix, center }: {
 }) {
   return (
     <div className="flex min-w-0 flex-1 items-center gap-2">
-      <input type="range" min={min} max={max} step={step} value={value} disabled={disabled}
+      <Rng min={min} max={max} step={step} value={value} disabled={disabled}
         onChange={(e) => onChange(Number(e.target.value))} onDoubleClick={() => !disabled && onChange(center ? 0 : min)}
-        className="h-1.5 min-w-0 flex-1 cursor-pointer accent-[var(--color-accent)] disabled:opacity-50" />
-      <span className="w-12 shrink-0 text-right text-2xs tabular-nums text-mute">{suffix ? `${value.toFixed(1)}${suffix}` : (value > 0 && center ? "+" : "") + Math.round(value * 100)}</span>
+        className="flex-1" />
+      <span className="mono w-12 shrink-0 text-right text-2xs tabular-nums text-mute">{suffix ? `${value.toFixed(1)}${suffix}` : (value > 0 && center ? "+" : "") + Math.round(value * 100)}</span>
     </div>
   );
 }
 
 function ToggleRow({ icon, label, checked, onChange, disabled }: { icon: ReactNode; label: string; checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
-    <div className="flex items-center gap-2 rounded-lg border border-line px-2.5 py-1.5">
+    <div className="flex items-center gap-2 rounded-lg border border-line bg-raised/30 px-2.5 py-1.5">
       <span className="text-dim [&>svg]:size-3.5">{icon}</span>
       <span className="min-w-0 flex-1 truncate text-xs">{label}</span>
       <Toggle checked={checked} onChange={onChange} disabled={disabled} />
@@ -291,11 +295,12 @@ function TransitionTile({ id, label, selected, disabled, onPick }: { id: string;
   const layer = (s: CSSProperties, bg: string, z: number): CSSProperties => ({ ...s, position: "absolute", inset: 0, background: bg, zIndex: z });
   return (
     <button type="button" disabled={disabled} onClick={onPick} onMouseEnter={play} onMouseLeave={stop} onFocus={play} onBlur={stop}
-      className={clsx("group rounded-lg border p-1 text-left transition-colors disabled:opacity-60", selected ? "border-accent bg-accent/10" : "border-line hover:border-dim/60")}>
-      <span className="relative block aspect-video overflow-hidden rounded-md" style={{ background: (f as any).bg ?? "#000" }}>
-        <span style={layer(f.a, "linear-gradient(135deg,#f97316,#fbbf24)", f.bTop ? 1 : 2)} />
-        <span style={layer(f.b, "linear-gradient(135deg,#0ea5e9,#6366f1)", f.bTop ? 2 : 1)} />
-        {selected && <Check className="absolute right-1 top-1 z-10 size-3.5 rounded-full bg-accent p-0.5 text-black" strokeWidth={3} />}
+      className={clsx("group rounded-lg border p-1 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/60 disabled:opacity-60",
+        selected ? "border-accent/60 bg-accent/10 shadow-[0_0_14px_-8px_var(--color-accent)]" : "border-line hover:border-dim/60")}>
+      <span className="relative block aspect-video overflow-hidden rounded-md" style={{ background: (f as any).bg ?? "rgb(0 0 0)" }}>
+        <span style={layer(f.a, "linear-gradient(135deg, var(--color-ai), var(--color-accent-2))", f.bTop ? 1 : 2)} />
+        <span style={layer(f.b, "linear-gradient(135deg, var(--color-accent), var(--color-info))", f.bTop ? 2 : 1)} />
+        {selected && <Check className="absolute right-1 top-1 z-10 size-3.5 rounded-md bg-accent p-0.5 text-[var(--on-accent)]" strokeWidth={3} />}
       </span>
       <span className="mt-1 block truncate text-2xs font-medium">{label}</span>
     </button>
@@ -306,13 +311,13 @@ function LookTile({ label, thumb, filter, selected, disabled, onPick, lut, onRem
   label: string; thumb: string; filter: string; selected: boolean; disabled?: boolean; onPick: () => void; lut?: boolean; onRemove?: () => void;
 }) {
   return (
-    <div className={clsx("group relative rounded-lg border p-1 transition-colors", selected ? "border-accent bg-accent/10" : "border-line hover:border-dim/60")}>
+    <div className={clsx("group relative rounded-lg border p-1 transition-colors", selected ? "border-accent/60 bg-accent/10 shadow-[0_0_14px_-8px_var(--color-accent)]" : "border-line hover:border-dim/60")}>
       <button type="button" disabled={disabled} onClick={onPick} className="block w-full text-left disabled:opacity-60">
         <span className="relative block aspect-[4/3] overflow-hidden rounded-md bg-raised">
           {thumb ? <img src={thumb} alt="" className="size-full object-cover" style={{ filter }} draggable={false} />
-            : <span className="block size-full bg-gradient-to-br from-orange-400 via-sky-400 to-indigo-500" style={{ filter }} />}
-          {lut && <span className="absolute bottom-1 left-1 rounded bg-black/65 px-1 text-[0.6rem] font-semibold text-white">LUT</span>}
-          {selected && <Check className="absolute right-1 top-1 size-3.5 rounded-full bg-accent p-0.5 text-black" strokeWidth={3} />}
+            : <span className="block size-full bg-gradient-to-br from-accent via-info to-accent-2" style={{ filter }} />}
+          {lut && <span className="mono absolute bottom-1 left-1 rounded bg-black/65 px-1 text-2xs font-semibold text-white">LUT</span>}
+          {selected && <Check className="absolute right-1 top-1 size-3.5 rounded-md bg-accent p-0.5 text-[var(--on-accent)]" strokeWidth={3} />}
         </span>
         <span className="mt-1 block truncate text-2xs font-medium">{label}</span>
       </button>
@@ -392,7 +397,7 @@ function FxPreview({ shot, prev, fx, aspect }: { shot: Shot; prev?: Shot; fx: Sh
 
   return (
     <div className="space-y-2 p-3">
-      <div className="relative mx-auto max-h-[46vh] overflow-hidden rounded-xl bg-black" style={{ aspectRatio: ratio, maxWidth: aspect === "9:16" ? 260 : "100%" }}>
+      <div className="scr mx-auto max-h-[46vh]" style={{ aspectRatio: ratio, maxWidth: aspect === "9:16" ? 260 : "100%" }}>
         {mode === "exact" && exact ? (
           <video key={exact.url} src={exact.url} className="size-full object-contain" autoPlay loop playsInline controls />
         ) : (
@@ -418,7 +423,7 @@ function FxPreview({ shot, prev, fx, aspect }: { shot: Shot; prev?: Shot; fx: Sh
             </div>
           </>
         )}
-        <span className="absolute left-2 top-2 z-10 rounded bg-black/60 px-1.5 py-0.5 text-2xs font-medium text-white">
+        <span className="mono absolute left-3 top-3 z-10 rounded border border-white/15 bg-black/60 px-1.5 py-0.5 text-2xs font-medium uppercase tracking-wider text-white">
           {mode === "exact" ? t("Exact — as exported") : mode === "transition" ? t("Transition preview") : t("Quick preview")}
         </span>
       </div>

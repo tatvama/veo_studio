@@ -3,6 +3,7 @@ import { CalendarClock, Check, Download, ExternalLink, Globe, ImageIcon, Link2, 
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
+import "../../styles/console.css";
 import { api } from "../../lib/api";
 import { LANG_NAMES, secs } from "../../lib/format";
 import { useT } from "../../lib/i18n";
@@ -92,7 +93,7 @@ export default function PublishModal({ x, onClose, project, episode }: {
       open={!!x}
       onClose={onClose}
       size="lg"
-      title={<span className="flex items-center gap-2"><span className="grid size-7 place-items-center rounded-lg bg-accent/12 text-accent-ink"><MonitorPlay className="size-4" /></span>{t("Publish to YouTube")}</span>}
+      title={<span className="flex items-center gap-2"><span className="grid size-7 place-items-center rounded-lg border border-accent/25 bg-accent/10 text-accent-ink"><MonitorPlay className="size-4" /></span>{t("Publish to YouTube")}</span>}
       footer={noChannel ? (
         <Button variant="ghost" onClick={onClose}>{t("Close")}</Button>
       ) : (
@@ -126,13 +127,13 @@ export default function PublishModal({ x, onClose, project, episode }: {
       ) : x && (
         <form id="publish-form" onSubmit={go} className="space-y-5">
           {/* what is being published */}
-          <div className="flex items-center gap-3 rounded-xl border border-line bg-raised/40 p-3">
-            <span className="grid h-14 w-10 shrink-0 place-items-center overflow-hidden rounded-md bg-black ring-1 ring-inset ring-white/10">
-              {x.thumb_url ? <img src={x.thumb_url} alt="" className="size-full object-cover" /> : <MonitorPlay className="size-4 text-dim" />}
+          <div className="cx-block flex items-center gap-3 p-3">
+            <span className="cx-monitor grid h-14 w-10 shrink-0 place-items-center">
+              {x.thumb_url ? <img src={x.thumb_url} alt="" className="size-full object-contain" /> : <MonitorPlay className="size-4 text-dim" />}
             </span>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-semibold">{t("Final")} · {t(LANG_NAMES[x.language] ?? x.language)}</p>
-              <p className="mt-0.5 truncate text-xs text-mute">{t(settings?.catalog.export_presets[x.preset]?.label ?? x.preset)} · {secs(x.duration_s)}</p>
+              <p className="mono mt-0.5 truncate text-2xs text-dim">{t(settings?.catalog.export_presets[x.preset]?.label ?? x.preset)} · {secs(x.duration_s)} · #{x.id}</p>
             </div>
             {channel && (
               <div className="flex shrink-0 items-center gap-2 text-xs text-mute">
@@ -142,7 +143,7 @@ export default function PublishModal({ x, onClose, project, episode }: {
             )}
           </div>
           {!copy && (
-            <p className="-mt-2 flex items-center gap-1.5 text-xs text-mute"><Sparkles className="size-3.5 text-accent-ink" />{t("Tip: generate a marketing pack to prefill this form.")}</p>
+            <p className="-mt-2 flex items-center gap-1.5 text-xs text-mute"><Sparkles className="size-3.5 text-ai" />{t("Tip: generate a marketing pack to prefill this form.")}</p>
           )}
 
           {prior && (
@@ -173,8 +174,8 @@ export default function PublishModal({ x, onClose, project, episode }: {
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {copy!.titles.map((tt, i) => (
                     <button key={i} type="button" onClick={() => setTitle(tt)} title={tt}
-                      className={clsx("max-w-[240px] truncate rounded-full border px-2.5 py-0.5 text-2xs transition-colors",
-                        tt === title ? "border-accent/50 bg-accent/12 text-ink" : "border-line text-mute hover:border-dim hover:text-ink")}>
+                      className={clsx("max-w-[240px] truncate rounded-lg border px-2.5 py-1 text-2xs transition-colors max-sm:py-2",
+                        tt === title ? "border-ai/45 bg-ai/12 text-ai" : "border-line text-mute hover:border-dim hover:text-ink")}>
                       {tt}
                     </button>
                   ))}
@@ -189,22 +190,22 @@ export default function PublishModal({ x, onClose, project, episode }: {
               <Textarea id="pub-desc" className="min-h-[120px]" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={4900} />
               <p className="mt-1.5 text-xs text-dim">{t("An AI-generated-content note is added automatically if it's missing.")}</p>
             </div>
-            <Field label={t("Tags")} hint={<span className={tagList.length > 30 ? "text-red-300" : undefined}>{t("Comma separated · {n} of 30", { n: tagList.length })}</span>}>
+            <Field label={t("Tags")} hint={<span className={tagList.length > 30 ? "text-bad" : undefined}>{t("Comma separated · {n} of 30", { n: tagList.length })}</span>}>
               <Input value={tags} onChange={(e) => setTags(e.target.value)} placeholder={t("story, kannada, shorts")} />
             </Field>
           </div>
 
           {/* visibility + schedule */}
           <div>
-            <p className="mb-1.5 text-xs font-medium text-mute">{t("Visibility")}</p>
+            <p className="eyebrow mb-2">{t("Visibility")}</p>
             <div role="radiogroup" aria-label={t("Visibility")} className={clsx("grid grid-cols-3 gap-2 transition-opacity", scheduleDate && "pointer-events-none opacity-50")}>
               {privacyOptions.map((o) => {
                 const sel = (scheduleDate ? "private" : privacy) === o.value;
                 return (
                   <button key={o.value} type="button" role="radio" aria-checked={sel} onClick={() => { setPrivacy(o.value); setConfirmPublic(false); }}
-                    className={clsx("relative flex flex-col items-start gap-1 rounded-xl border px-3 py-2.5 text-left transition-[border-color,background-color] duration-150",
+                    className={clsx("relative flex min-h-12 flex-col items-start gap-1 rounded-xl border px-3 py-2.5 text-left transition-[border-color,background-color] duration-150",
                       sel ? "border-accent/60 bg-accent/[0.07]" : "border-line hover:border-dim/50 hover:bg-hover/40")}>
-                    <span className={clsx("flex items-center gap-1.5 text-sm font-medium", sel && "text-accent-ink")}>{o.icon}{o.label}</span>
+                    <span className={clsx("flex items-center gap-1.5 pr-5 text-sm font-medium", sel && "text-accent-ink")}>{o.icon}{o.label}</span>
                     <span className="text-2xs leading-tight text-mute">{o.hint}</span>
                     {sel && <Check className="absolute right-2 top-2 size-3.5 text-accent-ink" strokeWidth={3} />}
                   </button>
@@ -224,7 +225,7 @@ export default function PublishModal({ x, onClose, project, episode }: {
           </div>
 
           <Field label={t("Schedule (optional)")}
-            hint={scheduleBad ? <span className="text-red-300">{t("Pick a time at least 5 minutes from now.")}</span>
+            hint={scheduleBad ? <span className="text-bad">{t("Pick a time at least 5 minutes from now.")}</span>
               : scheduleDate ? t("Uploads as Private now; YouTube makes it public on {when}.", { when: scheduleDate.toLocaleString() })
               : t("Leave empty to publish with the visibility above right away.")}>
             <div className="flex gap-2">
@@ -234,19 +235,19 @@ export default function PublishModal({ x, onClose, project, episode }: {
           </Field>
 
           {thumb && (
-            <div className="flex items-center gap-3 rounded-xl border border-line p-3">
-              <img src={thumb.url} alt="" className="h-16 w-auto rounded-md ring-1 ring-inset ring-white/10" />
+            <div className="cx-block flex items-center gap-3 p-3" data-tone="ai">
+              <img src={thumb.url} alt="" className="h-16 w-auto rounded-md ring-1 ring-inset ring-line" />
               <div className="min-w-0 flex-1 space-y-1">
                 <Toggle checked={useThumb} onChange={setUseThumb} label={<span className="flex items-center gap-1.5 text-sm font-medium"><ImageIcon className="size-4 text-mute" />{t("Upload the picked thumbnail")}</span>} />
                 <p className="text-xs leading-snug text-mute">{t("Custom thumbnails need a verified YouTube channel. If YouTube refuses it, the video still uploads.")}</p>
               </div>
-              <a href={thumb.url} download className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-line px-2.5 text-xs font-medium transition-colors hover:bg-hover">
+              <a href={thumb.url} download className="inline-flex h-8 shrink-0 items-center gap-1 rounded-lg border border-line px-2.5 text-xs font-medium transition-colors hover:bg-hover max-sm:h-10">
                 <Download className="size-3.5" />{t("Download")}
               </a>
             </div>
           )}
           <p className="flex items-start gap-2 text-xs leading-relaxed text-dim">
-            <Badge>{t("AI")}</Badge>
+            <Badge tone="ai">{t("AI")}</Badge>
             <span>{t("The video is labelled as altered or synthetic content on YouTube.")}{short ? ` ${t("#Shorts is added for vertical renders.")}` : ""}</span>
           </p>
         </form>

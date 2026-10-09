@@ -1,15 +1,16 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { clsx } from "clsx";
-import { Clapperboard, FileText, ListVideo, Lock, PenLine, Rocket, Save } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AlertTriangle, ArrowRight, Clapperboard, Eye, FileText, ListVideo, Lock, PenLine, Rocket, Save } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ImportWizard } from "../../components/board/ImportWizard";
-import { newScene, ShotListEditor, withKeys, type ShotPickerProps } from "../../components/board/ShotListEditor";
+import { newScene, sceneAnchor, ShotListEditor, withKeys, type ShotPickerProps } from "../../components/board/ShotListEditor";
 import { useGenerate } from "../../components/Generate";
-import { LoadError, RoomHeader, RoomPage } from "../../components/room/kit";
-import { Badge, Button, Modal, Select, Skeleton, Toggle } from "../../components/ui";
+import { Fact, LoadError, RoomHeader, RoomPage, SaveStatus, type SaveState } from "../../components/room/kit";
+import { Outline, StatStrip, Workspace, pad, sceneCode, type OutlineItem } from "../../components/room/workspace";
+import { Alert, Badge, Button, Meter, Modal, Select, Skeleton, Toggle } from "../../components/ui";
 import { api } from "../../lib/api";
+import { cn } from "../../lib/cn";
 import { QUALITY_INFO } from "../../lib/format";
 import { tr, useT } from "../../lib/i18n";
 import { useEditLock, useLockHolder } from "../../lib/collab";
@@ -144,17 +145,37 @@ export default function ShotListPage() {
 
   if (isError && !board) return <RoomPage width="full"><LoadError what={t("Couldn't load the shot list")} onRetry={() => refetch()} /></RoomPage>;
   if (isLoading || !board) {
-    return <RoomPage width="full"><Skeleton className="mb-4 h-16" />{[0, 1].map((i) => <Skeleton key={i} className="mb-4 h-64" />)}</RoomPage>;
+    return (
+      <RoomPage width="full">
+        <div aria-busy="true">
+          <Skeleton className="mb-5 h-12 w-72 max-w-full" />
+          <Skeleton className="mb-4 h-24" />
+          {[0, 1].map((i) => <Skeleton key={i} className="mb-4 h-64" />)}
+        </div>
+      </RoomPage>
+    );
   }
 
   const hasShots = board.scenes.some((s) => s.shots.length);
   const startWriting = () => edit([newScene(1)]);
+  const state: SaveState = saving ? "saving" : dirty ? "dirty" : "clean";
+
+  // the outline rail: one anchor per scene, with its length and whether it still needs attention
+  const outline: OutlineItem[] = scenes.map((sc, i) => {
+    const secs = sc.shots.reduce((a, s) => a + Math.max(s.extend_to || 0, s.duration_s), 0);
+    const missing = sc.shots.some((s) => !s.prompt.trim());
+    const made = !!sc.shots.length && sc.shots.every((s) => s.has_video);
+    return {
+      id: sceneAnchor(sc, i), state: missing ? "warn" : made ? "done" : "none", meta: `${secs}s`,
+      label: <span className="flex min-w-0 items-baseline gap-1.5"><span className="mono shrink-0 text-2xs text-dim">{sceneCode(i)}</span><span className="truncate">{sc.title || t("Scene {n}", { n: i + 1 })}</span></span>,
+    };
+  });
 
   return (
     <RoomPage width="full">
       <RoomHeader icon={<ListVideo />} title={t("Shot list")}
         description={t("Your film, scene by scene: what we see, who is in it and who says what. Write it here or import your script, then produce everything in one go.")}
-        status={dirty ? <Badge tone="warn">{t("Unsaved changes")}</Badge> : hasShots ? <Badge tone="ok">{t("Saved")}</Badge> : undefined}
+        status={!canEdit ? <Fact icon={<Eye />}>{t("View only")}</Fact> : dirty || saving || hasShots ? <SaveStatus state={state} /> : undefined}
         actions={canEdit && (
           <div className="flex flex-wrap items-center gap-2">
             <Button icon={<FileText className="size-4" />} onClick={() => setImporting(true)}>{t("Import script")}</Button>
@@ -168,34 +189,49 @@ export default function ShotListPage() {
         )} />
 
       {!scenes.length ? (
-        <div className="mx-auto grid max-w-3xl gap-4 py-6 sm:grid-cols-2">
-          <StartCard icon={<FileText className="size-6" />} title={t("Import my script")} disabled={!canEdit}
-            text={t("Word, PDF or pasted text, scene by scene with visuals and dialogue. You review every scene before anything is made.")}
-            onClick={() => setImporting(true)} />
-          <StartCard icon={<PenLine className="size-6" />} title={t("Build shot by shot")} disabled={!canEdit}
-            text={t("Write each shot yourself: the prompt, the characters in it, who says which line, voice-over, length and extensions.")}
-            onClick={startWriting} />
+        <div className="space-y-4">
+          <div className="grid gap-4 @2xl:grid-cols-2">
+            <StartCard index={1} tag="A" kicker={t("Import")} icon={<FileText className="size-5" />} title={t("Import my script")} disabled={!canEdit}
+              text={t("Word, PDF or pasted text, scene by scene with visuals and dialogue. You review every scene before anything is made.")}
+              onClick={() => setImporting(true)} />
+            <StartCard index={2} tag="B" kicker={t("Build")} icon={<PenLine className="size-5" />} title={t("Build shot by shot")} disabled={!canEdit}
+              text={t("Write each shot yourself: the prompt, the characters in it, who says which line, voice-over, length and extensions.")}
+              onClick={startWriting} />
+          </div>
+          <PipelineStrip />
         </div>
       ) : (
-        <>
-          <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-line bg-panel/80 px-3 py-2 text-xs text-mute">
-            <span><b className="text-ink">{scenes.length}</b> {t("scenes")}</span>
-            <span><b className="text-ink">{stats.shots}</b> {t("shots")}</span>
-            <span><b className="text-ink">{stats.secs}s</b> {t("total")}</span>
-            <span><b className="text-ink">{stats.lines}</b> {t("dialogue lines")}</span>
-            <span><b className="text-ink">{stats.vo}</b> {t("voice-over lines")}</span>
-            <span><b className="text-ink">{stats.videos}/{stats.shots}</b> {t("videos made")}</span>
-            {stats.empty > 0 && <Badge tone="warn">{t("{n} shots have no prompt", { n: stats.empty })}</Badge>}
-            <div className="flex-1" />
-            {stats.videos > 0 && <Button size="sm" variant="ghost" icon={<Clapperboard className="size-3.5" />} onClick={() => nav(`/p/${project.id}/storyboard`)}>{t("See takes in Storyboard")}</Button>}
-          </div>
-          <div className="@container">
-            {listLockedBy && (
-              <p className="mb-3 flex items-center gap-2 rounded-xl border border-warn/30 bg-warn/10 px-3 py-2 text-xs text-warn">
-                <Lock className="size-3.5 shrink-0" />
-                {t("{name} is editing the shot list. You can look; editing opens up when they save or leave.", { name: listLockedBy })}
-              </p>
-            )}
+        <div className="space-y-4">
+          {listLockedBy && (
+            <Alert tone="warn" icon={<Lock className="size-4" />}>
+              {t("{name} is editing the shot list. You can look; editing opens up when they save or leave.", { name: listLockedBy })}
+            </Alert>
+          )}
+
+          <StatStrip index={1} cells={[
+            { key: "scenes", label: t("Scenes"), value: scenes.length },
+            { key: "shots", label: t("Shots"), value: stats.shots },
+            { key: "runtime", label: t("Runtime"), value: stats.secs, unit: "s", sub: stats.secs >= 60 ? <span className="mono">≈ {Math.floor(stats.secs / 60)}:{pad(stats.secs % 60)}</span> : undefined },
+            { key: "dialogue", label: t("Dialogue"), value: stats.lines, sub: t("lines") },
+            { key: "vo", label: t("Voice-over"), value: stats.vo, sub: t("lines") },
+            {
+              key: "videos", label: t("Videos made"), value: stats.videos, unit: `/ ${stats.shots}`, tone: stats.shots > 0 && stats.videos === stats.shots ? "ok" : "neutral", wide: true,
+              visual: <Meter filled={bucket(stats.videos, stats.shots, 24)} total={Math.max(1, Math.min(stats.shots, 24))} tone={stats.videos === stats.shots ? "ok" : "accent"} />,
+            },
+          ]} aside={(stats.empty > 0 || stats.videos > 0) ? (
+            <div className="flex h-full flex-col items-start justify-center gap-2">
+              {stats.empty > 0 && (
+                <Badge tone="warn" className="whitespace-normal text-left leading-snug"><AlertTriangle className="size-3 shrink-0" />{t("{n} shots have no prompt", { n: stats.empty })}</Badge>
+              )}
+              {stats.videos > 0 && (
+                <Button size="sm" variant="ghost" className="-ml-2" icon={<Clapperboard className="size-3.5" />} onClick={() => nav(`/p/${project.id}/storyboard`)}>
+                  {t("See takes in Storyboard")}
+                </Button>
+              )}
+            </div>
+          ) : undefined} />
+
+          <Workspace rail={<Outline title={t("Scenes")} summary={`${scenes.length}`} items={outline} />}>
             <ShotListEditor scenes={scenes} onChange={edit} cast={cast} disabled={!canEdit || (!!listLockedBy && !dirty)} pickers={pickers}
               onMediaChanged={() => {
                 // uploads don't touch the text fields: refresh thumbnails/references, keeping unsaved edits
@@ -208,8 +244,8 @@ export default function ShotListPage() {
                   }) })));
                 });
               }} />
-          </div>
-        </>
+          </Workspace>
+        </div>
       )}
 
       <ImportWizard open={importing} onClose={() => setImporting(false)} eid={eid} projectId={project.id} hasShots={hasShots}
@@ -230,13 +266,57 @@ export default function ShotListPage() {
   );
 }
 
-function StartCard({ icon, title, text, onClick, disabled }: { icon: ReactNode; title: string; text: string; onClick: () => void; disabled?: boolean }) {
+/** `done` of `total` as cells of a `cells`-wide Meter (at least one lit while anything is done, so a start is visible). */
+function bucket(done: number, total: number, cells: number) {
+  if (!total || !done) return 0;
+  return Math.max(1, Math.min(cells, Math.round((done / total) * Math.min(total, cells))));
+}
+
+/** The production steps, with what each does. Shared by the "Produce all" dialog and the empty state. */
+function stepLabels(t: (s: string) => string): Record<(typeof STEPS)[number], [string, string]> {
+  return {
+    keyframes: [t("Keyframes"), t("A still image per shot, using your characters' reference photos")],
+    videos: [t("Videos"), t("Each shot animated from its keyframe")],
+    extend: [t("Extensions"), t("Longer clips for shots with “Extend to”")],
+    voices: [t("Voices & lip-sync"), t("Dialogue in each character's voice, lips matched; voice-over by the narrator")],
+    music: [t("Music"), t("A score for the whole episode")],
+    export: [t("Final export"), t("The finished video with captions")],
+  };
+}
+
+/** A hairline strip of what "Produce all" will do once the list exists. */
+function PipelineStrip() {
+  const t = useT();
+  const label = stepLabels(t);
   return (
-    <button type="button" onClick={onClick} disabled={disabled}
-      className="group flex flex-col items-start gap-3 rounded-2xl border border-line bg-panel p-5 text-left shadow-card transition-[border-color,transform,box-shadow] hover:-translate-y-0.5 hover:border-accent/50 hover:shadow-lift disabled:pointer-events-none disabled:opacity-60">
-      <span className="grid size-11 place-items-center rounded-xl bg-accent/12 text-accent-ink transition-transform group-hover:scale-105">{icon}</span>
-      <span className="text-base font-semibold">{title}</span>
+    <section className="hud relative min-w-0 rounded-xl border border-line bg-panel px-4 py-3.5">
+      <p className="eyebrow mb-3">{t("Produce all")}</p>
+      <ol className="flex flex-wrap items-center gap-x-1 gap-y-2">
+        {STEPS.map((s, i) => (
+          <li key={s} className="flex items-center gap-1">
+            <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-line bg-raised/50 px-2 text-xs text-mute">
+              <span className="mono text-2xs text-dim">{pad(i + 1)}</span>{label[s][0]}
+            </span>
+            {i < STEPS.length - 1 && <ArrowRight aria-hidden className="size-3 text-dim" />}
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+function StartCard({ icon, title, text, onClick, disabled, tag, kicker, index }: {
+  icon: ReactNode; title: string; text: string; onClick: () => void; disabled?: boolean; tag: string; kicker: string; index: number;
+}) {
+  return (
+    <button type="button" onClick={onClick} disabled={disabled} style={{ "--i": index } as CSSProperties}
+      className="hud group/start anim-rise relative flex min-w-0 flex-col items-start gap-3 rounded-xl border border-line bg-panel p-5 text-left transition-[border-color,background-color] hover:border-accent/50 hover:bg-hover/40 disabled:pointer-events-none disabled:opacity-60">
+      <span aria-hidden className="edge-light pointer-events-none absolute inset-x-4 top-0 h-px opacity-0 transition-opacity duration-300 group-hover/start:opacity-100" />
+      <span className="eyebrow flex items-center gap-1.5"><span className="mono">{tag}</span><span aria-hidden className="opacity-50">/</span>{kicker}</span>
+      <span className="hud grid size-11 place-items-center rounded-lg border border-accent/25 bg-accent/10 text-accent-ink">{icon}</span>
+      <span className="text-base font-semibold tracking-tight">{title}</span>
       <span className="text-sm leading-relaxed text-mute">{text}</span>
+      <ArrowRight aria-hidden className="mt-1 size-4 text-dim transition-[transform,color] group-hover/start:translate-x-1 group-hover/start:text-accent-ink" />
     </button>
   );
 }
@@ -249,14 +329,7 @@ function ProduceModal({ open, onClose, onGo, dirty }: {
   const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(STEPS.map((s) => [s, true])));
   const [quality, setQuality] = useState("");
   const [busy, setBusy] = useState(false);
-  const label: Record<string, [string, string]> = {
-    keyframes: [t("Keyframes"), t("A still image per shot, using your characters' reference photos")],
-    videos: [t("Videos"), t("Each shot animated from its keyframe")],
-    extend: [t("Extensions"), t("Longer clips for shots with “Extend to”")],
-    voices: [t("Voices & lip-sync"), t("Dialogue in each character's voice, lips matched; voice-over by the narrator")],
-    music: [t("Music"), t("A score for the whole episode")],
-    export: [t("Final export"), t("The finished video with captions")],
-  };
+  const label = stepLabels(t);
   const steps = STEPS.filter((s) => on[s]);
   return (
     <Modal open={open} onClose={() => !busy && onClose()} size="md"
@@ -270,21 +343,25 @@ function ProduceModal({ open, onClose, onGo, dirty }: {
       </>}>
       <div className="space-y-4">
         <p className="text-sm text-mute">{t("Runs the steps in order and only makes what's missing. You'll see the full cost before anything starts; the queue follows your API rate limits.")}</p>
-        <ul className="space-y-1.5">
-          {STEPS.map((s, i) => (
-            <li key={s} className={clsx("flex items-start gap-3 rounded-lg border px-3 py-2 transition-colors", on[s] ? "border-accent/40 bg-accent/5" : "border-line")}>
-              <span className="mt-0.5 w-4 text-right font-mono text-2xs text-dim">{i + 1}</span>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium">{label[s][0]}</p>
-                <p className="text-2xs text-dim">{label[s][1]}</p>
-              </div>
-              <Toggle checked={!!on[s]} onChange={(v) => setOn({ ...on, [s]: v })} />
-            </li>
-          ))}
-        </ul>
-        <label className="flex items-center justify-between gap-3 text-sm">
+        <div>
+          <p className="eyebrow mb-2 flex items-center justify-between"><span>{t("Steps")}</span><span className="mono">{steps.length} / {STEPS.length}</span></p>
+          <ol className="overflow-hidden rounded-xl border border-line">
+            {STEPS.map((s, i) => (
+              <li key={s} className={cn("flex items-start gap-3 border-b border-line px-3 py-2.5 transition-colors last:border-b-0", on[s] ? "bg-accent/5" : "")}>
+                <span className={cn("mono mt-0.5 grid size-6 shrink-0 place-items-center rounded-md border text-2xs font-semibold transition-colors",
+                  on[s] ? "border-accent/40 bg-accent/10 text-accent-ink" : "border-line text-dim")}>{pad(i + 1)}</span>
+                <div className="min-w-0 flex-1">
+                  <p className={cn("text-sm font-medium", !on[s] && "text-mute")}>{label[s][0]}</p>
+                  <p className="text-2xs leading-snug text-dim">{label[s][1]}</p>
+                </div>
+                <Toggle checked={!!on[s]} onChange={(v) => setOn({ ...on, [s]: v })} label={<span className="sr-only">{label[s][0]}</span>} />
+              </li>
+            ))}
+          </ol>
+        </div>
+        <label className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 text-sm">
           <span className="font-medium">{t("Video quality")}</span>
-          <Select value={quality} onChange={(e) => setQuality(e.target.value)} className="!w-56" aria-label={t("Video quality")}>
+          <Select value={quality} onChange={(e) => setQuality(e.target.value)} className="w-full sm:w-64" aria-label={t("Video quality")}>
             <option value="">{t("Project default ({q})", { q: QUALITY_INFO[project.quality_mode]?.label ?? project.quality_mode })}</option>
             {Object.entries(QUALITY_INFO).map(([k, v]) => <option key={k} value={k}>{t(v.label)} · {v.price}</option>)}
           </Select>

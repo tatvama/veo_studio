@@ -1,0 +1,55 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   Casting workspace (Bible: cast, character file, outfits, versions, locations, style).
+   Only what Tailwind utilities can't say cleanly. Built from the Command tokens in index.css, so dark and light follow.
+   Imported by components/room/cast.tsx.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* Episode axis: one hairline per episode. `--n` is the number of episodes on the axis. */
+.cs-ticks {
+  background-image: linear-gradient(to right, color-mix(in oklab, var(--color-line) 75%, transparent) 1px, transparent 1px);
+  background-size: calc(100% / var(--n, 1)) 100%;
+}
+
+/* An open-ended range (no first / no last episode): the bar fades out toward the open edge. */
+.cs-open-l {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 45%);
+  mask-image: linear-gradient(to right, transparent 0, #000 45%);
+}
+.cs-open-r {
+  -webkit-mask-image: linear-gradient(to left, transparent 0, #000 45%);
+  mask-image: linear-gradient(to left, transparent 0, #000 45%);
+}
+.cs-open-l.cs-open-r {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 20%, #000 80%, transparent 100%);
+  mask-image: linear-gradient(to right, transparent 0, #000 20%, #000 80%, transparent 100%);
+}
+
+/* Diagonal hatch for "not made yet" cells (empty pack segments, empty slots). */
+.cs-hatch {
+  background-image: repeating-linear-gradient(135deg, transparent 0 3px, color-mix(in oklab, var(--color-dim) 38%, transparent) 3px 4px);
+}
+
+/* The timeline spine of the version history: a dashed vertical leader behind the nodes. */
+.cs-spine {
+  background-image: linear-gradient(to bottom, var(--color-line) 50%, transparent 50%);
+  background-size: 1px 6px;
+  background-repeat: repeat-y;
+}
+
+/* The word-count gauge of the DNA field: a sweet-spot zone and tick marks along the track. */
+.cs-gauge-ticks {
+  background-image: linear-gradient(to right, var(--color-line) 1px, transparent 1px);
+  background-size: calc(100% / 11) 100%;
+}
+
+/* A lanyard slot at the top of an ID card (purely decorative). */
+.cs-slot {
+  width: 1.75rem;
+  height: 0.3125rem;
+  border-radius: 9999px;
+  background: color-mix(in oklab, var(--color-bg) 85%, var(--color-line));
+  box-shadow: inset 0 1px 1px rgb(0 0 0 / 0.35), 0 0 0 1px var(--color-line);
+}
+
+/* Range input in the lock panel: a thicker, calmer track so the three zones read. */
+.cs-range { height: 1.25rem; }

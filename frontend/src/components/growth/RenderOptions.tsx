@@ -5,13 +5,14 @@ import { AudioLines, Check, Crop, Palette, Volume2, Wand2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
+import "../../styles/console.css";
 import { api } from "../../lib/api";
 import { useT } from "../../lib/i18n";
 import { useBrandKits, useSettings } from "../../lib/queries";
 import type { Episode, Project, SubmitResult } from "../../lib/types";
 import { useGenerate } from "../Generate";
-import { Badge, Button, Progress, Select, Toggle } from "../ui";
-import { CardHeader, Chip, CostConfirm, providerLive, SettingRow, useActiveJobs } from "./common";
+import { Badge, Button, Panel, Progress, Select, Toggle } from "../ui";
+import { Chip, CostConfirm, providerLive, useActiveJobs } from "./common";
 
 export const CAPTION_STYLES: { value: string; label: string; desc: string }[] = [
   { value: "karaoke", label: "Karaoke", desc: "Words light up as they are spoken" },
@@ -37,11 +38,18 @@ export function useRenderSummary(episode: Episode, project: Project) {
   ];
 }
 
-function FieldLabel({ icon, children, right }: { icon?: React.ReactNode; children: React.ReactNode; right?: React.ReactNode }) {
+/** One cell of the options grid: a mono label (with an optional value or switch on the right), the control, a hint. */
+function Cell({ icon, label, right, hint, children, className }: {
+  icon?: React.ReactNode; label: React.ReactNode; right?: React.ReactNode; hint?: React.ReactNode; children?: React.ReactNode; className?: string;
+}) {
   return (
-    <div className="mb-2 flex items-center gap-1.5 text-xs font-medium text-mute">
-      {icon}<span>{children}</span>
-      {right && <span className="ml-auto">{right}</span>}
+    <div className={clsx("cx-block flex min-w-0 flex-col gap-2.5 p-3", className)}>
+      <div className="flex min-h-6 items-center gap-2">
+        <p className="eyebrow flex min-w-0 items-center gap-1.5 !leading-tight [&>svg]:size-3.5 [&>svg]:shrink-0">{icon}<span className="min-w-0">{label}</span></p>
+        {right && <span className="ml-auto shrink-0">{right}</span>}
+      </div>
+      {children}
+      {hint && <p className="mt-auto text-2xs leading-snug text-mute">{hint}</p>}
     </div>
   );
 }
@@ -109,74 +117,68 @@ export default function RenderOptions({ project, episode, canEdit }: { project: 
     ...CAPTION_STYLES.map((c) => ({ value: c.value, label: t(c.label), desc: t(c.desc) }))];
 
   return (
-    <div className="space-y-5">
-      <div>
-        <FieldLabel>{t("Caption style")}</FieldLabel>
-        <div role="group" aria-label={t("Caption style")} className={clsx("flex flex-wrap gap-1.5 transition-opacity", (!canEdit || saving === "caption") && "pointer-events-none opacity-60")}>
-          {captionOptions.map((o) => (
-            <Chip key={o.value} active={caption === o.value} onClick={() => pickCaption(o.value)} title={o.desc}
-              icon={caption === o.value ? <Check className="size-3" strokeWidth={3} /> : undefined}>{o.label}</Chip>
-          ))}
-        </div>
-        <p className="mt-1.5 text-xs text-mute">{t(CAPTION_STYLES.find((c) => c.value === effective)?.desc ?? "")}</p>
-      </div>
+    <div className="@container">
+      <div className="grid gap-2.5 @xl:grid-cols-2">
+        <Cell className="@xl:col-span-2" label={t("Caption style")} hint={t(CAPTION_STYLES.find((c) => c.value === effective)?.desc ?? "")}>
+          <div role="group" aria-label={t("Caption style")} className={clsx("flex flex-wrap gap-1.5 transition-opacity", (!canEdit || saving === "caption") && "pointer-events-none opacity-60")}>
+            {captionOptions.map((o) => (
+              <Chip key={o.value} active={caption === o.value} onClick={() => pickCaption(o.value)} title={o.desc}
+                icon={caption === o.value ? <Check className="size-3" strokeWidth={3} /> : undefined}>{o.label}</Chip>
+            ))}
+          </div>
+        </Cell>
 
-      <div>
-        <FieldLabel icon={<Palette className="size-3.5" />}>{t("Brand kit")}</FieldLabel>
-        <div className="flex items-center gap-2.5">
-          <Select className="min-w-0 flex-1" value={project.brand_kit_id ?? ""} disabled={!canEdit || saving === "kit"} aria-label={t("Brand kit")}
-            onChange={(e) => setKit(e.target.value ? Number(e.target.value) : null)}>
-            <option value="">{t("No brand kit")}</option>
-            {(kits ?? []).map((k) => <option key={k.id} value={k.id}>{k.name}</option>)}
-          </Select>
-          {kit?.colors?.length ? (
-            <span className="flex shrink-0 -space-x-1.5">
-              {kit.colors.slice(0, 4).map((c, i) => (
-                <span key={i} className="size-5 rounded-full border-2 border-panel shadow-sm" style={{ background: c }} title={c} />
-              ))}
-            </span>
-          ) : null}
-        </div>
-        <p className="mt-1.5 text-xs text-mute">
-          {kit ? (kit.end_card?.enabled ? t("Adds a {n}s branded end card to final renders.", { n: kit.end_card.seconds ?? 3 })
-            : t("This kit's end card is off.")) : t("Pick a kit to add a branded end card.")}{" "}
-          <Link to="/brand-kits" className="font-medium text-accent-ink underline-offset-2 hover:underline">{t("Edit kits")}</Link>
-        </p>
-      </div>
+        <Cell icon={<Palette />} label={t("Brand kit")}
+          hint={<>
+            {kit ? (kit.end_card?.enabled ? t("Adds a {n}s branded end card to final renders.", { n: kit.end_card.seconds ?? 3 })
+              : t("This kit's end card is off.")) : t("Pick a kit to add a branded end card.")}{" "}
+            <Link to="/brand-kits" className="font-medium text-accent-ink underline-offset-2 hover:underline">{t("Edit kits")}</Link>
+          </>}>
+          <div className="flex items-center gap-2.5">
+            <Select className="min-w-0 flex-1" value={project.brand_kit_id ?? ""} disabled={!canEdit || saving === "kit"} aria-label={t("Brand kit")}
+              onChange={(e) => setKit(e.target.value ? Number(e.target.value) : null)}>
+              <option value="">{t("No brand kit")}</option>
+              {(kits ?? []).map((k) => <option key={k.id} value={k.id}>{k.name}</option>)}
+            </Select>
+            {kit?.colors?.length ? (
+              <span className="flex shrink-0 -space-x-1.5">
+                {kit.colors.slice(0, 4).map((c, i) => (
+                  <span key={i} className="size-5 rounded-full border-2 border-panel" style={{ background: c }} title={c} />
+                ))}
+              </span>
+            ) : null}
+          </div>
+        </Cell>
 
-      <div>
-        <FieldLabel icon={<Volume2 className="size-3.5" />} right={<span className="font-mono text-xs tabular-nums text-ink">{volume} dB</span>}>{t("Music level")}</FieldLabel>
-        <input type="range" min={-30} max={-6} step={1} value={volume} disabled={!canEdit} className="w-full accent-accent"
-          onChange={(e) => onVolume(Number(e.target.value))} aria-label={t("Music level")} />
-        <div className="mt-2">
+        <Cell icon={<Volume2 />} label={t("Music level")} right={<span className="mono text-xs text-ink">{volume} dB</span>}>
+          <input type="range" min={-30} max={-6} step={1} value={volume} disabled={!canEdit} className="w-full accent-accent max-sm:h-8"
+            onChange={(e) => onVolume(Number(e.target.value))} aria-label={t("Music level")} />
           <Toggle checked={es.duck !== false} disabled={!canEdit || saving === "duck"}
             onChange={(v) => saveEpisode("duck", { duck: v }, v ? t("Music ducks under dialogue") : t("Music ducking off"))}
             label={<span className="text-sm text-mute">{t("Lower music under dialogue")}</span>} />
-        </div>
-      </div>
+        </Cell>
 
-      <div className="divide-y divide-line overflow-hidden rounded-xl border border-line bg-raised/30">
-        <SettingRow icon={<Crop className="size-4" />} label={t("Auto-reframe")}
+        <Cell icon={<Crop />} label={t("Auto-reframe")}
+          right={<Toggle checked={autoReframe} disabled={!canEdit || saving === "reframe"} label={<span className="sr-only">{t("Auto-reframe")}</span>}
+            onChange={(v) => saveEpisode("reframe", { auto_reframe: v }, v ? t("Auto-reframe on for this episode") : t("Auto-reframe off for this episode"))} />}
           hint={<>{t("Clips shot in another shape are cropped around the main face for 9:16, 1:1 or 16:9.")}{" "}
             {es.auto_reframe === undefined || es.auto_reframe === null
               ? <Link to="/settings#delivery" className="font-medium text-accent-ink underline-offset-2 hover:underline">{t("Team setting")}</Link>
               : <button type="button" className="font-medium text-accent-ink underline-offset-2 hover:underline disabled:opacity-50" disabled={!canEdit}
-                  onClick={() => saveEpisode("reframe", { auto_reframe: null }, t("Using the team setting"))}>{t("Use team setting")}</button>}</>}>
-          <Toggle checked={autoReframe} disabled={!canEdit || saving === "reframe"} label={<span className="sr-only">{t("Auto-reframe")}</span>}
-            onChange={(v) => saveEpisode("reframe", { auto_reframe: v }, v ? t("Auto-reframe on for this episode") : t("Auto-reframe off for this episode"))} />
-        </SettingRow>
-        <SettingRow icon={<AudioLines className="size-4" />}
-          label={<span className="flex items-center gap-2">{t("Sound effects")}<Badge tone={withSfx ? "ok" : "neutral"}>{t("{n}/{m} shots", { n: withSfx, m: shots.length })}</Badge></span>}
+                  onClick={() => saveEpisode("reframe", { auto_reframe: null }, t("Using the team setting"))}>{t("Use team setting")}</button>}</>} />
+
+        <Cell icon={<AudioLines />} label={t("Sound effects")}
+          right={<Toggle checked={sfxOn} disabled={!canEdit || saving === "sfx"} label={<span className="sr-only">{t("Sound effects")}</span>}
+            onChange={(v) => saveEpisode("sfx", { sfx: v }, v ? t("Sound effects included in renders") : t("Sound effects left out of renders"))} />}
           hint={t("Mixed into renders when switched on. Loudness is normalised to −14 LUFS.")}>
-          <Toggle checked={sfxOn} disabled={!canEdit || saving === "sfx"} label={<span className="sr-only">{t("Sound effects")}</span>}
-            onChange={(v) => saveEpisode("sfx", { sfx: v }, v ? t("Sound effects included in renders") : t("Sound effects left out of renders"))} />
-        </SettingRow>
+          <Badge tone={withSfx ? "ok" : "neutral"} className="mono self-start">{t("{n}/{m} shots", { n: withSfx, m: shots.length })}</Badge>
+        </Cell>
       </div>
     </div>
   );
 }
 
-/** Generate ambience and spot effects for every shot (own card on the Export page). */
+/** Generate ambience and spot effects for every shot (own panel on the Export page). */
 export function SoundDesignCard({ project, episode, canEdit }: { project: Project; episode: Episode; canEdit: boolean }) {
   const t = useT();
   const { submit } = useGenerate();
@@ -190,18 +192,18 @@ export function SoundDesignCard({ project, episode, canEdit }: { project: Projec
   const pct = shots.length ? withSfx / shots.length : 0;
 
   return (
-    <div className="rounded-xl border border-line bg-panel p-4 sm:p-5">
-      <CardHeader icon={<AudioLines className="size-4" />} title={t("Sound design")}
-        sub={t("Ambience and spot effects for every shot, mixed into your renders.")} className="!mb-3" />
+    <Panel eyebrow={t("Sound")} icon={<AudioLines />} title={t("Sound design")}
+      actions={running.length > 0 ? <Badge tone="accent" dot>{t("Generating…")}</Badge> : undefined}>
+      <p className="mb-3 text-xs leading-relaxed text-mute">{t("Ambience and spot effects for every shot, mixed into your renders.")}</p>
       <div className="mb-4">
         <div className="mb-1.5 flex items-center justify-between text-xs">
-          <span className="text-mute">{t("{n}/{m} shots", { n: withSfx, m: shots.length })}</span>
-          <span className="font-mono tabular-nums text-dim">{Math.round(pct * 100)}%</span>
+          <span className="mono text-mute">{t("{n}/{m} shots", { n: withSfx, m: shots.length })}</span>
+          <span className="mono text-dim">{Math.round(pct * 100)}%</span>
         </div>
         <Progress value={pct} tone={pct >= 1 ? "ok" : "accent"} />
       </div>
       {canEdit ? (
-        <Button variant="outline" block icon={<Wand2 className="size-4" />} loading={running.length > 0} disabled={!shots.length} onClick={() => setOpen(true)}>
+        <Button variant="outline" block icon={<Wand2 className="size-4" />} loading={running.length > 0} disabled={!shots.length} onClick={() => setOpen(true)} className="max-sm:h-10">
           {withSfx ? t("Redo sound design") : t("Design sound effects")}
         </Button>
       ) : null}
@@ -211,6 +213,6 @@ export function SoundDesignCard({ project, episode, canEdit }: { project: Projec
           note={t("Plans effects per shot, then generates them with ElevenLabs. Replaces existing effects.")}
           onConfirm={() => submit(() => api.post<SubmitResult>(`/api/episodes/${eid}/sfx`, {}), t("Sound design"))} />
       )}
-    </div>
+    </Panel>
   );
 }

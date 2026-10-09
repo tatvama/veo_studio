@@ -1,4 +1,4 @@
-# VEO Studio
+# Tatvam AI Studio
 
 An AI video studio for teams. You give it a concept, and it takes you from hook to script, scene plan, cast and voices, shot list, keyframes, video, lip-sync, music, sound and the final edit, in **English, Hindi, Kannada, Telugu and Tamil**.
 It isn't tied to one AI provider: the **Model Hub** keeps a live catalog of about 800 models (Google Veo, Kling, Seedance, Wan, MiniMax, LTX, Luma, Grok, sync.so, HeyGen, ElevenLabs …) and routes every shot to the best engine for the job.
@@ -143,17 +143,23 @@ How spending is controlled:
 - **Project caps:** each project can have its own cap.
 - **Approvals:** anything over a limit goes to the **Approvals** inbox.
 - **Costs page:** shows spending by project, by person and by service, plus the full ledger.
+- **Rupees next to dollars:** every cost figure can show INR beside USD (Both, USD or INR, set in the top bar or the account menu). Billing stays in US dollars; the rupee figure is an estimate at the live mid-market rate (refreshed every 15 minutes, last good rate kept if the source is down). Pin your own rate, for example your bank rate, with `USD_INR_RATE` in `.env`.
 
 **Audit & consent:** the audit log records sensitive actions (keys, settings, publishing, client links, identity training, deletions) with who and from where. Consent records (signed release, scope, expiry) cover cloned voices and real people's faces.
 
 ## 7. Interface
 
-- **Sidebar:** labelled sections (Create, Library, Team, System) with your recent projects; collapse it to icons with `[` or the arrow button. On narrow windows it stays slim and opens as a slide-over.
-- **Project workspace:** each step (Brief → Story → Scenes → Bible → Storyboard → Timeline → Export) shows whether it is done, in progress or not started, with a progress line under the header. The Director floats over the page on small screens.
-- **Themes:** dark, light or follow the system (user menu or `Ctrl+K`).
-- **Interface language:** English, हिन्दी, ಕನ್ನಡ, తెలుగు, தமிழ் (user menu, login page or `Ctrl+K`). Film terms (Shot, Scene, Take, Storyboard …) stay in English on purpose, as they're used on set.
-- **Motion:** smooth transitions throughout; respects the system's reduce-motion setting, or turn it off in the user menu.
-- **Install as an app:** in Chrome or Edge, use *Install VEO Studio* from the address bar (works on desktop and Android). The app shell loads offline; your work always comes live from the server.
+The app is a fixed-viewport **production cockpit** (design system: [docs/DESIGN.md](docs/DESIGN.md)). Panels scroll; the page does not.
+
+- **Top command bar:** the Tatvam mark, a breadcrumb (Command center / project / section), the command search (`Ctrl+K`) and live telemetry: AI engine health, running jobs with a live queue, team spend against the monthly cap, the live USD to INR rate, a theme switch, notifications and your account.
+- **Rail:** a slim icon column for Command center, Search, Library, Model Hub, Brand kits and (by role) Approvals, Costs, Team, Audit and Settings. Labels are tooltips, so the work area never shifts. On phones it becomes a bottom tab bar.
+- **Command center (home):** greeting and a mission KPI strip, the new-production composer with templates, your productions as mission cards with progress, and a column with the live queue, what needs your attention, recent activity and engine health.
+- **Project workspace:** the left **pipeline rail** shows the project, episode and language switchers, then the production flow (Mission overview, 01 Write, 02 Cast, 03 Shots, 04 Finish, Log) with per-stage progress, the next-step card and the Director toggle. `[` collapses it to icons; below 1024 px it becomes a stage strip. Projects open on the **Mission overview**: flight path, telemetry, shot map, spend, change impact, live queue, cast and seasons.
+- **Status strip (bottom):** connection, engine mode, a live job ticker and shortcut hints.
+- **Themes:** dark, light or follow the system: a one-click sun/moon button in the top bar, the full choice in the account menu or `Ctrl+K`.
+- **Interface language:** English, हिन्दी, ಕನ್ನಡ, తెలుగు, தமிழ் (account menu, login page or `Ctrl+K`). Film terms (Shot, Scene, Take, Storyboard …) stay in English on purpose, as they're used on set.
+- **Motion:** smooth transitions throughout; respects the system's reduce-motion setting, or turn it off in the account menu.
+- **Install as an app:** in Chrome or Edge, use *Install Tatvam AI Studio* from the address bar (works on desktop and Android). The app shell loads offline; your work always comes live from the server.
 
 ## 8. Deploy for the team (Unraid, a VPS or Docker Desktop)
 

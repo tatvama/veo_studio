@@ -17,12 +17,14 @@ import { FPS, LABEL_W, RULER_H, TRACK_H, type Clip, type Overlay } from "./share
 
 export function PlayheadReadout({ clock, className }: { clock: Clock; className?: string }) {
   const v = useClock(clock);
-  return <span className={clsx("font-mono text-xs font-semibold tabular-nums text-ink", className)}>{formatTC(v, FPS)}</span>;
+  return <span className={clsx("mono text-[0.8rem] font-semibold tabular-nums text-ink", className)}>{formatTC(v, FPS)}</span>;
 }
 
 // ── ruler, playhead, guides ──────────────────────────────────────────────────
 
 const STEPS = [1 / 24, 2 / 24, 6 / 24, 12 / 24, 1, 2, 5, 10, 15, 30, 60, 120, 300];
+/** The spacing (seconds) of the ruler's labelled ticks at this zoom; the lanes' faint grid follows it. */
+export const rulerMajor = (pps: number) => STEPS.find((s) => s * pps >= 64) ?? 300;
 
 export function TimeRuler({ total, pps, view, clock, onScrub }: {
   total: number; pps: number; view: { left: number; width: number }; clock: Clock;
@@ -31,7 +33,7 @@ export function TimeRuler({ total, pps, view, clock, onScrub }: {
   const t = useT();
   const ref = useRef<HTMLDivElement>(null);
   const drag = useRef(false);
-  const major = STEPS.find((s) => s * pps >= 64) ?? 300;
+  const major = rulerMajor(pps);
   const minorN = major * pps >= 120 ? 5 : major * pps >= 64 ? 4 : 2;
   const minor = major / minorN;
   const from = Math.max(0, Math.floor((view.left - 40) / pps / major));
@@ -44,7 +46,7 @@ export function TimeRuler({ total, pps, view, clock, onScrub }: {
   };
   return (
     <div className="sticky top-0 z-40 flex border-b border-line bg-raised" style={{ height: RULER_H }}>
-      <div className="sticky left-0 z-30 flex shrink-0 items-center border-r border-line bg-panel px-2.5" style={{ width: LABEL_W }} title={`${FPS} fps`}>
+      <div className="sticky left-0 z-30 flex shrink-0 items-center gap-1.5 border-r border-line bg-panel px-2.5" style={{ width: LABEL_W }} title={`${FPS} fps`}>
         <PlayheadReadout clock={clock} />
       </div>
       <div
@@ -66,13 +68,13 @@ export function TimeRuler({ total, pps, view, clock, onScrub }: {
         }}
       >
         {/* the part of the ruler that has footage */}
-        <div className="pointer-events-none absolute inset-y-0 left-0 border-r border-line bg-hover/60" style={{ width: total * pps }} />
+        <div className="pointer-events-none absolute inset-y-0 left-0 border-r border-accent/40 bg-accent/[0.06]" style={{ width: total * pps }} />
         {ticks.map((i) => {
           const tt = i * major;
           return (
             <div key={i} className="pointer-events-none absolute inset-y-0" style={{ left: tt * pps }}>
               <span className="absolute bottom-0 h-3 border-l border-mute/60" />
-              <span className="absolute left-1.5 top-1 whitespace-nowrap font-mono text-2xs text-mute">{rulerLabel(tt, FPS, major < 1)}</span>
+              <span className="mono absolute left-1.5 top-1 whitespace-nowrap text-2xs tabular-nums text-mute">{rulerLabel(tt, FPS, major < 1)}</span>
               {Array.from({ length: minorN - 1 }, (_, k) => (
                 <span key={k} className="absolute bottom-0 h-1.5 border-l border-line" style={{ left: (k + 1) * minor * pps }} />
               ))}
@@ -92,9 +94,9 @@ export function PlayheadLine({ clock, pps, viewLeft }: { clock: Clock; pps: numb
   const shift = rel < 46 ? 46 - rel : 0;
   return (
     <div className="pointer-events-none absolute inset-y-0 z-20 will-change-transform" style={{ left: LABEL_W, transform: `translate3d(${v * pps}px,0,0)` }}>
-      <div className="absolute inset-y-0 -left-px w-0.5 bg-accent shadow-[0_0_0_1px_rgb(0_0_0/0.28)]" />
+      <div className="tl-playhead absolute inset-y-0 -left-px w-0.5" />
       <div className="absolute left-0 top-1" style={{ transform: `translateX(calc(-50% + ${shift}px))` }}>
-        <div className="rounded-md bg-accent px-1.5 py-0.5 font-mono text-2xs font-bold leading-4 tabular-nums text-black shadow-md">{formatTC(v, FPS, true)}</div>
+        <div className="tl-flag mono rounded-md px-1.5 py-0.5 text-2xs font-bold leading-4 tabular-nums">{formatTC(v, FPS, true)}</div>
         {shift === 0 && <div className="mx-auto -mt-px size-0 border-x-[4px] border-t-[5px] border-x-transparent border-t-accent" />}
       </div>
     </div>
@@ -106,7 +108,7 @@ export function SnapGuide({ time, pps }: { time: number; pps: number }) {
   return (
     <div className="pointer-events-none absolute inset-y-0 z-[25] w-px" style={{ left: LABEL_W + time * pps }}>
       <div className="absolute inset-y-0 left-0 border-l border-dashed border-accent-2" />
-      <span className="absolute bottom-1 left-1.5 rounded bg-accent-2 px-1 font-mono text-2xs font-bold leading-4 tabular-nums text-black shadow">{formatTC(time, FPS, true)}</span>
+      <span className="mono absolute bottom-1 left-1.5 rounded bg-accent-2 px-1 text-2xs font-bold leading-4 tabular-nums text-[var(--on-accent)] shadow">{formatTC(time, FPS, true)}</span>
     </div>
   );
 }
@@ -123,30 +125,37 @@ export function WaveLane({ segs, view, pps, className, height = TRACK_H - 8 }: {
 // ── tracks ───────────────────────────────────────────────────────────────────
 
 const TRACK_TONE = {
-  neutral: "bg-raised text-mute", ok: "bg-ok/12 text-ok", info: "bg-info/12 text-info", accent: "bg-accent/12 text-accent-ink",
-  warn: "bg-warn/12 text-warn", gold: "bg-accent-2/12 text-accent-2",
+  neutral: { chip: "border-line bg-raised text-mute", bar: "bg-dim/70" },
+  ok: { chip: "border-ok/30 bg-ok/10 text-ok", bar: "bg-ok" },
+  info: { chip: "border-info/30 bg-info/10 text-info", bar: "bg-info" },
+  accent: { chip: "border-accent/30 bg-accent/10 text-accent-ink", bar: "bg-accent" },
+  warn: { chip: "border-warn/30 bg-warn/10 text-warn", bar: "bg-warn" },
+  ai: { chip: "border-ai/30 bg-ai/10 text-ai", bar: "bg-ai" },
+  gold: { chip: "border-accent-2/30 bg-accent-2/10 text-accent-2", bar: "bg-accent-2" },
 } as const;
 export type TrackTone = keyof typeof TRACK_TONE;
 
-/** One row: a sticky label column (icon tile, name, item count) and the lane. Odd rows get a faint stripe. */
+/** One row: a sticky label column (a lit tick in the track's colour, icon, mono name, item count) and the lane with its faint time grid. */
 export function Track({ icon, label, tone = "neutral", count, height = TRACK_H, stripe, children }: {
   icon: ReactNode; label: string; tone?: TrackTone; count?: number | string; height?: number; stripe?: boolean; children: ReactNode;
 }) {
+  const tt = TRACK_TONE[tone];
   return (
     <div className="flex border-b border-line/60" style={{ height }}>
-      <div className="sticky left-0 z-30 flex shrink-0 items-center gap-2 border-r border-line bg-panel px-2.5" style={{ width: LABEL_W }}>
-        <span className={clsx("grid size-5 shrink-0 place-items-center rounded-md [&>svg]:size-3", TRACK_TONE[tone])}>{icon}</span>
-        <span className="min-w-0 flex-1 truncate text-2xs font-semibold uppercase tracking-wide text-mute">{label}</span>
-        {count !== undefined && count !== "" && <span className="shrink-0 text-2xs tabular-nums text-dim">{count}</span>}
+      <div className="sticky left-0 z-30 flex shrink-0 items-center gap-2 border-r border-line bg-panel pl-3 pr-2" style={{ width: LABEL_W }}>
+        <span aria-hidden className={clsx("absolute inset-y-1.5 left-0 w-[2px] rounded-r", tt.bar)} />
+        <span className={clsx("grid size-5 shrink-0 place-items-center rounded-md border [&>svg]:size-3", tt.chip)}>{icon}</span>
+        <span className="mono min-w-0 flex-1 truncate text-2xs font-medium uppercase tracking-wider text-mute">{label}</span>
+        {count !== undefined && count !== "" && <span className="mono shrink-0 text-2xs tabular-nums text-dim">{count}</span>}
       </div>
-      <div className={clsx("relative flex-1", stripe && "bg-raised/35")}>{children}</div>
+      <div className={clsx("tl-lane relative flex-1", stripe && "bg-raised/35")}>{children}</div>
     </div>
   );
 }
 
 const ITEM_TONE = {
   ok: "border-ok/40 bg-ok/12 text-ok", info: "border-info/40 bg-info/12 text-info", accent: "border-accent/40 bg-accent/10 text-accent-ink",
-  warn: "border-warn/40 bg-warn/12 text-warn", mute: "border-line bg-raised text-mute",
+  warn: "border-warn/40 bg-warn/12 text-warn", mute: "border-line bg-raised text-mute", ai: "border-ai/40 bg-ai/12 text-ai",
 } as const;
 
 /** A block on a lane (spoken line, narration, music bed, effect, caption). Dashed = planned but not generated yet. */
@@ -157,8 +166,8 @@ export function LaneItem({ tone, left, width, dashed, title, children, className
 }) {
   return (
     <div title={title} style={{ left, width }}
-      className={clsx("absolute inset-y-1 flex items-center overflow-hidden rounded-md border px-1 text-2xs font-medium leading-none", dashed ? "border-dashed bg-transparent text-dim" : ITEM_TONE[tone],
-        dashed && (tone === "ok" ? "border-ok/40" : tone === "info" ? "border-info/40" : tone === "warn" ? "border-warn/40" : "border-line"), className)}>
+      className={clsx("mono absolute inset-y-1 flex items-center overflow-hidden rounded-md border px-1 text-2xs font-medium leading-none", dashed ? "border-dashed bg-transparent text-dim" : ITEM_TONE[tone],
+        dashed && (tone === "ok" ? "border-ok/40" : tone === "info" ? "border-info/40" : tone === "warn" ? "border-warn/40" : tone === "ai" ? "border-ai/40" : tone === "accent" ? "border-accent/40" : "border-line"), className)}>
       <span className={clsx("truncate", pill && !dashed ? "rounded-[4px] bg-panel/85 px-1 py-[3px] text-ink" : "px-0.5")}>{children}</span>
     </div>
   );
@@ -187,21 +196,21 @@ export function ClipBlock({ clip, pps, selected, onClick, onDoubleClick, draggab
     <Tooltip content={`${clip.shot.code} · ${t(kindTag ?? "Video")} · ${clip.duration.toFixed(1)}s`} side="top" delay={500}>
       <div ref={setNodeRef} {...attributes} {...listeners} role="button" aria-label={`${clip.shot.code}, ${clip.duration.toFixed(1)}s`} aria-pressed={selected}
         onClick={onClick} onDoubleClick={onDoubleClick} style={style}
-        className={clsx("relative my-1 shrink-0 cursor-pointer overflow-hidden rounded-md border bg-raised outline-none transition-[box-shadow,border-color,opacity] duration-150",
+        className={clsx("tl-clip relative my-1 shrink-0 cursor-pointer overflow-hidden rounded-md border bg-raised outline-none transition-[box-shadow,border-color,opacity] duration-150",
           "focus-visible:ring-2 focus-visible:ring-accent/70",
-          selected ? "z-[1] border-accent ring-2 ring-accent/50" : "border-black/50 hover:border-dim",
+          selected ? "is-sel z-[1] border-accent" : "border-white/10 hover:border-dim",
           clip.kind === "still" && "opacity-70", isDragging && "z-20 opacity-90 shadow-lift")}>
         <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/55 via-transparent to-black/45" />
-        <span className="absolute left-1 top-0.5 rounded bg-black/65 px-1 font-mono text-2xs font-semibold leading-4 text-white">{code}</span>
+        <span className="mono absolute left-1 top-0.5 rounded-[3px] bg-black/70 px-1 text-2xs font-semibold leading-4 text-white">{code}</span>
         {clip.shot.fx?.transition && (
           <span title={`${clip.shot.fx.transition.type} · ${clip.shot.fx.transition.duration}s`}
             className="absolute -left-px top-1/2 z-[2] grid size-4 -translate-y-1/2 rotate-45 place-items-center rounded-sm border border-white/70 bg-accent shadow" />
         )}
         {Object.keys(clip.shot.fx ?? {}).some((k) => k !== "transition") && w > 50 && (
-          <span className="absolute right-1 top-0.5 rounded bg-accent/85 px-1 text-2xs font-bold leading-4 text-black">fx</span>
+          <span className="mono absolute right-1 top-0.5 rounded-[3px] bg-accent px-1 text-2xs font-bold leading-4 text-[var(--on-accent)]">fx</span>
         )}
-        {w > 70 && <span className="absolute bottom-0.5 right-1 font-mono text-2xs font-medium tabular-nums leading-4 text-white/90">{clip.duration.toFixed(1)}s</span>}
-        {kindTag && w > 70 && <span className="absolute bottom-0.5 left-1 rounded bg-black/65 px-1 text-2xs font-medium leading-4 text-white/90">{t(kindTag)}</span>}
+        {w > 70 && <span className="mono absolute bottom-0.5 right-1 text-2xs font-medium tabular-nums leading-4 text-white/90">{clip.duration.toFixed(1)}s</span>}
+        {kindTag && w > 70 && <span className="mono absolute bottom-0.5 left-1 rounded-[3px] bg-black/70 px-1 text-2xs font-medium leading-4 text-white/90">{t(kindTag)}</span>}
       </div>
     </Tooltip>
   );
@@ -272,7 +281,7 @@ export function OverlayLane({ clips, pps, canEdit, snapTime, setSnapLine, onOpen
           <div
             key={`${c.shot.id}-${i}`}
             title={`${lower ? t("Lower third") : t("Title")}: ${o.text}`}
-            className={clsx("group absolute inset-y-1 flex items-center gap-1 overflow-hidden rounded-md border px-1.5 text-2xs font-medium leading-none",
+            className={clsx("mono group absolute inset-y-1 flex items-center gap-1 overflow-hidden rounded-md border px-1.5 text-2xs font-medium leading-none",
               lower ? "border-info/50 bg-info/15 text-info" : "border-accent-2/50 bg-accent-2/15 text-accent-2",
               canEdit && "cursor-grab active:cursor-grabbing", live && "z-10 ring-2 ring-accent/50")}
             style={{ left: (c.start + start) * pps, width: Math.max((end - start) * pps, 6) }}
@@ -317,7 +326,7 @@ function SpanBar({ start, end, total }: { start: number; end: number; total: num
   const w = total > 0 ? clamp((end - start) / total, 0, 1) * 100 : 0;
   return (
     <div className="relative h-2 overflow-hidden rounded-full bg-line" aria-hidden>
-      <motion.div className="absolute inset-y-0 rounded-full bg-accent-2" animate={{ left: `${l}%`, width: `${Math.max(w, 1.5)}%` }} transition={{ type: "spring", stiffness: 300, damping: 30 }} />
+      <motion.div className="absolute inset-y-0 rounded-full bg-accent-2 shadow-[0_0_8px_var(--color-accent-2)]" animate={{ left: `${l}%`, width: `${Math.max(w, 1.5)}%` }} transition={{ type: "spring", stiffness: 300, damping: 30 }} />
     </div>
   );
 }

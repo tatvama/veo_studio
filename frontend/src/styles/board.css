@@ -1,0 +1,27 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   Shot board + World workspaces (ShotListEditor, ImportWizard, Props, Wardrobe, Continuity Bible).
+   Only what Tailwind utilities can't say cleanly. Built from the Command tokens, so dark and light follow automatically.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+/* Row actions (shot rows, prop tiles): always there on touch screens, revealed by hover or keyboard focus on a pointer device. */
+.bd-act { transition: opacity 150ms ease; }
+@media (hover: hover) and (pointer: fine) {
+  .bd-act { opacity: 0; }
+  .bd-row:hover .bd-act, .bd-row:focus-within .bd-act,
+  .bd-tile:hover .bd-act, .bd-tile:focus-within .bd-act,
+  .bd-act:focus-within { opacity: 1; }
+}
+
+/* A shot row in the board: hairline-separated, with a lit rail on the left while you are working in it. */
+.bd-row { transition: background-color 150ms ease, box-shadow 150ms ease; }
+.bd-row:hover { background-color: color-mix(in oklab, var(--color-raised) 38%, transparent); }
+.bd-row:focus-within { box-shadow: inset 2px 0 0 var(--color-accent); }
+.bd-row[data-changed="true"] { box-shadow: inset 2px 0 0 var(--color-warn); background-color: color-mix(in oklab, var(--color-warn) 5%, transparent); }
+
+/* The continuity-bible timeline: a node on a dashed rule. */
+.bd-node { box-shadow: 0 0 0 3px var(--color-bg); }
+
+@media (prefers-reduced-motion: reduce) {
+  .bd-act, .bd-row { transition: none; }
+}
+:root[data-motion="reduced"] .bd-act, :root[data-motion="reduced"] .bd-row { transition: none; }

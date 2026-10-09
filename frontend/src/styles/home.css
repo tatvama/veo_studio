@@ -1,0 +1,59 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   Command Center (the home page): the few effects the utilities can't express.
+   Tokens only, so dark and light both work. Motion is slow, CSS-only and neutralised by the global reduced-motion rule.
+   Imported by components/home/Kpis.tsx and components/home/Projects.tsx.
+   ════════════════════════════════════════════════════════════════════════════ */
+@layer theme, base, components, utilities;
+
+/* A faint colour band drifting behind the KPI strip, plus a hairline grid that only shows through the middle of it. */
+@keyframes cc-drift { from { background-position: 0% 0; } to { background-position: 100% 0; } }
+@keyframes cc-beam { from { transform: translateY(-110%); } to { transform: translateY(260%); } }
+
+@layer components {
+  .cc-ground { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+  .cc-ground::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(105deg, transparent 0%, color-mix(in oklab, var(--color-accent) 9%, transparent) 28%,
+      color-mix(in oklab, var(--color-accent-2) 8%, transparent) 50%, transparent 74%);
+    background-size: 240% 100%;
+    animation: cc-drift 18s ease-in-out infinite alternate;
+  }
+  .cc-ground::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+    background-size: 22px 22px;
+    -webkit-mask-image: linear-gradient(100deg, transparent 6%, #000 52%, transparent 96%);
+    mask-image: linear-gradient(100deg, transparent 6%, #000 52%, transparent 96%);
+  }
+
+  /* A thin scan beam passing over a thumbnail whose project is generating right now. */
+  .cc-beam { overflow: hidden; }
+  .cc-beam::before {
+    content: "";
+    position: absolute;
+    inset-inline: 0;
+    top: 0;
+    height: 38%;
+    z-index: 1;
+    pointer-events: none;
+    background: linear-gradient(to bottom, transparent, color-mix(in oklab, var(--color-accent) 26%, transparent));
+    border-bottom: 1px solid color-mix(in oklab, var(--color-accent) 60%, transparent);
+    animation: cc-beam 2.6s linear infinite;
+  }
+
+  /* Vertical hairline that joins the nodes of a timeline (the activity feed). */
+  .cc-rail { position: relative; }
+  .cc-rail::before {
+    content: "";
+    position: absolute;
+    left: 0.6875rem;
+    top: 0.5rem;
+    bottom: 0.5rem;
+    width: 1px;
+    background: var(--color-line);
+  }
+}

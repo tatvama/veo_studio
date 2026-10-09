@@ -1,8 +1,8 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { Check, FileText, LayoutTemplate, Lightbulb, PenLine, Shuffle, Sparkles, Star, Wand2, X } from "lucide-react";
+import { FileText, LayoutTemplate, Lightbulb, PenLine, Shuffle, Sparkles, Star, Wand2, X } from "lucide-react";
 import { AnimatePresence, motion, useAnimate } from "motion/react";
-import { forwardRef, useId, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useId, useImperativeHandle, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { api } from "../../lib/api";
@@ -12,7 +12,7 @@ import { useSettings } from "../../lib/queries";
 import type { Project } from "../../lib/types";
 import { MOD } from "../shell/keys";
 import type { ProjectTemplate } from "../shell/templates";
-import { Badge, Button, Kbd, ScrollStrip, Segmented, Select } from "../ui";
+import { Badge, Button, Kbd, Panel, ScrollStrip, Segmented, Select } from "../ui";
 import { Eyebrow } from "./Chips";
 import { type Aspect, DEFAULT_ASPECT, useExamples, useProjectKinds, type ProjectKind } from "./kinds";
 
@@ -30,7 +30,8 @@ function FrameGlyph({ w, h }: { w: number; h: number }) {
   return <span className="rounded-[2px] border-[1.5px] border-current" style={{ width: w, height: h }} />;
 }
 
-function KindCard({ kind, selected, hint, layoutId, onSelect }: {
+/** One format (Short, Series, Ad…) as a compact radio tile: icon, name and its default frame. */
+function KindChip({ kind, selected, hint, layoutId, onSelect }: {
   kind: ProjectKind; selected: boolean; hint: string; layoutId: string; onSelect: () => void;
 }) {
   const Icon = kind.icon;
@@ -42,41 +43,31 @@ function KindCard({ kind, selected, hint, layoutId, onSelect }: {
       data-active={selected}
       onClick={onSelect}
       className={clsx(
-        "group relative flex w-36 shrink-0 flex-col items-start gap-2.5 rounded-xl border p-3 text-left transition-[color,background-color,border-color,transform] duration-150 active:scale-[0.98] sm:w-auto sm:min-w-0",
+        "group relative flex h-12 w-40 shrink-0 items-center gap-2.5 rounded-lg border px-2.5 text-left transition-[color,background-color,border-color,transform] duration-150 active:scale-[0.98] @3xl:w-auto @3xl:min-w-0",
         selected ? "border-transparent" : "border-line bg-panel hover:border-dim/50 hover:bg-hover",
       )}
     >
       {selected && (
-        <motion.span layoutId={layoutId} transition={SPRING} className="absolute inset-0 rounded-xl border-[1.5px] border-accent bg-accent/10" />
+        <motion.span layoutId={layoutId} transition={SPRING} className="absolute inset-0 rounded-lg border border-accent bg-accent/10 shadow-[0_0_14px_-4px_var(--color-accent)]" />
       )}
-      <span className="relative flex w-full items-center justify-between">
-        <span className={clsx("grid size-8 shrink-0 place-items-center rounded-lg transition-colors duration-200",
-          selected ? "bg-accent text-black" : "bg-raised text-mute group-hover:text-ink")}>
-          <Icon className="size-4" />
-        </span>
-        <AnimatePresence initial={false}>
-          {selected && (
-            <motion.span key="tick" initial={{ scale: 0.4, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.4, opacity: 0 }} transition={{ duration: 0.16 }}
-              className="grid size-5 place-items-center rounded-full bg-accent text-black">
-              <Check className="size-3" strokeWidth={3} />
-            </motion.span>
-          )}
-        </AnimatePresence>
+      <span className={clsx("relative grid size-7 shrink-0 place-items-center rounded-md transition-colors duration-200",
+        selected ? "bg-accent text-[color:var(--on-accent)]" : "bg-raised text-mute group-hover:text-ink")}>
+        <Icon className="size-4" />
       </span>
-      <span className="relative min-w-0">
-        <span className="block text-sm font-medium leading-tight">{kind.label}</span>
-        <span className="mt-1 block text-2xs tabular-nums text-dim">{hint}</span>
+      <span className="relative min-w-0 flex-1">
+        <span className="block truncate text-xs font-medium leading-tight">{kind.label}</span>
+        <span className="mono mt-1 block text-2xs leading-none text-dim">{hint}</span>
       </span>
     </button>
   );
 }
 
-function Cell({ label, hint, children, className }: { label: string; hint?: string; children: React.ReactNode; className?: string }) {
+function Cell({ label, hint, children, className }: { label: string; hint?: string; children: ReactNode; className?: string }) {
   return (
     <div className={clsx("min-w-0", className)}>
-      <Eyebrow className="mb-1.5 flex items-baseline gap-1.5">
+      <Eyebrow className="mb-2 flex items-baseline gap-1.5">
         {label}
-        {hint && <span className="font-normal normal-case tracking-normal text-dim">{hint}</span>}
+        {hint && <span className="font-sans text-2xs font-normal normal-case tracking-normal text-dim">{hint}</span>}
       </Eyebrow>
       {children}
     </div>
@@ -84,10 +75,11 @@ function Cell({ label, hint, children, className }: { label: string; hint?: stri
 }
 
 /**
- * The hero of the home page: concept box, format cards, frame / languages / look / quality, autopilot and Start.
- * Parents drive it through the ref (templates, deep links and empty states all call applyTemplate / focus).
+ * The "New production" console: concept box, template rail, format / frame / languages / look / quality, autopilot and Start.
+ * Parents drive it through the ref (templates, deep links and empty states all call applyTemplate / focus). `rail` is
+ * rendered between the concept and the options (the Command Center puts its template cards there).
  */
-export const Composer = forwardRef<ComposerHandle, { onTemplateChange?: (tpl: ProjectTemplate | null) => void }>(function Composer({ onTemplateChange }, ref) {
+export const Composer = forwardRef<ComposerHandle, { onTemplateChange?: (tpl: ProjectTemplate | null) => void; rail?: ReactNode; index?: number }>(function Composer({ onTemplateChange, rail, index }, ref) {
   const t = useT();
   const qc = useQueryClient();
   const nav = useNavigate();
@@ -188,177 +180,188 @@ export const Composer = forwardRef<ComposerHandle, { onTemplateChange?: (tpl: Pr
   const ideas = [examples[first], examples[(first + 1) % examples.length]];
 
   return (
-    <div ref={scope} className="group/composer relative isolate">
-      {/* soft accent halo that fades in while the composer has focus */}
-      <div aria-hidden className="pointer-events-none absolute -inset-2 -z-10 rounded-[1.75rem] bg-gradient-to-r from-accent/25 via-accent-2/15 to-accent/25 opacity-0 blur-2xl transition-opacity duration-500 group-focus-within/composer:opacity-100" />
-      <span ref={flash} aria-hidden className="pointer-events-none absolute -inset-1 z-10 rounded-[1.25rem] opacity-0 ring-4 ring-accent/45" />
+    <div ref={scope} className="relative">
+      <span ref={flash} aria-hidden className="pointer-events-none absolute -inset-1 z-10 rounded-[0.875rem] opacity-0 ring-4 ring-accent/45" />
 
-      <div className="overflow-hidden rounded-2xl border border-line bg-panel shadow-lift transition-[border-color,box-shadow] duration-300 group-focus-within/composer:border-accent/50 group-focus-within/composer:shadow-glow">
-        {/* ── concept ─────────────────────────────────────────────────── */}
-        <div className="px-4 pt-4 sm:px-5 sm:pt-5">
+      <Panel
+        index={index}
+        tone="ai"
+        flush
+        bodyClassName="pt-3"
+        eyebrow={<span className="text-ai">{t("New production")}</span>}
+        icon={<Wand2 className="text-ai" />}
+        className="transition-[border-color,box-shadow] duration-300 focus-within:border-accent/50 focus-within:shadow-glow"
+        actions={<span className="hidden items-center gap-1 text-2xs text-dim sm:flex"><Kbd>{MOD}</Kbd><Kbd>↵</Kbd>{t("to start")}</span>}
+      >
+        <div className="@container overflow-hidden rounded-b-xl">
+          {/* ── concept ─────────────────────────────────────────────────── */}
+          <div className="px-4">
+            <AnimatePresence initial={false}>
+              {applied && (
+                <motion.div key="tpl" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+                  transition={{ duration: 0.18 }} className="overflow-hidden">
+                  <div className="mb-2 flex items-center gap-1.5">
+                    <Badge tone="accent"><LayoutTemplate className="size-3" />{t("Template")}: {applied.label}</Badge>
+                    <button type="button" onClick={clearTemplate} aria-label={t("Clear template")}
+                      className="grid size-6 place-items-center rounded-md text-dim transition-colors hover:bg-hover hover:text-ink">
+                      <X className="size-3.5" />
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+            <textarea
+              ref={area}
+              value={concept}
+              onChange={(e) => setConcept(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void create(); } }}
+              aria-label={t("Your concept")}
+              placeholder={t("e.g. A young temple priest discovers the brass lamp moves by itself at night…")}
+              rows={2}
+              className="block max-h-72 min-h-[4.5rem] w-full resize-none bg-transparent text-base leading-relaxed text-ink [field-sizing:content] placeholder:text-dim focus:outline-none @xl:text-lg"
+            />
+            <div className="flex items-center justify-between gap-3 pb-3 pt-1 text-2xs text-dim">
+              <span className="mono">{chars > 0 ? t("{n} chars", { n: chars }) : t("One or two sentences is enough.")}</span>
+            </div>
+          </div>
+
           <AnimatePresence initial={false}>
-            {applied && (
-              <motion.div key="tpl" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-                transition={{ duration: 0.18 }} className="overflow-hidden">
-                <div className="mb-2 flex items-center gap-1.5">
-                  <Badge tone="accent"><LayoutTemplate className="size-3" />{t("Template")}: {applied.label}</Badge>
-                  <button type="button" onClick={clearTemplate} aria-label={t("Clear template")}
-                    className="grid size-6 place-items-center rounded-md text-dim transition-colors hover:bg-hover hover:text-ink">
-                    <X className="size-3.5" />
-                  </button>
+            {showIdeas && (
+              <motion.div key="ideas" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.2 }} className="overflow-hidden">
+                <div className="px-4 pb-4">
+                  <div className="mb-2 flex items-center justify-between gap-3">
+                    <Eyebrow className="flex items-center gap-1.5"><Lightbulb className="size-3.5" />{t("Need a spark? Try one")}</Eyebrow>
+                    <button type="button" onClick={() => setIdeaPage((n) => n + 1)}
+                      className="-my-1 inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-2xs font-medium text-mute transition-colors hover:bg-hover hover:text-ink active:scale-95">
+                      <Shuffle className="size-3" />{t("More ideas")}
+                    </button>
+                  </div>
+                  <div key={ideaPage} className="anim-fade grid gap-2 @2xl:grid-cols-2">
+                    {ideas.map((ex, i) => {
+                      const on = concept === ex;
+                      return (
+                        <button key={ex} type="button" onClick={() => setConcept(ex)} aria-pressed={on}
+                          className={clsx(
+                            "group/idea items-start gap-2 rounded-lg border px-3 py-2.5 text-left text-xs leading-relaxed transition-[color,background-color,border-color,transform] duration-150 active:scale-[0.99]",
+                            i > 0 ? "hidden @2xl:flex" : "flex",
+                            on ? "border-accent/60 bg-accent/10 text-ink" : "border-line bg-raised/50 text-mute hover:border-accent/40 hover:bg-raised hover:text-ink",
+                          )}>
+                          <Sparkles className="mt-0.5 size-3.5 shrink-0 text-ai transition-transform duration-200 group-hover/idea:scale-110" />
+                          <span className="min-w-0">{ex}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
               </motion.div>
             )}
           </AnimatePresence>
-          <textarea
-            ref={area}
-            value={concept}
-            onChange={(e) => setConcept(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void create(); } }}
-            aria-label={t("Your concept")}
-            placeholder={t("e.g. A young temple priest discovers the brass lamp moves by itself at night…")}
-            rows={3}
-            className="block max-h-72 min-h-[6.5rem] w-full resize-none bg-transparent text-lg leading-relaxed text-ink [field-sizing:content] placeholder:text-dim focus:outline-none"
-          />
-          <div className="flex items-center justify-between gap-3 pb-3 pt-1 text-2xs text-dim">
-            <span className="tabular-nums">{chars > 0 ? t("{n} chars", { n: chars }) : t("One or two sentences is enough.")}</span>
-            <span className="hidden items-center gap-1 sm:flex"><Kbd>{MOD}</Kbd><Kbd>↵</Kbd>{t("to start")}</span>
-          </div>
-        </div>
 
-        <AnimatePresence initial={false}>
-          {showIdeas && (
-            <motion.div key="ideas" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-              transition={{ duration: 0.2 }} className="overflow-hidden">
-              <div className="px-4 pb-4 sm:px-5">
-                <div className="mb-2 flex items-center justify-between gap-3">
-                  <Eyebrow className="flex items-center gap-1.5"><Lightbulb className="size-3" />{t("Need a spark? Try one")}</Eyebrow>
-                  <button type="button" onClick={() => setIdeaPage((n) => n + 1)}
-                    className="-my-1 inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-2xs font-medium text-mute transition-colors hover:bg-hover hover:text-ink active:scale-95">
-                    <Shuffle className="size-3" />{t("More ideas")}
-                  </button>
+          {/* ── template rail ───────────────────────────────────────────── */}
+          {rail && <div className="border-t border-line px-4 py-3">{rail}</div>}
+
+          {/* ── options ─────────────────────────────────────────────────── */}
+          <div className="space-y-4 border-t border-line bg-raised/30 px-4 py-4">
+            <Cell label={t("Format")}>
+              <ScrollStrip role="radiogroup" aria-label={t("Format")} className="-mx-4 -my-1">
+                <div className="flex gap-2 px-4 py-1 @3xl:grid @3xl:grid-cols-5">
+                  {kinds.map((k) => (
+                    <KindChip key={k.value} kind={k} selected={type === k.value} layoutId={`kind-${ringId}`} hint={DEFAULT_ASPECT[k.value] ?? "9:16"} onSelect={() => pickKind(k.value)} />
+                  ))}
                 </div>
-                <div key={ideaPage} className="anim-fade grid gap-2 sm:grid-cols-2">
-                  {ideas.map((ex, i) => {
-                    const on = concept === ex;
+              </ScrollStrip>
+            </Cell>
+
+            <div className="grid gap-x-5 gap-y-4 @xl:grid-cols-2">
+              <Cell label={t("Frame")}>
+                <Segmented<Aspect>
+                  aria-label={t("Frame")}
+                  value={aspect}
+                  onChange={setAspect}
+                  options={[
+                    { value: "9:16", label: <span className="mono flex items-center gap-1.5"><FrameGlyph w={8} h={14} />9:16</span>, title: t("Vertical — Shorts, Reels") },
+                    { value: "16:9", label: <span className="mono flex items-center gap-1.5"><FrameGlyph w={14} h={8} />16:9</span>, title: t("Widescreen — YouTube, web") },
+                    { value: "1:1", label: <span className="mono flex items-center gap-1.5"><FrameGlyph w={10} h={10} />1:1</span>, title: t("Square — feeds") },
+                  ]}
+                />
+              </Cell>
+
+              <Cell label={t("Languages")} hint={t("(★ = written first)")}>
+                <div role="group" aria-label={t("Languages")} className="flex flex-wrap gap-1.5">
+                  {Object.keys(LANG_NAMES).map((l) => {
+                    const on = langs.includes(l);
+                    const isPrimary = on && primary === l;
+                    const canPick = on && langs.length > 1 && !isPrimary;
                     return (
-                      <button key={ex} type="button" onClick={() => setConcept(ex)} aria-pressed={on}
-                        className={clsx(
-                          "group/idea items-start gap-2 rounded-xl border px-3 py-2.5 text-left text-xs leading-relaxed transition-[color,background-color,border-color,transform] duration-150 active:scale-[0.99]",
-                          i > 0 ? "hidden sm:flex" : "flex",
-                          on ? "border-accent/60 bg-accent/10 text-ink" : "border-line bg-raised/50 text-mute hover:border-accent/40 hover:bg-raised hover:text-ink",
-                        )}>
-                        <Sparkles className="mt-0.5 size-3.5 shrink-0 text-accent-ink transition-transform duration-200 group-hover/idea:scale-110" />
-                        <span className="min-w-0">{ex}</span>
-                      </button>
+                      <span key={l} className={clsx("mono inline-flex h-9 items-stretch overflow-hidden rounded-lg border text-xs font-medium transition-colors",
+                        on ? "border-accent/60 bg-accent/10 text-ink" : "border-line bg-panel text-mute hover:border-dim/50 hover:bg-hover hover:text-ink")}>
+                        <button type="button" aria-pressed={on} onClick={() => toggleLang(l)} onDoubleClick={() => on && setPrimary(l)}
+                          title={t("{lang} — double-click to make primary", { lang: LANG_NAMES[l] })}
+                          className="px-2.5 transition-transform active:scale-95">
+                          {LANG_SHORT[l]}
+                        </button>
+                        {on && (canPick ? (
+                          <button type="button" onClick={() => setPrimary(l)} aria-label={t("Write {lang} first", { lang: LANG_NAMES[l] })} title={t("Write {lang} first", { lang: LANG_NAMES[l] })}
+                            className="grid w-7 place-items-center border-l border-accent/25 text-dim transition-colors hover:bg-accent/15 hover:text-accent-ink">
+                            <Star className="size-3.5" />
+                          </button>
+                        ) : (
+                          <span className={clsx("grid w-6 place-items-center", isPrimary ? "text-accent-ink" : "hidden")} aria-hidden>
+                            <Star className="size-3.5 fill-current" />
+                          </span>
+                        ))}
+                      </span>
                     );
                   })}
                 </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+              </Cell>
 
-        {/* ── options ─────────────────────────────────────────────────── */}
-        <div className="space-y-4 border-t border-line bg-raised/30 px-4 py-4 sm:px-5">
-          <Cell label={t("Format")}>
-            <ScrollStrip role="radiogroup" aria-label={t("Format")} className="-mx-4 -my-1 sm:-mx-1 sm:px-0">
-              <div className="flex gap-2 px-4 py-1 sm:grid sm:grid-cols-5 sm:px-1">
-                {kinds.map((k) => (
-                  <KindCard key={k.value} kind={k} selected={type === k.value} layoutId={`kind-${ringId}`} hint={DEFAULT_ASPECT[k.value] ?? "9:16"} onSelect={() => pickKind(k.value)} />
-                ))}
-              </div>
-            </ScrollStrip>
-          </Cell>
+              <Cell label={t("Look")}>
+                <Select value={style} onChange={(e) => setStyle(e.target.value)} aria-label={t("Look")}>
+                  <option value="">{t("Let the Director decide")}</option>
+                  {settings?.catalog.style_presets.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
+                </Select>
+              </Cell>
 
-          <div className="grid gap-x-5 gap-y-4 sm:grid-cols-2">
-            <Cell label={t("Frame")}>
-              <Segmented<Aspect>
-                aria-label={t("Frame")}
-                value={aspect}
-                onChange={setAspect}
-                options={[
-                  { value: "9:16", label: <span className="flex items-center gap-1.5"><FrameGlyph w={8} h={14} />9:16</span>, title: t("Vertical — Shorts, Reels") },
-                  { value: "16:9", label: <span className="flex items-center gap-1.5"><FrameGlyph w={14} h={8} />16:9</span>, title: t("Widescreen — YouTube, web") },
-                  { value: "1:1", label: <span className="flex items-center gap-1.5"><FrameGlyph w={10} h={10} />1:1</span>, title: t("Square — feeds") },
-                ]}
-              />
-            </Cell>
+              <Cell label={t("Quality")}>
+                <Select value={quality} onChange={(e) => setQuality(e.target.value)} aria-label={t("Quality")}>
+                  <option value="">{t("Team default")}</option>
+                  {Object.entries(QUALITY_INFO).map(([k, v]) => <option key={k} value={k}>{qualityLabel[k] ?? v.label} · {v.price}</option>)}
+                </Select>
+              </Cell>
+            </div>
+          </div>
 
-            <Cell label={t("Languages")} hint={t("(★ = written first)")}>
-              <div role="group" aria-label={t("Languages")} className="flex flex-wrap gap-1.5">
-                {Object.keys(LANG_NAMES).map((l) => {
-                  const on = langs.includes(l);
-                  const isPrimary = on && primary === l;
-                  const canPick = on && langs.length > 1 && !isPrimary;
-                  return (
-                    <span key={l} className={clsx("inline-flex h-9 items-stretch overflow-hidden rounded-lg border text-sm font-medium transition-colors",
-                      on ? "border-accent/60 bg-accent/10 text-ink" : "border-line bg-panel text-mute hover:border-dim/50 hover:bg-hover hover:text-ink")}>
-                      <button type="button" aria-pressed={on} onClick={() => toggleLang(l)} onDoubleClick={() => on && setPrimary(l)}
-                        title={t("{lang} — double-click to make primary", { lang: LANG_NAMES[l] })}
-                        className="px-2.5 transition-transform active:scale-95">
-                        {LANG_SHORT[l]}
-                      </button>
-                      {on && (canPick ? (
-                        <button type="button" onClick={() => setPrimary(l)} aria-label={t("Write {lang} first", { lang: LANG_NAMES[l] })} title={t("Write {lang} first", { lang: LANG_NAMES[l] })}
-                          className="grid w-7 place-items-center border-l border-accent/25 text-dim transition-colors hover:bg-accent/15 hover:text-accent-ink">
-                          <Star className="size-3.5" />
-                        </button>
-                      ) : (
-                        <span className={clsx("grid w-6 place-items-center", isPrimary ? "text-accent-ink" : "hidden")} aria-hidden>
-                          <Star className="size-3.5 fill-current" />
-                        </span>
-                      ))}
-                    </span>
-                  );
-                })}
-              </div>
-            </Cell>
-
-            <Cell label={t("Look")}>
-              <Select value={style} onChange={(e) => setStyle(e.target.value)} aria-label={t("Look")}>
-                <option value="">{t("Let the Director decide")}</option>
-                {settings?.catalog.style_presets.map((s) => <option key={s.name} value={s.name}>{s.name}</option>)}
+          {/* ── footer: autopilot + start ───────────────────────────────── */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-3 border-t border-line bg-raised/50 px-4 py-3">
+            <div className="flex min-w-0 flex-1 basis-72 flex-wrap items-center gap-x-3 gap-y-1">
+              <label htmlFor="ai-reach" className="text-sm font-medium">{t("How far should AI take it?")}</label>
+              <Select id="ai-reach" value={autopilot} onChange={(e) => setAutopilot(e.target.value as typeof autopilot)} className="!w-auto min-w-[13rem] max-w-full">
+                <option value="">{t("Step by step — I guide each step")}</option>
+                <option value="script">{t("Write the script for me")}</option>
+                <option value="storyboard">{t("Up to the storyboard (keyframes)")}</option>
+                <option value="final">{t("The whole video")}</option>
               </Select>
-            </Cell>
+              {autopilot && <span className="min-w-0 text-xs text-dim">{t("Autopilot · asks once for budget, stops for your approval at each milestone")}</span>}
+            </div>
+            <Button variant="primary" size="lg" loading={busy === "idea"} disabled={!!busy && busy !== "idea"} onClick={() => void create()} icon={<Wand2 className="size-4" />} className="w-full sm:w-auto sm:min-w-32">
+              {t("Start")}
+            </Button>
+          </div>
 
-            <Cell label={t("Quality")}>
-              <Select value={quality} onChange={(e) => setQuality(e.target.value)} aria-label={t("Quality")}>
-                <option value="">{t("Team default")}</option>
-                {Object.entries(QUALITY_INFO).map(([k, v]) => <option key={k} value={k}>{qualityLabel[k] ?? v.label} · {v.price}</option>)}
-              </Select>
-            </Cell>
+          {/* ── bring your own script / full manual control ─────────────── */}
+          <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-3">
+            <span className="min-w-0 flex-1 basis-52 text-xs text-mute">{t("Already have a script, or want to direct every shot yourself? No AI writing, no co-pilot.")}</span>
+            <Button variant="outline" loading={busy === "import"} disabled={!!busy && busy !== "import"} icon={<FileText className="size-4" />} onClick={() => void create("import")}>
+              {t("Import my script")}
+            </Button>
+            <Button variant="outline" loading={busy === "manual"} disabled={!!busy && busy !== "manual"} icon={<PenLine className="size-4" />} onClick={() => void create("manual")}>
+              {t("Build shot by shot")}
+            </Button>
           </div>
         </div>
-
-        {/* ── footer: autopilot + start ───────────────────────────────── */}
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-3 border-t border-line bg-raised/50 px-4 py-3 sm:px-5">
-          <div className="flex min-w-0 flex-1 basis-72 flex-wrap items-center gap-x-3 gap-y-1">
-            <label htmlFor="ai-reach" className="text-sm font-medium">{t("How far should AI take it?")}</label>
-            <Select id="ai-reach" value={autopilot} onChange={(e) => setAutopilot(e.target.value as typeof autopilot)} className="!w-auto min-w-[13rem]">
-              <option value="">{t("Step by step — I guide each step")}</option>
-              <option value="script">{t("Write the script for me")}</option>
-              <option value="storyboard">{t("Up to the storyboard (keyframes)")}</option>
-              <option value="final">{t("The whole video")}</option>
-            </Select>
-            {autopilot && <span className="min-w-0 text-xs text-dim">{t("Autopilot · asks once for budget, stops for your approval at each milestone")}</span>}
-          </div>
-          <Button variant="primary" size="lg" loading={busy === "idea"} disabled={!!busy && busy !== "idea"} onClick={() => void create()} icon={<Wand2 className="size-4" />} className="w-full sm:w-auto sm:min-w-32">
-            {t("Start")}
-          </Button>
-        </div>
-
-        {/* ── bring your own script / full manual control ─────────────── */}
-        <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-3 sm:px-5">
-          <span className="min-w-0 flex-1 basis-52 text-xs text-mute">{t("Already have a script, or want to direct every shot yourself? No AI writing, no co-pilot.")}</span>
-          <Button variant="outline" loading={busy === "import"} disabled={!!busy && busy !== "import"} icon={<FileText className="size-4" />} onClick={() => void create("import")}>
-            {t("Import my script")}
-          </Button>
-          <Button variant="outline" loading={busy === "manual"} disabled={!!busy && busy !== "manual"} icon={<PenLine className="size-4" />} onClick={() => void create("manual")}>
-            {t("Build shot by shot")}
-          </Button>
-        </div>
-      </div>
+      </Panel>
     </div>
   );
 });

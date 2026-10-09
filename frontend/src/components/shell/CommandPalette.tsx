@@ -169,7 +169,7 @@ function PaletteDialog({ user, onClose }: { user: UserBrief; onClose: () => void
         keys: [MOD, "J"], run: () => openDirector() });
     }
     if (window.innerWidth >= SIDEBAR_RAIL_MIN) {
-      out.push({ id: "sidebar", group: "actions", label: sidebarExpanded() ? t("Collapse sidebar") : t("Expand sidebar"), keywords: "menu navigation rail panel",
+      out.push({ id: "sidebar", group: "actions", label: sidebarExpanded() ? t("Collapse the pipeline rail") : t("Expand the pipeline rail"), keywords: "menu navigation rail panel pipeline sidebar",
         icon: <PanelLeft className="size-4" />, keys: ["["], run: () => { toggleSidebar(); } });
     }
 
@@ -360,7 +360,7 @@ function PaletteDialog({ user, onClose }: { user: UserBrief; onClose: () => void
       animate={{ opacity: 1, scale: 1, y: 0 }}
       exit={{ opacity: 0, scale: phone ? 1 : 0.98, y: phone ? 20 : -6 }}
       transition={{ duration: 0.2, ease: EASE }}
-      className="flex w-full max-w-[40rem] flex-col overflow-hidden border-line bg-panel shadow-modal max-sm:h-full max-sm:max-w-none sm:rounded-2xl sm:border"
+      className="hud relative flex w-full max-w-[40rem] flex-col overflow-hidden border-line bg-panel shadow-modal max-sm:h-full max-sm:max-w-none sm:rounded-2xl sm:border"
       onMouseDown={(e) => e.stopPropagation()}
     >
       <div className="flex shrink-0 items-center gap-3 border-b border-line px-4 max-sm:pt-[max(env(safe-area-inset-top),0px)]">
@@ -437,7 +437,7 @@ function PaletteDialog({ user, onClose }: { user: UserBrief; onClose: () => void
                 const GroupIcon = s.icon;
                 return (
                   <section key={s.key} role="group" aria-label={s.label} className="pb-1">
-                    <div aria-hidden className="sticky top-0 z-10 flex items-center gap-1.5 bg-panel px-2 pb-1.5 pt-3 text-2xs font-semibold uppercase tracking-[0.12em] text-dim">
+                    <div aria-hidden className="eyebrow sticky top-0 z-10 flex items-center gap-1.5 bg-panel px-2 pb-1.5 pt-3">
                       <GroupIcon className="size-3.5" />
                       {s.label}
                     </div>
@@ -459,7 +459,7 @@ function PaletteDialog({ user, onClose }: { user: UserBrief; onClose: () => void
                         >
                           {on && (
                             <motion.span layoutId="palette-active" transition={{ type: "spring", stiffness: 700, damping: 46 }}
-                              className="absolute inset-0 rounded-xl bg-hover ring-1 ring-line" />
+                              className="absolute inset-0 rounded-xl bg-accent/10 ring-1 ring-accent/30" />
                           )}
                           <span
                             className={clsx("relative grid size-8 shrink-0 place-items-center overflow-hidden rounded-lg border transition-colors duration-150",
