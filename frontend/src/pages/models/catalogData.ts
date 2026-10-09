@@ -24,8 +24,9 @@ export const NO_FILTERS: Filters = { q: "", task: "", status: "", provider: "", 
 export const CATALOG_TASKS = ["video", "avatar", "lipsync", "edit", "image", "tts", "music", "train", "other"] as const;
 
 /** Providers the studio knows about. Others that show up in the data are added to the filter automatically. */
-export const KNOWN_PROVIDERS = ["fal", "google", "sync", "elevenlabs", "sarvam"] as const;
-const PROVIDER_LABELS: Record<string, string> = { fal: "fal.ai", google: "Google", sync: "sync.so", elevenlabs: "ElevenLabs", sarvam: "Sarvam AI" };
+export const KNOWN_PROVIDERS = ["google", "byteplus", "openrouter", "fal", "sync", "elevenlabs", "sarvam"] as const;
+const PROVIDER_LABELS: Record<string, string> = { fal: "fal.ai", google: "Google", sync: "sync.so", elevenlabs: "ElevenLabs", sarvam: "Sarvam AI",
+  openrouter: "OpenRouter", byteplus: "BytePlus" };
 export const providerLabel = (p: string) => PROVIDER_LABELS[p] ?? (p ? p.charAt(0).toUpperCase() + p.slice(1) : "—");
 
 const qsOf = (o: Record<string, string | number | undefined>) =>

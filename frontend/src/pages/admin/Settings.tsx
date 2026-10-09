@@ -36,6 +36,7 @@ const EDITABLE = [
   "dialogue_method", "dub_method", "hub_auto_sync", "hub_sync_hours", "hub_auto_enable", "identity_trainer", "face_match_threshold",
   "lipsync_qc", "lipsync_qc_threshold", "critic_rounds", "critic_min_score", "caption_style", "auto_reframe", "sfx_auto",
   "ui_default_language", "google_first", "native_dialogue_languages", "dialogue_words_qc", "dialogue_words_threshold", "outfit_qc",
+  "cheapest_route", "text_provider", "openrouter_text_model",
 ] as const;
 
 type Draft = Record<string, any>;
@@ -433,8 +434,27 @@ export default function SettingsPage() {
                 <SwitchRow label={t("Google first (your Gemini key)")}
                   hint={draft.google_first !== false
                     ? t("Keyframes, videos and edits use only Google. If Google's quota is reached, jobs wait for it instead of moving to fal. fal is used only for what Google can't do (e.g. lip-sync) or when you pick a fal engine for a shot.")
-                    : t("Off: when a Google engine fails or is rate-limited, the job moves to the next engine in the chain (fal), which bills your fal balance.")}
+                    : t("Off: when a Google engine fails or is rate-limited, the job moves to the next engine in the chain (fal, BytePlus or OpenRouter), which bills that provider.")}
                   checked={draft.google_first !== false} disabled={ro} changed={ch("google_first")} onChange={(v) => set("google_first", v)} />
+                <SwitchRow label={t("Cheapest route first")}
+                  hint={draft.cheapest_route !== false
+                    ? t("When a model runs on several providers (e.g. Seedance on BytePlus, OpenRouter and fal), the cheapest live one is tried first and the others take over if it fails.")
+                    : t("Off: the engine named in the chain is tried first; its other providers are only a fallback.")}
+                  checked={draft.cheapest_route !== false} disabled={ro} changed={ch("cheapest_route")} onChange={(v) => set("cheapest_route", v)} />
+                <Row label={t("Writing (scripts, prompts, reviews)")} hint={t("OpenRouter is also used automatically when there is no Gemini key. Clips sent for review stay on Gemini, which watches video.")} changed={ch("text_provider") || ch("openrouter_text_model")}>
+                  <div className="flex w-full max-w-md flex-wrap gap-2">
+                    <div className="min-w-36 flex-1">
+                      <Select value={draft.text_provider ?? "gemini"} disabled={ro} aria-label={t("Writing (scripts, prompts, reviews)")} onChange={(e) => set("text_provider", e.target.value)}>
+                        <option value="gemini">{t("Gemini (your Gemini key)")}</option>
+                        <option value="openrouter">{t("OpenRouter")}</option>
+                      </Select>
+                    </div>
+                    {draft.text_provider === "openrouter" && (
+                      <Input className="min-w-44 flex-1 font-mono" value={draft.openrouter_text_model ?? ""} disabled={ro} aria-label={t("OpenRouter model")}
+                        placeholder={t("Same Gemini model")} onChange={(e) => set("openrouter_text_model", e.target.value.trim())} />
+                    )}
+                  </div>
+                </Row>
                 <Row stack label={t("Default video quality")} hint={t(QUALITY_INFO[quality]?.desc ?? "")} changed={ch("default_quality_mode")}>
                   <TileGroup ariaLabel={t("Default video quality")} value={quality} disabled={ro} onChange={(v) => set("default_quality_mode", v)}
                     options={Object.entries(QUALITY_INFO).map(([value, q]) => ({

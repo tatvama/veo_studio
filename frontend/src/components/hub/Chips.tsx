@@ -8,6 +8,7 @@ import { MODE_LABELS, durationsText, isFresh } from "./util";
 const PROVIDER_NAMES: Record<string, string> = {
   fal: "fal", google: "Google", gemini: "Gemini", sync: "Sync", elevenlabs: "ElevenLabs", replicate: "Replicate", openai: "OpenAI",
   sarvam: "Sarvam", runway: "Runway", luma: "Luma", kling: "Kling", minimax: "MiniMax", bytedance: "ByteDance",
+  openrouter: "OpenRouter", byteplus: "BytePlus",
 };
 
 /** Brand names aren't translated: just tidy the provider id. */

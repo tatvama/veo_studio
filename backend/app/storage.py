@@ -75,6 +75,11 @@ class LocalStorage:
     def _after_save(self, rel: str) -> None:  # overridden by the bucket backend
         pass
 
+    def public_url(self, path: Path, expires_s: int = 6 * 3600) -> str | None:
+        """A temporary HTTPS link to a local file that an outside service (OpenRouter, BytePlus) can download.
+        None here: files on this disk have no public address. The bucket backend makes one."""
+        return None
+
 
 class S3Storage(LocalStorage):
     """Cloudflare R2 / S3 as the shared store, local disk as a read-through cache."""
@@ -89,6 +94,7 @@ class S3Storage(LocalStorage):
         self._locks: dict[str, threading.Lock] = {}
         self._locks_guard = threading.Lock()
         self._misses: dict[str, float] = {}
+        self._shared: set[str] = set()  # share/ keys known to be in the bucket
 
     @staticmethod
     def _make_client(s):
@@ -155,6 +161,23 @@ class S3Storage(LocalStorage):
                 print(f"[storage] upload to bucket failed for {rel}: {e}")
 
         threading.Thread(target=upload, daemon=True).start()
+
+    def public_url(self, path: Path, expires_s: int = 6 * 3600) -> str | None:
+        """Copy the file to share/<sha1> in the bucket (once; same content, same key) and return a presigned link.
+        A copy rather than the file's own key: saves upload in the background, so the original may not be there yet."""
+        import hashlib
+
+        data = Path(path).read_bytes()
+        key = f"share/{hashlib.sha1(data).hexdigest()}{Path(path).suffix.lower() or '.bin'}"
+        if key not in self._shared:
+            try:
+                self.client.head_object(Bucket=self.bucket, Key=key)
+            except Exception:
+                ctype = mimetypes.guess_type(key)[0] or "application/octet-stream"
+                self.client.put_object(Bucket=self.bucket, Key=key, Body=data, ContentType=ctype)
+            self._shared.add(key)
+        return self.client.generate_presigned_url("get_object", Params={"Bucket": self.bucket, "Key": key},
+                                                  ExpiresIn=int(expires_s))
 
 
 S3MirrorStorage = S3Storage  # old name

@@ -116,7 +116,7 @@ export function FitChips({ fit, className }: { fit: VideoFit; className?: string
 export function engineFor(id: string | undefined, data: VideoEngines | undefined, quality: string): VideoEngine | undefined {
   if (!data) return undefined;
   const want = !id || id === "auto" ? data.auto_first?.[quality] : id;
-  return data.engines.find((e) => e.id === want);
+  return data.engines.find((e) => e.id === want) ?? data.engines.find((e) => e.routes?.some((r) => r.id === want));
 }
 
 /** The shot's video model: Auto (team policy, Google first) or one picked by hand, with what each can use. */
@@ -130,6 +130,7 @@ export function ModelPicker({ value, data, quality, onChange, disabled, needsCha
   const onlyChars = onlyPick ?? needsCharacters;  // on by default once the shot has characters
   const auto = !value || value === "auto";
   const cur = engineFor(value, data, quality);
+  const isPicked = (e: VideoEngine) => !auto && (value === e.id || !!e.routes?.some((r) => r.id === value));
   const list = useMemo(() => (data?.engines ?? []).filter((e) => !onlyChars || e.fit.characters !== "none"), [data, onlyChars]);
   const pick = (id: string) => { onChange(id); setOpen(false); };
 
@@ -156,10 +157,11 @@ export function ModelPicker({ value, data, quality, onChange, disabled, needsCha
             sub={data?.google_first ? t("Google first; other providers only for what Google can't do") : t("Team order from Model Hub")}
             fit={engineFor("auto", data, quality)?.fit} price={engineFor("auto", data, quality)?.est_8s_usd} />
           {list.map((e) => (
-            <ModelRow key={e.id} selected={!auto && value === e.id} onClick={() => pick(e.id)}
-              title={<><span className="font-medium">{e.display_name}</span> <span className="rounded border border-line px-1 font-mono text-2xs text-mute">{providerName(e.provider)}</span>
+            <ModelRow key={e.id} selected={isPicked(e)} onClick={() => pick(e.id)}
+              title={<><span className="font-medium">{(e.routes?.length ?? 0) > 1 ? e.display_name.replace(/ \((OpenRouter|BytePlus)\)$/, "") : e.display_name}</span> <span className="rounded border border-line px-1 font-mono text-2xs text-mute">{providerName(e.provider)}</span>
+                {(e.routes?.length ?? 0) > 1 && <span className="ml-1 text-2xs text-dim" title={e.routes!.map((r) => providerName(r.provider)).join(" → ")}>{t("+{n} routes", { n: e.routes!.length - 1 })}</span>}
                 {e.provider_mode === "mock" && <Badge tone="warn" className="ml-1">{t("mock")}</Badge>}</>}
-              sub={`${t("Characters")}: ${t(VIA_LABEL[e.fit.characters])}${e.fit.characters === "refs" ? ` (${t("up to {n}", { n: e.fit.max_refs })})` : ""}`}
+              sub={`${t("Characters")}: ${t(VIA_LABEL[e.fit.characters])}${e.fit.characters === "refs" ? ` (${t("up to {n}", { n: e.fit.max_refs })})` : ""}${(e.routes?.length ?? 0) > 1 ? ` · ${t("cheapest route first, then {rest}", { rest: e.routes!.slice(1).map((r) => providerName(r.provider)).join(", ") })}` : ""}`}
               fit={e.fit} price={e.est_8s_usd} warn={needsCharacters && e.fit.characters === "none"} />
           ))}
           {data && !list.length && <p className="px-2 py-3 text-center text-xs text-dim">{t("No enabled model fits. Turn more on in Model Hub.")}</p>}

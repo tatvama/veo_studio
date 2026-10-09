@@ -4,10 +4,14 @@
 * fal.ai models are discovered automatically (daily or on demand) with their input schemas, so new
   releases (Kling, Seedance, Wan, MiniMax, LTX, Flux, Luma, Grok …) appear without a code change.
 * Engine chains ("policy") decide which engines a quality tier / task uses, in order, with fallback.
+* One model can be reachable through several providers ("routes": Seedance on BytePlus, OpenRouter and fal). Routes
+  share a route key; the router tries the cheapest live route first and fails over to the others.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta
+from functools import lru_cache
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -17,10 +21,32 @@ from ..db import SessionLocal, utcnow
 from ..events import emit
 from ..models import AIModel
 from ..providers import fal as fal_api
+from ..providers import openrouter as or_api
 from ..providers.schema_map import build_param_map, derive_capabilities
 from ..providers.services import provider_mode
 
 V = ["16:9", "9:16"]
+SEEDANCE_ASPECTS = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]
+
+
+def _seedance_prices(per_m_tokens: float) -> dict[str, float]:
+    """USD per second by resolution for a token-priced Seedance model (tokens ≈ w × h × 24 fps / 1024 per second)."""
+    from ..providers.byteplus import PIXELS, tokens_per_second
+    return {r: round(per_m_tokens * tokens_per_second(r) / 1e6, 5) for r in PIXELS}
+
+
+def _seedance(key: str, endpoint: str, name: str, tier: str, per_m: float, max_s: int, estimate: bool = False) -> dict:
+    prices = _seedance_prices(per_m)
+    return {"id": f"byteplus:{key}", "provider": "byteplus", "endpoint": endpoint, "task": "video", "family": name,
+            "maker": "bytedance", "display_name": f"{name} (BytePlus)", "tier": tier,
+            "price_usd": prices["720p"], "price_unit": "second", "price_source": "estimate" if estimate else "catalog",
+            "capabilities": {"modes": ["t2v", "i2v", "flf", "ref2v"], "durations": {"min": 4, "max": max_s},
+                             "resolutions": ["480p", "720p", "1080p"], "aspects": SEEDANCE_ASPECTS, "native_audio": True,
+                             "max_refs": 9, "speech_in_video": True, "audio_driven": False, "lora_input": False,
+                             "lipsync_to_audio": False, "asset_refs": True, "price_per_m_tokens": per_m,
+                             "price_by_resolution": prices}}
+
+
 BUILTINS: list[dict[str, Any]] = [
     {"id": "google:video_saver", "provider": "google", "endpoint": "video_saver", "task": "video", "family": "Veo 3.1",
      "maker": "google", "display_name": "Veo 3.1 Lite", "tier": "draft",
@@ -52,6 +78,16 @@ BUILTINS: list[dict[str, Any]] = [
      "maker": "sync", "display_name": "sync.so lipsync-2-pro", "tier": "standard", "capabilities": {"modes": ["lipsync"], "lipsync_to_audio": True}},
     {"id": "sync:lipsync_angles", "provider": "sync", "endpoint": "lipsync_angles", "task": "lipsync", "family": "sync.so",
      "maker": "sync", "display_name": "sync.so sync-3 (side angles, 4K)", "tier": "premium", "capabilities": {"modes": ["lipsync"], "lipsync_to_audio": True}},
+    # BytePlus ModelArk (ByteDance direct). Seedance bills tokens: 2.0 ≈ $7 and 2.5 ≈ $10.70 per million (BytePlus
+    # list prices); the premium tier's price isn't published yet, so it is an estimate until set in the Hub.
+    _seedance("seedance-2.0", "dreamina-seedance-2-0-260128", "Seedance 2.0", "standard", 7.0, 15),
+    _seedance("seedance-2.5", "dreamina-seedance-2-5-260628", "Seedance 2.5", "premium", 10.7, 30),
+    _seedance("seedance-2.5-premium", "dreamina-seedance-2-5-premium-260915", "Seedance 2.5 Premium", "premium", 16.0,
+              30, estimate=True),
+    {"id": "byteplus:seedream-5.0-pro", "provider": "byteplus", "endpoint": "seedream-5-0-pro-260628", "task": "image",
+     "family": "Seedream 5.0 Pro", "maker": "bytedance", "display_name": "Seedream 5.0 Pro (BytePlus)", "tier": "premium",
+     "price_usd": 0.09, "price_unit": "image", "price_source": "catalog",  # 2K output (above 2.36 MP)
+     "capabilities": {"modes": ["t2i", "i2i"], "max_refs": 10}},
 ]
 
 # Engine chains: tried in order; the first enabled engine whose provider is usable and that supports
@@ -95,7 +131,9 @@ def seed_builtins() -> None:
             row.tier = row.tier or b["tier"]
             row.builtin = True
             if row.price_source != "manual":  # keep a price the admin set by hand
-                row.price_source = "catalog"
+                row.price_source = b.get("price_source", "catalog")
+                if "price_usd" in b:
+                    row.price_usd, row.price_unit = b["price_usd"], b["price_unit"]
             row.last_seen = utcnow()
         db.commit()
 
@@ -188,8 +226,53 @@ def sync_catalog(full_schemas: bool = False) -> dict[str, Any]:
                    "first_sync": first_sync}
         settings_store.set_setting(db, "hub_last_sync", summary)
         db.commit()
+    try:
+        summary["openrouter"] = sync_openrouter()
+    except Exception as e:  # one catalog failing must not lose the other
+        summary["openrouter"] = {"error": str(e)[:300]}
     emit(None, None, "models.synced", {k: v for k, v in summary.items() if k != "new"} | {"new": new_ids[:20]})
     return summary
+
+
+def sync_openrouter() -> dict[str, Any]:
+    """Pull OpenRouter's video catalog (only once the team has an OpenRouter key). Its list is short and curated, so
+    the first sync switches every usable model on; later arrivals wait for review unless auto-enable is on."""
+    if not settings_store.api_key("openrouter"):
+        return {"skipped": "no OpenRouter key"}
+    listed = or_api.list_video_models()
+    now = utcnow()
+    with SessionLocal() as db:
+        auto_enable = bool(settings_store.get_setting(db, "hub_auto_enable"))
+        existing = {m.id: m for m in db.query(AIModel).filter(AIModel.provider == "openrouter").all()}
+        first_sync = not existing
+        new_ids: list[str] = []
+        seen: set[str] = set()
+        for item in listed:
+            f = or_api.model_row(item)
+            seen.add(f["id"])
+            row = existing.get(f["id"])
+            usable = f["capabilities"].get("usable", True)
+            if row is None:
+                status = ("enabled" if usable else "disabled") if (first_sync or auto_enable) else "new"
+                row = AIModel(id=f["id"], provider="openrouter", endpoint=f["endpoint"], first_seen=now, status=status,
+                              tier=_tier_guess(f["endpoint"]))
+                db.add(row)
+                if not first_sync:
+                    new_ids.append(f["id"])
+            for k in ("display_name", "family", "maker", "description", "category", "task", "capabilities", "released_at"):
+                setattr(row, k, f[k])
+            if row.price_source != "manual" and f["price_usd"]:
+                row.price_usd, row.price_unit, row.price_source = f["price_usd"], f["price_unit"], "live"
+            if row.status == "retired":
+                row.status = "new"
+            row.last_seen = now
+        retired = 0
+        for mid, row in existing.items():
+            if mid not in seen and row.status != "retired":
+                row.status = "retired"
+                retired += 1
+        db.commit()
+    return {"total": len(listed), "new": new_ids, "retired": retired, "first_sync": first_sync}
 
 
 def sync_due(db: Session) -> bool:
@@ -224,9 +307,12 @@ def price_for(m: AIModel, seconds: float = 8.0, resolution: str = "720p", units:
         if m.provider == "sync":
             return float(prices["lipsync_per_second"].get(models.get(m.endpoint, ""), 0.05)) * seconds
     p = m.price_usd
+    unit = (m.price_unit or "").lower()
+    table = (m.capabilities or {}).get("price_by_resolution") or {}
+    if table and m.price_source != "manual" and "second" in unit:
+        p = table.get((resolution or "").lower()) or table.get("default") or p
     if p is None:
         return TASK_DEFAULT_PRICE.get(m.task, 0.1) * (seconds if m.task in ("video", "avatar", "lipsync", "edit") else units)
-    unit = (m.price_unit or "").lower()
     if "second" in unit or unit in ("s", "sec"):
         return p * seconds
     if "minute" in unit:
@@ -234,29 +320,116 @@ def price_for(m: AIModel, seconds: float = 8.0, resolution: str = "720p", units:
     return p * units  # per video / image / request / generation
 
 
+# ── routes: one model, several providers ─────────────────────────────────────
+
+# model families and how their versions are written in endpoint ids and names ("seedance-2-0-260128",
+# "bytedance/seedance-2.0", "fal-ai/kling-video/v3/pro/…", "Veo 3.1 Fast"); the kling O-series before plain kling
+_FAMILIES: list[tuple[str, re.Pattern]] = [(name, re.compile(rx)) for name, rx in (
+    ("kling-o", r"kling[-_ /]?(?:video[-_ /])?o(\d+)(?!\d)"),
+    ("seedance", r"seedance[-_ /]?v?(\d+)(?:[-_.](\d{1,2})(?!\d))?"),
+    ("seedream", r"seedream[-_ /]?v?(\d+)(?:[-_.](\d{1,2})(?!\d))?"),
+    ("kling", r"kling[-_ /]?(?:video[-_ /])?v?(\d+)(?:[-_.](\d{1,2})(?!\d))?"),
+    ("veo", r"veo[-_ ]?(\d+)(?:[-_.](\d{1,2})(?!\d))?"),
+    ("wan", r"(?<![a-z])wan[-_ ]?v?(\d+)(?:[-_.](\d{1,2})(?!\d))?"),
+    ("hailuo", r"(?:hailuo|minimax/h)[-_ ]?(\d+)(?:[-_.](\d{1,2})(?!\d))?"),
+    ("grok-video", r"grok[-_ ]imagine[-_ ]video(?:[-_ /]v?(\d+)(?:[-_.](\d{1,2})(?!\d))?)?"),
+    ("ltx", r"ltx[-_ ]?(?:video[-_ ])?v?(\d+)(?:[-_.](\d{1,2})(?!\d))?"),
+    ("nano-banana", r"nano[-_ ]banana(?:[-_ ]v?(\d+)(?:[-_.](\d{1,2})(?!\d))?)?"),
+)]
+_VARIANTS = {"mini": "mini", "lite": "lite", "fast": "fast", "turbo": "turbo", "flash": "flash", "std": "std",
+             "standard": "std", "pro": "pro", "premium": "premium", "prime": "prime", "max": "max", "master": "master",
+             "plus": "plus", "ultra": "ultra", "4k": "4k"}
+PROVIDER_RANK = {"google": 0, "byteplus": 1, "sync": 1, "openrouter": 2, "fal": 3}  # direct first when prices tie
+
+
+@lru_cache(maxsize=4096)
+def route_key_of(text: str) -> str:
+    """'seedance-2.5-premium' for any spelling of that model; '' when the family isn't known (no merging)."""
+    low = (text or "").lower()
+    for name, rx in _FAMILIES:
+        hit = rx.search(low)
+        if not hit:
+            continue
+        nums = [g for g in hit.groups() if g]
+        version = nums[0] + (f".{nums[1]}" if len(nums) > 1 and nums[1] != "0" else "") if nums else ""
+        variants: list[str] = []
+        for tok in re.split(r"[-_/ .()]+", low[hit.end():]):
+            v = _VARIANTS.get(tok)
+            if v and v not in variants:
+                variants.append(v)
+        return "-".join(x for x in (name, version, *variants) if x)
+    return ""
+
+
+def route_key(m: AIModel | None, model_id: str = "") -> str:
+    """The model behind an engine. An admin can set or clear it in the engine's overrides ("route_key")."""
+    if m is not None:
+        own = (m.param_overrides or {}).get("route_key")
+        if isinstance(own, str):
+            return own.strip()
+        return route_key_of(m.endpoint or "") or route_key_of(m.display_name or "")
+    return route_key_of(model_id.split(":", 1)[-1])
+
+
+def route_groups(db: Session) -> dict[str, list[AIModel]]:
+    """Enabled engines grouped by the model they run."""
+    out: dict[str, list[AIModel]] = {}
+    for m in db.query(AIModel).filter(AIModel.status == "enabled").all():
+        key = route_key(m)
+        if key:
+            out.setdefault(key, []).append(m)
+    return out
+
+
+def _fits(m: AIModel | None, modes_ok: list[str], need_refs: int, explicit: bool) -> tuple[AIModel, str] | None:
+    if not m or m.status == "retired" or (not explicit and m.status != "enabled"):
+        return None
+    if provider_mode(m.provider) == "missing":
+        return None
+    caps = m.capabilities or {}
+    if caps.get("usable") is False:
+        return None
+    modes = set(caps.get("modes") or [])
+    for mode in modes_ok:
+        if mode in modes:
+            if mode == "ref2v" and need_refs and (caps.get("max_refs") or 0) < 1:
+                continue
+            return m, mode
+    return None
+
+
+def route_order(pairs: list[tuple[AIModel, str]], modes_ok: list[str]) -> list[tuple[AIModel, str]]:
+    """Preferred mode first, then live before mock, then cheapest, then direct before resellers."""
+    return sorted(pairs, key=lambda t: (modes_ok.index(t[1]) if t[1] in modes_ok else 99,
+                                        provider_mode(t[0].provider) != "live", round(price_for(t[0]), 3),
+                                        PROVIDER_RANK.get(t[0].provider, 9)))
+
+
 # ── router ───────────────────────────────────────────────────────────────────
 
 def candidates(db: Session, chain: str, modes_ok: list[str], explicit: str | None = None,
                need_refs: int = 0) -> list[tuple[AIModel, str]]:
-    """Ordered (model, mode) pairs to try. Explicit engine (shot setting / shootout) wins and is the only choice."""
+    """Ordered (model, mode) pairs to try. An explicit engine (shot setting / shootout) wins: only that model is
+    used, through its other routes too when they are on. Each chain engine brings its model's other routes."""
     ids = [explicit] if explicit and explicit != "auto" else policy(db).get(chain, [])
+    cheapest = settings_store.get_setting(db, "cheapest_route") is not False
+    groups = route_groups(db)
     out: list[tuple[AIModel, str]] = []
+    seen: set[str] = set()
     for mid in ids:
         m = db.get(AIModel, mid)
-        if not m or m.status == "retired" or (not explicit and m.status != "enabled"):
-            continue
-        if provider_mode(m.provider) == "missing":
-            continue
-        caps = m.capabilities or {}
-        if caps.get("usable") is False:
-            continue
-        modes = set(caps.get("modes") or [])
-        for mode in modes_ok:
-            if mode in modes:
-                if mode == "ref2v" and need_refs and (caps.get("max_refs") or 0) < 1:
-                    continue
-                out.append((m, mode))
-                break
+        own = _fits(m, modes_ok, need_refs, explicit=bool(explicit))
+        key = route_key(m, mid)
+        others = [_fits(r, modes_ok, need_refs, explicit=False) for r in groups.get(key, []) if r.id != mid] if key else []
+        others = [t for t in others if t]
+        if own and (explicit or not cheapest):  # the named engine first, its other routes as the fallback
+            pairs = [own, *route_order(others, modes_ok)]
+        else:
+            pairs = route_order([*([own] if own else []), *others], modes_ok)
+        for t in pairs:
+            if t[0].id not in seen:
+                seen.add(t[0].id)
+                out.append(t)
     # a live engine exists: never fall through to a mock one (a placeholder would be saved as real work);
     # with no live engine at all (dev mode) the mock ones keep the app usable
     live = [t for t in out if provider_mode(t[0].provider) == "live"]
@@ -264,8 +437,8 @@ def candidates(db: Session, chain: str, modes_ok: list[str], explicit: str | Non
         out = live
     if not explicit and settings_store.get_setting(db, "google_first") is not False:
         google = [t for t in out if t[0].provider == "google"]
-        if google:  # Google can do it: use only Google (fal stays for what Google can't do, or when picked by hand)
-            return google
+        if google:  # Google can do it: use only Google (other providers stay for what Google can't do, or when picked
+            return google  # by hand; turn Google first off to use the cheapest route of every model)
     return out
 
 

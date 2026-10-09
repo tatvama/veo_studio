@@ -24,6 +24,16 @@ DEFAULTS: dict[str, Any] = {
     # Google rate limit makes the job wait rather than move to fal. fal runs only for jobs Google can't do (e.g.
     # lip-sync) or when a shot has a fal engine picked by hand. Off = fall back through the whole chain.
     "google_first": True,
+    # Same model, several routes (e.g. Seedance on BytePlus, OpenRouter and fal): try the cheapest live route first and
+    # fail over to the others. Off = the engine named in the chain first, its other routes only as a fallback.
+    "cheapest_route": True,
+    # Writing (scripts, prompts, QC notes): "gemini" (Gemini key) or "openrouter". OpenRouter is also used on its own
+    # when there is no Gemini key. Empty model = the same Gemini model through OpenRouter.
+    "text_provider": "gemini",
+    "openrouter_text_model": "",
+    "openrouter_text_model_pro": "",
+    # BytePlus asset library: CreateAsset calls per minute (3 on the free Entry tier, 120 Advanced, 300 Premium)
+    "byteplus_asset_qpm": 3,
     "qc_threshold": 0.7,
     "lipsync_model": "lipsync-2",
     "make_webhook_url": "",
@@ -62,7 +72,8 @@ DEFAULTS: dict[str, Any] = {
     "ui_default_language": "en",
 }
 
-PROVIDERS = ["gemini", "elevenlabs", "sync", "sarvam", "fal"]
+# byteplus_iam is the BytePlus access key and secret, saved together as "ACCESS_KEY:SECRET" (asset library only)
+PROVIDERS = ["gemini", "elevenlabs", "sync", "sarvam", "fal", "openrouter", "byteplus", "byteplus_iam"]
 
 
 def get_setting(db: Session, key: str) -> Any:
@@ -158,6 +169,9 @@ def api_key(provider: str) -> str:
         "sync": s.sync_api_key,
         "sarvam": s.sarvam_api_key,
         "fal": s.fal_key,
+        "openrouter": s.openrouter_api_key,
+        "byteplus": s.byteplus_api_key,
+        "byteplus_iam": f"{s.byteplus_access_key}:{s.byteplus_secret_key}" if s.byteplus_access_key and s.byteplus_secret_key else "",
     }.get(provider, "") or ""
 
 
@@ -168,4 +182,6 @@ def key_source(db: Session, provider: str) -> str:
 
 
 def mask(key: str) -> str:
+    if ":" in key:  # "ACCESS_KEY:SECRET": show only the access key's ends, never any of the secret
+        key = key.split(":", 1)[0]
     return (key[:4] + "…" + key[-4:]) if len(key) > 10 else ("set" if key else "")

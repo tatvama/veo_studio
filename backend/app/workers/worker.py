@@ -32,7 +32,7 @@ GROUP_OF = {"video": "video", "omni_edit": "video", "lipsync": "lipsync", "voice
             "export": "render", "animatic": "render", "keyframe": "image", "character_sheet": "image",
             "character_outfit": "image", "character_lighting": "image", "character_expressions": "image", "location_images": "image", "marketing": "image",
             "qc": "llm", "critic_loop": "llm", "search_index": "llm", "model_sync": "system", "fetch_metrics": "system",
-            "publish_youtube": "system", "train_identity": "train", "identity_variations": "image", "campaign": "system"}
+            "publish_youtube": "system", "train_identity": "train", "identity_variations": "image", "byteplus_register": "train", "campaign": "system"}
 GROUP_LIMITS = {"video": 3, "lipsync": 2, "audio": 4, "render": 2, "image": 4, "llm": 4, "system": 1, "train": 2}
 # A rate-limited job waits in the queue up to this many times (back-off grows to 15 min, so about a day:
 # long enough for a daily quota to reset at midnight Pacific) before it is retried and failed as usual.

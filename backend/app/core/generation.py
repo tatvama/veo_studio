@@ -304,6 +304,11 @@ def train_identity_spec(db: Session, project_id: int | None, ch: Character) -> d
                 estimate=(3.0 + Estimator(db).image(8)) if live else 0.0, label=f"Train identity: {ch.name}")
 
 
+def byteplus_register_spec(project_id: int | None, ch: Character) -> dict:
+    return spec("byteplus_register", payload={"character_id": ch.id, "project_id": project_id}, project_id=project_id,
+                estimate=0.0, label=f"Register {ch.name} with BytePlus")
+
+
 def identity_variations_spec(db: Session, project_id: int | None, ch: Character, count: int) -> dict:
     return spec("identity_variations", payload={"character_id": ch.id, "count": count, "project_id": project_id},
                 project_id=project_id, estimate=Estimator(db).image(count), label=f"Variations of {ch.name}'s photo ×{count}")

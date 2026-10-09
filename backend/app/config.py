@@ -57,6 +57,15 @@ class Settings(BaseSettings):
     sync_api_key: str = ""
     sarvam_api_key: str = ""
     fal_key: str = ""
+    # OpenRouter: one key for many video models (Seedance, Kling, Wan, Veo, Hailuo …) and, optionally, text
+    openrouter_api_key: str = ""
+    # BytePlus ModelArk (ByteDance direct): the API key runs Seedance / Seedream; the IAM access key + secret manage
+    # the private asset library, where the studio registers its AI characters for Seedance
+    byteplus_api_key: str = ""
+    byteplus_access_key: str = ""
+    byteplus_secret_key: str = ""
+    byteplus_region: str = "ap-southeast-1"
+    byteplus_project: str = "default"
 
     google_client_id: str = ""
     google_client_secret: str = ""

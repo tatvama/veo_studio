@@ -17,7 +17,7 @@ from .. import catalog, settings_store
 from ..config import get_settings
 from ..pipeline import ffmpeg as ff
 from . import mock
-from .base import MediaResult, ProviderError, ProviderNotConfigured, RetryableProviderError, Usage
+from .base import MediaResult, ProviderBlocked, ProviderError, ProviderNotConfigured, RetryableProviderError, Usage
 from .elevenlabs import ElevenLabsClient
 from .gemini import GeminiClient, guess_mime
 from .sarvam import SarvamClient
@@ -31,6 +31,9 @@ PROVIDER_LABELS = {
     "sync": "sync.so (lip-sync)",
     "sarvam": "Sarvam AI (Indian-language TTS)",
     "fal": "fal.ai (Kling, Seedance, Wan, MiniMax, LTX, Flux, Luma, Grok, HeyGen … one key)",
+    "openrouter": "OpenRouter (Seedance, Kling, Wan, Veo, Hailuo, Grok video … and text; one key, pay per use)",
+    "byteplus": "BytePlus ModelArk (Seedance 2.0 / 2.5 video, Seedream images; ByteDance direct)",
+    "byteplus_iam": "BytePlus asset library (access key + secret: registers your AI characters for Seedance)",
 }
 
 
@@ -91,10 +94,25 @@ class Services:
         return tin / 1e6 * p["in"] + tout / 1e6 * p["out"]
 
     # ── LLM (structured JSON) ────────────────────────────────────────────────
+    def text_route(self, videos: bool = False) -> str:
+        """"openrouter" when the team chose it for writing (or there is no Gemini key), else "gemini".
+        Prompts that include video clips stay on Gemini when it is live: it watches video natively."""
+        if provider_mode("openrouter") != "live":
+            return "gemini"
+        gemini = provider_mode("gemini")
+        if videos and gemini == "live":
+            return "gemini"
+        from ..db import SessionLocal
+        with SessionLocal() as db:
+            pref = settings_store.get_setting(db, "text_provider")
+        return "openrouter" if pref == "openrouter" or gemini != "live" else "gemini"
+
     def llm_json(self, task: str, system: str, prompt: str, schema: type[T], *, pro: bool = False,
                  images: list[bytes] | None = None, videos: list[bytes] | None = None, mock_ctx: dict | None = None,
                  temperature: float | None = None, tools: list[dict] | None = None) -> tuple[T, Usage]:
         model = self.models["text_pro" if pro else "text"]
+        if self.text_route(bool(videos)) == "openrouter":
+            return self._llm_openrouter(task, system, prompt, schema, model, pro, images, temperature, bool(tools))
         if _require("gemini") == "mock":
             data = mock.llm(task, mock_ctx or {})
             return schema.model_validate(data), Usage("gemini", model, f"llm:{task}", 0, "tokens", 0.0, mock=True)
@@ -126,6 +144,31 @@ class Services:
             except ValidationError as e:
                 last_err = e
         raise RetryableProviderError(f"model output did not match schema: {last_err}", provider="gemini")
+
+    def _llm_openrouter(self, task: str, system: str, prompt: str, schema: type[T], gemini_model: str, pro: bool,
+                        images: list[bytes] | None, temperature: float | None, search: bool) -> tuple[T, Usage]:
+        from ..db import SessionLocal
+        with SessionLocal() as db:
+            chosen = settings_store.get_setting(db, "openrouter_text_model_pro" if pro else "openrouter_text_model")
+        model = (chosen or f"google/{gemini_model}") + (":online" if search else "")  # :online adds web search
+        content: Any = prompt
+        if images:
+            content = [{"type": "text", "text": prompt}] + [
+                {"type": "image_url",
+                 "image_url": {"url": f"data:{guess_mime(b, 'image/jpeg')};base64,{base64.b64encode(b).decode()}"}}
+                for b in images]
+        client = self.openrouter()
+        last_err: Exception | None = None
+        for _ in range(2):
+            data, (tin, tout, cost) = client.chat_json(model, system + "\nAnswer as JSON only.", content,
+                                                       schema.model_json_schema(), temperature)
+            try:
+                obj = schema.model_validate(data)
+                usd = cost if cost is not None else self.text_cost(gemini_model, tin, tout)
+                return obj, Usage("openrouter", model, f"llm:{task}", tin + tout, "tokens", usd)
+            except ValidationError as e:
+                last_err = e
+        raise RetryableProviderError(f"model output did not match schema: {last_err}", provider="openrouter")
 
     # ── Images ───────────────────────────────────────────────────────────────
     def image(self, prompt: str, refs: list[Path], aspect: str, hero: bool = False, title: str = "") -> MediaResult:
@@ -381,6 +424,14 @@ class Services:
         from .fal import FalClient
         return FalClient(settings_store.api_key("fal"))
 
+    def openrouter(self):
+        from .openrouter import OpenRouterClient
+        return OpenRouterClient(settings_store.api_key("openrouter"), referer=get_settings().public_base_url)
+
+    def ark(self):
+        from .byteplus import ArkClient
+        return ArkClient(settings_store.api_key("byteplus"))
+
     def run_model(self, m, req, on_tick: Callable[[float], bool] | None = None,
                   on_request: Callable[[str], None] | None = None, resume: str | None = None) -> MediaResult:
         """Run `req` (schema_map.GenRequest) on hub engine `m` (models.AIModel). Returns media + cost."""
@@ -406,7 +457,7 @@ class Services:
         if m.provider == "sync" and m.builtin:
             return self.lipsync(req.video, req.audio, self.models.get(m.endpoint, "lipsync-2"), on_tick=on_tick)
 
-        # catalog engine (fal.ai)
+        # catalog engine (fal.ai, OpenRouter, BytePlus)
         seconds = float(req.duration or 8)
         if req.mode in ("a2v", "lipsync") and req.audio:
             seconds = max(ff.duration(req.audio), 1.0)
@@ -416,6 +467,12 @@ class Services:
         units = 1.0
         if _require(m.provider) == "mock":
             return _mock_engine(m, req, seconds)
+        if m.provider == "openrouter":
+            return self._openrouter_video(m, req, seconds, on_tick, on_request, resume)
+        if m.provider == "byteplus":
+            if task == "image":
+                return self._seedream(m, req)
+            return self._seedance(m, req, seconds, on_tick, on_request, resume)
         client = self.fal()
         pm = dict(m.param_map or {})
         args = schema_map.build_args(pm, m.capabilities or {}, req, client.upload)
@@ -439,6 +496,216 @@ class Services:
                            duration_s=dur, remote_ref=url, meta={"args": {k: v for k, v in args.items() if "url" not in k}})
 
 
+    # ── OpenRouter video ─────────────────────────────────────────────────────
+    def _openrouter_video(self, m, req, seconds: float, on_tick, on_request, resume) -> MediaResult:
+        from ..core.model_hub import price_for
+        from .links import media_link
+        caps = m.capabilities or {}
+        client = self.openrouter()
+        resolution = _pick(caps.get("resolutions"), req.resolution)
+        if resume:
+            vid = resume
+        else:
+            body: dict[str, Any] = {"model": m.endpoint, "prompt": _avoid(req.prompt, req.negative),
+                                    "duration": int(round(seconds))}
+            if resolution:
+                body["resolution"] = resolution
+            if req.aspect in (caps.get("aspects") or []):
+                body["aspect_ratio"] = req.aspect
+            if caps.get("native_audio"):
+                body["generate_audio"] = bool(req.generate_audio)
+            if req.seed is not None:
+                body["seed"] = req.seed
+            frames = []
+            if req.mode in ("i2v", "flf") and req.first_frame:
+                frames.append({"type": "image_url", "frame_type": "first_frame",
+                               "image_url": {"url": media_link(req.first_frame, provider="OpenRouter")}})
+            if req.mode == "flf" and req.last_frame:
+                frames.append({"type": "image_url", "frame_type": "last_frame",
+                               "image_url": {"url": media_link(req.last_frame, provider="OpenRouter")}})
+            if frames:
+                body["frame_images"] = frames
+            if req.mode == "ref2v" and req.refs:
+                refs = req.refs[: int(caps.get("max_refs") or 3)]
+                body["input_references"] = [{"type": "image_url", "image_url": {"url": media_link(r, provider="OpenRouter")}}
+                                            for r in refs]
+                body["prompt"] = _legend([(_label(r, req.cast_refs), r) for r in refs]) + body["prompt"]
+            vid = client.start_video(body)
+            if on_request:
+                on_request(vid)
+        job = client.wait_video(vid, on_tick=on_tick)
+        data = client.download_video(vid)
+        tmp = _tmp() / "out.mp4"
+        tmp.write_bytes(data)
+        dur = ff.duration(tmp) or seconds
+        billed = float((job.get("usage") or {}).get("cost") or 0)  # what OpenRouter actually charged
+        cost = billed or price_for(m, seconds=dur, resolution=(resolution or req.resolution).lower())
+        return MediaResult(data, "mp4", Usage("openrouter", m.endpoint, m.task, dur, "seconds", cost), duration_s=dur,
+                           remote_ref=f"openrouter:{vid}", meta={"job": vid})
+
+    # ── BytePlus (Seedance video, Seedream images) ───────────────────────────
+    def _seedance(self, m, req, seconds: float, on_tick, on_request, resume) -> MediaResult:
+        client = self.ark()
+        if resume:
+            return self._seedance_finish(client, m, req, resume, seconds, on_tick)
+        try:
+            return self._seedance_run(client, m, req, seconds, on_tick, on_request, as_reference=False)
+        except ProviderBlocked:
+            # the keyframe tripped Seedance's real-person filter: when the shot's characters are registered in the
+            # asset library, make the clip from those (and the location) as reference images instead
+            if req.mode in ("i2v", "flf") and byteplus_assets([p for _, p in req.cast_refs]):
+                return self._seedance_run(client, m, req, seconds, on_tick, on_request, as_reference=True)
+            raise
+
+    def _seedance_run(self, client, m, req, seconds: float, on_tick, on_request, as_reference: bool) -> MediaResult:
+        from .links import media_link
+        caps = m.capabilities or {}
+        resolution = _pick(caps.get("resolutions"), req.resolution) or "720p"
+        prompt = _avoid(req.prompt, req.negative)
+        content: list[dict[str, Any]] = []
+        ratio = req.aspect
+        if req.mode in ("i2v", "flf") and not as_reference and req.first_frame:
+            content.append({"type": "image_url", "image_url": {"url": media_link(req.first_frame, provider="BytePlus")},
+                            "role": "first_frame"})
+            if req.mode == "flf" and req.last_frame:
+                content.append({"type": "image_url", "image_url": {"url": media_link(req.last_frame, provider="BytePlus")},
+                                "role": "last_frame"})
+            ratio = "adaptive"  # the clip keeps the first frame's shape
+        elif req.mode == "ref2v" or as_reference:
+            labelled = req.cast_refs if as_reference else [(_label(r, req.cast_refs), r) for r in req.refs]
+            images = _seedance_refs(labelled, int(caps.get("max_refs") or 9))
+            content += [{"type": "image_url", "image_url": {"url": url}, "role": "reference_image"} for _, url in images]
+            prompt = _legend([(label, None) for label, _ in images]) + prompt
+        body: dict[str, Any] = {"model": m.endpoint, "content": [{"type": "text", "text": prompt}, *content],
+                                "resolution": resolution, "ratio": ratio, "duration": int(round(seconds)),
+                                "generate_audio": bool(req.generate_audio), "watermark": False}
+        if req.seed is not None:
+            body["seed"] = req.seed
+        tid = client.create_task(body)
+        if on_request:
+            on_request(tid)
+        return self._seedance_finish(client, m, req, tid, seconds, on_tick, resolution)
+
+    def _seedance_finish(self, client, m, req, tid: str, seconds: float, on_tick, resolution: str = "") -> MediaResult:
+        from ..core.model_hub import price_for
+        task = client.wait_task(tid, on_tick=on_tick)
+        url = (task.get("content") or {}).get("video_url")
+        if not url:
+            raise ProviderError(f"BytePlus task {tid} finished without a video", provider="byteplus")
+        data = client.download(url)
+        tmp = _tmp() / "out.mp4"
+        tmp.write_bytes(data)
+        dur = ff.duration(tmp) or seconds
+        resolution = str(task.get("resolution") or resolution or req.resolution)
+        tokens = float((task.get("usage") or {}).get("completion_tokens") or 0)
+        rate = float((m.capabilities or {}).get("price_per_m_tokens") or 0)
+        cost = tokens * rate / 1e6 if tokens and rate else price_for(m, seconds=dur, resolution=resolution)
+        return MediaResult(data, "mp4", Usage("byteplus", m.endpoint, m.task, dur, "seconds", cost), duration_s=dur,
+                           remote_ref=f"byteplus:{tid}", meta={"task": tid, "tokens": tokens})
+
+    def _seedream(self, m, req) -> MediaResult:
+        from ..core.model_hub import price_for
+        from .byteplus import IMAGE_SIZES, _classify
+        from .links import media_link
+        client = self.ark()
+        body: dict[str, Any] = {"model": m.endpoint, "prompt": req.prompt, "size": IMAGE_SIZES.get(req.aspect, "2048x2048"),
+                                "response_format": "url", "watermark": False, "sequential_image_generation": "disabled"}
+        if req.mode == "i2i":
+            imgs = [media_link(p, provider="BytePlus") for p in [*req.refs, *([req.first_frame] if req.first_frame else [])]
+                    if p and p.exists()][: int((m.capabilities or {}).get("max_refs") or 10)]
+            if imgs:
+                body["image"] = imgs if len(imgs) > 1 else imgs[0]
+        d = client.images(body)
+        item = (d.get("data") or [{}])[0]
+        if item.get("error") or not item.get("url"):
+            err = item.get("error") or {}
+            raise _classify(str(err.get("code") or ""), str(err.get("message") or "no image in the answer"))
+        data = client.download(item["url"])
+        ext = "jpg" if guess_mime(data) == "image/jpeg" else "png"
+        return MediaResult(data, ext, Usage("byteplus", m.endpoint, "image", 1, "images", price_for(m)))
+
+
+def _pick(supported: list[str] | None, want: str) -> str:
+    """The model's own spelling of the wanted resolution ("4K"), else 720p, else its first; "" when it lists none."""
+    if not supported:
+        return ""
+    by_low = {str(r).lower(): str(r) for r in supported}
+    return by_low.get((want or "").lower()) or by_low.get("720p") or str(supported[0])
+
+
+def _avoid(prompt: str, negative: str) -> str:
+    return f"{prompt}\n\nAvoid: {negative}" if negative else prompt
+
+
+def _label(path: Path, cast: list[tuple[str, Path]]) -> str:
+    for label, p in cast:
+        if str(p) == str(path):
+            return label
+    return "a reference for the scene"
+
+
+def _legend(images: list[tuple[str, Any]]) -> str:
+    """'Image 1 is Ravi (front). …' so the model knows who each reference image shows."""
+    if not images:
+        return ""
+    lines = [f"Image {i} is {label}." for i, (label, _) in enumerate(images, 1)]
+    return " ".join(lines) + " Keep each person's face, hair and outfit exactly as in their image.\n\n"
+
+
+def byteplus_assets(paths: list[Path]) -> dict[int, tuple[str, list[str], set[str]]]:
+    """Characters among these reference images that are registered in the BytePlus asset library:
+    {character id: (name, active asset ids, the given paths that belong to it)}."""
+    import os
+
+    from ..db import SessionLocal
+    from ..models import Character, CharacterAsset
+    from ..storage import get_storage
+    root = os.path.abspath(get_storage().root)
+    rels: dict[str, str] = {}
+    for p in paths:
+        try:
+            rels[os.path.relpath(os.path.abspath(p), root).replace("\\", "/")] = str(p)
+        except ValueError:  # another drive
+            continue
+    if not rels:
+        return {}
+    out: dict[int, tuple[str, list[str], set[str]]] = {}
+    with SessionLocal() as db:
+        rows = db.query(CharacterAsset.path, CharacterAsset.character_id).filter(CharacterAsset.path.in_(list(rels))).all()
+        cids = {cid for _, cid in rows}
+        chars = {c.id: c for c in db.query(Character).filter(Character.id.in_(cids)).all()} if cids else {}
+        for path, cid in rows:
+            ch = chars.get(cid)
+            reg = ((ch.provider_assets or {}).get("byteplus") or {}) if ch else {}
+            ids = [a["asset_id"] for a in reg.get("assets") or [] if a.get("status") == "Active" and a.get("asset_id")]
+            if ids:
+                name, have, mine = out.get(cid, (ch.name, ids, set()))
+                mine.add(rels[path])
+                out[cid] = (name, have, mine)
+    return out
+
+
+def _seedance_refs(labelled: list[tuple[str, Path]], limit: int) -> list[tuple[str, str]]:
+    """Reference images for Seedance: a registered character becomes its asset library entries (asset://…, up to
+    three); anything else goes in as a link."""
+    from .links import media_link
+    reg = byteplus_assets([p for _, p in labelled])
+    by_path = {p: cid for cid, (_, _, paths) in reg.items() for p in paths}
+    out: list[tuple[str, str]] = []
+    used: set[int] = set()
+    for label, p in labelled:
+        cid = by_path.get(str(p))
+        if cid is not None:
+            if cid in used:
+                continue
+            used.add(cid)
+            name, ids, _ = reg[cid]
+            out += [(name, f"asset://{a}") for a in ids[:3]]
+        elif p and Path(p).exists():
+            out.append((label, media_link(Path(p), provider="BytePlus")))
+    return out[:limit]
+
+
 def hash_embed(text: str, dims: int = 256) -> list[float]:
     """Offline fallback embedding (bag of words, hashed). Good enough for keyword-ish search in mock mode."""
     import math
@@ -457,7 +724,7 @@ def _mock_engine(m, req, seconds: float) -> MediaResult:
     label = f"{m.display_name} · {req.mode}"
     if m.task == "image":
         data = mock.image(req.prompt, req.aspect, label, refs=len(req.refs))
-        return MediaResult(data, "png", Usage("fal", m.endpoint, "image", 1, "units", 0.0, mock=True))
+        return MediaResult(data, "png", Usage(m.provider, m.endpoint, "image", 1, "units", 0.0, mock=True))
     if req.mode == "lipsync" and req.video and req.audio:
         mock.lipsync(req.video, req.audio, out)
     elif req.mode in ("edit", "extend") and req.video:
@@ -472,7 +739,7 @@ def _mock_engine(m, req, seconds: float) -> MediaResult:
             mock.lipsync(out, req.audio, muxed)
             out = muxed
     d = ff.duration(out)
-    return MediaResult(out.read_bytes(), "mp4", Usage("fal", m.endpoint, m.task, d, "seconds", 0.0, mock=True), duration_s=d,
+    return MediaResult(out.read_bytes(), "mp4", Usage(m.provider, m.endpoint, m.task, d, "seconds", 0.0, mock=True), duration_s=d,
                        remote_ref="mock://engine")
 
 
