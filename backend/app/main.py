@@ -5,6 +5,7 @@ Run (dev):   backend/.venv/Scripts/python -m uvicorn app.main:app --reload --por
 from __future__ import annotations
 
 import mimetypes
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -67,6 +68,26 @@ async def provider_error(_: Request, exc: ProviderError):
 def health():
     from .providers.services import provider_status
     return {"ok": True, "providers": provider_status()}
+
+
+@app.get("/api/health/live")
+def health_live():
+    """Liveness: the process answers. Never touches the database, so a slow database can't get the app restarted."""
+    from . import health as h
+    return {"ok": True, "version": app.version, "uptime_s": round(time.time() - h.STARTED_AT)}
+
+
+@app.get("/api/health/ready")
+def health_ready():
+    """Readiness: the database answers, and (when the worker runs inside this process) the job worker is alive."""
+    from . import health as h
+    db_ok, db_ms, db_err = h.check_database()
+    in_process = settings.run_worker_in_process
+    worker_ok = h.worker_alive() if in_process else None
+    ok = db_ok and (worker_ok is not False)
+    body = {"ok": ok, "database": {"ok": db_ok, "ms": db_ms, **({"error": db_err} if db_err else {})},
+            "worker": {"in_process": in_process, "ok": worker_ok, "heartbeat_age_s": (round(h.heartbeat_age() or 0) if in_process else None)}}
+    return JSONResponse(status_code=200 if ok else 503, content=body)
 
 
 # Serve the built frontend (production). In dev, Vite serves it on :5173 and proxies /api and /media here.

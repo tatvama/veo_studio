@@ -194,6 +194,17 @@ docker compose --profile tunnel up -d
 
 Then set `COOKIE_SECURE=true`. The image includes FFmpeg (with Indic text shaping) and Noto fonts for all five scripts. Data lives in `./data/` (Postgres + media). Back it up. Client review links use `PUBLIC_BASE_URL`, so set it to the address clients will open.
 
+**Health checks (Coolify, Docker, uptime monitors):**
+
+| Check | Use it for |
+|---|---|
+| `GET /api/health/live` | Liveness. Answers while the server runs; never touches the database, so a slow database can't get the app restarted. |
+| `GET /api/health/ready` | Readiness. 200 when the database answers (and, with the worker inside the web process, the worker is alive); 503 with details otherwise. |
+| `python -m app.health api` | The image's built-in Docker `HEALTHCHECK` (no curl needed). |
+| `python -m app.health worker` | The worker container's check: healthy while its job loop keeps beating. |
+
+In Coolify, set the health check to port `8100` and path `/api/health/live` (the image includes `curl` for Coolify's own probe). Give it a start period of about a minute: the first connection to a remote Postgres can be slow.
+
 **Voice Lock separation (optional):** the default uses ElevenLabs audio isolation. That loses the clip's background sound, so the shot gets the new voice plus your music. For a proper voice/background split on the CPU, build with:
 
 ```bash
