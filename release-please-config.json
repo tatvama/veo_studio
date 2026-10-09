@@ -1,0 +1,34 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "release-type": "simple",
+  "include-component-in-tag": false,
+  "include-v-in-tag": true,
+  "bootstrap-sha": "6500dfc1b22da0040e8c4a6a38abc218593f149d",
+  "pull-request-title-pattern": "chore: release ${version}",
+  "pull-request-header": ":clapper: Merging this pull request publishes the release: tag, GitHub Release, Docker image on GHCR and (when configured) the production deploy.",
+  "changelog-sections": [
+    { "type": "feat", "section": "Features" },
+    { "type": "fix", "section": "Bug Fixes" },
+    { "type": "perf", "section": "Performance" },
+    { "type": "revert", "section": "Reverts" },
+    { "type": "refactor", "section": "Code Refactoring" },
+    { "type": "docs", "section": "Documentation" },
+    { "type": "build", "section": "Build & Dependencies" },
+    { "type": "ci", "section": "CI/CD", "hidden": true },
+    { "type": "test", "section": "Tests", "hidden": true },
+    { "type": "style", "section": "Styles", "hidden": true },
+    { "type": "chore", "section": "Miscellaneous", "hidden": true }
+  ],
+  "packages": {
+    ".": {
+      "package-name": "veo-studio",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        "backend/app/__init__.py",
+        { "type": "json", "path": "frontend/package.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "frontend/package-lock.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "frontend/package-lock.json", "jsonpath": "$.packages[''].version" }
+      ]
+    }
+  }
+}

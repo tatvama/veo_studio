@@ -1,0 +1,9 @@
+# Lint settings shared by CI (.github/workflows/ci.yml) and scripts/dev/check.py.
+# Only errors that break at runtime are enforced for now: syntax errors, undefined names, invalid comparisons.
+# Tighten later by adding rule codes to `select` (for example "F401" unused imports, "B" bugbear).
+target-version = "py312"
+line-length = 140
+extend-exclude = [".venv", ".dev"]
+
+[lint]
+select = ["E9", "F63", "F7", "F82"]

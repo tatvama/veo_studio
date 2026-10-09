@@ -1,278 +1,540 @@
 # Tatvam AI Studio
 
-An AI video studio for teams. You give it a concept, and it takes you from hook to script, scene plan, cast and voices, shot list, keyframes, video, lip-sync, music, sound and the final edit, in **English, Hindi, Kannada, Telugu and Tamil**.
-It isn't tied to one AI provider: the **Model Hub** keeps a live catalog of about 800 models (Google Veo, Kling, Seedance, Wan, MiniMax, LTX, Luma, Grok, sync.so, HeyGen, ElevenLabs …) and routes every shot to the best engine for the job.
-The **Director** agent can do any step for you. Paid steps always show the cost first.
+[![CI](https://github.com/tatvama/veo_studio/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tatvama/veo_studio/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/tatvama/veo_studio/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/tatvama/veo_studio/actions/workflows/codeql.yml)
+[![Release](https://img.shields.io/github/v/release/tatvama/veo_studio?sort=semver)](https://github.com/tatvama/veo_studio/releases)
+[![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-fe5196.svg)](https://www.conventionalcommits.org/)
 
-The working plan is [TATVAM_PLAN.md](TATVAM_PLAN.md): the full design, the three surfaces (web studio, desktop finishing room, mobile review app) and the roadmap. The older [PLAN.md](PLAN.md) is kept only as a record of what was built first. This file covers running and using it.
+An AI video studio for teams. Give it a concept and it takes you from hook to script, scene plan, cast and voices,
+shot list, keyframes, video, lip-sync, music, sound and the final edit, in **English, Hindi, Kannada, Telugu and Tamil**.
+
+It isn't tied to one AI provider. It is **Google first** (Veo, Gemini, Nano Banana, Lyria), and the **Model Hub** keeps a
+live catalog of about 800 more models (Kling, Seedance, Wan, MiniMax, LTX, Luma, Grok, sync.so, HeyGen, ElevenLabs …)
+through fal.ai, OpenRouter and BytePlus. The **Director** agent (Claude or Gemini) can do any step for you, and an
+**MCP server** lets Claude Code, Claude Desktop and claude.ai run the whole pipeline. Paid steps always show the cost first.
+
+| | |
+|---|---|
+| **Use it** | [User guide](docs/USER_GUIDE.md) · [MCP server](docs/MCP.md) · [Design system](docs/DESIGN.md) |
+| **Build it** | [Contributing & dev workflow](CONTRIBUTING.md) · [Changelog](CHANGELOG.md) · [Security](SECURITY.md) |
+| **Plan** | [TATVAM_PLAN.md](TATVAM_PLAN.md) (the working plan) · [docs/V3.md](docs/V3.md) (v3 design) · [PLAN.md](PLAN.md) (original plan, kept as a record) |
 
 ---
 
-## 1. Run it on this Windows PC (development)
+## Contents
 
-You need Python 3.12 and Node 20 or newer. Both are already installed here.
+1. [Features](#features)
+2. [Architecture](#architecture)
+3. [Quick start (local development)](#quick-start-local-development)
+4. [Configuration: environment variables](#configuration-environment-variables)
+5. [Third-party services](#third-party-services)
+6. [Third-party libraries and tools](#third-party-libraries-and-tools)
+7. [MCP server (Claude Code, Claude Desktop, claude.ai)](#mcp-server-claude-code-claude-desktop-claudeai)
+8. [Deployment](#deployment)
+9. [Development workflow, CI/CD and releases](#development-workflow-cicd-and-releases)
+10. [Testing](#testing)
+11. [Project structure](#project-structure)
+12. [Status: what's verified](#status-whats-verified)
 
-```bash
-# backend (first time only)
-cd backend
-py -3.12 -m venv .venv
-.venv\Scripts\python -m pip install -r requirements.txt
-```
+---
 
-```bash
-# start the API + background worker on http://localhost:8100
-cd backend
-.venv\Scripts\python -m uvicorn app.main:app --port 8100 --reload
-```
+## Features
 
-```bash
-# start the web app on http://localhost:5173 (second terminal)
-cd frontend
-npm install
-npm run dev
-```
+A project goes through an **Overview** and **five steps** (details in the [user guide](docs/USER_GUIDE.md)):
 
-Open **http://localhost:5173**. The first visit asks you to create the **admin account**, then a short tour shows you around.
-
-**No keys yet?** The studio runs in **Mock mode**. You get free placeholder images, video and voices, so the team can learn the whole flow before spending anything.
-
-**Upgrading from v1?** Just start the new version. The database upgrades itself on start (new tables and columns are added, rows are kept).
-
-## 2. Add your API keys
-
-You can add them in either of two places:
-- **Settings → AI services & API keys** in the app (admins only). Keys are encrypted with `APP_SECRET`.
-- The `.env` file. Copy `.env.example` to `.env` and fill in the keys you have.
-
-| Key | Used for |
+| Step | What you do |
 |---|---|
-| `GEMINI_API_KEY` | Writing, images, Veo video, voices (TTS + voice design), Omni edits, Lyria music, lip-sync and vision QC, search |
-| `FAL_KEY` | The Model Hub catalog: Kling, Seedance, Wan, MiniMax, LTX, sync-3, HeyGen and ~800 more; character identity (LoRA) training |
-| `ELEVENLABS_API_KEY` | Voices, Voice Lock (voice changer), voice design, sound effects, audio clean-up |
-| `SYNC_API_KEY` | sync.so lip-sync |
-| `SARVAM_API_KEY` | Optional Indian-language voices (Bulbul) |
+| **1 Story** | Brief (AI fills audience, tone, CTA; trend scout), 6 scored hooks, script writing with the **writers' room** (critic loop, table read in the cast voices, continuity check, native-speaker localization), versions with diff and restore, `@mentions`, scene cards |
+| **2 Cast** | Characters and places from the script, reference sheets, **Character Lock** (face, body, voice, costume, gestures), costumes with turnarounds, props, wardrobe timeline, continuity bible, identity (LoRA) training, consent records |
+| **3 Shots** | Storyboard · List · Studio views; keyframes then videos, engine picker per shot, **shootouts** between 2–4 engines, Film Map shot links, scene continuity (anchor shot first, keyframe QC with automatic retake), Enhance |
+| **4 Edit** | Professional timeline: J/K/L, roll trims, speed, keyframes, waveforms, Auto SFX, titles, caption preview, music ducking |
+| **5 Deliver** | Render for Shorts / Reels / YouTube with karaoke captions and brand end cards, dubbing, cut-downs, marketing pack, YouTube publishing, client review links, Ads & Reels campaigns, **Poster Studio** |
 
-Set `APP_SECRET` in `.env` to a long random string before inviting the team.
+Across the app: the **Director** agent (`Ctrl+J`), **Autopilot**, the **Model Hub** with routing chains (Saver / Balanced /
+Hero) and automatic fallbacks, budgets with team, personal and project caps, an approvals inbox, rupees beside
+dollars, audit log, roles (Admin, Producer, Creator, Reviewer, Viewer), command palette (`Ctrl+K`), dark/light themes,
+installable PWA, and **Mock mode** so the whole flow runs free before you add any keys.
 
-**YouTube publishing** (optional): create a Google Cloud OAuth client (Web application) with the YouTube Data API v3 and YouTube Analytics API enabled. Add the redirect URI `<PUBLIC_BASE_URL>/api/integrations/youtube/callback`, put the ID and secret in `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`, then click **Settings → Integrations → Connect YouTube**. The same client also enables Google sign-in.
+## Architecture
 
-**Objective face check** (optional, recommended): download two small OpenCV face models (≈ 37 MB) so QC can measure face similarity instead of only asking the vision model:
-
-```bash
-backend\.venv\Scripts\python scripts\get_face_models.py
+```mermaid
+flowchart LR
+  subgraph Clients
+    B[Browser / PWA]
+    M[MCP clients<br/>Claude Code · Desktop · claude.ai]
+  end
+  subgraph Server["One server, port 8100 (Docker image)"]
+    API[FastAPI<br/>REST · WebSocket · /mcp · OAuth]
+    WEB[Built web app<br/>React + Vite → frontend/dist]
+    W[Job worker<br/>in-process or separate container]
+  end
+  DB[(SQLite or<br/>PostgreSQL)]
+  S3[(Local disk or<br/>Cloudflare R2 / S3)]
+  AI[AI providers<br/>Google · Anthropic · fal.ai · OpenRouter<br/>BytePlus · ElevenLabs · sync.so · Sarvam]
+  B --> API
+  B --> WEB
+  M --> API
+  API --> DB
+  W --> DB
+  API --> S3
+  W --> S3
+  W --> AI
+  API --> AI
 ```
 
-## 3. Phase 0: test every service on your keys (about $10)
+- **Backend:** Python 3.12, FastAPI, SQLAlchemy 2. The database is also the job queue: API requests create jobs, the
+  worker claims them, calls the providers, runs FFmpeg and writes takes. The database upgrades itself on start.
+- **Frontend:** React 19 + TypeScript + Vite + Tailwind, served by the backend from `frontend/dist` in production, so
+  the API and the web app share **one port (8100)**.
+- **Storage:** `local` keeps media on disk; `s3` makes a Cloudflare R2 / S3 bucket the shared store with the local
+  media folder as a cache (needed when several machines or containers share media, and for BytePlus/OpenRouter, which
+  fetch input images by link).
 
-```bash
-backend\.venv\Scripts\python spike\run_spike.py --list
-```
+## Quick start (local development)
 
-```bash
-backend\.venv\Scripts\python spike\run_spike.py --all --budget 15
-```
+### Prerequisites
 
-The script writes `spike/results/<date>/report.md` with every clip, image and voice sample. It answers the plan's open questions:
-- Do the model IDs exist on your key?
-- Does Veo 3.1 Lite keep the face from the keyframe? Saver mode depends on this.
-- Can Veo take a first frame and reference images together?
-- How good is Veo's own Hindi, Kannada, Telugu and Tamil dialogue?
-- How do lip-sync and the ElevenLabs voice changer sound?
-
-The voice samples in `listen/` have code names, so the team can do a **blind listening test**. Afterwards, set the winning voice service per language in **Settings → Voices**.
-
-## 4. Daily workflow
-
-| Step | Where | What happens |
+| Tool | Version | Notes |
 |---|---|---|
-| Concept | Home | Type the idea or **start from a template** (Short, Reel ad, product ad, web-series episode, devotional story, explainer, music video, kids story). Pick format, frame, languages, look and quality, then **Start** (or turn on **Autopilot**) |
-| Brief | Brief tab | AI fills audience, tone, length and CTA. **Trend scout** suggests current trends, hook patterns and formats for your audience. Series: **Plan season** |
-| Hook + script | Story tab | 6 scored hooks (with **what worked before** from your YouTube analytics), pick one and **Write script**. Then the **writers' room**: **Critic** scores the draft and the loop rewrites until it passes, **Table read** plays the whole episode in the cast voices, **Continuity** checks props, wardrobe and time of day, **Localization** translates and gives each language a native-speaker polish. Every change is saved in **Versions** with a diff and restore |
-| Scenes | Scenes tab | One card per scene: goal, conflict, turn, emotion, cast, props, wardrobe, blocking and coverage plan. Approve the cards, then **Break into shots** follows them |
-| Bible | Bible tab | **Build from script** creates the cast, locations and style. Generate sheets and voices, approve images and **Lock**. **Train identity** gives a character a face model so every keyframe keeps the exact face. A consent record is asked for when a real person's face or voice is used |
-| Shots | Storyboard tab | **Keyframes** (cents each), then **Videos**, then **Voice + lip-sync**, then **Music**. Click a shot to edit it, pick the **engine** (or Auto), run a **shootout** between 2–4 engines and pick the winner, compare takes, retake, extend, **Edit with words** or approve. Each take shows its engine and QC (face match, lip-sync score) |
-| Timeline | Timeline tab | Zoom, snap, J/K/L shuttle, waveforms for dialogue, music and SFX, **Auto SFX**, title and lower-third track, caption preview, music volume and ducking |
-| Export | Export tab | **Animatic** (free preview), **Render** (Shorts / Reels / YouTube / Square, karaoke or clean captions, auto-reframe, brand-kit end card), **Dub**, **Cut into shorts**, **Marketing pack** (titles, descriptions, hashtags and thumbnails per platform and language), **Publish to YouTube** (or schedule it), **Client link** |
-| Review | Review tab | Frame-accurate player, timecoded comments, draw on the frame, A/B **wipe compare** between renders, approve the final. Clients get a link that works without an account, on phone or desktop |
-| Director | Right panel (`Ctrl+J`) | Ask in plain words, e.g. *"dub into Telugu"*, *"Ravi wears his wedding outfit in this episode"*, *"cut this into 3 shorts"*, *"freeze Ravi's look for episodes 1-3"*, *"what is stale?"*. In Co-pilot mode it proposes the work with a price and you click **Approve** |
-| World | World tab | **Props** (reusable objects with a reference image, mentioned in scripts with `@`), the **wardrobe timeline** (who wears what in every scene, continuity breaks flagged) and the **Continuity Bible** (the state at the end of every scene, written by AI and corrected by hand, carried into the next scene's prompts) |
-| Dashboard | Dashboard tab | Shots by status, approved vs planned seconds, spend by provider, **cost per approved second**, **change impact** (everything stale after an edit, with a one-click regenerate), seasons |
-| Ads & Reels | Ads & Reels tab | One brief into every language x aspect variant with **locked brand facts**; reels cut from highlights of what you already made |
+| Python | 3.12 | Windows: `winget install Python.Python.3.12` |
+| Node.js | 22 or newer | Windows: `winget install OpenJS.NodeJS.LTS` |
+| Git | any recent | plus the [GitHub CLI](https://cli.github.com/) (`gh`) for pull requests |
+| FFmpeg | optional | a bundled FFmpeg (imageio-ffmpeg) is used when none is set; set `FFMPEG_PATH` to use your own |
+| Docker | optional | only for the production-like `docker compose` setup |
 
-**v3 (Tatvam):** `@mentions` in the script editor (characters, places, props stored by id), an import wizard that previews visuals and dialogue before anything is saved, Film Map **shot-to-shot links** (last frame or extension) and **next shot**, the **Character Lock** (face, body, voice, costume, gestures, strictness), **character versions** per episode range, **costumes** with 3-angle turnarounds, the **back view** and **lighting variants** in the reference pack, the **Google dialogue route** (Veo speaks each line itself in the languages you allow; dubbing regenerates per language; QC checks the words spoken), **change impact** (edits mark takes stale instead of deleting anything), and a professional timeline (right-click AI actions, roll trims, speed, keyframe animation on layers). Design notes: [docs/V3.md](docs/V3.md); the plan: [TATVAM_PLAN.md](TATVAM_PLAN.md).
+### 1. Clone and configure
 
-**Anywhere:** `Ctrl+K` opens the command palette (pages, projects, actions, theme, language, search). `?` lists every shortcut. **Search everything** finds shots, takes, scenes, characters and renders by what's in them ("Ravi near the lamp at night").
+```bash
+git clone https://github.com/tatvama/veo_studio.git
+```
 
-### Quality modes
-| Mode | How | ≈ $/second |
+```bash
+cd veo_studio
+```
+
+Copy `.env.example` to `.env` (Windows: `copy .env.example .env`; macOS/Linux: `cp .env.example .env`). You can leave
+every key empty to start in Mock mode. See [Configuration](#configuration-environment-variables) for each variable.
+
+### 2. Backend
+
+Windows (PowerShell):
+
+```powershell
+cd backend; py -3.12 -m venv .venv; .venv\Scripts\python -m pip install -r requirements-dev.txt
+```
+
+macOS / Linux:
+
+```bash
+cd backend && python3.12 -m venv .venv && .venv/bin/python -m pip install -r requirements-dev.txt
+```
+
+`requirements-dev.txt` installs the app's `requirements.txt` plus the lint tool. Optional, recommended: download the
+two OpenCV face models (≈ 37 MB) so QC measures face similarity instead of only asking the vision model:
+
+```bash
+backend/.venv/Scripts/python scripts/get_face_models.py
+```
+
+### 3. Frontend
+
+```bash
+cd frontend && npm ci
+```
+
+### 4. Run it
+
+**One server on port 8100** (API + web app, like production). Build the web app, then start the API:
+
+```bash
+cd frontend && npm run build
+```
+
+```bash
+cd backend && .venv/Scripts/python -m uvicorn app.main:app --port 8100 --reload
+```
+
+Open **http://localhost:8100**. (macOS/Linux: use `.venv/bin/python`.)
+
+**Working on the frontend?** Run Vite with hot reload on port 5173 in a second terminal; it proxies `/api`, `/media`
+and the WebSocket to the API on 8100. Open http://localhost:5173 while you work, and rebuild `frontend/dist` when done.
+
+```bash
+cd frontend && npm run dev
+```
+
+### 5. First sign-in
+
+The first visit asks you to create the **admin account**, then a short tour shows you around.
+
+**No keys yet?** With `MOCK_PROVIDERS=auto` the studio uses free placeholder images, video and voices for every
+service without a key, so the team can learn the whole flow before spending anything. Add keys in `.env` or in the
+app under **Settings → AI services & API keys** (admins only; keys saved there are encrypted with `APP_SECRET`).
+
+### Test your keys against the real services (Phase 0, about $10)
+
+```bash
+backend/.venv/Scripts/python spike/run_spike.py --list
+```
+
+```bash
+backend/.venv/Scripts/python spike/run_spike.py --all --budget 15
+```
+
+It writes `spike/results/<date>/report.md` with every clip, image and voice sample: do the model IDs exist on your
+key, does Veo keep the face from the keyframe, how good is Veo's own Hindi/Kannada/Telugu/Tamil dialogue, how do
+lip-sync and the voice changer sound. Voice samples in `listen/` have code names for a blind listening test.
+
+## Configuration: environment variables
+
+Settings are read from `.env` in the repository root (see [.env.example](.env.example)) or from the process
+environment (Docker, Coolify). AI keys can also be saved in the app (**Settings → AI services**), which takes
+precedence. **Never commit `.env`.**
+
+### App and security
+
+| Variable | Default | Description |
 |---|---|---|
-| **Saver** (default) | Approved keyframe → cheapest good image-to-video engine | 0.05 |
-| **Balanced** | Mid-tier engines with up to 3 reference images | 0.10 |
-| **Hero** | Best available engine, 1080p or 4K | 0.40 |
+| `APP_SECRET` | `dev-only-secret-change-me` | **Required in production.** Long random string; signs logins and encrypts API keys saved in the app. Changing it logs everyone out and makes saved keys unreadable. |
+| `PUBLIC_BASE_URL` | `http://localhost:8100` | The address people open. Used in client review links, OAuth redirects and as the MCP server's address / OAuth issuer (must be **HTTPS** for claude.ai connectors). |
+| `COOKIE_SECURE` | `false` | Set `true` when served over HTTPS. |
+| `FRONTEND_ORIGIN` | `http://localhost:5173` | Where to send the browser back after Google / YouTube sign-in in Vite dev mode. Docker Compose sets it to `PUBLIC_BASE_URL`. |
+| `MOCK_PROVIDERS` | `auto` | `auto` = placeholder output for services without a key; `false` = fail instead; `true` = always placeholders (no spend). |
 
-Each mode is a **routing chain** in the Model Hub (for example Veo 3.1 Lite → Wan 3.0 → Seedance 2.0 Mini). If an engine fails or is down, the next one in the chain takes over. Admins can reorder the chains.
+### Database
 
-### Dialogue methods (Settings → Dialogue & dubbing, or per project)
-- **Audio-first** (default): the line is spoken in the character's locked voice, then lip-sync moves the mouth to match. All 5 languages.
-- **Audio-driven**: the video engine animates the character *from* the voice track (MiniMax H3 lip-sync, Kling AI Avatar, LTX audio-to-video …). Best acting and mouth shapes; falls back to audio-first if no engine is available.
-- **Voice lock**: keeps the engine's own acting and swaps in the character's ElevenLabs voice. English, Hindi and Tamil only; one speaker per shot.
-- **Native when possible**: the video engine speaks the line itself. Cheapest; good for English ads and shorts.
+| Variable | Default | Description |
+|---|---|---|
+| `DATABASE_URL` | *(empty → SQLite at `data/studio.db`)* | e.g. `postgresql+psycopg://veo:<password>@db:5432/veo`. SQLite is fine for one machine. |
+| `POSTGRES_PASSWORD` | — | Used by `docker-compose.yml` for its Postgres container. |
+| `DB_POOL_SIZE` / `DB_MAX_OVERFLOW` | `5` / `10` | Postgres pool per process. Keep (pool + overflow) × processes under the server's `max_connections`. |
+| `DB_POOL_RECYCLE_S` | `300` | Recycle idle connections before a remote server or NAT drops them. |
+| `DB_CONNECT_TIMEOUT_S` | `10` | Connect timeout for remote Postgres. |
 
-**Dubbing** either re-syncs the lips on the existing video (**re-dub**, cheaper) or regenerates audio-driven shots per language (**regenerate**, most accurate mouth shapes).
+### Media storage
 
-## 5. Model Hub
+| Variable | Default | Description |
+|---|---|---|
+| `STORAGE_BACKEND` | `local` | `local` = this machine's disk; `s3` = bucket is the shared store, local folder is a cache. |
+| `S3_ENDPOINT_URL` | — | R2: `https://<account-id>.r2.cloudflarestorage.com` |
+| `S3_BUCKET` | — | Bucket name. |
+| `S3_ACCESS_KEY_ID` / `S3_SECRET_ACCESS_KEY` | — | R2 API token (or S3) credentials. |
+| `MEDIA_ROOT` / `DATA_ROOT` | `./media` / `./data` | Media cache and SQLite/data folders. The Docker image uses `/data/media` and `/data/db`. |
 
-- **Catalog:** the hub syncs fal.ai's model list every 24 hours (Settings → Model Hub). It reads each model's input schema, works out what it can do (text-to-video, image-to-video, reference-to-video, first/last frame, audio-driven, lip-sync, extend, edit …) and prices it. New releases show up under **New models** for an admin to enable or dismiss. The first sync files everything outside the routing chains as available-but-off, so the team isn't asked to review 800 models at once.
-- **Routing policy:** drag to reorder each chain (Saver, Balanced, Hero, Dialogue, Lip-sync, Image, Edit, Extend).
-- **Per shot:** the engine picker in the shot drawer shows only engines that can do that shot (reference images, audio, length), with the price. **Shootout** runs the same shot on 2–4 engines; the winner is credited in the hub, so ratings reflect your own results.
-- **Quality checks:** every new take is checked for face match (OpenCV, if the face models are installed), extra people, text artifacts and, for dialogue, lip-sync. A failed take is retried automatically on the next engine, up to the retake limit.
+### AI services
 
-## 6. Team, roles and money
+All optional: a service without a key runs in Mock mode (with `MOCK_PROVIDERS=auto`).
 
-| Role | Can |
+| Variable | Service | Used for |
+|---|---|---|
+| `GEMINI_API_KEY` | Google Gemini API | Writing, images (Nano Banana), Veo 3.1 video, TTS and voice design, Omni edits, Lyria music, vision QC, embeddings for search. **Veo needs billing enabled.** |
+| `ANTHROPIC_API_KEY` | Anthropic Claude | The Director chat agent on Claude Sonnet 5.5 (default engine; Gemini is used when this is missing or picked in Settings). |
+| `FAL_KEY` | fal.ai | The Model Hub catalog (~800 models: Kling, Seedance, Wan, MiniMax, LTX, sync, HeyGen …) and identity (LoRA) training. |
+| `OPENROUTER_API_KEY` | OpenRouter | One key for many video models (Seedance, Kling, Wan, Veo, Hailuo …), images, and an optional text route. |
+| `BYTEPLUS_API_KEY` | BytePlus ModelArk | Seedance video and Seedream images, direct from ByteDance. |
+| `BYTEPLUS_ACCESS_KEY` / `BYTEPLUS_SECRET_KEY` | BytePlus IAM | Register AI characters in the private asset library so Seedance keeps them consistent (needs `STORAGE_BACKEND=s3`). |
+| `BYTEPLUS_REGION` / `BYTEPLUS_PROJECT` | BytePlus | Default `ap-southeast-1` / `default`. |
+| `ELEVENLABS_API_KEY` | ElevenLabs | Premium voices, Voice Lock (voice changer), voice design, sound effects, audio clean-up. |
+| `SYNC_API_KEY` | sync.so | Lip-sync. |
+| `SARVAM_API_KEY` | Sarvam AI | Indian-language voices (Bulbul). |
+
+### Spend and money
+
+| Variable | Default | Description |
+|---|---|---|
+| `GEMINI_SPEND_PER_10MIN` | `10` | Google caps paid spend per rolling 10 minutes by tier (Tier 1: $10, Tier 2: $50, Tier 3: $200). Veo jobs wait instead of crossing it. `0` = off. |
+| `USD_INR_RATE` | `0` | Pin the rupee display rate (e.g. `94.5`); `0` = live rate. |
+| `SPIKE_BUDGET_USD` | `30` | Budget stop for `spike/run_spike.py`. |
+
+Team, personal and project budgets are set in the app (**Settings → Budget**).
+
+### Worker
+
+| Variable | Default | Description |
+|---|---|---|
+| `RUN_WORKER_IN_PROCESS` | `true` | Run the job worker inside the API process. Docker Compose sets `false` and runs a separate `worker` container. |
+| `WORKER_CONCURRENCY` | `4` | Jobs run at the same time. |
+| `WORKER_HEARTBEAT_FILE` | temp dir | Heartbeat file the worker health check reads. |
+| `PORT` | `8100` | Port the `python -m app.health api` probe calls. |
+
+### Sign-in and integrations
+
+| Variable | Default | Description |
+|---|---|---|
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | — | Google sign-in and YouTube publishing. Redirect URIs: `<PUBLIC_BASE_URL>/api/auth/google/callback` and `<PUBLIC_BASE_URL>/api/integrations/youtube/callback` (enable YouTube Data API v3 and YouTube Analytics API). |
+| `ALLOWED_GOOGLE_DOMAINS` | — | Email domains that may sign in with Google as Viewers (comma separated). Empty = invited emails only. |
+| `MAKE_WEBHOOK_URL` | — | Make.com webhook called when a render is published (also settable in the app). |
+| `CLOUDFLARE_TUNNEL_TOKEN` | — | For `docker compose --profile tunnel up -d`. |
+
+### MCP server
+
+| Variable | Default | Description |
+|---|---|---|
+| `MCP_ENABLED` | `true` | Serve the MCP endpoint at `/mcp`. |
+| `MCP_ALLOWED_HOSTS` | — | Extra host names `/mcp` answers to (comma separated; `*` = any, every request still needs a token). `PUBLIC_BASE_URL`'s host and localhost always work. |
+| `TATVAM_TOKEN` | — | Token for the **stdio** MCP server (`python -m app.mcp_server`). |
+
+### Media tools
+
+| Variable | Default | Description |
+|---|---|---|
+| `FFMPEG_PATH` | bundled | Path to your own FFmpeg (with libass + harfbuzz for Indic captions). |
+| `CAPTION_FONT` | `Nirmala UI` (Windows) / `Noto Sans` | Caption font. The Docker image ships Noto fonts for all five scripts. |
+
+### Development and CI
+
+| Variable | Where | Description |
+|---|---|---|
+| `VEO_API` | frontend dev | Vite proxy target (default `http://localhost:8100`). |
+| `VEO_PYTHON` | `scripts/dev/check.py` | Python to use instead of the auto-detected `backend/.venv`. |
+| `RELEASE_PLEASE_TOKEN` | GitHub secret, optional | PAT so CI runs on release pull requests. |
+| `COOLIFY_WEBHOOK_URL` / `COOLIFY_TOKEN` | GitHub secrets, optional | Deploy to Coolify after each release. |
+| `PRODUCTION_URL` | GitHub variable, optional | Checked after deploy until `/api/health/live` reports the new version. |
+
+## Third-party services
+
+| Service | What the studio uses it for | Config | Needed? |
+|---|---|---|---|
+| [Google Gemini API](https://ai.google.dev/) | Veo 3.1 (Lite / Fast / standard) video with native dialogue, Gemini 3.x text and vision QC, Nano Banana 2.1 and Gemini 3 Pro Image, Gemini TTS, Lyria music, Omni edits, embeddings | `GEMINI_API_KEY` | Recommended (default engine) |
+| [Anthropic Claude API](https://docs.anthropic.com/) | Director chat agent (Claude Sonnet 5.5) | `ANTHROPIC_API_KEY` | Optional |
+| [fal.ai](https://fal.ai/) | Model Hub catalog of ~800 models (Kling, Seedance, Wan, MiniMax, LTX, Luma, HeyGen, sync …), identity (LoRA) training | `FAL_KEY` | Optional |
+| [OpenRouter](https://openrouter.ai/) | Video and image models through one key, optional text route | `OPENROUTER_API_KEY` | Optional |
+| [BytePlus ModelArk](https://www.byteplus.com/en/product/modelark) | Seedance 2.x video, Seedream images, character asset library | `BYTEPLUS_*` | Optional |
+| [ElevenLabs](https://elevenlabs.io/) | Voices (eleven v3), voice changer, voice design, SFX, audio isolation | `ELEVENLABS_API_KEY` | Optional |
+| [sync.so](https://sync.so/) | Lip-sync (lipsync-2 / lipsync-2-pro) | `SYNC_API_KEY` | Optional |
+| [Sarvam AI](https://www.sarvam.ai/) | Indian-language TTS (Bulbul v3) | `SARVAM_API_KEY` | Optional |
+| [Google Cloud OAuth](https://console.cloud.google.com/) + YouTube Data / Analytics APIs | Google sign-in, YouTube publishing and analytics | `GOOGLE_CLIENT_*` | Optional |
+| [Cloudflare R2](https://developers.cloudflare.com/r2/) (or any S3) | Shared media store | `S3_*` | Needed for multi-machine setups and BytePlus/OpenRouter |
+| [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) | Team access from anywhere without opening ports | `CLOUDFLARE_TUNNEL_TOKEN` | Optional |
+| [PostgreSQL](https://www.postgresql.org/) 16 | Production database (SQLite otherwise) | `DATABASE_URL` | Production |
+| [open.er-api.com](https://open.er-api.com/) / [frankfurter.dev](https://frankfurter.dev/) | Live USD → INR rate (no key; the last good rate is kept) | `USD_INR_RATE` to pin | Automatic |
+| [OpenCV Zoo](https://github.com/opencv/opencv_zoo) | YuNet + SFace face models for objective face-match QC (downloaded once) | `scripts/get_face_models.py` | Optional |
+| [Make.com](https://www.make.com/) | Webhook for publishing to other platforms | `MAKE_WEBHOOK_URL` | Optional |
+| [Coolify](https://coolify.io/) | Self-hosted deployment target (health checks, deploy webhook) | GitHub secrets | Optional |
+| [GitHub](https://github.com/) Actions, CodeQL, Dependabot, GHCR | CI, code scanning, dependency updates, release images | — | Development |
+
+## Third-party libraries and tools
+
+### Backend (Python, [backend/requirements.txt](backend/requirements.txt))
+
+| Library | Purpose |
 |---|---|
-| Admin | Users, API keys, team budget, settings, Model Hub, audit log |
-| Producer | Approve spending over limits, lock the Bible, approve final exports, publish, delete brand kits |
-| Creator | Write and generate within their own monthly limit |
-| Reviewer | Comment (with @mentions), approve takes, pick shootout winners |
-| Viewer | Watch |
+| FastAPI, Uvicorn, python-multipart | Web framework, ASGI server, uploads |
+| SQLAlchemy 2, psycopg 3, pg8000 | ORM and Postgres drivers (SQLite built in) |
+| Pydantic 2, pydantic-settings | Data validation and `.env` settings |
+| httpx | HTTP client for the provider REST APIs |
+| anthropic | Official Claude SDK (Director agent) |
+| fal-client | fal.ai SDK (Model Hub, training) |
+| mcp 2.x | Model Context Protocol server SDK |
+| boto3 | S3 / Cloudflare R2 storage |
+| bcrypt, itsdangerous, cryptography | Password hashing, signed sessions, encryption of saved keys |
+| Pillow, numpy, opencv-python-headless | Images, face detection and similarity QC |
+| imageio-ffmpeg | Bundled FFmpeg binary (render, captions, reframe, audio) |
+| pypdf | Script import from PDF |
+| pytest | Tests |
+| ruff *(dev)* | Lint ([backend/ruff.toml](backend/ruff.toml)) |
+| torch, torchaudio, demucs *(optional Docker build arg)* | CPU voice/background separation for Voice Lock |
 
-How spending is controlled:
-- **Team cap:** set a monthly team cap (Settings → Budget). Alerts fire at 50%, 80% and 100%.
-- **Personal limits:** each creator has their own monthly limit.
-- **Project caps:** each project can have its own cap.
-- **Approvals:** anything over a limit goes to the **Approvals** inbox.
-- **Costs page:** shows spending by project, by person and by service, plus the full ledger.
-- **Rupees next to dollars:** every cost figure can show INR beside USD (Both, USD or INR, set in the top bar or the account menu). Billing stays in US dollars; the rupee figure is an estimate at the live mid-market rate (refreshed every 15 minutes, last good rate kept if the source is down). Pin your own rate, for example your bank rate, with `USD_INR_RATE` in `.env`.
+### Frontend (TypeScript, [frontend/package.json](frontend/package.json))
 
-**Audit & consent:** the audit log records sensitive actions (keys, settings, publishing, client links, identity training, deletions) with who and from where. Consent records (signed release, scope, expiry) cover cloned voices and real people's faces.
+| Library | Purpose |
+|---|---|
+| React 19, React DOM, React Router 7 | UI and routing |
+| Vite 8, TypeScript 7, @vitejs/plugin-react | Build and type checking |
+| Tailwind CSS 4, clsx, tailwind-merge | Styling |
+| TanStack Query 5, Zustand 5 | Server state and client state |
+| @xyflow/react | Film Map (shot-to-shot link graph) |
+| dockview | Dockable panels in the Studio view |
+| Konva, react-konva | Poster Studio canvas |
+| @dnd-kit | Drag and drop (storyboard, timeline, lists) |
+| motion | Animations |
+| lucide-react | Icons |
+| sonner | Toasts |
+| @fontsource / @fontsource-variable | Bundled fonts incl. Devanagari, Kannada, Telugu and Tamil display faces |
 
-## 7. Interface
+### Runtime and infrastructure
 
-The app is a fixed-viewport **production cockpit** (design system: [docs/DESIGN.md](docs/DESIGN.md)). Panels scroll; the page does not.
+| Tool | Purpose |
+|---|---|
+| Docker (`python:3.12-slim`, `node:22-slim`) | One image: API + worker + built web app, FFmpeg with libass/harfbuzz, Noto fonts |
+| Docker Compose | `db` (postgres:16-alpine), `api`, `worker`, optional `tunnel` (cloudflare/cloudflared) |
+| GitHub Actions | CI, CodeQL, PR checks, release-please releases, GHCR images, deploy |
 
-- **Top command bar:** the Tatvam mark, a breadcrumb (Command center / project / section), the command search (`Ctrl+K`) and live telemetry: AI engine health, running jobs with a live queue, team spend against the monthly cap, the live USD to INR rate, a theme switch, notifications and your account.
-- **Sign-in page:** a cinematic showreel of AI-made stills behind a glass sign-in card, with the engine lineup (Google, fal.ai, ElevenLabs, Sarvam, sync.so) scrolling along the bottom. Refresh the stills with `backend/.venv/Scripts/python scripts/showcase/generate.py` (Google Nano Banana, about $0.42), or `... generate.py fal --loops` for fal.ai FLUX stills plus two Kling motion loops (about $1.06; needs fal.ai credit).
-- **Rail:** a slim icon column for Command center, Search, Library, Model Hub, Brand kits and (by role) Approvals, Costs, Team, Audit and Settings. Labels are tooltips, so the work area never shifts. On phones it becomes a bottom tab bar.
-- **Command center (home):** greeting and a mission KPI strip, the new-production composer with templates, your productions as mission cards with progress, and a column with the live queue, what needs your attention, recent activity and engine health.
-- **Project workspace:** the left **pipeline rail** shows the project, episode and language switchers, then the production flow (Mission overview, 01 Write, 02 Cast, 03 Shots, 04 Finish, Log) with per-stage progress, the next-step card and the Director toggle. `[` collapses it to icons; below 1024 px it becomes a stage strip. Projects open on the **Mission overview**: flight path, telemetry, shot map, spend, change impact, live queue, cast and seasons.
-- **Status strip (bottom):** connection, engine mode, a live job ticker and shortcut hints.
-- **Themes:** dark, light or follow the system: a one-click sun/moon button in the top bar, the full choice in the account menu or `Ctrl+K`.
-- **Interface language:** English, हिन्दी, ಕನ್ನಡ, తెలుగు, தமிழ் (account menu, login page or `Ctrl+K`). Film terms (Shot, Scene, Take, Storyboard …) stay in English on purpose, as they're used on set.
-- **Motion:** smooth transitions throughout; respects the system's reduce-motion setting, or turn it off in the account menu.
-- **Install as an app:** in Chrome or Edge, use *Install Tatvam AI Studio* from the address bar (works on desktop and Android). The app shell loads offline; your work always comes live from the server.
+## MCP server (Claude Code, Claude Desktop, claude.ai)
 
-### Poster Studio
+The studio is also an **MCP server**, so Claude (or any MCP app) can read and improve a script, plan scenes, build the
+storyboard and make the videos scene by scene with continuity carried forward. It runs on the same port at
+**`<PUBLIC_BASE_URL>/mcp`** (Streamable HTTP). Full tool list and design: [docs/MCP.md](docs/MCP.md).
 
-Posters, YouTube thumbnails, social posts, festival greetings, product ads and character cards, in a drag-and-drop editor (**Posters** in the rail, or the **Posters** tab of a project).
+**1. Create a token:** in the app, **Settings → MCP access → Create a token**, with scopes:
 
-- **Layers:** images, text, shapes and effects (vignette, fade, film grain, light leak, glow, scanlines, frame). Drag, resize, rotate, snap to edges and centres, align and distribute, lock, hide, reorder, undo and redo.
-- **Any size:** presets for film one-sheets, A4 and A3 print, hoardings, YouTube, OTT tiles, Instagram, Stories, WhatsApp status, X and Facebook covers, or a custom size. Resizing re-lays the design so the same poster works in every format; safe-area guides show where platforms put their own buttons.
-- **Templates:** cinematic one-sheet, character spotlight, minimal typographic, YouTube thumbnail, product ad, festival greeting, cast line-up, episode card, event flyer and quote card. Brand kits recolour them and swap in the fonts and logo.
-- **AI:** describe the poster in one line and get the layout, title, tagline, credits and a background painted for it. Generate backgrounds, characters (from the film's locked characters, in their outfits, cut out on a transparent background with a face-match score), elements and products, with up to four variations to swap between. Relight the whole poster so every element shares one light and colour grade; text is never touched by AI. Title, tagline, CTA and credits ideas in English, Hindi, Kannada, Telugu or Tamil.
-- **Text:** 21 bundled poster fonts including Devanagari, Kannada, Telugu and Tamil display faces, drawn by the browser so Indian scripts are always shaped correctly. Gradients, outlines, shadows, pill backgrounds and auto-fit titles.
-- **Export:** PNG, JPG, WebP or a 300 dpi PDF; every export is kept with the design. Autosave, named versions with restore, and a guard against overwriting a teammate who saved first.
-- **Costs:** AI images are normal jobs, so budgets, approvals and the Costs page apply (about $0.07 per image with Nano Banana).
+| Scope | Allows |
+|---|---|
+| `read` | Look at projects, scripts, storyboards, jobs |
+| `write` | Change scripts, scenes and shots, run AI writing, and **propose** paid work (nothing is spent) |
+| `spend` | Approve proposals and start paid work (budget limits still apply) |
 
-## 8. Deploy for the team (Unraid, a VPS or Docker Desktop)
+**2. Connect a client:**
+
+Claude Code:
 
 ```bash
-copy .env.example .env
+claude mcp add --transport http tatvam http://localhost:8100/mcp --header "Authorization: Bearer tvm_…"
 ```
 
-In `.env`, set `APP_SECRET`, `POSTGRES_PASSWORD`, `PUBLIC_BASE_URL` and your keys. Then:
+Claude Desktop and other apps (JSON config):
+
+```json
+{
+  "mcpServers": {
+    "tatvam": {
+      "type": "http",
+      "url": "http://localhost:8100/mcp",
+      "headers": { "Authorization": "Bearer tvm_…" }
+    }
+  }
+}
+```
+
+Apps that can only start a command can use **stdio** (the app on port 8100 must keep running, since it runs the
+jobs): in `backend/`, set `TATVAM_TOKEN=tvm_…` and run `.venv/Scripts/python -m app.mcp_server`.
+
+**claude.ai (custom connector):** add `<PUBLIC_BASE_URL>/mcp`. claude.ai registers itself (OAuth with dynamic client
+registration + PKCE), sends you to `/oauth/consent` in the studio to approve it and pick scopes. Needs an **HTTPS**
+`PUBLIC_BASE_URL` (Cloudflare Tunnel or Coolify with TLS). Connected apps are listed and can be disconnected in
+Settings → MCP access.
+
+**Safety:** paid tools return a *proposal* (batch id + estimate) and spend nothing until `approve_spend` (needs `spend`)
+or approval in the app. Tools that would overwrite a script, shot list or scene cards ask for confirmation first.
+Tokens are stored as hashes; personal tokens can expire and can be limited to some projects. Prompts available as
+slash commands: `film_from_script`, `improve_script`, `storyboard_review`, `continue_scenes`.
+
+## Deployment
+
+### Docker Compose (Unraid, a VPS or Docker Desktop)
+
+1. Copy `.env.example` to `.env` and set `APP_SECRET`, `POSTGRES_PASSWORD`, `PUBLIC_BASE_URL` and your keys.
+2. Start it:
 
 ```bash
 docker compose up -d --build
 ```
 
-Open `http://<server-ip>:8100`. For a secure team link from anywhere without opening router ports, add a Cloudflare Tunnel token to `.env` and run:
+3. Open `http://<server-ip>:8100` and create the first admin.
 
-```bash
-docker compose --profile tunnel up -d
-```
+Data lives in `./data/` (Postgres + media): back it up. For team access from anywhere without opening router ports,
+add `CLOUDFLARE_TUNNEL_TOKEN` and run `docker compose --profile tunnel up -d`, then set `COOKIE_SECURE=true`.
 
-Then set `COOKIE_SECURE=true`. The image includes FFmpeg (with Indic text shaping) and Noto fonts for all five scripts. Data lives in `./data/` (Postgres + media). Back it up. Client review links use `PUBLIC_BASE_URL`, so set it to the address clients will open.
+**Released images:** every release is published to `ghcr.io/tatvama/veo_studio` with tags `X.Y.Z`, `X.Y`, `X` and `latest`,
+so a server can pull a tested image instead of building (`image: ghcr.io/tatvama/veo_studio:3` in place of `build: .`).
 
-**Health checks (Coolify, Docker, uptime monitors):**
+**Voice Lock separation (optional):** `docker compose build --build-arg WITH_DEMUCS=1` adds CPU voice/background
+separation (~1 GB); the default uses ElevenLabs audio isolation.
 
-| Check | Use it for |
+### Coolify
+
+Set the same variables in the app's Environment. The AI keys are read by both the API and the worker. Health check:
+port `8100`, path `/api/health/live`, start period about a minute. To deploy automatically on each release, add the
+`COOLIFY_WEBHOOK_URL` and `COOLIFY_TOKEN` secrets to GitHub (see [releases](#development-workflow-cicd-and-releases))
+and turn off Coolify's own deploy-on-push, so only released versions go live.
+
+### Health checks
+
+| Check | Use |
 |---|---|
-| `GET /api/health/live` | Liveness. Answers while the server runs; never touches the database, so a slow database can't get the app restarted. |
-| `GET /api/health/ready` | Readiness. 200 when the database answers (and, with the worker inside the web process, the worker is alive); 503 with details otherwise. |
+| `GET /api/health/live` | Liveness and version (`{"ok":true,"version":"3.0.0",…}`). Never touches the database. |
+| `GET /api/health/ready` | Readiness: 200 when the database (and an in-process worker) is fine, 503 with details otherwise. |
 | `python -m app.health api` | The image's built-in Docker `HEALTHCHECK` (no curl needed). |
-| `python -m app.health worker` | The worker container's check: healthy while its job loop keeps beating. |
+| `python -m app.health worker` | The worker container's check (job loop heartbeat). |
 
-In Coolify, set the health check to port `8100` and path `/api/health/live` (the image includes `curl` for Coolify's own probe). Give it a start period of about a minute: the first connection to a remote Postgres can be slow.
+## Development workflow, CI/CD and releases
 
-**Voice Lock separation (optional):** the default uses ElevenLabs audio isolation. That loses the clip's background sound, so the shot gets the new voice plus your music. For a proper voice/background split on the CPU, build with:
+The full guide is in [CONTRIBUTING.md](CONTRIBUTING.md). In short:
+
+```mermaid
+flowchart LR
+  A["worktree.py new feat/x"] --> B[commit] --> C["check.py<br/>(local CI)"] --> D["push + PR<br/>title: feat: …"]
+  D --> E{"CI ok?<br/>lint · tests · tsc · Docker"}
+  E -->|yes| F[squash merge to main]
+  F --> G["release-please PR<br/>chore: release X.Y.Z"]
+  G -->|merge| H["tag vX.Y.Z +<br/>GitHub Release"]
+  H --> I["image on GHCR"] --> J["deploy (Coolify)"]
+```
+
+| Command | What it does |
+|---|---|
+| `python scripts/dev/worktree.py new feat/my-change` | New branch + worktree from the latest `origin/main` in `.claude/worktrees/`, with `.env` copied and `npm ci` done |
+| `python scripts/dev/check.py` | The same checks as CI: ruff, pytest, `tsc -b` + Vite build (`--fast` for lint + typecheck only) |
+| `python scripts/dev/worktree.py list` / `clean` | Show worktrees and merge state / remove merged worktrees and branches |
+
+**Automation on GitHub:**
+
+| Workflow | When | What |
+|---|---|---|
+| [CI](.github/workflows/ci.yml) | Every PR and push to `main` | Backend lint + tests, frontend typecheck + build, Docker build + smoke test, then the required **CI ok** check |
+| [PR title](.github/workflows/pr-title.yml) | PR opened / edited | Title must follow Conventional Commits (it becomes the changelog line) |
+| [Labeler](.github/workflows/labeler.yml) | PR opened / updated | Labels by area: backend, frontend, mcp, providers, docs, ci, docker, dependencies |
+| [CodeQL](.github/workflows/codeql.yml) | PRs, `main`, weekly | Security scanning of Python and TypeScript |
+| [Release](.github/workflows/release.yml) | Push to `main` | release-please release PR → tag + GitHub Release → GHCR image → optional Coolify deploy |
+| [Dependabot](.github/dependabot.yml) | Weekly (Mondays) | Grouped pip, npm and GitHub Actions updates |
+
+Versions follow [SemVer](https://semver.org/): `feat` → minor, `fix` → patch, `feat!` / `BREAKING CHANGE` → major. The
+version lives in `version.txt`, `backend/app/__init__.py` and `frontend/package.json`, all bumped by the release PR.
+
+## Testing
 
 ```bash
-docker compose build --build-arg WITH_DEMUCS=1
+cd backend && .venv/Scripts/python -m pytest
 ```
 
-## 9. Tests
+177 tests, all in mock mode (about 7 minutes): the full pipeline end to end (concept → hooks → script → bible → sheets →
+voices → shots → keyframes → videos + QC → lip-sync → music → animatic → export → dubbing → Director → approvals),
+Model Hub schema mapping on real fal.ai schemas, routing and fallbacks, Google-first and cheapest-route rules,
+providers, MCP (HTTP, tokens, OAuth, the whole pipeline with continuity checks, spend scope), scene chain and scene
+continuity, Poster Studio, health checks, storage, database migrations and resilience. Tests use a temporary SQLite
+database and local storage, never the real bucket or keys from `.env`.
 
-```bash
-cd backend
-.venv\Scripts\python -m pytest
-```
+Frontend: `cd frontend && npm run build` (type check + production build). In development, `/dev/kit` shows every
+shared component in the current theme.
 
-28 tests, all in mock mode (about 2 minutes):
-- **v1 pipeline:** concept → hooks → script → bible → sheets → voices → shots → keyframes → videos + QC → lip-sync → music → animatic → export → Kannada dub → Kannada export → Director agent → approvals.
-- **v2:** Model Hub catalog sync and schema mapping (22 real fal.ai schemas), routing with fallbacks, explicit engine, shootout and winner, audio-driven dialogue, identity training, critic loop, scene cards, script versions, continuity, table read, marketing pack, SFX, brand-kit end card, overlays, karaoke captions, search, client review links with guest comments, audit, preferences.
-- **Upgrade:** a v1-shaped table is migrated in place with its rows kept.
-
-## 10. Code map
+## Project structure
 
 ```
+.github/             CI/CD workflows, Dependabot, PR and issue templates, CODEOWNERS
 backend/app/
-  main.py            FastAPI app (+ serves frontend/dist in production)      db_migrate.py  auto-upgrade on start
-  config.py          .env settings          catalog.py   model IDs, prices, languages, voices, presets
-  models.py          database tables        settings_store.py  team settings + encrypted API keys
-  api/               REST: auth, admin, projects, bible, shots, generate, work (jobs, approvals, comments, agent, ws, media),
-                     production (dashboards, impact, seasons, mentions, continuity bible, lock, versions, costumes, props), campaign,
-                     hub (Model Hub), room (writers' room), growth (brand kits, search, consents, audit, YouTube, review links, prefs)
-  core/              studio.py (writing room), generation.py (job specs + estimates), model_hub.py (catalog, policy, pricing),
-                     mentions.py (@tokens), dependencies.py (change impact), lock.py (Character Lock), continuity.py (bible,
-                     wardrobe), dashboard.py, campaign.py,
-                     budget.py, jobs.py, youtube.py, audit.py
-  agents/            director.py (agent loop), tools.py, prompts.py, schemas.py
-  providers/         gemini.py, fal.py, schema_map.py (OpenAPI → capabilities → arguments), elevenlabs.py, syncso.py, sarvam.py,
-                     mock.py, services.py (one run_model() for every engine)
-  pipeline/          prompting.py, voice.py, captions.py (karaoke ASS), assembler.py (reframe, SFX, end card), ffmpeg.py, faces.py
-  workers/           worker.py (DB job queue), handlers.py, handlers_hub.py, handlers_room.py, handlers_growth.py, handlers_campaign.py, run.py
-frontend/src/
-  pages/             Home, Login, Library, SearchPage, BrandKits, PublicReview, models/ (Model Hub), admin/*,
-                     project/Dashboard, World, Campaign (v3),
-                     project/* (Brief, Story, Scenes, Bible, Storyboard, ShotDrawer, Timeline, Export, Review, Activity)
-  components/        shell/ (palette, tour, theme, user menu), hub/, room/, review/, growth/, Generate (cost dialog), ui
-  lib/               api, queries, types, live (WebSocket), i18n.ts + i18n/{hi,kn,te,ta}.ts
-spike/run_spike.py   Phase 0 real-API tests
-scripts/             get_face_models.py, i18n/ (keys.py, split.py, merge.py — find and merge UI translations)
+  main.py            FastAPI app (API, WebSocket, /mcp, serves frontend/dist)   db_migrate.py  auto-upgrade on start
+  config.py          settings from .env    catalog.py  model IDs, prices, languages, voices, presets
+  models.py          database tables       settings_store.py  team settings + encrypted API keys
+  api/               REST: auth, admin, projects, bible, board, shots, generate, work (jobs, approvals, agent, ws, media),
+                     production, campaign, hub (Model Hub), room (writers' room), growth, designs (posters), layers,
+                     mcp_access, rates, fx
+  core/              studio, generation, model_hub, budget, jobs, lock, continuity, mentions, dependencies (change impact),
+                     scene_chain + scene_order (continuity ordering), autopilot, recovery, youtube, audit, rates …
+  agents/            director.py (agent loop: Claude or Gemini, keyword mock), director_claude.py, tools.py, prompts.py
+  mcp_server/        MCP server, tools, OAuth provider, tokens
+  providers/         gemini, fal, openrouter, byteplus, elevenlabs, syncso, sarvam, mock, schema_map, services (run_model)
+  pipeline/          prompting, voice, captions (karaoke ASS), assembler, ffmpeg, faces, scene_look, approved_stills
+  workers/           worker.py (DB job queue), handlers*.py, run.py (separate worker process)
+backend/tests/       pytest suite (mock providers)
+frontend/src/        pages/, components/, lib/ (api, queries, types, live WebSocket)
+scripts/             dev/ (worktree.py, check.py), get_face_models.py, showcase/, i18n/
+spike/               Phase 0 real-API checks
+docs/                USER_GUIDE.md, MCP.md, V3.md, DESIGN.md
 ```
 
-**Design system:** [docs/DESIGN.md](docs/DESIGN.md) describes the tokens, components, layout and motion rules every screen follows. In development, `/dev/kit` shows every shared component in the current theme.
+## Status: what's verified
 
-**Adding UI text:** wrap it in `t("…")` (`const t = useT()`). Then `python scripts/i18n/keys.py` shows how many strings each language is missing; put translations in `scripts/i18n/work/<lang>_NN.json` and run `python scripts/i18n/merge.py`. Untranslated strings simply show in English.
+**Verified with mock providers:** all 177 backend tests; every page checked in a browser; upgrading older databases in
+place; renders in English and Kannada with correct Indic captions; the MCP pipeline end to end. CI also builds the
+Docker image and starts it on every pull request.
 
-## 11. What's verified, and what isn't
+**Not yet verified against live services:** real API calls to Google, fal.ai, ElevenLabs, sync.so, Sarvam, OpenRouter
+and BytePlus (Phase 0 is that check; Veo needs a billed Gemini key); YouTube upload/analytics; Google sign-in; LoRA
+training; keyframe QC scores and retake spend on real images; Postgres beyond the connection layer (tests use SQLite).
 
-**Verified here, with mock providers:**
-- All 28 backend tests pass.
-- Every page, checked in a browser, including: scene cards, critic, table read, engine picker, shootout and winner, identity training, review mode with timecoded comments and drawing, client review link on a phone-sized screen with a guest comment, marketing pack, semantic search, Auto SFX, light theme, Hindi interface, command palette, onboarding tour, template gallery and the installable app (service worker, offline shell).
-- Upgrading the v1 dev database to v2 in place.
-- Rendering in English and Kannada with correct Indic captions, karaoke captions and title overlays.
+**Not built yet:** real-time collaborative editing of the same shot (last save wins, with undo per shot);
+Instagram/Facebook direct publishing (use the Make.com webhook or download the render).
 
-**Not yet verified:**
-- **Real API calls:** they follow Google's, fal.ai's, ElevenLabs', sync.so's and Sarvam's current docs, but haven't run with real keys yet. Phase 0 is that check. The Model Hub's schema mapping was tested on 22 real fal.ai schemas; the other ~780 are mapped the same way on the first live sync.
-- **YouTube upload and analytics:** written to the YouTube Data/Analytics API docs, untested without an OAuth client.
-- **Identity (LoRA) training** on fal.ai: mock only.
-- **Docker image:** written but not built here, because Docker Desktop isn't running on this PC.
-- **Postgres:** only tested on SQLite so far.
-- **Google sign-in:** written but untested.
-- **Translations:** machine-translated by AI and checked for placeholders. A native speaker should review the Kannada, Telugu, Tamil and Hindi wording.
+---
 
-**Not built yet:**
-- **Real-time collaborative editing** of the same shot. The last save wins; there is undo per shot.
-- **Instagram/Facebook direct publishing:** use the Make.com webhook or download the render.
+Security issues: please report privately, see [SECURITY.md](SECURITY.md).

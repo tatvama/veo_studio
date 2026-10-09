@@ -1,0 +1,23 @@
+name: Feature request
+description: Suggest a new feature or an improvement
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is hard or impossible today? Who runs into it?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Idea
+      description: What should the studio do? Which step of the flow (Story, Cast, Shots, Edit, Deliver)?
+    validations:
+      required: true
+  - type: textarea
+    id: cost
+    attributes:
+      label: Cost and providers
+      description: Does it call paid AI services? Which ones, and roughly how often?

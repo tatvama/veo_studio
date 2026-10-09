@@ -21,6 +21,7 @@ mimetypes.add_type("image/svg+xml", ".svg")
 mimetypes.add_type("image/webp", ".webp")
 mimetypes.add_type("video/mp4", ".mp4")
 
+from . import __version__
 from .api import (admin, auth, bible, board, campaign, designs, fx, generate, growth, hub, layers, mcp_access, production,
                   projects, rates, room, shots,
                   work)
@@ -52,7 +53,7 @@ async def lifespan(app: FastAPI):
         stop_worker()
 
 
-app = FastAPI(title="VEO STUDIO", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="VEO STUDIO", version=__version__, lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=[settings.frontend_origin], allow_credentials=True,
                    allow_methods=["*"], allow_headers=["*"])
 app.add_middleware(RetryReads)  # re-run a GET once if a dropped database connection failed it (see middleware.py)
