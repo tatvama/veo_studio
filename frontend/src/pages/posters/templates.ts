@@ -325,6 +325,151 @@ export const TEMPLATES: Template[] = [
       ], { type: "linear", angle: 135, stops: [{ offset: 0, color: "#0c4a6e" }, { offset: 1, color: dark }] }, pal);
     },
   },
+  {
+    key: "teaser_silhouette", label: "Teaser: coming soon", category: "Film", formats: ["film_poster", "story", "ig_post"],
+    description: "A silhouette half lost in the dark, one cryptic line and a date. Builds mystery before the full reveal.",
+    swatch: ["#030712", "#ef4444"], backgroundPrompt: "Lone silhouette against a single shaft of light in thick fog, almost black, high contrast",
+    build: (ctx) => {
+      const W = ctx.width, H = ctx.height, S = Math.min(W, H);
+      const { pal, a, dark } = kit(ctx, ["#030712", "#ef4444", "#f97316", "#f8fafc"]);
+      return doc(dark, [
+        slot("Silhouette scene", "background", "background", 0, 0, W, H, { filters: { brightness: -0.15, contrast: 15 } }),
+        fx("vignette", W, H, { intensity: 0.85 }),
+        fx("fade", W, H, { color: dark, intensity: 0.9, angle: 90 }),
+        sh("rect", W, H, { name: "Accent rule", x: W * 0.45, y: H * 0.6, width: W * 0.1, height: Math.max(3, Math.round(S * 0.004)), fill: a, cornerRadius: 0 }),
+        txt("tagline", W, H, { x: W * 0.1, y: H * 0.625, w: W * 0.8, h: S * 0.07 }, { text: ctx.tagline ?? "Every light hides a shadow.", fill: "#e5e7eb",
+          fontSize: Math.round(S * 0.036), slot: "tagline" }, ctx),
+        txt("title", W, H, { x: W * 0.06, y: H * 0.71, w: W * 0.88, h: H * 0.11 }, { text: ctx.title ?? "THE LAST LIGHT", fontFamily: "Cinzel Variable",
+          fontWeight: 700, fontSize: Math.round(S * 0.095), letterSpacing: Math.round(S * 0.015), fill: "#f8fafc", slot: "title" }, ctx),
+        txt("subtitle", W, H, { x: W * 0.2, y: H * 0.845, w: W * 0.6, h: S * 0.05 }, { text: ctx.badge ?? "COMING SOON", fill: a,
+          fontSize: Math.round(S * 0.03), letterSpacing: Math.round(S * 0.012), slot: "badge" }, ctx),
+        fx("grain", W, H, { intensity: 0.2 }),
+        ...logoLayer(ctx, W, H, "bc", 0.07),
+      ], null, pal);
+    },
+  },
+  {
+    key: "yt_versus", label: "Versus thumbnail", category: "YouTube", formats: ["yt_thumbnail", "ott_landscape", "landscape"],
+    description: "Two faces on split colours with a blazing VS burst between them. Face-offs, debates and comparisons.",
+    swatch: ["#1d4ed8", "#dc2626"], backgroundPrompt: "",
+    build: (ctx) => {
+      const W = ctx.width, H = ctx.height, S = Math.min(W, H);
+      const { pal, a, b, dark } = kit(ctx, ["#0b0b0b", "#2563eb", "#dc2626", "#ffffff"]);
+      const r = S * 0.17;
+      return doc(dark, [
+        sh("rect", W, H, { name: "Left side", x: 0, y: 0, width: W * 0.5, height: H, cornerRadius: 0, locked: true,
+          fill: { type: "linear", angle: 0, stops: [{ offset: 0, color: a }, { offset: 1, color: al(a, "bb") }] } }),
+        sh("rect", W, H, { name: "Right side", x: W * 0.5, y: 0, width: W * 0.5, height: H, cornerRadius: 0, locked: true,
+          fill: { type: "linear", angle: 0, stops: [{ offset: 0, color: al(b, "bb") }, { offset: 1, color: b }] } }),
+        slot("Left face", "character_1", "character", W * 0.02, H * 0.06, W * 0.44, H * 0.94),
+        slot("Right face", "character_2", "character", W * 0.54, H * 0.06, W * 0.44, H * 0.94),
+        sh("burst", W, H, { name: "VS burst", x: W * 0.5 - r, y: H * 0.42 - r, width: r * 2, height: r * 2, fill: "#facc15", points: 14, innerRatio: 0.72 }),
+        txt("title", W, H, { x: W * 0.5 - r, y: H * 0.42 - r * 0.6, w: r * 2, h: r * 1.2 }, { text: "VS", fontSize: Math.round(S * 0.15), fill: dark,
+          shadow: null, autoFit: false, name: "VS", slot: "vs" }, ctx),
+        txt("title", W, H, { x: W * 0.04, y: H * 0.76, w: W * 0.92, h: H * 0.2 }, { text: ctx.title ?? "WHO WINS?", fontSize: Math.round(S * 0.15),
+          fill: "#ffffff", stroke: { color: dark, width: Math.round(S * 0.01) }, slot: "title" }, ctx),
+      ], null, pal);
+    },
+  },
+  {
+    key: "sale_banner", label: "Sale announcement", category: "Ads", formats: ["square", "ig_post", "story", "fb_cover"],
+    description: "A giant discount, the product on a colour blob, the offer details and a shop-now button.",
+    swatch: ["#4c1d95", "#facc15"], backgroundPrompt: "Bright festive shopping backdrop, confetti, soft gradient, empty product podium",
+    build: (ctx) => {
+      const W = ctx.width, H = ctx.height, S = Math.min(W, H);
+      const { pal, a, b, dark } = kit(ctx, ["#2e1065", "#facc15", "#ec4899", "#ffffff"]);
+      return doc(dark, [
+        sh("ellipse", W, H, { name: "Colour blob", x: W * 0.4, y: H * 0.28, width: S * 0.72, height: S * 0.72, fill: al(b, "cc"), locked: true }),
+        slot("Product", "product", "product", W * 0.44, H * 0.32, W * 0.5, H * 0.5, { shadow: { color: "#000000", blur: Math.round(S * 0.04), x: 0,
+          y: Math.round(S * 0.02), opacity: 0.3 } }),
+        txt("subtitle", W, H, { x: W * 0.06, y: H * 0.07, w: W * 0.62, h: S * 0.06 }, { text: ctx.tagline ?? "FESTIVE SALE · 3 DAYS ONLY", align: "left", fill: a,
+          fontSize: Math.round(S * 0.032), slot: "tagline" }, ctx),
+        txt("title", W, H, { x: W * 0.05, y: H * 0.14, w: W * 0.56, h: H * 0.36 }, { text: ctx.title ?? "FLAT\n50%\nOFF", align: "left",
+          fontSize: Math.round(S * 0.16), lineHeight: 0.92, fill: "#ffffff", slot: "title" }, ctx),
+        txt("body", W, H, { x: W * 0.06, y: H * 0.53, w: W * 0.36, h: H * 0.16 }, { text: "On every jar, pickle and podi.\nFree delivery over ₹499.",
+          fill: "#ede9fe", fontSize: Math.round(S * 0.028), slot: "details" }, ctx),
+        txt("cta", W, H, { x: W * 0.06, y: H * 0.79, w: W * 0.4, h: S * 0.09 }, { text: ctx.cta ?? ctx.brand?.cta ?? "SHOP NOW",
+          background: { color: a, padding: Math.round(S * 0.022), radius: Math.round(S * 0.05) }, fill: dark, slot: "cta" }, ctx),
+        txt("badge", W, H, { x: W * 0.06, y: H * 0.91, w: W * 0.5, h: S * 0.045 }, { text: ctx.badge ?? "USE CODE TATVAM50", background: null, fill: a,
+          align: "left", fontSize: Math.round(S * 0.026), slot: "badge" }, ctx),
+        ...logoLayer(ctx, W, H, "tr", 0.1),
+      ], { type: "linear", angle: 135, stops: [{ offset: 0, color: "#4c1d95" }, { offset: 1, color: dark }] }, pal);
+    },
+  },
+  {
+    key: "season_premiere", label: "Season premiere", category: "Series", formats: ["film_poster", "ig_post", "story"],
+    description: "A huge outlined season number behind the lead, the show title and the streaming date.",
+    swatch: ["#030712", "#22d3ee"], backgroundPrompt: "Atmospheric night cityscape with neon reflections on wet streets",
+    build: (ctx) => {
+      const W = ctx.width, H = ctx.height, S = Math.min(W, H);
+      const { pal, a, dark } = kit(ctx, ["#030712", "#22d3ee", "#a855f7", "#f8fafc"]);
+      return doc(dark, [
+        slot("Backdrop", "background", "background", 0, 0, W, H, { opacity: 0.55 }),
+        fx("fade", W, H, { color: dark, intensity: 0.9, angle: 90 }),
+        txt("title", W, H, { x: 0, y: H * 0.06, w: W, h: H * 0.58 }, { text: "2", fontFamily: "Anton", fontSize: Math.round(Math.min(W * 0.9, H * 0.55)),
+          fill: al(a, "00"), stroke: { color: a, width: Math.max(3, Math.round(S * 0.006)) }, shadow: null, autoFit: false, name: "Season number",
+          slot: "season_number" }, ctx),
+        slot("Lead character", "hero", "character", W * 0.15, H * 0.14, W * 0.7, H * 0.6),
+        txt("subtitle", W, H, { x: W * 0.1, y: H * 0.7, w: W * 0.8, h: S * 0.05 }, { text: "SEASON 2", fill: a, fontSize: Math.round(S * 0.034),
+          letterSpacing: Math.round(S * 0.015), slot: "season" }, ctx),
+        txt("title", W, H, { x: W * 0.06, y: H * 0.75, w: W * 0.88, h: H * 0.11 }, { text: ctx.title ?? "THE LAMP", fontSize: Math.round(S * 0.13),
+          fill: "#ffffff", slot: "title" }, ctx),
+        txt("badge", W, H, { x: W * 0.25, y: H * 0.88, w: W * 0.5, h: S * 0.05 }, { text: ctx.badge ?? "STREAMING FROM 14 NOV", fill: dark,
+          background: { color: a, padding: Math.round(S * 0.012), radius: Math.round(S * 0.006) }, fontSize: Math.round(S * 0.026), slot: "badge" }, ctx),
+        fx("grain", W, H, { intensity: 0.12 }),
+        ...logoLayer(ctx, W, H, "tl", 0.09),
+      ], null, pal);
+    },
+  },
+  {
+    key: "story_announcement", label: "Story announcement", category: "Social", formats: ["story", "whatsapp_status", "ig_post"],
+    description: "A framed photo card, a bold headline and a swipe-up button. Drops, news and behind-the-scenes.",
+    swatch: ["#0c0a09", "#0ea5e9"], backgroundPrompt: "Behind the scenes on an Indian film set, warm practical lights, candid moment",
+    build: (ctx) => {
+      const W = ctx.width, H = ctx.height, S = Math.min(W, H);
+      const { pal, a, b, dark } = kit(ctx, ["#0c0a09", "#0ea5e9", "#f43f5e", "#fafaf9"]);
+      return doc(dark, [
+        sh("rect", W, H, { name: "Accent glow", x: 0, y: H * 0.55, width: W, height: H * 0.45, cornerRadius: 0, locked: true,
+          fill: { type: "linear", angle: 90, stops: [{ offset: 0, color: al(a, "00") }, { offset: 1, color: al(a, "66") }] } }),
+        slot("Photo", "background", "photo", W * 0.08, H * 0.1, W * 0.84, H * 0.5, { fit: "cover", cornerRadius: Math.round(S * 0.04),
+          stroke: { color: "#ffffff", width: Math.max(2, Math.round(S * 0.006)) } }),
+        txt("badge", W, H, { x: W * 0.08, y: H * 0.045, w: W * 0.4, h: S * 0.05 }, { text: ctx.badge ?? "JUST ANNOUNCED", align: "left", fill: "#ffffff",
+          background: { color: b, padding: Math.round(S * 0.012), radius: Math.round(S * 0.008) }, fontSize: Math.round(S * 0.03), slot: "badge" }, ctx),
+        txt("title", W, H, { x: W * 0.08, y: H * 0.63, w: W * 0.84, h: H * 0.15 }, { text: ctx.title ?? "WE START SHOOTING MONDAY", align: "left",
+          fontSize: Math.round(S * 0.1), lineHeight: 1, fill: "#ffffff", slot: "title" }, ctx),
+        txt("tagline", W, H, { x: W * 0.08, y: H * 0.79, w: W * 0.84, h: H * 0.06 }, { text: ctx.tagline ?? "Thirty days. Five languages. One lamp.",
+          align: "left", fill: "#e7e5e4", fontSize: Math.round(S * 0.04), slot: "tagline" }, ctx),
+        txt("cta", W, H, { x: W * 0.3, y: H * 0.88, w: W * 0.4, h: S * 0.09 }, { text: ctx.cta ?? ctx.brand?.cta ?? "SWIPE UP",
+          background: { color: a, padding: Math.round(S * 0.022), radius: Math.round(S * 0.05) }, fill: "#ffffff", slot: "cta" }, ctx),
+        ...logoLayer(ctx, W, H, "tr", 0.09),
+      ], null, pal);
+    },
+  },
+  {
+    key: "harvest_festival", label: "Harvest festival", category: "Festival", formats: ["square", "ig_post", "story"],
+    description: "Kolam rings, a sugarcane-gold palette and a greeting in Tamil under the English line. Pongal, Sankranti, Onam.",
+    swatch: ["#052e16", "#facc15"], backgroundPrompt: "Clay pot overflowing with pongal, sugarcane, marigolds, kolam on the floor, morning sun",
+    build: (ctx) => {
+      const W = ctx.width, H = ctx.height, S = Math.min(W, H);
+      const { pal, a, dark } = kit(ctx, ["#052e16", "#facc15", "#f97316", "#fefce8"]);
+      const cy = H * 0.42;
+      return doc(dark, [
+        slot("Festive scene", "background", "background", 0, 0, W, H, { opacity: 0.5 }),
+        fx("vignette", W, H, { intensity: 0.7, color: "#021208" }),
+        sh("ring", W, H, { name: "Kolam ring", x: W / 2 - S * 0.36, y: cy - S * 0.36, width: S * 0.72, height: S * 0.72, fill: al(a, "aa"),
+          innerRatio: 0.97, locked: true }),
+        sh("star", W, H, { name: "Kolam star", x: W / 2 - S * 0.31, y: cy - S * 0.31, width: S * 0.62, height: S * 0.62, fill: null,
+          stroke: { color: al(a, "66"), width: Math.max(2, Math.round(S * 0.003)) }, points: 8, innerRatio: 0.72, locked: true }),
+        txt("tamil", W, H, { x: W * 0.08, y: cy - H * 0.11, w: W * 0.84, h: H * 0.13 }, { text: ctx.title ?? "இனிய பொங்கல்", fill: a,
+          fontSize: Math.round(S * 0.09), slot: "title" }, ctx),
+        txt("subtitle", W, H, { x: W * 0.1, y: cy + H * 0.04, w: W * 0.8, h: S * 0.06 }, { text: ctx.tagline ?? "HAPPY PONGAL", fill: "#fefce8",
+          fontSize: Math.round(S * 0.04), letterSpacing: Math.round(S * 0.012), slot: "tagline" }, ctx),
+        txt("body", W, H, { x: W * 0.15, y: H * 0.78, w: W * 0.7, h: H * 0.08 }, { text: "May the harvest fill every home with sweetness",
+          align: "center", fill: "#fef9c3", fontSize: Math.round(S * 0.028), slot: "message" }, ctx),
+        ...logoLayer(ctx, W, H, "bc", 0.08),
+      ], { type: "radial", angle: 0, stops: [{ offset: 0, color: "#166534" }, { offset: 1, color: dark }] }, pal);
+    },
+  },
 ];
 
 export const TEMPLATE_CATEGORIES: TemplateCategory[] = ["Film", "Series", "YouTube", "Social", "Ads", "Festival", "Events"];

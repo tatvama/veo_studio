@@ -1,7 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
-  Activity, BookOpen, BookUser, Boxes, Clapperboard, Coins, FileText, Film, Gauge, Globe, Home, LayoutGrid, ListVideo, Megaphone, MessageSquareText,
-  Palette, PanelsTopLeft, ScrollText, Search, Settings, ShieldCheck, SquareKanban, Users,
+  Activity, BookOpen, BookUser, Boxes, Clapperboard, Coins, FileText, Film, Gauge, Globe, Home, LayoutGrid, LayoutTemplate, ListVideo, Megaphone,
+  MessageSquareText, Palette, PanelsTopLeft, ScrollText, Search, Settings, ShieldCheck, SquareKanban, Users,
 } from "lucide-react";
 import { ROLE_RANK, type Role } from "../../lib/types";
 
@@ -18,6 +18,7 @@ export function getNav(t: T, role: Role): NavEntry[] {
     { to: "/", group: "create", label: t("Command center"), icon: Home, tour: "nav-projects", keywords: "home projects dashboard start overview" },
     { to: "/search", group: "create", label: t("Search everything"), icon: Search, tour: "nav-search", keywords: "find" },
     { to: "/library", group: "library", label: t("Characters & places"), icon: BookUser, keywords: "characters locations cast library photos voice clone avatar" },
+    { to: "/posters", group: "library", label: t("Posters"), icon: LayoutTemplate, keywords: "poster studio design thumbnail youtube instagram story social post flyer banner festival greeting key art canva" },
     { to: "/models", group: "library", label: t("Model Hub"), icon: Boxes, tour: "nav-models", keywords: "ai engines veo kling models" },
     { to: "/brand-kits", group: "library", label: t("Brand kits"), icon: Palette, keywords: "logo colours fonts brand" },
     canApprove && { to: "/approvals", group: "team", label: t("Approvals"), icon: ShieldCheck, badge: "approvals", keywords: "budget approve" },
@@ -56,6 +57,7 @@ export function getProjectTabs(t: T): ProjectTab[] {
     { to: "export", phase: "finish", label: t("Export"), icon: Clapperboard, keywords: "render publish download" },
     { to: "review", phase: "finish", label: t("Review"), icon: MessageSquareText, keywords: "comments feedback client" },
     { to: "campaign", phase: "finish", label: t("Ads & Reels"), icon: Megaphone, keywords: "advert campaign variants languages aspect reels shorts highlights" },
+    { to: "posters", phase: "finish", label: t("Posters"), icon: LayoutTemplate, keywords: "poster studio key art thumbnail social post design flyer banner festival greeting" },
     { to: "activity", phase: "log", label: t("Activity"), icon: Activity, keywords: "log history events" },
   ];
 }

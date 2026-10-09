@@ -45,7 +45,7 @@ const blobFile = (b: Blob, name: string) => new File([b], name, { type: b.type |
 export const designsApi = {
   create: (body: { title?: string; format: string; width: number; height: number; project_id?: number | null; template?: string;
     brand_kit_id?: number | null; doc?: DesignDoc }) => api.post<Design>("/api/designs", body),
-  save: (id: number, patch: Partial<Pick<Design, "title" | "format" | "width" | "height" | "status" | "project_id" | "brand_kit_id">> & {
+  save: (id: number, patch: Partial<Pick<Design, "title" | "format" | "width" | "height" | "status" | "project_id" | "brand_kit_id" | "template">> & {
     doc?: DesignDoc; base_revision?: number; force?: boolean }) =>
     api.put<{ id: number; revision: number; updated_at: string }>(`/api/designs/${id}`, patch, { silent: true }),
   duplicate: (id: number) => api.post<Design>(`/api/designs/${id}/duplicate`),
@@ -66,7 +66,31 @@ export const designsApi = {
     api.post<{ suggestions: string[] }>("/api/designs/ai/copy", body),
   aiBrief: (body: { brief: string; format: string; project_id?: number | null; language?: string }) =>
     api.post<BriefPlan>("/api/designs/ai/brief", body),
+  /** Like `upload`, but reports byte progress (0…1) while the file goes up. Rejects with a readable message (no toast). */
+  uploadWithProgress: (id: number, file: File, onProgress?: (fraction: number) => void) => uploadWithProgress(id, file, onProgress),
 };
+
+function uploadWithProgress(id: number, file: File, onProgress?: (fraction: number) => void): Promise<UploadResult> {
+  return new Promise((resolve, reject) => {
+    const fd = new FormData();
+    fd.append("file", file);
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `/api/designs/${id}/upload`);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader("X-Requested-With", "veo-studio");
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable) onProgress?.(e.loaded / e.total); };
+    xhr.onload = () => {
+      let data: { detail?: unknown } & Partial<UploadResult> = {};
+      try { data = JSON.parse(xhr.responseText); } catch { /* not json */ }
+      if (xhr.status >= 200 && xhr.status < 300 && data.asset) { onProgress?.(1); resolve(data as UploadResult); return; }
+      if (xhr.status === 401) window.dispatchEvent(new CustomEvent("veo:unauthorized"));
+      reject(new Error(typeof data.detail === "string" ? data.detail : xhr.statusText || "Upload failed"));
+    };
+    xhr.onerror = () => reject(new Error("Network error while uploading"));
+    xhr.onabort = () => reject(new Error("Upload cancelled"));
+    xhr.send(fd);
+  });
+}
 
 /** Poll the AI jobs the editor is waiting for and drop their images into the right layers. Mount once in the editor. */
 export function useJobWatcher() {

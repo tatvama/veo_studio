@@ -10,9 +10,9 @@ export type SaveState = "idle" | "dirty" | "saving" | "saved" | "error" | "confl
 export type LeftTab = "templates" | "ai" | "text" | "elements" | "photos" | "cast" | "brand";
 export type RightTab = "design" | "layers";
 
-interface Snapshot { doc: DesignDoc; width: number; height: number }
+interface Snapshot { doc: DesignDoc; width: number; height: number; format?: string }
 
-export interface TrackedJob { layerId: string; kind: AiKind; variation: number }
+export interface TrackedJob { layerId: string; kind: AiKind; variation: number; /** the jobs started together */ batch: string; size: number }
 
 export interface EditorState {
   design: Design | null;
@@ -80,7 +80,11 @@ const COALESCE_MS = 900;
 let lastKey = "";
 let lastAt = 0;
 
-const snap = (s: Pick<EditorState, "doc" | "width" | "height">): Snapshot => ({ doc: structuredClone(s.doc), width: s.width, height: s.height });
+const snap = (s: Pick<EditorState, "doc" | "width" | "height" | "design">): Snapshot =>
+  ({ doc: structuredClone(s.doc), width: s.width, height: s.height, format: s.design?.format });
+
+/** one entry per picture, so a take is never listed twice */
+const uniqueAlts = (alts: Alternative[]) => alts.filter((a, i, arr) => !!(a.asset || a.src) && arr.findIndex((b) => (b.asset || b.src) === (a.asset || a.src)) === i);
 
 export const useEditor = create<EditorState>((set, get) => {
   /** apply a document change with undo history */
@@ -204,7 +208,7 @@ export const useEditor = create<EditorState>((set, get) => {
       lastKey = "";
       const ok = new Set(prev.doc.layers.map((l) => l.id));
       set({ past: s.past.slice(0, -1), future: [snap(s), ...s.future].slice(0, MAX_HISTORY), doc: prev.doc, width: prev.width,
-        height: prev.height, selection: s.selection.filter((i) => ok.has(i)), rev: s.rev + 1, save: "dirty", editingTextId: null });
+        height: prev.height, design: s.design && prev.format ? { ...s.design, format: prev.format } : s.design, selection: s.selection.filter((i) => ok.has(i)), rev: s.rev + 1, save: "dirty", editingTextId: null });
     },
     redo: () => {
       const s = get();
@@ -213,7 +217,7 @@ export const useEditor = create<EditorState>((set, get) => {
       lastKey = "";
       const ok = new Set(next.doc.layers.map((l) => l.id));
       set({ future: s.future.slice(1), past: [...s.past, snap(s)].slice(-MAX_HISTORY), doc: next.doc, width: next.width,
-        height: next.height, selection: s.selection.filter((i) => ok.has(i)), rev: s.rev + 1, save: "dirty", editingTextId: null });
+        height: next.height, design: s.design && next.format ? { ...s.design, format: next.format } : s.design, selection: s.selection.filter((i) => ok.has(i)), rev: s.rev + 1, save: "dirty", editingTextId: null });
     },
     select: (want, mode = "set") => {
       const cur = get().selection;
@@ -237,7 +241,8 @@ export const useEditor = create<EditorState>((set, get) => {
 
     trackJobs: (jobIds, layerId, kind) => {
       const jobs = { ...get().jobs };
-      jobIds.forEach((id, i) => { jobs[id] = { layerId, kind, variation: i }; });
+      const batch = jobIds.join(",");
+      jobIds.forEach((id, i) => { jobs[id] = { layerId, kind, variation: i, batch, size: jobIds.length }; });
       set({ jobs });
       const doc = get().doc;
       set({ doc: mapLayers(doc, (l) => (l.id === layerId && l.type === "image"
@@ -250,15 +255,16 @@ export const useEditor = create<EditorState>((set, get) => {
       const jobs = { ...s.jobs };
       delete jobs[jobId];
       const alt: Alternative = { src: r.src, asset: r.asset, width: r.width, height: r.height };
+      // the first take of a batch to arrive replaces the picture (the old one is kept as a take); later takes queue up
+      const firstToLand = Object.values(s.jobs).filter((j) => j.batch === t.batch).length === t.size;
       const doc = mapLayers(s.doc, (l) => {
         if (l.id !== t.layerId || l.type !== "image") return l;
         const img = l as ImageLayer;
         const left = (img.pending?.jobIds ?? []).filter((j) => j !== jobId);
-        const hasImage = !!img.src;
-        // the first take fills the layer; later variations wait as alternatives to swap in
-        let next: ImageLayer = hasImage && img.pending && t.variation > 0
-          ? { ...img, alternatives: [...(img.alternatives ?? []), alt] }
-          : refitImage({ ...img, src: r.src, asset: r.asset, alternatives: hasImage && img.src && !img.pending ? [...(img.alternatives ?? []), { src: img.src, asset: img.asset, width: img.naturalWidth ?? 0, height: img.naturalHeight ?? 0 }] : (img.alternatives ?? []) }, r.width, r.height);
+        const old: Alternative[] = img.src ? [{ src: img.src, asset: img.asset, width: img.naturalWidth ?? 0, height: img.naturalHeight ?? 0 }] : [];
+        let next: ImageLayer = firstToLand
+          ? refitImage({ ...img, src: r.src, asset: r.asset, alternatives: uniqueAlts([...(img.alternatives ?? []), ...old]).filter((a) => (a.asset || a.src) !== (r.asset || r.src)) }, r.width, r.height)
+          : { ...img, alternatives: uniqueAlts([...(img.alternatives ?? []), alt]) };
         next = { ...next, pending: left.length ? { ...img.pending!, jobIds: left } : null,
           ai: { ...(img.ai ?? { kind: t.kind, prompt: r.prompt ?? "" }), kind: t.kind, engine: r.engine, faceMatch: r.face_match ?? null } };
         return next;
@@ -272,6 +278,8 @@ export const useEditor = create<EditorState>((set, get) => {
       if (!t) return;
       const jobs = { ...s.jobs };
       delete jobs[jobId];
+      // a failed take no longer counts towards its batch, so the next one to land still fills the picture
+      for (const k of Object.keys(jobs)) if (jobs[+k].batch === t.batch) jobs[+k] = { ...jobs[+k], size: jobs[+k].size - 1 };
       set({ jobs, doc: mapLayers(s.doc, (l) => {
         if (l.id !== t.layerId || l.type !== "image") return l;
         const left = (l.pending?.jobIds ?? []).filter((j) => j !== jobId);

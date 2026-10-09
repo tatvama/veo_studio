@@ -1,0 +1,169 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   Poster Studio editor: the workspace around the page, the page itself, the inline text editor and HUD readouts.
+   Only what Tailwind utilities can't say cleanly. Built from the Command tokens, so dark and light follow automatically.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* smart guides and equal-spacing hints: a magenta that reads on any poster */
+  --pst-guide: #f472b6;
+  --pst-gap: #ec4899;
+  --pst-safe: #fbbf24;
+  --pst-handle: #ffffff;
+  --pst-dot: rgb(148 163 184 / 0.11);
+  --pst-ws: color-mix(in oklab, var(--color-bg) 78%, var(--color-hover));
+  --pst-page-shadow: 0 0 0 1px rgb(0 0 0 / 0.55), 0 28px 70px -24px rgb(0 0 0 / 0.9), 0 10px 24px -12px rgb(0 0 0 / 0.65);
+  --pst-check-a: #2a2f3a;
+  --pst-check-b: #1c2029;
+}
+
+:root[data-theme="light"] {
+  --pst-guide: #db2777;
+  --pst-gap: #db2777;
+  --pst-safe: #d97706;
+  --pst-handle: #ffffff;
+  --pst-dot: rgb(30 60 110 / 0.1);
+  --pst-ws: color-mix(in oklab, var(--color-bg) 70%, var(--color-hover));
+  --pst-page-shadow: 0 0 0 1px rgb(15 25 45 / 0.08), 0 24px 56px -22px rgb(15 25 45 / 0.42), 0 6px 16px -8px rgb(15 25 45 / 0.2);
+  --pst-check-a: #e2e6ee;
+  --pst-check-b: #f6f8fb;
+}
+
+/* The workspace: a calm neutral ground with a faint dot grid, so any palette on the page reads true. */
+.pst-workspace {
+  background-color: var(--pst-ws);
+  background-image: radial-gradient(circle at 1px 1px, var(--pst-dot) 1px, transparent 1.4px);
+  background-size: 22px 22px;
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: none;
+}
+.pst-workspace.is-hand .pst-stage, .pst-workspace.is-hand canvas { cursor: inherit !important; }
+
+.pst-stage { position: absolute !important; inset: 0; }
+
+/* The page's drop shadow lives in HTML behind the (transparent) canvas. */
+.pst-page-shadow {
+  position: absolute;
+  pointer-events: none;
+  box-shadow: var(--pst-page-shadow);
+  border-radius: 1px;
+}
+.pst-page-shadow.is-transparent {
+  background: repeating-conic-gradient(var(--pst-check-a) 0% 25%, var(--pst-check-b) 0% 50%) 0 0 / 16px 16px;
+}
+
+/* Inline text editing: a textarea laid over the layer in the layer's own type. */
+.pst-text-editor {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  transform-origin: 0 0;
+  outline: calc(1.5px / var(--pst-z, 1)) dashed var(--color-accent);
+  outline-offset: 0;
+}
+.pst-text-editor textarea {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background-color: transparent;
+  resize: none;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  caret-color: var(--color-accent);
+  font-kerning: normal;
+  font-optical-sizing: auto;
+}
+.pst-text-editor textarea::selection { background: var(--selection); }
+
+/* Live X/Y, W×H and angle readout under the selection while dragging, resizing or rotating. */
+.pst-readout {
+  position: absolute;
+  z-index: 6;
+  transform: translateX(-50%);
+  pointer-events: none;
+  white-space: nowrap;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--color-accent);
+  color: var(--on-accent);
+  font-size: 11px;
+  line-height: 16px;
+  font-weight: 600;
+  box-shadow: 0 4px 14px -4px rgb(0 0 0 / 0.5);
+}
+
+/* "Painting the background…" badge over a layer an AI job is filling (always above the design). */
+.pst-pending {
+  position: absolute;
+  z-index: 4;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(320px, 80%);
+  white-space: nowrap;
+  padding: 5px 11px 5px 9px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in oklab, var(--color-ai) 35%, var(--color-line));
+  background: color-mix(in oklab, var(--color-panel) 86%, transparent);
+  color: var(--color-ink);
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: 0 6px 20px -8px rgb(0 0 0 / 0.55);
+  backdrop-filter: blur(6px);
+}
+.pst-pending > span { overflow: hidden; text-overflow: ellipsis; }
+.pst-pending .eq > i { background: var(--color-ai); }
+
+/* Read-only previews (gallery, template picker, versions). */
+.pst-preview { position: relative; overflow: hidden; flex-shrink: 0; }
+.pst-preview > img, .pst-preview > canvas { display: block; width: 100%; height: 100%; }
+.pst-preview .konvajs-content { pointer-events: none; }
+
+/* Zoom slider in the editor's bottom bar. */
+.pst-zoom-range {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--color-accent) 0 var(--pst-fill, 50%), var(--color-line) var(--pst-fill, 50%) 100%);
+}
+.pst-zoom-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  background: var(--color-ink);
+  border: 2px solid var(--color-panel);
+  box-shadow: 0 0 0 1px var(--color-line);
+}
+.pst-zoom-range::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--color-ink);
+  border: 2px solid var(--color-panel);
+}
+
+/* Toolbar title: looks like text until you edit it. */
+.pst-title {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 0.5rem;
+  transition: border-color 150ms ease, background-color 150ms ease;
+}
+.pst-title:hover { border-color: var(--color-line); }
+.pst-title:focus { outline: none; border-color: color-mix(in oklab, var(--color-accent) 70%, transparent); background: var(--color-raised); }
+
+@media (prefers-reduced-motion: reduce) {
+  .pst-title { transition: none; }
+}

@@ -149,3 +149,10 @@ def test_nearest_aspect_and_prompts():
     assert "No text" in p and "temple" in p
     c = dz.prompt_for("character", "", pose="arms crossed", cutout=True, has_ref=True)
     assert "#00FF00" in c and "Same person" in c and "arms crossed" in c
+
+
+def test_template_and_brand_kit_are_saved(client):
+    d = _new(client)
+    ok(client.put(f"/api/designs/{d['id']}", json={"template": "festival_greeting", "brand_kit_id": 7}, headers=H))
+    got = ok(client.get(f"/api/designs/{d['id']}", headers=H))
+    assert got["template"] == "festival_greeting" and got["brand_kit_id"] == 7

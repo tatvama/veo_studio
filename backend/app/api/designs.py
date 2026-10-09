@@ -100,6 +100,7 @@ class DesignPatch(BaseModel):
     status: Literal["draft", "approved"] | None = None
     project_id: int | None = None
     brand_kit_id: int | None = None
+    template: str | None = Field(None, max_length=60)
     base_revision: int | None = None  # the revision the editor started from; a newer one on the server means a teammate saved
     force: bool = False
 
@@ -120,7 +121,7 @@ def save_design(did: int, body: DesignPatch, user: User = Depends(current_user),
             raise HTTPException(400, str(e))
     if body.width is not None or body.height is not None:
         d.width, d.height = dz.clamp_size(body.width or d.width, body.height or d.height)
-    for k in ("title", "format", "status", "brand_kit_id"):
+    for k in ("title", "format", "status", "brand_kit_id", "template"):
         v = getattr(body, k)
         if v is not None:
             setattr(d, k, v.strip() if isinstance(v, str) and k == "title" else v)
@@ -393,9 +394,13 @@ class BriefOut(BaseModel):
 
 BRIEF_SYSTEM = ("You are a key-art director for Indian films, series, ads and social posts. From a brief, plan one poster: pick "
                 "the best template, write the title, tagline, optional credits/CTA/badge, describe the background image "
-                "(no text in it), give a 3-5 colour hex palette and a short visual style. Templates: film_onesheet, "
-                "character_spotlight, minimal_title, youtube_thumbnail, product_ad, festival_greeting, cast_lineup, "
-                "episode_card, event_flyer, quote_card.")
+                "(no text in it), give a 3-5 colour hex palette and a short visual style. Templates: film_onesheet "
+                "(classic film poster), character_spotlight (one character reveal), minimal_title (typographic), "
+                "teaser_silhouette (mysterious teaser), youtube_thumbnail (single hook), yt_versus (two sides, versus), "
+                "product_ad (product with price and CTA), sale_banner (discount or sale), festival_greeting (Diwali, Eid, "
+                "Christmas…), harvest_festival (Pongal, Sankranti, Onam, Ugadi), cast_lineup (ensemble), episode_card "
+                "(weekly episode), season_premiere (new season), event_flyer (premiere, screening, launch), "
+                "story_announcement (9:16 announcement), quote_card (a line from the film).")
 
 
 @router.post("/designs/ai/brief")

@@ -108,7 +108,7 @@ def prompt_for(kind: str, prompt: str, *, style: str = "", character: Any = None
                 f"rich colour grade, professional key art quality.{style_txt} {NO_TEXT}")
     if kind == "character":
         same = ("Same person as the reference image: identical face, facial structure, hair, skin tone and age. " if has_ref else "")
-        dna = f"{character.dna_text}. " if character is not None and getattr(character, "dna_text", "") else ""
+        dna = f"{character.dna_text.strip().rstrip('.')}. " if character is not None and getattr(character, "dna_text", "") else ""
         who = f"{character.name}. " if character is not None else ""
         return (f"Key-art photograph of {who}{same}{dna}Pose and framing: {pose or prompt or 'heroic three-quarter pose, waist up'}. "
                 f"{'Outfit: ' + outfit + '. ' if outfit else ''}{prompt + '. ' if prompt and pose else ''}"
