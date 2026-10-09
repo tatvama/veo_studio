@@ -84,6 +84,7 @@ export function ProvidersCard({ providers, isAdmin, index, prices }: { providers
   const { data: keys, isLoading, isError, isFetching, refetch } = useApiKeys(isAdmin);
   const [editing, setEditing] = useState<string | null>(null);
   const [value, setValue] = useState("");
+  const [secret, setSecret] = useState("");  // BytePlus asset library: access key + secret, saved as "KEY:SECRET"
   const [busy, setBusy] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<ProviderStatus | null>(null);
   const keyMap = useMemo(() => Object.fromEntries((keys ?? []).map((k) => [k.provider, k])), [keys]);
@@ -97,7 +98,9 @@ export function ProvidersCard({ providers, isAdmin, index, prices }: { providers
   ]);
 
   const saveKey = async (p: ProviderStatus) => {
-    const key = value.trim();
+    const pair = p.provider === "byteplus_iam";
+    if (pair && (!value.trim() || !secret.trim())) return void toast.error(t("Paste both the Access Key ID and the Secret Access Key"));
+    const key = pair ? `${value.trim()}:${secret.trim()}` : value.trim();
     if (key.length < 8) return void toast.error(t("That key looks too short — paste the full key"));
     setBusy(p.provider);
     try {
@@ -105,6 +108,7 @@ export function ProvidersCard({ providers, isAdmin, index, prices }: { providers
       await refresh();
       setEditing(null);
       setValue("");
+      setSecret("");
       toast.success(t("{name} key saved", { name: brandName(p.provider) }), { description: t("New generations will use the real service.") });
     } catch {
       /* already toasted */
@@ -203,7 +207,7 @@ export function ProvidersCard({ providers, isAdmin, index, prices }: { providers
                             </div>
                           ))}
                         </dl>
-                      ) : p.provider === "fal" ? (
+                      ) : ["fal", "openrouter", "byteplus"].includes(p.provider) ? (
                         <p className="text-xs text-mute">{t("Priced per model.")} <Link to="/models" className="font-medium text-accent-ink hover:underline">{t("Open Model Hub")}</Link></p>
                       ) : <span className="text-xs text-dim">—</span>}
                     </div>
@@ -211,7 +215,7 @@ export function ProvidersCard({ providers, isAdmin, index, prices }: { providers
                     {isAdmin && (
                       <div className="st-eng-act flex flex-wrap items-center gap-2 @[56rem]:justify-end">
                         {!isEditing && (
-                          <Button size="sm" variant="outline" className="max-sm:h-10" icon={<KeyRound className="size-3.5" />} onClick={() => { setEditing(p.provider); setValue(""); }}>
+                          <Button size="sm" variant="outline" className="max-sm:h-10" icon={<KeyRound className="size-3.5" />} onClick={() => { setEditing(p.provider); setValue(""); setSecret(""); }}>
                             {k && k.source !== "missing" ? t("Replace key") : t("Set key")}
                           </Button>
                         )}
@@ -228,11 +232,20 @@ export function ProvidersCard({ providers, isAdmin, index, prices }: { providers
                         transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }} className="overflow-hidden"
                         onSubmit={(e) => { e.preventDefault(); void saveKey(p); }}>
                         <div className="cx-block mt-3 flex flex-wrap gap-2 p-2.5">
-                          <Input type="password" autoFocus autoComplete="off" className="min-w-[220px] flex-1 font-mono max-sm:h-10"
-                            aria-label={t("Paste the {name} API key", { name: brandName(p.provider) })}
-                            placeholder={t("Paste the {name} API key", { name: brandName(p.provider) })} value={value} onChange={(e) => setValue(e.target.value)} />
+                          {p.provider === "byteplus_iam" ? (
+                            <>
+                              <Input autoFocus autoComplete="off" spellCheck={false} className="min-w-[180px] flex-1 font-mono max-sm:h-10"
+                                aria-label={t("Access Key ID")} placeholder={t("Access Key ID (AKLT…)")} value={value} onChange={(e) => setValue(e.target.value)} />
+                              <Input type="password" autoComplete="off" className="min-w-[180px] flex-1 font-mono max-sm:h-10"
+                                aria-label={t("Secret Access Key")} placeholder={t("Secret Access Key")} value={secret} onChange={(e) => setSecret(e.target.value)} />
+                            </>
+                          ) : (
+                            <Input type="password" autoFocus autoComplete="off" className="min-w-[220px] flex-1 font-mono max-sm:h-10"
+                              aria-label={t("Paste the {name} API key", { name: brandName(p.provider) })}
+                              placeholder={t("Paste the {name} API key", { name: brandName(p.provider) })} value={value} onChange={(e) => setValue(e.target.value)} />
+                          )}
                           <Button type="submit" variant="primary" className="max-sm:h-10" icon={<Save className="size-4" />} loading={busy === p.provider}>{t("Save key")}</Button>
-                          <Button type="button" variant="ghost" className="max-sm:h-10" icon={<X className="size-4" />} onClick={() => { setEditing(null); setValue(""); }}>{t("Cancel")}</Button>
+                          <Button type="button" variant="ghost" className="max-sm:h-10" icon={<X className="size-4" />} onClick={() => { setEditing(null); setValue(""); setSecret(""); }}>{t("Cancel")}</Button>
                         </div>
                       </motion.form>
                     )}

@@ -97,6 +97,9 @@ export interface Character {
   assets?: CharacterAsset[]; voices?: any[]; asset_count?: number;
   identity: { status?: "preparing" | "training" | "ready" | "failed" | "cancelled"; trigger?: string; images?: number; trained_at?: string;
     error?: string; lora_url?: string; basis?: "your_photos" | "sheet" };
+  /** The character registered with outside services: BytePlus asset library entries that Seedance takes as references. */
+  provider_assets?: { byteplus?: { status?: "registering" | "ready" | "failed"; group_id?: string; error?: string; registered_at?: string;
+    updated_at?: string; assets?: { asset_id: string; source_id: number; path: string; kind: string; status: "Active" | "Processing" | "Failed" | string; error?: string }[] } };
   /** What a face model would be trained on now: the user's photos + approved variations (or the sheet if no photos). */
   training?: { basis: "your_photos" | "sheet"; own: number; variations_approved: number; variations_waiting: number; count: number; min: number;
     good: number; auto_fill: boolean };
@@ -188,13 +191,21 @@ export interface AIModel {
   failures: number; tags: string[]; thumbnail_url: string; released_at: string; builtin: boolean; notes: string;
   provider_mode: "live" | "mock" | "missing"; unmapped_required: string[]; first_seen: string; estimate_usd?: number;
   param_map?: Record<string, any>; param_overrides?: Record<string, any>;
+  /** The model behind the engine ("seedance-2"); engines with the same key run the same model through other providers. */
+  route_key?: string; other_routes?: ModelRoute[];
+}
+/** One provider's way to run a model. */
+export interface ModelRoute {
+  id: string; provider: string; display_name: string; provider_mode: "live" | "mock" | "missing"; est_8s_usd: number | null;
+  price_usd?: number | null; price_unit?: string; modes?: string[];
 }
 /** How a video model can use a shot: characters/location by "refs" (images go to the model), "keyframe" or not at all. */
 export interface VideoFit {
   characters: "refs" | "keyframe" | "none"; location: "refs" | "keyframe" | "none"; max_refs: number;
   start_frame: boolean; end_frame: boolean; sound: boolean; extend: boolean; talking: boolean;
 }
-export interface VideoEngine extends AIModel { fit: VideoFit }
+/** A video model for the shot picker: listed once, led by its cheapest live route; `routes` are all of them. */
+export interface VideoEngine extends AIModel { fit: VideoFit; routes?: Pick<ModelRoute, "id" | "provider" | "display_name" | "provider_mode" | "est_8s_usd">[] }
 export interface VideoEngines { engines: VideoEngine[]; auto_first: Record<string, string | null>; google_first: boolean }
 export interface ModelList { models: AIModel[]; total: number; offset: number; last_sync: { at?: string; total?: number; new?: string[]; new_count?: number; retired?: number; priced?: number };
   counts: Record<string, number> }

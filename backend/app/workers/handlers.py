@@ -158,9 +158,7 @@ def run_chain(ctx: JobContext, chain: str, modes_ok: list[str], build: Callable[
                 ctx.save_result(ops={k: v for k, v in (ctx.result.get("ops") or {}).items() if k != m.id})
             model_hub.record_outcome(m.id, False)
             attempts.append({"engine": m.id, "mode": mode, "error": str(e)[:300]})
-            last = e
-            if explicit:
-                raise
+            last = e  # an explicit pick only has routes of the same model to fall back on
         finally:
             ratelimit.release(token)
     if held:
@@ -367,7 +365,7 @@ def video(ctx: JobContext) -> dict:
                           last_frame=last_frame if mode_ == "flf" else None, refs=refs if mode_ == "ref2v" else [],
                           audio=audio, video=extend_from, video_uri=extend_uri, duration=duration, aspect=aspect,
                           resolution="720p" if extend else qm["resolution"], generate_audio=not audio_driven,
-                          loras=loras if mode_ in ("i2v", "t2v", "ref2v", "flf") else [])
+                          loras=loras if mode_ in ("i2v", "t2v", "ref2v", "flf") else [], cast_refs=vr)
 
     try:
         m, used, res, attempts = run_chain(ctx, chain, modes_ok, build, explicit=explicit, skip=p.get("skip_engines"))

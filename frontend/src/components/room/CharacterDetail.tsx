@@ -14,6 +14,7 @@ import { Badge, Button, Input, Select, Skeleton, Textarea } from "../ui";
 import { GroupHead, IdMark, JobStrip, LangChips, LEVEL_TEXT, LockMeter, PackBar, PackStations, Portrait, Vital, packDone as countPack, packOf, voicedLanguages } from "./cast";
 import { CharacterLockPanel } from "./CharacterLock";
 import { Costumes } from "./Costumes";
+import { BytePlusPanel } from "./BytePlusPanel";
 import { ConsentPanel, IdentityBadge, IdentityPanel } from "./Identity";
 import { DetailBar, FloatingSaveBar, RField, RoomEmpty, type SaveState } from "./kit";
 import { Gallery, type GalleryItem } from "./Lightbox";
@@ -172,6 +173,7 @@ export function CharacterDetail({ cid, chars, onBack, onOpen, backLabel }: {
     { id: "sec-voices", label: t("Voice"), state: scope.languages.length && voiceCount === scope.languages.length ? "done" : voiceCount ? "warn" : "todo", meta: `${voiceCount}/${scope.languages.length}` },
     { id: "sec-identity", label: t("Identity"), state: idStatus === "ready" ? "done" : idStatus === "failed" ? "warn" : idStatus === "training" || idStatus === "preparing" ? "none" : "todo",
       meta: idStatus === "training" || idStatus === "preparing" ? "RUN" : undefined },
+    { id: "sec-byteplus", label: t("Seedance"), state: c.provider_assets?.byteplus?.status === "ready" ? "done" : "none" },
     ...(showConsent ? [{ id: "sec-consent", label: t("Consent"), state: (consentOk ? "done" : "warn") as OutlineItem["state"] }] : []),
   ];
   const outlineDone = outline.filter((i) => i.state === "done").length;
@@ -378,7 +380,8 @@ export function CharacterDetail({ cid, chars, onBack, onOpen, backLabel }: {
         <Versions character={c} editable={editable} n={5} />
         <Voices character={c} n={6} />
         <IdentityPanel character={c} n={7} />
-        <ConsentPanel character={c} n={8} />
+        <BytePlusPanel character={c} n={8} />
+        <ConsentPanel character={c} n={9} />
       </Workspace>
 
       <FloatingSaveBar show={editable && (dirty || busy === "save")} state={state} saving={busy === "save"} onSave={save} onDiscard={() => setForm(seed(c))} />

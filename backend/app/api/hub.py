@@ -25,7 +25,7 @@ from .common import get_or_404, take_out
 router = APIRouter(prefix="/api", tags=["models"])
 
 
-def model_out(m: AIModel, est_seconds: float = 8.0) -> dict:
+def model_out(m: AIModel, est_seconds: float = 8.0, groups: dict[str, list[AIModel]] | None = None) -> dict:
     d = m.to_dict()
     d.pop("param_map", None)
     d["provider_mode"] = provider_mode(m.provider)
@@ -33,7 +33,17 @@ def model_out(m: AIModel, est_seconds: float = 8.0) -> dict:
                         else ("catalog price" if m.builtin else "price unknown"))
     d["est_8s_usd"] = round(model_hub.price_for(m, seconds=est_seconds), 4) if m.task in ("video", "avatar", "lipsync", "edit") else None
     d["unmapped_required"] = (m.param_map or {}).get("unmapped_required", [])
+    d["route_key"] = model_hub.route_key(m)
+    if groups is not None:  # the same model through other providers (switched on)
+        d["other_routes"] = [route_out(r) for r in groups.get(d["route_key"], []) if r.id != m.id] if d["route_key"] else []
     return d
+
+
+def route_out(m: AIModel) -> dict:
+    video = m.task in ("video", "avatar", "lipsync", "edit")
+    return {"id": m.id, "provider": m.provider, "display_name": m.display_name, "provider_mode": provider_mode(m.provider),
+            "est_8s_usd": round(model_hub.price_for(m, seconds=8.0), 4) if video else None,
+            "price_usd": m.price_usd, "price_unit": m.price_unit, "modes": (m.capabilities or {}).get("modes") or []}
 
 
 SORTS = ("newest", "name", "price", "rating", "uses")
@@ -74,7 +84,9 @@ def list_models(task: str | None = None, status: str | None = None, q: str | Non
     rows = rows[start:start + max(1, min(limit, 1000))]
     last = settings_store.get_setting(db, "hub_last_sync") or {}
     counts = {s: db.query(AIModel).filter(AIModel.status == s).count() for s in ("enabled", "new", "disabled", "retired")}
-    return {"models": [model_out(m) for m in rows], "total": total, "offset": start, "last_sync": last, "counts": counts}
+    groups = model_hub.route_groups(db)
+    return {"models": [model_out(m, groups=groups) for m in rows], "total": total, "offset": start, "last_sync": last,
+            "counts": counts}
 
 
 @router.get("/models/policy")
@@ -113,7 +125,7 @@ def sync_now(full: bool = False, admin: User = Depends(require("admin")), db: Se
 @router.get("/models/{model_id:path}")
 def get_model(model_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
     m = get_or_404(db, AIModel, model_id, "Model")
-    d = model_out(m)
+    d = model_out(m, groups=model_hub.route_groups(db))
     d["param_map"] = m.param_map
     return d
 
@@ -159,25 +171,48 @@ def video_fit(caps: dict) -> dict:
             "sound": bool(caps.get("native_audio")), "extend": "extend" in modes, "talking": "a2v" in modes}
 
 
+def _merged_caps(ds: list[dict]) -> dict:
+    """What a model can do through any of its routes (each route takes the jobs it can)."""
+    caps = [d.get("capabilities") or {} for d in ds]
+    return {"modes": sorted({x for c in caps for x in c.get("modes") or []}),
+            "max_refs": max((int(c.get("max_refs") or 0) for c in caps), default=0),
+            "native_audio": any(c.get("native_audio") for c in caps)}
+
+
 @router.get("/engines/video")
 def video_engines(user: User = Depends(current_user), db: Session = Depends(get_db)):
     """Video models you can pick for a shot, with what each can use (characters, location, sound) and a price for
-    an 8-second clip. Auto follows the team policy (Google first)."""
+    an 8-second clip. Auto follows the team policy (Google first). A model reachable through several providers is
+    listed once: the cheapest live route leads, and `routes` lists them all (the others are its fallback)."""
     rows = db.query(AIModel).filter(AIModel.status == "enabled", AIModel.task == "video").all()
-    out = []
+    found = []
     for m in rows:
         caps = m.capabilities or {}
         if caps.get("usable") is False or provider_mode(m.provider) == "missing":
             continue
         if not set(caps.get("modes") or []) & {"t2v", "i2v", "ref2v", "flf"}:
             continue
-        d = model_out(m)
-        d["fit"] = video_fit(caps)
-        out.append(d)
+        found.append(model_out(m))
+    by_key: dict[str, list[dict]] = {}
+    out = []
+    for d in found:
+        if d["route_key"]:
+            by_key.setdefault(d["route_key"], []).append(d)
+        else:
+            d["routes"] = [{k: d[k] for k in ("id", "provider", "display_name", "provider_mode", "est_8s_usd")}]
+            d["fit"] = video_fit(d["capabilities"] or {})
+            out.append(d)
+    for key, ds in by_key.items():
+        ds.sort(key=lambda d: (d["provider_mode"] != "live", round(d["est_8s_usd"] or 0, 3),
+                               model_hub.PROVIDER_RANK.get(d["provider"], 9)))
+        head = dict(ds[0])
+        head["routes"] = [{k: d[k] for k in ("id", "provider", "display_name", "provider_mode", "est_8s_usd")} for d in ds]
+        head["fit"] = video_fit(_merged_caps(ds) if len(ds) > 1 else (head["capabilities"] or {}))
+        out.append(head)
     rank = {"refs": 0, "keyframe": 1, "none": 2}
     out.sort(key=lambda d: (d["provider"] != "google", rank[d["fit"]["characters"]], d["est_8s_usd"] or 0))
     pol = model_hub.policy(db)
-    ids = {d["id"] for d in out}
+    ids = {r["id"] for d in out for r in d["routes"]}
     # what Auto tries first, per quality mode (the shot's or the project's)
     auto = {q: next((x for x in pol.get(f"video.{q}", []) if x in ids), None) for q in ("saver", "balanced", "hero")}
     return {"engines": out, "auto_first": auto,

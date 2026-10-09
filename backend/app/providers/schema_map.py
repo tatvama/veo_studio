@@ -68,6 +68,9 @@ class GenRequest:
     voice: str = ""
     language: str = ""
     loras: list[dict] = field(default_factory=list)  # [{path, scale}] for engines with a loras input
+    # the shot's character / location references with labels, in every mode (engines that take reference images
+    # name them in the prompt; BytePlus swaps a registered character's photos for its asset library entries)
+    cast_refs: list[tuple[str, Path]] = field(default_factory=list)
 
 
 # ── schema reading ───────────────────────────────────────────────────────────

@@ -139,9 +139,17 @@ class KeyIn(BaseModel):
 def set_key(provider: str, body: KeyIn, admin: User = Depends(require("admin")), db: Session = Depends(get_db)):
     if provider not in settings_store.PROVIDERS:
         raise HTTPException(404, "unknown provider")
+    if provider == "byteplus_iam":  # saved together as "ACCESS_KEY:SECRET"
+        ak, _, sk = body.key.partition(":")
+        if not ak.strip() or not sk.strip():
+            raise HTTPException(400, "Enter the BytePlus Access Key ID and Secret Access Key")
     settings_store.save_api_key(db, provider, body.key, admin.id)
     audit(db, admin, "apikey.set", provider, commit=False)
     db.commit()
+    if provider == "openrouter":  # pull its video models and prices into the Model Hub right away
+        from ..core import jobs
+        jobs.submit(db, admin, None, [jobs.spec("model_sync", payload={"full": False}, label="Model Hub sync")],
+                    skip_budget=True)
     return {"ok": True, "providers": provider_status()}
 
 

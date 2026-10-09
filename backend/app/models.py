@@ -105,6 +105,9 @@ class Character(Base, Serializable):
     # Character Lock: structured constraints that steer prompts, reference picking and QC thresholds (core/lock.py)
     # {face, body, skin_hair, voice, costume_continuity, gestures, age, lighting, strictness: 0..1}
     lock: Mapped[Any] = mapped_column(JSON, default=dict)
+    # the character registered with outside services, e.g. {"byteplus": {status, group_id, assets: [{asset_id,
+    # source_id, path, kind, status, error}], job_id, error, updated_at}} (BytePlus asset library, for Seedance)
+    provider_assets: Mapped[Any] = mapped_column(JSON, default=dict)
     # how the name is said, for voices and prompts, e.g. RAH-vee
     name_pronunciation: Mapped[str] = mapped_column(String(120), default="")
     # signature gestures, posture, speaking style (fed into prompts)

@@ -417,6 +417,29 @@ def train_identity(cid: int, body: TrainIn, request: Request, user: User = Depen
     return jobs.submit(db, user, p, [generation.train_identity_spec(db, body.project_id, ch)])
 
 
+@router.post("/characters/{cid}/register/byteplus")
+def register_byteplus(cid: int, body: TrainIn, request: Request, user: User = Depends(require("creator")),
+                      db: Session = Depends(get_db)):
+    """Register the character's approved sheet images in the BytePlus asset library, so Seedance can use them."""
+    from ..providers.services import provider_mode
+    from ..workers.handlers_hub import register_images
+    ch = get_or_404(db, Character, cid)
+    mode = provider_mode("byteplus_iam")
+    if mode == "missing":
+        raise HTTPException(400, "Add the BytePlus access key and secret in Settings → AI services first")
+    if mode == "live" and get_settings().storage_backend != "s3":
+        raise HTTPException(400, "BytePlus downloads the images by link, which needs bucket storage (STORAGE_BACKEND=s3)")
+    if not register_images(db, ch):
+        raise HTTPException(400, "Make this character's sheet (front, three-quarter, full body) first")
+    from ..models import Job
+    running = db.query(Job).filter(Job.type == "byteplus_register", Job.status.in_(jobs.ACTIVE)).all()
+    if any((j.payload or {}).get("character_id") == cid for j in running):
+        raise HTTPException(409, "Already registering")
+    p = db.get(Project, body.project_id) if body.project_id else None
+    audit(db, user, "character.register_byteplus", ch.name, request=request, commit=False)
+    return jobs.submit(db, user, p, [generation.byteplus_register_spec(body.project_id, ch)])
+
+
 class VariationsIn(BaseModel):
     count: int = 6
     project_id: int | None = None

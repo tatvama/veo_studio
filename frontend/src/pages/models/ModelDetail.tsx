@@ -15,7 +15,7 @@ import { useModel } from "../../lib/queries";
 import type { AIModel } from "../../lib/types";
 import { providerLabel } from "./catalogData";
 import { CAP_DEFS, clipUsd, hasCap, isListPrice, isTimeBased, perSecond, rateText, speedCells, successPct } from "./modelMeta";
-import { ModelThumb, ProviderBadge, StateBadge, StatusBadge, TASK_ICON, useModelPatch, type ModelPatchBody } from "./ModelCard";
+import { ModelThumb, ProviderBadge, RoutesLine, StateBadge, StatusBadge, TASK_ICON, useModelPatch, type ModelPatchBody } from "./ModelCard";
 import { SlideOver } from "./SlideOver";
 
 import "../../styles/console.css";
@@ -371,6 +371,12 @@ function Overview({ m }: { m: AIModel }) {
 
       <Panel eyebrow={t("Price")} icon={<Coins />}>
         <PriceTable m={m} />
+        {(m.other_routes?.length ?? 0) > 0 && (
+          <div className="mt-3 border-t border-line pt-3">
+            <RoutesLine m={m} />
+            <p className="mt-1 text-2xs text-dim">{t("With “Cheapest route first” on (Settings), the cheapest live provider runs this model and the others take over if it fails.")}</p>
+          </div>
+        )}
       </Panel>
 
       {tags.length > 0 && (

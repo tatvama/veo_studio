@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle, AudioLines, Boxes, Film, GitCompareArrows, Image as ImageIcon, Images, Music, Play, Speech, Sparkles, Star, Trophy, UserRound, Wand2, XCircle, Zap,
+  AlertTriangle, AudioLines, Boxes, Film, GitCompareArrows, Image as ImageIcon, Images, Music, Play, Route, Speech, Sparkles, Star, Trophy, UserRound, Wand2, XCircle, Zap,
 } from "lucide-react";
 import { memo, useCallback, useState, type CSSProperties } from "react";
 import { toast } from "sonner";
@@ -145,6 +145,26 @@ export function SpecTags({ m, className, modes = 0 }: { m: AIModel; className?: 
         <Badge tone="bad" title={t("Input schema could not be mapped — this engine can't be used yet")}><XCircle className="size-3" />{t("unusable")}</Badge>
       )}
     </span>
+  );
+}
+
+/** The same model through other providers, each with its state and price per second. */
+export function RoutesLine({ m, className }: { m: Pick<AIModel, "other_routes">; className?: string }) {
+  const t = useT();
+  const routes = m.other_routes ?? [];
+  if (!routes.length) return null;
+  return (
+    <p className={cn("flex flex-wrap items-center gap-x-2 gap-y-1 text-2xs text-mute", className)}
+      title={t("The same model through other providers: the cheapest live one runs first, the others take over if it fails")}>
+      <Route className="size-3 shrink-0" aria-hidden /><span>{t("Also on")}</span>
+      {routes.map((r) => (
+        <span key={r.id} className="mono inline-flex items-center gap-1">
+          <StatusDot tone={r.provider_mode === "live" ? "ok" : r.provider_mode === "mock" ? "warn" : "bad"} />
+          {providerLabel(r.provider)}
+          {r.est_8s_usd ? <span className="text-money">{rateText(r.est_8s_usd / 8)}/s</span> : null}
+        </span>
+      ))}
+    </p>
   );
 }
 
@@ -327,6 +347,7 @@ export const ModelCard = memo(function ModelCard({ m, admin, busy, onToggle, onO
         </div>
         <CapRow m={m} />
         {mapped ? <SpecTags m={m} modes={3} /> : <span className="text-2xs text-dim">{t("Details not mapped yet")}</span>}
+        <RoutesLine m={m} />
         {m.unmapped_required?.length > 0 && (
           <p className="flex items-center gap-1 text-2xs text-warn" title={m.unmapped_required.join(", ")}>
             <AlertTriangle className="size-3 shrink-0" /><span className="truncate">{t("Needs mapping: {fields}", { fields: m.unmapped_required.slice(0, 3).join(", ") })}</span>

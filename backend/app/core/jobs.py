@@ -16,6 +16,7 @@ ACTIVE = ("proposed", "queued", "running", "awaiting_approval")
 SHOT_EXCLUSIVE = {"keyframe", "video", "lipsync", "voicelock", "voice", "omni_edit"}
 
 JOB_LABELS = {
+    "byteplus_register": "Register with BytePlus",
     "keyframe": "Keyframe", "video": "Video", "qc": "QC review", "voice": "Voice", "lipsync": "Lip-sync",
     "voicelock": "Voice lock", "music": "Music", "character_sheet": "Character sheet", "character_outfit": "Outfit",
     "character_expressions": "Expressions", "location_images": "Location images", "voice_design": "Voice design",

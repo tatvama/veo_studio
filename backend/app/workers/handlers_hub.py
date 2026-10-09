@@ -1,8 +1,9 @@
-"""Model Hub jobs: catalog sync and character identity (LoRA) training."""
+"""Model Hub jobs: catalog sync, character identity (LoRA) training, and registering characters with BytePlus."""
 from __future__ import annotations
 
 import re
 import shutil
+import time
 import zipfile
 
 from .. import settings_store
@@ -12,6 +13,7 @@ from ..db import SessionLocal, utcnow
 from ..events import emit
 from ..models import Character, CharacterAsset
 from ..providers.base import ProviderError, RetryableProviderError
+from ..providers.services import provider_mode
 from ..storage import get_storage
 from .handlers import _save_char_asset, _sheet_prompt, _style_of, gen_image
 from .worker import Cancelled, JobContext, handler
@@ -23,6 +25,129 @@ VARIATIONS = [
     "Close-up, surprised expression, cinematic light", "Medium shot walking, outdoors daylight",
     "Front view, determined expression, dramatic side light", "Over-the-shoulder glance back", "Low angle medium shot, confident",
 ]
+
+
+# ── BytePlus asset library ───────────────────────────────────────────────────
+
+# the character sheet views BytePlus gets, best first (never "source": the library's AI-character groups must not
+# show a real person; real people verify themselves in the BytePlus console instead)
+REGISTER_KINDS = ["front", "three_quarter", "full_body", "profile", "outfit"]
+REGISTER_MAX = 4
+
+
+def register_images(db, ch: Character) -> list[CharacterAsset]:
+    """The approved sheet views, or (like identity training) the whole AI-made sheet while none is approved yet."""
+    sheet = (db.query(CharacterAsset).filter(CharacterAsset.character_id == ch.id, CharacterAsset.archived.is_(False),
+                                             CharacterAsset.kind.in_(REGISTER_KINDS))
+             .order_by(CharacterAsset.id.desc()).all())
+    rows = [a for a in sheet if a.approved] or sheet
+    rows.sort(key=lambda a: REGISTER_KINDS.index(a.kind))
+    out, kinds = [], set()
+    for a in rows:  # one image per view first, then more if there is room
+        if a.kind not in kinds:
+            kinds.add(a.kind)
+            out.append(a)
+    out += [a for a in rows if a not in out]
+    return out[:REGISTER_MAX]
+
+
+def _save_reg(ctx: JobContext, cid: int, **values) -> dict:
+    with SessionLocal() as db:
+        c = db.get(Character, cid)
+        pa = dict(c.provider_assets or {})
+        reg = {**(pa.get("byteplus") or {}), **values, "updated_at": utcnow().isoformat() + "Z"}
+        pa["byteplus"] = reg
+        c.provider_assets = pa
+        db.commit()
+        emit(db, ctx.project_id, "bible.updated", {"character_id": cid})
+        return reg
+
+
+@handler("byteplus_register")
+def byteplus_register(ctx: JobContext) -> dict:
+    """Register a character's approved sheet images in the BytePlus asset library (one AI-character group per
+    character). Seedance then takes them as asset:// references, the sanctioned way to keep an AI character
+    consistent without its real-person filter blocking the clip."""
+    cid = ctx.payload["character_id"]
+    try:
+        return _byteplus_register(ctx, cid)
+    except Cancelled:
+        _save_reg(ctx, cid, status="failed", error="Stopped before it finished")
+        raise
+    except RetryableProviderError:
+        raise  # rate limit / brief error: the worker runs it again and it carries on where it stopped
+    except Exception as e:
+        _save_reg(ctx, cid, status="failed", error=str(e)[:300])
+        raise
+
+
+def _byteplus_register(ctx: JobContext, cid: int) -> dict:
+    from ..config import get_settings
+    from ..providers.byteplus import AssetLibrary
+    st = get_storage()
+    mock = provider_mode("byteplus_iam") == "mock"
+    with SessionLocal() as db:
+        ch = db.get(Character, cid)
+        name = ch.name
+        images = [(a.id, a.kind, a.path) for a in register_images(db, ch)]
+        reg = dict((ch.provider_assets or {}).get("byteplus") or {})
+        qpm = max(1, int(settings_store.get_setting(db, "byteplus_asset_qpm") or 3))
+    if not images:
+        raise ProviderError("Make this character's sheet (front, three-quarter, full body) first")
+    assets = [a for a in reg.get("assets") or [] if a.get("status") in ("Active", "Processing")]
+    done = {a.get("source_id") for a in assets}
+    _save_reg(ctx, cid, status="registering", job_id=ctx.job_id, error="", assets=assets)
+    s = get_settings()
+    lib = None if mock else AssetLibrary(settings_store.api_key("byteplus_iam"), s.byteplus_region, s.byteplus_project)
+    group = reg.get("group_id") or ""
+    if not group:
+        ctx.progress(0.05, "Creating the character's group in BytePlus")
+        slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40] or "character"
+        group = f"mock-group-{cid}" if mock else lib.ensure_group(f"tatvam-{cid}-{slug}", f"Tatvam AI Studio character: {name}")
+        _save_reg(ctx, cid, group_id=group)
+    todo = [im for im in images if im[0] not in done]
+    for i, (aid, kind, path) in enumerate(todo):
+        ctx.check_cancel()
+        ctx.progress(0.1 + 0.5 * i / max(len(todo), 1), f"Uploading {kind.replace('_', ' ')} view ({i + 1}/{len(todo)})")
+        if i:  # the library allows only a few uploads a minute on the Entry tier
+            wait_until = time.time() + 60.0 / qpm
+            while time.time() < wait_until and not mock:
+                ctx.check_cancel()
+                time.sleep(1)
+        if mock:
+            asset_id, status = f"asset-mock-{cid}-{aid}", "Active"
+        else:
+            url = st.public_url(st.abs(path))
+            if not url:
+                raise ProviderError("BytePlus downloads the images by link, which needs bucket storage "
+                                    "(STORAGE_BACKEND=s3 with the R2 settings)")
+            asset_id, status = lib.create_asset(group, url, f"{name} {kind.replace('_', ' ')}"), "Processing"
+        assets.append({"asset_id": asset_id, "source_id": aid, "path": path, "kind": kind, "status": status, "error": ""})
+        _save_reg(ctx, cid, assets=assets)
+    deadline = time.time() + 900
+    while any(a["status"] == "Processing" for a in assets):
+        ctx.check_cancel()
+        if time.time() > deadline:
+            raise RetryableProviderError("BytePlus is still checking the images; trying again shortly", provider="byteplus")
+        ready = sum(a["status"] != "Processing" for a in assets)
+        ctx.progress(0.65 + 0.3 * ready / len(assets), f"BytePlus is checking the images ({ready}/{len(assets)} done)")
+        time.sleep(5)
+        for a in assets:
+            if a["status"] == "Processing":
+                info = lib.get_asset(a["asset_id"])
+                a["status"] = str(info.get("Status") or "Processing")
+                if a["status"] == "Failed":
+                    a["error"] = str(info.get("FailedReason") or info.get("ErrorMessage") or info.get("Error") or
+                                     "rejected by BytePlus review")[:200]
+        _save_reg(ctx, cid, assets=assets)
+    active = [a for a in assets if a["status"] == "Active"]
+    failed = [a for a in assets if a["status"] == "Failed"]
+    if not active:
+        reg = _save_reg(ctx, cid, status="failed", error="; ".join(a["error"] for a in failed)[:300] or "No image was accepted")
+        raise ProviderError(f"BytePlus accepted none of {name}'s images: {reg['error']}", provider="byteplus")
+    _save_reg(ctx, cid, status="ready", error=f"{len(failed)} image(s) rejected" if failed else "",
+              registered_at=utcnow().isoformat() + "Z")
+    return {"character_id": cid, "group_id": group, "active": len(active), "failed": len(failed)}
 
 
 @handler("model_sync")
