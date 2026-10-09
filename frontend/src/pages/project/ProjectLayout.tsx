@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { FolderSearch } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Link, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import AgentPanel from "../../components/AgentPanel";
@@ -68,6 +68,15 @@ export default function ProjectLayout() {
     try { localStorage.setItem(fullKey, v ? "1" : "0"); } catch { /* storage blocked */ }
   };
 
+  // Below ~1100px the Director floats over the page, so it only opens when asked (toggle or Ctrl/⌘+J), never by default.
+  const [floatOpen, setFloatOpen] = useState(false);
+  const agentSeen = useRef(true);
+  useEffect(() => { if (agentSeen.current) { agentSeen.current = false; return; } setFloatOpen(ui.agentOpen); }, [ui.agentOpen]);
+  useEffect(() => {
+    const open = () => setFloatOpen(true);
+    window.addEventListener("veo:director-open", open);
+    return () => window.removeEventListener("veo:director-open", open);
+  }, []);
   useEffect(() => { if (project) setTitle(project.title); }, [project?.title]);
   useEffect(() => {
     const h = () => setVw(window.innerWidth);
@@ -151,9 +160,9 @@ export default function ProjectLayout() {
   const apPaused = ap.status === "paused";
   const step = nextStep(project, episode, ap, settings?.catalog.autopilot);
   const stepKey = step ? `${pid}:${eid}:${step.text}` : "";
-  const showAgent = ui.agentOpen && !(drawerOpen && narrow);
   // Below ~1100px there isn't room for a docked Director: float it over the page instead of squeezing the content.
   const floatAgent = vw < 1100;
+  const showAgent = ui.agentOpen && !(drawerOpen && narrow) && (!floatAgent || floatOpen);
   const ownMaterial = project.workflow === "shots" || project.workflow === "script";
   const simple = ownMaterial && !fullTabs;
   const shown = simple ? tabs.filter((tb) => SIMPLE_TABS.includes(tb.to)).map((tb) => (tb.to === "bible" ? { ...tb, label: t("Characters") } : tb)) : tabs;

@@ -19,6 +19,8 @@ export function MobileNav({ user }: { user: UserBrief }) {
   const pending = (approvals ?? []).filter((a) => a.can_decide).length;
   const entries = useMemo(() => getNav(t, user.role), [t, user.role]);
   const main = entries.filter((e) => ["/", "/library", "/models"].includes(e.to));
+  // short labels: five cells plus the account share a 375px bar
+  const short: Record<string, string> = { "/": t("Home"), "/library": t("Library"), "/models": t("Models") };
   const more = entries.filter((e) => !main.includes(e) && e.to !== "/search");
   const [open, setOpen] = useState(false);
   const moreRef = useRef<HTMLButtonElement>(null);
@@ -31,7 +33,7 @@ export function MobileNav({ user }: { user: UserBrief }) {
           {({ isActive }) => (
             <>
               <e.icon className="size-5" />
-              <span className="max-w-full truncate">{e.label}</span>
+              <span className="max-w-full truncate">{short[e.to] ?? e.label}</span>
               {isActive && <span aria-hidden className="absolute inset-x-5 top-0 h-0.5 rounded-b-full bg-accent shadow-[0_0_10px_var(--color-accent)]" />}
             </>
           )}

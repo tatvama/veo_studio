@@ -21,6 +21,7 @@ export function isTypingTarget(el: EventTarget | null): boolean {
 export function openDirector() {
   const ui = useUI.getState();
   ui.setAgentOpen(true);
+  window.dispatchEvent(new Event("veo:director-open"));
   if (window.innerWidth < 1760) ui.setSelectedShot(null);
   setTimeout(() => document.getElementById("agent-input")?.focus(), 80);
 }
