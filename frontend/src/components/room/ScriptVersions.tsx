@@ -18,7 +18,7 @@ import { Fact, RoomEmpty } from "./kit";
 import { ScriptEditor } from "./ScriptEditor";
 import { scoreTone, scriptToLines, TONE_TEXT_SM, useDialogFocus } from "./util";
 
-const SOURCE: Record<string, { label: string; tone: "neutral" | "accent" | "ok" | "info" | "warn"; dot: string }> = {
+export const SOURCE: Record<string, { label: string; tone: "neutral" | "accent" | "ok" | "info" | "warn"; dot: string }> = {
   ai: { label: "AI draft", tone: "accent", dot: "bg-accent" },
   manual: { label: "Manual edit", tone: "neutral", dot: "bg-dim" },
   critic: { label: "Critic pass", tone: "info", dot: "bg-info" },
@@ -28,8 +28,9 @@ const SOURCE: Record<string, { label: string; tone: "neutral" | "accent" | "ok" 
 type Mode = "current" | "previous" | "text";
 
 /** Right-hand drawer: script history, line diff vs current/previous, restore. */
-export function ScriptVersionsDrawer({ open, onClose, eid, current, canEdit, hasUnsaved }: {
+export function ScriptVersionsDrawer({ open, onClose, eid, current, canEdit, hasUnsaved, focusId }: {
   open: boolean; onClose: () => void; eid: number; current: Script | undefined; canEdit: boolean; hasUnsaved?: boolean;
+  /** open with this version selected (otherwise the latest) */ focusId?: number | null;
 }) {
   return createPortal(
     <AnimatePresence>
@@ -37,7 +38,7 @@ export function ScriptVersionsDrawer({ open, onClose, eid, current, canEdit, has
         <>
           <motion.div key="scrim" className="veo-backdrop fixed inset-0 z-40 backdrop-blur-[2px]" onClick={onClose}
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }} />
-          <Drawer key="drawer" eid={eid} current={current} canEdit={canEdit} onClose={onClose} hasUnsaved={hasUnsaved} />
+          <Drawer key="drawer" eid={eid} current={current} canEdit={canEdit} onClose={onClose} hasUnsaved={hasUnsaved} focusId={focusId} />
         </>
       )}
     </AnimatePresence>,
@@ -45,8 +46,8 @@ export function ScriptVersionsDrawer({ open, onClose, eid, current, canEdit, has
   );
 }
 
-function Drawer({ eid, current, canEdit, onClose, hasUnsaved }: {
-  eid: number; current: Script | undefined; canEdit: boolean; onClose: () => void; hasUnsaved?: boolean;
+function Drawer({ eid, current, canEdit, onClose, hasUnsaved, focusId }: {
+  eid: number; current: Script | undefined; canEdit: boolean; onClose: () => void; hasUnsaved?: boolean; focusId?: number | null;
 }) {
   const panel = useRef<HTMLElement>(null);
   useDialogFocus(panel);
@@ -54,20 +55,20 @@ function Drawer({ eid, current, canEdit, onClose, hasUnsaved }: {
     <motion.aside ref={panel} role="dialog" aria-modal="true" aria-label={tr("Script versions")}
       className="fixed inset-y-0 right-0 z-40 flex w-full max-w-5xl flex-col border-l border-line bg-panel shadow-modal"
       initial={{ x: "100%" }} animate={{ x: 0 }} exit={{ x: "100%" }} transition={{ type: "spring", stiffness: 380, damping: 40, mass: 0.9 }}>
-      <DrawerBody eid={eid} current={current} canEdit={canEdit} onClose={onClose} hasUnsaved={hasUnsaved} />
+      <DrawerBody eid={eid} current={current} canEdit={canEdit} onClose={onClose} hasUnsaved={hasUnsaved} focusId={focusId} />
     </motion.aside>
   );
 }
 
-function DrawerBody({ eid, current, canEdit, onClose, hasUnsaved }: {
-  eid: number; current: Script | undefined; canEdit: boolean; onClose: () => void; hasUnsaved?: boolean;
+function DrawerBody({ eid, current, canEdit, onClose, hasUnsaved, focusId }: {
+  eid: number; current: Script | undefined; canEdit: boolean; onClose: () => void; hasUnsaved?: boolean; focusId?: number | null;
 }) {
   const t = useT();
   const qc = useQueryClient();
   const { project } = useProjectCtx();
   const { data: versions, isLoading } = useScriptVersions(eid);
   const { data: users } = useUsers();
-  const [selId, setSelId] = useState<number | null>(null);
+  const [selId, setSelId] = useState<number | null>(focusId ?? null);
   const [mode, setMode] = useState<Mode>("current");
   const [confirm, setConfirm] = useState<ScriptVersion | null>(null);
   const [busy, setBusy] = useState(false);
@@ -102,8 +103,9 @@ function DrawerBody({ eid, current, canEdit, onClose, hasUnsaved }: {
   return (
     <>
       <div className="flex items-center gap-3 border-b border-line px-5 py-3.5">
-        <span className="grid size-8 place-items-center rounded-lg bg-accent/12 text-accent-ink"><History className="size-4" /></span>
+        <span className="hud grid size-9 place-items-center rounded-lg border border-accent/25 bg-accent/10 text-accent-ink"><History className="size-4" /></span>
         <div className="min-w-0">
+          <p className="eyebrow mb-1">{t("History")}</p>
           <h2 className="text-sm font-semibold leading-tight">{t("Script versions")}</h2>
           <p className="text-xs text-mute">{versions ? t("{n} saved", { n: versions.length }) : " "}</p>
         </div>

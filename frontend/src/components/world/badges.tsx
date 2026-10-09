@@ -20,6 +20,6 @@ export function StateSourceBadge({ source, className }: { source?: "ai" | "manua
   const t = useT();
   if (!source) return null;
   return source === "ai"
-    ? <Badge tone="accent" title={t("Written by AI from the script and the previous scene")} className={className}><Bot className="size-3" />{t("AI")}</Badge>
+    ? <Badge tone="ai" title={t("Written by AI from the script and the previous scene")} className={className}><Bot className="size-3" />{t("AI")}</Badge>
     : <Badge tone="info" title={t("Edited by hand")} className={className}><UserPen className="size-3" />{t("manual")}</Badge>;
 }

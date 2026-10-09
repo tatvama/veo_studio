@@ -214,19 +214,21 @@ body {
 }
 
 /* Numerals that line up (tables, counters, telemetry). */
-.num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
+@layer components { .num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; } }
 
 /* ── Form controls ───────────────────────────────────────────────────────── */
-select:not([multiple]):not([size]) {
-  appearance: none;
-  background-image: var(--chevron);
-  background-repeat: no-repeat;
-  background-position: right 0.6rem center;
-  background-size: 1rem;
-  padding-right: 2rem;
-  text-overflow: ellipsis;
+@layer base {
+  select:not([multiple]):not([size]) {
+    appearance: none;
+    background-image: var(--chevron);
+    background-repeat: no-repeat;
+    background-position: right 0.6rem center;
+    background-size: 1rem;
+    padding-right: 2rem;
+    text-overflow: ellipsis;
+  }
+  select option { background: var(--color-panel); color: var(--color-ink); }
 }
-select option { background: var(--color-panel); color: var(--color-ink); }
 
 /* ── Surfaces ────────────────────────────────────────────────────────────── */
 /* Bordered panels get a hairline highlight + soft shadow so cards read as layered rather than flat outlines. */
@@ -288,16 +290,18 @@ select option { background: var(--color-panel); color: var(--color-ink); }
 .hud:hover::before, .hud:hover::after, .hud:focus-within::before, .hud:focus-within::after { opacity: 1; width: 14px; height: 14px; }
 
 /* Small uppercase mono label above a value or section ("eyebrow"). */
-.eyebrow {
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-  line-height: 1;
-  font-weight: 500;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--color-dim);
+@layer components {
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    line-height: 1;
+    font-weight: 500;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--color-dim);
+  }
+  .mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 }
-.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 
 /* A bar of light along the top edge of a panel, in the accent gradient. */
 .edge-light {

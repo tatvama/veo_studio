@@ -1,13 +1,13 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { Check, Cloud, Clock, Loader2, Package, PenLine, Sparkles, StickyNote, X } from "lucide-react";
+import { Check, Loader2, Package, PenLine, Sparkles, StickyNote, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { tr, useT } from "../../lib/i18n";
 import type { Character } from "../../lib/types";
 import { aiEndState, editEndState, type EndState } from "../../lib/v3";
-import { Avatar, Button, Input, Textarea } from "../ui";
+import { Avatar, Button, Input, Tag, Textarea } from "../ui";
 import { StateSourceBadge } from "./badges";
 import { TagInput } from "./TagInput";
 
@@ -66,8 +66,8 @@ export function useEndStateActions(sceneId: number, eid: number | undefined) {
 function Line({ icon, label, children }: { icon: ReactNode; label: string; children: ReactNode }) {
   return (
     <div className="flex items-start gap-2 text-xs">
-      <span className="mt-0.5 shrink-0 text-dim [&>svg]:size-3.5" title={label}>{icon}</span>
-      <div className="min-w-0 flex-1"><span className="mr-1.5 text-2xs font-semibold uppercase tracking-wide text-dim">{label}</span><span className="text-ink">{children}</span></div>
+      <span className="mt-px shrink-0 text-dim [&>svg]:size-3.5" title={label}>{icon}</span>
+      <div className="min-w-0 flex-1"><span className="eyebrow mr-1.5">{label}</span><span className="text-ink">{children}</span></div>
     </div>
   );
 }
@@ -78,13 +78,13 @@ export function EndStateView({ state, cast, className }: { state: Partial<EndSta
   const chars = Object.entries(state.characters ?? {});
   if (endStateEmpty(state)) return <p className={clsx("text-xs text-dim", className)}>{t("Nothing written yet.")}</p>;
   return (
-    <div className={clsx("space-y-2", className)}>
+    <div className={clsx("space-y-3", className)}>
       {chars.length > 0 && (
-        <ul className="space-y-1.5">
+        <ul className="divide-y divide-line/70 rounded-lg border border-line bg-raised/30">
           {chars.map(([id, c]) => {
             const person = cast?.find((x) => String(x.id) === id);
             return (
-              <li key={id} className="flex items-start gap-2 text-xs">
+              <li key={id} className="flex items-start gap-2 px-2.5 py-1.5 text-xs">
                 <Avatar name={c.name || person?.name || id} src={person?.avatar_url || undefined} size={22} />
                 <div className="min-w-0 flex-1 leading-snug">
                   <span className="font-medium">{c.name || person?.name || id}</span>
@@ -96,11 +96,18 @@ export function EndStateView({ state, cast, className }: { state: Partial<EndSta
           })}
         </ul>
       )}
-      {!!state.props?.length && <Line icon={<Package />} label={t("Props")}>{state.props.join(", ")}</Line>}
+      {!!state.props?.length && (
+        <div className="flex items-start gap-2 text-xs">
+          <span className="mt-0.5 shrink-0 text-dim [&>svg]:size-3.5" title={t("Props")}><Package /></span>
+          <div className="flex min-w-0 flex-1 flex-wrap gap-1" role="list" aria-label={t("Props")}>
+            {state.props.map((p) => <span key={p} role="listitem" className="rounded-md border border-line bg-raised px-1.5 py-0.5 text-2xs text-mute">{p}</span>)}
+          </div>
+        </div>
+      )}
       {(state.time_of_day || state.weather) && (
-        <div className="flex flex-wrap gap-x-4 gap-y-1">
-          {state.time_of_day && <Line icon={<Clock />} label={t("Time")}>{state.time_of_day}</Line>}
-          {state.weather && <Line icon={<Cloud />} label={t("Weather")}>{state.weather}</Line>}
+        <div className="flex flex-wrap gap-1.5">
+          {state.time_of_day && <Tag k={t("Time")}>{state.time_of_day}</Tag>}
+          {state.weather && <Tag k={t("Weather")}>{state.weather}</Tag>}
         </div>
       )}
       {state.notes && <Line icon={<StickyNote />} label={t("Notes")}>{state.notes}</Line>}
@@ -133,7 +140,7 @@ export function EndStateForm({ state, cast, onSave, onCancel, saving }: {
   return (
     <form className="space-y-3" onSubmit={(e) => { e.preventDefault(); void onSave({ characters: chars, props, time_of_day: time, weather, notes }); }}>
       <div className="space-y-2">
-        <p className="text-2xs font-semibold uppercase tracking-wider text-dim">{t("Characters at the end of the scene")}</p>
+        <p className="eyebrow">{t("Characters at the end of the scene")}</p>
         {Object.entries(chars).map(([id, c]) => {
           const person = cast?.find((x) => String(x.id) === id);
           return (
@@ -144,7 +151,7 @@ export function EndStateForm({ state, cast, onSave, onCancel, saving }: {
               </span>
               <Input className="h-8! text-xs!" value={c.outfit ?? ""} placeholder={t("Outfit")} aria-label={`${c.name || id}: ${t("Outfit")}`} onChange={(e) => setChar(id, { outfit: e.target.value })} />
               <Input className="h-8! text-xs!" value={c.state ?? ""} placeholder={t("State (wet, wounded, carrying…)")} aria-label={`${c.name || id}: ${t("State")}`} onChange={(e) => setChar(id, { state: e.target.value })} />
-              <button type="button" aria-label={`${t("Remove")}: ${c.name || id}`} onClick={() => removeChar(id)} className="grid size-7 place-items-center rounded-md text-dim hover:bg-hover hover:text-bad"><X className="size-3.5" /></button>
+              <button type="button" aria-label={`${t("Remove")}: ${c.name || id}`} onClick={() => removeChar(id)} className="grid size-7 place-items-center rounded-md text-dim hover:bg-hover hover:text-bad pointer-coarse:size-10"><X className="size-3.5" /></button>
             </div>
           );
         })}
@@ -197,8 +204,9 @@ export function EndStateBlock({ sceneId, eid, state, cast, canEdit, compact, cla
         <span className="flex-1" />
         {canEdit && !editing && (
           <>
-            <Button size="sm" variant="ghost" icon={<PenLine className="size-3.5" />} onClick={() => setEditing(true)} disabled={!!busy}>{t("Edit")}</Button>
-            <Button size="sm" variant={endStateEmpty(s) ? "primary" : "secondary"} icon={busy === "ai" ? <Loader2 className="size-3.5 animate-spin" /> : <Sparkles className="size-3.5" />}
+            <Button size="sm" variant="ghost" className="pointer-coarse:h-10" icon={<PenLine className="size-3.5" />} onClick={() => setEditing(true)} disabled={!!busy}>{t("Edit")}</Button>
+            <Button size="sm" variant="secondary" className={clsx("pointer-coarse:h-10", endStateEmpty(s) && "border-ai/40 bg-ai/10 hover:bg-ai/20")}
+              icon={busy === "ai" ? <Loader2 className="size-3.5 animate-spin text-ai" /> : <Sparkles className="size-3.5 text-ai" />}
               disabled={!!busy} onClick={() => void writeAI()} title={t("A small AI call (cents): reads the script and the previous scene's state")}>
               {endStateEmpty(s) ? t("Write with AI") : t("Rewrite with AI")}
             </Button>

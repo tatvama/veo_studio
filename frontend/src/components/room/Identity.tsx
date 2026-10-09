@@ -1,20 +1,22 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { clsx } from "clsx";
 import { Check, Coins, Copy, FileText, Loader2, RotateCcw, ScanFace, ShieldAlert, ShieldCheck, Upload, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "../../lib/api";
+import { cn } from "../../lib/cn";
 import { ago, usd } from "../../lib/format";
 import { tr, useT } from "../../lib/i18n";
 import { useSettings } from "../../lib/queries";
-import type { Character, ConsentRow, SubmitResult, VoiceProfile } from "../../lib/types";
+import type { Character, ConsentRow, SubmitResult } from "../../lib/types";
 import { useCharScope } from "./scope";
 import { useGenerate } from "../Generate";
-import { Alert, Badge, Button, Field, Input, Modal, Progress, Select, Skeleton, Textarea } from "../ui";
-import { Fact, SectionCard } from "./kit";
+import { Alert, Badge, Button, Field, Input, Meter, Modal, Select, Skeleton, Textarea } from "../ui";
+import { JobStrip, scaleMeter } from "./cast";
+import { Fact } from "./kit";
 import { Gallery, type GalleryItem } from "./Lightbox";
 import { consentNeeds, IDENTITY_STATUS, useActiveJobs, useConsentRows } from "./util";
+import { WorkPanel, scrollToSection } from "./workspace";
 
 type IdStatus = NonNullable<Character["identity"]["status"]>;
 const STATUS = IDENTITY_STATUS;
@@ -29,7 +31,7 @@ export function IdentityBadge({ identity }: { identity: Character["identity"] | 
   return null;
 }
 
-/** Four-step progress for the face model: reference images → training set → training → ready. */
+/** Four-step progress for the face model: reference images → training set → training → ready. Mono nodes joined by connector lines. */
 function Stepper({ status, hasRefs, trainingImages }: { status: IdStatus | "none"; hasRefs: boolean; trainingImages: number }) {
   const t = useT();
   const steps = [t("Reference images"), t("Training set"), t("Training"), t("Ready")];
@@ -48,13 +50,17 @@ function Stepper({ status, hasRefs, trainingImages }: { status: IdStatus | "none
         const isActive = i === active;
         const isFailed = i === failed;
         return (
-          <li key={label} className="relative flex flex-col items-center gap-1.5 px-1 text-center">
-            {i > 0 && <span aria-hidden className={clsx("absolute left-[calc(-50%+0.875rem)] right-[calc(50%+0.875rem)] top-3 h-px -translate-y-1/2 transition-colors duration-500", i <= done ? "bg-ok/60" : "bg-line")} />}
-            <span className={clsx("relative z-[1] grid size-6 place-items-center rounded-full border text-2xs font-semibold tabular-nums transition-colors duration-300",
-              isFailed ? "border-bad/50 bg-bad/15 text-bad" : isDone ? "border-ok/50 bg-ok/15 text-ok" : isActive ? "border-accent bg-accent/12 text-accent-ink" : "border-line bg-raised text-dim")}>
-              {isFailed ? <X className="size-3.5" strokeWidth={3} /> : isDone ? <Check className="size-3.5" strokeWidth={3} /> : isActive ? <Loader2 className="size-3.5 animate-spin" /> : i + 1}
+          <li key={label} className="relative flex flex-col items-center gap-2 px-1 text-center" aria-current={isActive ? "step" : undefined}>
+            {i > 0 && (
+              <span aria-hidden className={cn("absolute left-[calc(-50%+1.375rem)] right-[calc(50%+1.375rem)] top-3.5 h-px -translate-y-1/2 transition-colors duration-500",
+                i <= done ? "bg-ok/60" : isActive || (isFailed && i === failed) ? "bg-accent/50" : "rm-rule")} />
+            )}
+            <span className={cn("mono relative z-[1] grid size-7 place-items-center rounded-md border text-2xs font-semibold transition-colors duration-300",
+              isFailed ? "border-bad/50 bg-bad/15 text-bad" : isDone ? "border-ok/50 bg-ok/15 text-ok"
+                : isActive ? "border-accent bg-accent/12 text-accent-ink shadow-[0_0_12px_-3px_var(--color-accent)]" : "border-line bg-raised text-dim")}>
+              {isFailed ? <X className="size-3.5" strokeWidth={3} /> : isDone ? <Check className="size-3.5" strokeWidth={3} /> : isActive ? <Loader2 className="size-3.5 animate-spin" /> : String(i + 1).padStart(2, "0")}
             </span>
-            <span className={clsx("text-2xs leading-tight", isDone || isActive || isFailed ? "font-medium text-ink" : "text-dim")}>{label}</span>
+            <span className={cn("text-2xs leading-tight", isDone || isActive || isFailed ? "font-medium text-ink" : "text-dim")}>{label}</span>
           </li>
         );
       })}
@@ -63,7 +69,7 @@ function Stepper({ status, hasRefs, trainingImages }: { status: IdStatus | "none
 }
 
 /** Character identity (LoRA): train, status/progress, trigger word, samples, reset. */
-export function IdentityPanel({ character: c, index }: { character: Character; index?: number }) {
+export function IdentityPanel({ character: c, index, n }: { character: Character; index?: number; n?: number }) {
   const t = useT();
   const qc = useQueryClient();
   const { projectId, canEdit, canProduce } = useCharScope();
@@ -91,6 +97,7 @@ export function IdentityPanel({ character: c, index }: { character: Character; i
   const ts = c.training ?? { basis: "sheet" as const, own: 0, variations_approved: 0, variations_waiting: 0, count: 0, min: 4, good: 10, auto_fill: false };
   const enough = ts.count >= ts.min;
   const ownPhotos = assets.filter((a) => a.kind === "source");
+  const setMeter = scaleMeter(Math.min(ts.count, ts.good), ts.good, 10);
 
   const makeVariations = () => submit(() => api.post<SubmitResult>(`/api/characters/${c.id}/training/variations`, { count: 6, project_id: projectId ?? null }),
     tr("Variations of {name}'s photo", { name: c.name }));
@@ -138,18 +145,18 @@ export function IdentityPanel({ character: c, index }: { character: Character; i
   }));
 
   return (
-    <SectionCard id="sec-identity" index={index} icon={<ScanFace />}
-      title={<span className="flex flex-wrap items-center gap-2">{t("Identity")}<Badge tone={st.tone} dot>{t(st.label)}</Badge></span>}
+    <WorkPanel id="sec-identity" index={index} n={n} kicker={t("Face model")} icon={<ScanFace />} title={t("Identity")}
+      badge={<Badge tone={st.tone} dot>{t(st.label)}</Badge>}
       description={t("Trains a face model on this character so every keyframe keeps the exact same face.")}
       actions={<>
         {editable && (
-          <Button size="sm" variant={status === "ready" ? "secondary" : "primary"} disabled={inFlight || !enough} icon={<ScanFace className="size-3.5" />}
+          <Button size="sm" variant={status === "ready" ? "secondary" : "primary"} disabled={inFlight || !enough} icon={<ScanFace className="size-3.5" />} className="max-sm:h-10"
             title={enough ? undefined : t("Needs at least {n} approved images", { n: ts.min })} onClick={() => setConfirm("train")}>
             {status === "ready" || status === "failed" || status === "cancelled" ? t("Retrain identity") : t("Train identity")}
           </Button>
         )}
         {canProduce && status !== "none" && !inFlight && (
-          <Button size="sm" variant="ghost" icon={<RotateCcw className="size-3.5" />} onClick={() => setConfirm("reset")}>{t("Reset identity")}</Button>
+          <Button size="sm" variant="ghost" className="max-sm:h-10" icon={<RotateCcw className="size-3.5" />} onClick={() => setConfirm("reset")}>{t("Reset identity")}</Button>
         )}
       </>}>
       <div className="space-y-5">
@@ -158,13 +165,8 @@ export function IdentityPanel({ character: c, index }: { character: Character; i
         <AnimatePresence initial={false}>
           {(job || status === "preparing" || status === "training") && (
             <motion.div key="progress" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-              <div className="rounded-lg border border-info/30 bg-info/10 p-3">
-                <div className="mb-1.5 flex items-center justify-between gap-2 text-xs">
-                  <span className="min-w-0 truncate text-sky-300">{jobLabel ?? job?.message ?? (status === "training" ? t("Training (10–30 min)…") : t("Building the training set…"))}</span>
-                  {job && <span className="shrink-0 tabular-nums text-mute">{Math.round((job.progress || 0) * 100)}%</span>}
-                </div>
-                <Progress value={job?.progress ?? (status === "training" ? 0.4 : 0.1)} tone="info" />
-              </div>
+              <JobStrip label={jobLabel ?? job?.message ?? (status === "training" ? t("Training (10–30 min)…") : t("Building the training set…"))}
+                right={job ? `${Math.round((job.progress || 0) * 100)}%` : ""} progress={job?.progress ?? (status === "training" ? 0.4 : 0.1)} />
             </motion.div>
           )}
         </AnimatePresence>
@@ -174,7 +176,14 @@ export function IdentityPanel({ character: c, index }: { character: Character; i
         )}
 
         {/* the training set: only images the user approved */}
-        <div className={clsx("rounded-xl border p-3.5", enough ? "border-ok/30 bg-ok/5" : "border-warn/40 bg-warn/5")}>
+        <div className={cn("rounded-lg border p-3.5", enough ? "border-ok/30 bg-ok/5" : "border-warn/40 bg-warn/5")}>
+          <div className="mb-2.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+            <p className="eyebrow">{t("Training set")}</p>
+            <span className="flex items-center gap-2.5">
+              <Meter filled={setMeter.filled} total={setMeter.total} tone={enough ? "ok" : "warn"} className="w-20" />
+              <span className="mono text-xs"><b className="font-semibold">{ts.count}</b><span className="text-dim"> / {ts.good}</span></span>
+            </span>
+          </div>
           <p className="text-sm font-medium">
             {ts.basis === "your_photos"
               ? t("Trains on {n} images: {own} of your photos + {v} approved variations", { n: ts.count, own: ts.own, v: ts.variations_approved })
@@ -187,10 +196,10 @@ export function IdentityPanel({ character: c, index }: { character: Character; i
           </p>
           {editable && (
             <div className="mt-2.5 flex flex-wrap gap-2">
-              <Button size="sm" variant={ownPhotos.length ? "secondary" : "primary"} icon={<Upload className="size-3.5" />}
-                onClick={() => document.getElementById("sec-sheet")?.scrollIntoView({ behavior: "smooth", block: "start" })}>{t("Upload more photos")}</Button>
+              <Button size="sm" variant={ownPhotos.length ? "secondary" : "primary"} icon={<Upload className="size-3.5" />} className="max-sm:h-10"
+                onClick={() => scrollToSection("sec-sheet")}>{t("Upload more photos")}</Button>
               {ownPhotos.length > 0 && (
-                <Button size="sm" icon={<ScanFace className="size-3.5" />} loading={!!varJob} disabled={!!varJob} onClick={() => void makeVariations()}>
+                <Button size="sm" icon={<ScanFace className="size-3.5" />} className="max-sm:h-10" loading={!!varJob} disabled={!!varJob} onClick={() => void makeVariations()}>
                   {t("Make 6 variations of my photo")}
                 </Button>
               )}
@@ -201,53 +210,53 @@ export function IdentityPanel({ character: c, index }: { character: Character; i
           )}
         </div>
 
-        <dl className="grid gap-x-6 gap-y-3 rounded-xl border border-line bg-bg/40 p-3.5 text-sm @lg:grid-cols-3">
-          <div className="min-w-0">
-            <dt className="text-xs text-mute">{t("Trigger word")}</dt>
-            <dd className="mt-1 flex items-center gap-1.5">
+        <dl className="grid gap-px overflow-hidden rounded-lg border border-line bg-line text-sm @lg:grid-cols-3">
+          <div className="min-w-0 bg-panel p-3">
+            <dt className="eyebrow">{t("Trigger word")}</dt>
+            <dd className="mt-2 flex items-center gap-1.5">
               {id.trigger ? (
                 <>
-                  <code className="truncate rounded bg-raised px-1.5 py-0.5 font-mono text-xs">{id.trigger}</code>
-                  <button type="button" title={t("Copy")} aria-label={t("Copy")} onClick={copyTrigger} className="grid size-6 place-items-center rounded-md text-dim transition-colors hover:bg-hover hover:text-ink"><Copy className="size-3.5" /></button>
+                  <code className="mono truncate rounded bg-raised px-1.5 py-0.5 text-xs">{id.trigger}</code>
+                  <button type="button" title={t("Copy")} aria-label={t("Copy")} onClick={copyTrigger} className="grid size-8 place-items-center rounded-md text-dim transition-colors hover:bg-hover hover:text-ink sm:size-6"><Copy className="size-3.5" /></button>
                 </>
               ) : <span className="text-dim">—</span>}
             </dd>
           </div>
-          <div>
-            <dt className="text-xs text-mute">{t("Training images")}</dt>
-            <dd className="mt-1 font-medium tabular-nums">{id.images ?? "—"}</dd>
+          <div className="bg-panel p-3">
+            <dt className="eyebrow">{t("Training images")}</dt>
+            <dd className="mono mt-2 text-sm font-medium">{id.images ?? "—"}</dd>
           </div>
-          <div>
-            <dt className="text-xs text-mute">{t("Trained")}</dt>
-            <dd className="mt-1" title={id.trained_at ? new Date(id.trained_at).toLocaleString() : undefined}>{id.trained_at ? ago(id.trained_at) : "—"}</dd>
+          <div className="bg-panel p-3">
+            <dt className="eyebrow">{t("Trained")}</dt>
+            <dd className="mono mt-2 text-sm" title={id.trained_at ? new Date(id.trained_at).toLocaleString() : undefined}>{id.trained_at ? ago(id.trained_at) : "—"}</dd>
           </div>
         </dl>
 
         {trainItems.length > 0 && (
           <div>
-            <p className="mb-2 text-xs font-medium text-mute">{t("Variations of your photo ({n}) — only approved ones are trained on", { n: trainItems.length })}</p>
+            <p className="eyebrow mb-2.5 !normal-case !tracking-normal">{t("Variations of your photo ({n}) — only approved ones are trained on", { n: trainItems.length })}</p>
             <Gallery items={trainItems} canEdit={editable} minTile={5} aspect="3 / 4" className="gap-2"
               onApprove={(it) => void patchAsset(it.id, { approved: !it.approved })} onRemove={(it) => void patchAsset(it.id, { archived: true })} />
           </div>
         )}
         {testItems.length > 0 && (
           <div>
-            <p className="mb-2 text-xs font-medium text-mute">{t("Identity tests ({n})", { n: testItems.length })}</p>
+            <p className="eyebrow mb-2.5 !normal-case !tracking-normal">{t("Identity tests ({n})", { n: testItems.length })}</p>
             <Gallery items={testItems} canEdit={false} minTile={5} aspect="3 / 4" className="gap-2" />
           </div>
         )}
       </div>
 
       <Modal open={confirm === "train"} onClose={() => setConfirm(null)}
-        title={<span className="flex items-center gap-2"><Coins className="size-4 text-accent-ink" />{t("Train identity for {name}", { name: c.name })}</span>}
+        title={<span className="flex items-center gap-2"><Coins className="size-4 text-money" />{t("Train identity for {name}", { name: c.name })}</span>}
         footer={<>
           <Button variant="ghost" onClick={() => setConfirm(null)}>{t("Cancel")}</Button>
           <Button variant="primary" loading={busy} onClick={train}>{estimate ? t("Train · ≈{cost}", { cost: usd(estimate) }) : t("Train")}</Button>
         </>}>
         <div className="space-y-4 text-sm">
-          <div className="flex items-baseline justify-between rounded-xl border border-line bg-bg/40 px-4 py-3">
-            <span className="text-mute">{t("Approximate cost")}</span>
-            <span className="text-2xl font-semibold tabular-nums">{estimate ? `≈${usd(estimate)}` : usd(0)}</span>
+          <div className="flex items-baseline justify-between gap-3 rounded-lg border border-line bg-bg/40 px-4 py-3">
+            <span className="eyebrow">{t("Approximate cost")}</span>
+            <span className="mono text-2xl font-semibold text-money">{estimate ? `≈${usd(estimate)}` : usd(0)}</span>
           </div>
           <ul className="space-y-2 text-mute">
             {[
@@ -272,7 +281,7 @@ export function IdentityPanel({ character: c, index }: { character: Character; i
         </>}>
         <p className="text-sm text-mute">{t("Keyframes will stop using the trained face for {name}. Images stay in the reference sheet; you can retrain at any time.", { name: c.name })}</p>
       </Modal>
-    </SectionCard>
+    </WorkPanel>
   );
 }
 
@@ -282,7 +291,7 @@ const KIND_LABEL: Record<string, string> = { likeness: "Likeness", voice_replica
 const today = () => new Date().toISOString().slice(0, 10);
 
 /** Consent for real-person likeness (uploaded photos) or a possibly cloned external ElevenLabs voice. */
-export function ConsentPanel({ character: c, index }: { character: Character; index?: number }) {
+export function ConsentPanel({ character: c, index, n }: { character: Character; index?: number; n?: number }) {
   const t = useT();
   const { canProduce } = useCharScope();
   const { data: consents, isLoading, isError } = useConsentRows(canProduce);
@@ -296,66 +305,70 @@ export function ConsentPanel({ character: c, index }: { character: Character; in
   if (!needs.length && !mine.length) return null;
 
   const valid = (r: ConsentRow) => !r.expires_on || r.expires_on >= today();
+  const missingKinds = needs.filter((x) => !mine.some((r) => r.kind === x.kind && valid(r))).length;
 
   return (
-    <SectionCard id="sec-consent" index={index} icon={<ShieldCheck />} title={t("Consent")}
+    <WorkPanel id="sec-consent" index={index} n={n} kicker={t("Compliance")} icon={<ShieldCheck />} title={t("Consent")}
+      tone={missingKinds > 0 ? "warn" : undefined}
       description={t("Real people's faces and voices need a signed consent on file before publishing.")}
-      actions={canProduce && <Button size="sm" icon={<Upload className="size-3.5" />} onClick={() => setAdding(needs[0]?.kind ?? "likeness")}>{t("Add consent")}</Button>}>
+      actions={canProduce && <Button size="sm" icon={<Upload className="size-3.5" />} className="max-sm:h-10" onClick={() => setAdding(needs[0]?.kind ?? "likeness")}>{t("Add consent")}</Button>}>
       {!canProduce ? (
         <div className="space-y-2">
-          {needs.map((n) => (
-            <Alert key={n.kind} tone="warn" icon={<ShieldAlert className="size-4" />}>
-              {n.why}. <span className="text-mute">{t("A producer must have consent on file.")}</span>
+          {needs.map((x) => (
+            <Alert key={x.kind} tone="warn" icon={<ShieldAlert className="size-4" />}>
+              {x.why}. <span className="text-mute">{t("A producer must have consent on file.")}</span>
             </Alert>
           ))}
         </div>
       ) : isLoading ? <div className="space-y-2"><Skeleton className="h-12" /><Skeleton className="h-12" /></div> : isError ? (
         <p className="text-sm text-mute">{t("Couldn't load consent records.")}</p>
       ) : (
-        <div className="space-y-2">
-          {needs.map((n) => {
-            const rows = mine.filter((r) => r.kind === n.kind);
+        <ul className="divide-y divide-line overflow-hidden rounded-lg border border-line">
+          {needs.map((x) => {
+            const rows = mine.filter((r) => r.kind === x.kind);
             const ok = rows.find(valid);
             if (ok) return null;
             const expired = rows[0];
             return (
-              <div key={n.kind} className="flex flex-wrap items-center gap-3 rounded-xl border border-warn/30 bg-warn/5 p-3 text-sm">
+              <li key={x.kind} className="relative flex flex-wrap items-center gap-3 bg-warn/5 py-3 pl-4 pr-3 text-sm">
+                <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-warn" />
                 <span className="grid size-8 shrink-0 place-items-center rounded-lg bg-warn/15 text-warn"><ShieldAlert className="size-4" /></span>
                 <span className="min-w-0 flex-1 basis-48">
                   <span className="block font-medium">
-                    {expired ? t("{kind} consent expired on {date}", { kind: t(KIND_LABEL[n.kind] ?? n.kind), date: expired.expires_on })
-                      : t("No {kind} consent on file", { kind: t(KIND_LABEL[n.kind] ?? n.kind).toLowerCase() })}
+                    {expired ? t("{kind} consent expired on {date}", { kind: t(KIND_LABEL[x.kind] ?? x.kind), date: expired.expires_on })
+                      : t("No {kind} consent on file", { kind: t(KIND_LABEL[x.kind] ?? x.kind).toLowerCase() })}
                   </span>
-                  <span className="block text-xs text-mute">{n.why}</span>
+                  <span className="block text-xs text-mute">{x.why}</span>
                 </span>
-                <Button size="sm" variant="outline" onClick={() => setAdding(n.kind)}>{t("Add consent")}</Button>
-              </div>
+                <Button size="sm" variant="outline" className="max-sm:h-10" onClick={() => setAdding(x.kind)}>{t("Add consent")}</Button>
+              </li>
             );
           })}
           {mine.map((r) => (
-            <div key={r.id} className={clsx("flex flex-wrap items-center gap-3 rounded-xl border p-3 text-sm", valid(r) ? "border-ok/30 bg-ok/5" : "border-line bg-bg/40")}>
-              <span className={clsx("grid size-8 shrink-0 place-items-center rounded-lg", valid(r) ? "bg-ok/15 text-ok" : "bg-raised text-dim")}>
+            <li key={r.id} className={cn("relative flex flex-wrap items-center gap-3 py-3 pl-4 pr-3 text-sm", valid(r) ? "bg-ok/5" : "bg-bg/40")}>
+              <span aria-hidden className={cn("absolute inset-y-0 left-0 w-[3px]", valid(r) ? "bg-ok" : "bg-transparent")} />
+              <span className={cn("grid size-8 shrink-0 place-items-center rounded-lg", valid(r) ? "bg-ok/15 text-ok" : "bg-raised text-dim")}>
                 {valid(r) ? <ShieldCheck className="size-4" /> : <ShieldAlert className="size-4" />}
               </span>
               <span className="min-w-0 flex-1 basis-48">
                 <span className="block"><span className="font-medium">{valid(r) ? t("Consent on file") : t("Expired consent")}</span>
                   <span className="text-mute"> · {t(KIND_LABEL[r.kind] ?? r.kind)} · {r.subject_name}</span></span>
-                <span className="block text-xs text-dim">
+                <span className="mono block text-2xs text-dim">
                   {[r.scope, r.expires_on ? t("expires {date}", { date: r.expires_on }) : t("no expiry"), t("recorded {when}", { when: ago(r.created_at) })].filter(Boolean).join(" · ")}
                 </span>
               </span>
               {r.file_url && (
-                <a href={r.file_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-mute transition-colors hover:bg-hover hover:text-ink">
+                <a href={r.file_url} target="_blank" rel="noreferrer" className="inline-flex min-h-10 items-center gap-1 rounded-md px-2 py-1 text-xs text-mute transition-colors hover:bg-hover hover:text-ink sm:min-h-0">
                   <FileText className="size-3.5" />{t("Signed form")}
                 </a>
               )}
-            </div>
+            </li>
           ))}
-        </div>
+        </ul>
       )}
 
       <AddConsentModal open={!!adding} kind={adding ?? "likeness"} character={c} onClose={() => setAdding(null)} />
-    </SectionCard>
+    </WorkPanel>
   );
 }
 
@@ -413,7 +426,7 @@ function AddConsentModal({ open, kind, character, onClose }: { open: boolean; ki
         </Field>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label={t("Expires on")} hint={t("Leave blank if it doesn't expire")}>
-            <Input type="date" value={form.expires_on} onChange={(e) => setForm({ ...form, expires_on: e.target.value })} />
+            <Input type="date" className="mono" value={form.expires_on} onChange={(e) => setForm({ ...form, expires_on: e.target.value })} />
           </Field>
           <div className="space-y-1.5">
             <span className="block text-xs font-medium text-mute">{t("Signed form")}</span>

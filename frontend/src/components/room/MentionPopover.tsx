@@ -53,7 +53,7 @@ export function MentionPopover({ open, anchor, listId, items, cursor, loading, b
         )}
         {groups.map((g) => (
           <div key={g.label} role="group" aria-label={t(g.label)}>
-            <p className="px-2.5 pb-0.5 pt-1.5 text-2xs font-semibold uppercase tracking-wider text-dim">{t(g.label)}</p>
+            <p className="eyebrow px-2.5 pb-1 pt-2">{t(g.label)}</p>
             {g.rows.map(({ it, i }) => {
               const Icon = it.type === "pick" ? KIND_ICON[it.cand.kind] : Plus;
               const on = i === cursor;

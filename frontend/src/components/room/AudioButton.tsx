@@ -1,6 +1,6 @@
-import { clsx } from "clsx";
 import { Loader2, Pause, Play } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { cn } from "../../lib/cn";
 import { useT } from "../../lib/i18n";
 
 /** Only one voice sample plays at a time: starting a new one stops whichever was playing. */
@@ -47,8 +47,11 @@ export function AudioButton({ src, size = 28, label }: { src: string; size?: num
   return (
     <button type="button" onClick={toggle} title={state === "idle" ? name : t("Stop")} aria-label={state === "idle" ? name : t("Stop")} aria-pressed={state !== "idle"}
       style={{ width: size, height: size }}
-      className={clsx("relative grid shrink-0 place-items-center rounded-full transition-colors",
-        state === "idle" ? "bg-raised text-ink hover:bg-hover" : "bg-accent/15 text-accent-ink")}>
+      className={cn("relative grid shrink-0 place-items-center rounded-full ring-1 ring-inset transition-[color,background-color,box-shadow]",
+        // a 40px hit target on phones without changing the look
+        "before:absolute before:left-1/2 before:top-1/2 before:size-10 before:-translate-x-1/2 before:-translate-y-1/2 before:content-[''] sm:before:hidden",
+        state === "idle" ? "bg-raised text-ink ring-line hover:bg-hover hover:ring-dim/50"
+          : "bg-accent/15 text-accent-ink ring-accent/40 shadow-[0_0_12px_-4px_var(--color-accent)]")}>
       {state !== "idle" && (
         <svg aria-hidden width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="absolute inset-0 -rotate-90">
           <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - progress)} className="transition-[stroke-dashoffset] duration-200 ease-linear" />

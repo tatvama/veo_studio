@@ -157,13 +157,13 @@ export function MentionChips({ value, onChange, className }: { value: string; on
       {found.map((m, k) => {
         const Icon = KIND_ICON[m.kind];
         return (
-          <li key={`${m.start}-${m.kind}-${m.id}`} className="inline-flex h-6 max-w-full items-center gap-1 rounded-full border border-line bg-raised pl-1.5 pr-0.5 text-2xs font-medium text-ink"
+          <li key={`${m.start}-${m.kind}-${m.id}`} className="inline-flex h-6 max-w-full items-center gap-1 rounded-md border border-line bg-raised pl-1.5 pr-0.5 text-2xs font-medium text-ink"
             title={t(KIND_LABEL[m.kind])}>
             <Icon aria-hidden className="size-3 shrink-0 text-accent-ink" />
             <span className="truncate">{m.name}</span>
             {onChange ? (
               <button type="button" onClick={() => unlink(k)} aria-label={t("Unlink {name} (keep the plain name)", { name: m.name })}
-                className="grid size-5 place-items-center rounded-full text-mute transition-colors hover:bg-hover hover:text-bad">
+                className="grid size-5 place-items-center rounded text-mute transition-colors hover:bg-hover hover:text-bad">
                 <X className="size-3" />
               </button>
             ) : <span className="w-1" />}
