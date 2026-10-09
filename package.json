@@ -1,0 +1,12 @@
+{
+  "name": "veo-studio",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "dev": "node scripts/dev.mjs",
+    "dev:api": "node scripts/dev.mjs api",
+    "dev:web": "node scripts/dev.mjs web",
+    "build": "npm --prefix frontend run build"
+  }
+}
