@@ -22,7 +22,7 @@ JOB_LABELS = {
     "character_expressions": "Expressions", "location_images": "Location images", "voice_design": "Voice design",
     "voice_preview": "Voice preview", "omni_edit": "Omni edit", "animatic": "Animatic", "export": "Export",
     "dub": "Dub episode", "autopilot": "Autopilot", "produce": "Produce all", "identity_variations": "Photo variations",
-    "design_image": "Poster image",
+    "design_image": "Poster image", "scene_chain": "Scenes in order",
 }
 
 
@@ -48,7 +48,7 @@ def _duplicate(db: Session, s: dict) -> bool:
     return False
 
 
-RUNS = ("autopilot", "produce")  # each makes every missing shot: two at once on one episode would pay twice
+RUNS = ("autopilot", "produce", "scene_chain")  # each makes every missing shot: two at once on one episode would pay twice
 
 
 def _one_run_per_episode(db: Session, specs: list[dict]) -> None:

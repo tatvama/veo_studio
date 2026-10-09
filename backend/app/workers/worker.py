@@ -26,7 +26,7 @@ from ..providers.base import ProviderBlocked, ProviderError, ProviderNotConfigur
 from ..providers.services import Services
 
 HANDLERS: dict[str, Callable[["JobContext"], dict | None]] = {}
-ORCHESTRATORS = {"dub", "autopilot", "produce", "campaign"}
+ORCHESTRATORS = {"dub", "autopilot", "produce", "campaign", "scene_chain"}
 GROUP_OF = {"video": "video", "omni_edit": "video", "lipsync": "lipsync", "voicelock": "audio", "voice": "audio",
             "voice_design": "audio", "voice_preview": "audio", "music": "audio", "sfx": "audio", "table_read": "audio",
             "export": "render", "animatic": "render", "keyframe": "image", "character_sheet": "image",
@@ -196,7 +196,7 @@ class Worker:
 
     def start(self) -> None:
         from . import (handlers, handlers_campaign, handlers_design, handlers_growth, handlers_hub,  # noqa: F401
-                       handlers_room)  # (registers handlers)
+                       handlers_room, handlers_scene)  # (registers handlers)
 
         self.recover()
         self.thread = threading.Thread(target=self.loop, name="worker-loop", daemon=True)

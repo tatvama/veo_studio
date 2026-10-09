@@ -8,7 +8,7 @@ from typing import Any
 
 from .. import settings_store
 from ..core import autopilot as autopilot_def
-from ..core import budget, generation, studio
+from ..core import budget, generation, scene_chain, studio
 from ..db import SessionLocal, utcnow
 from ..events import emit
 from ..models import AudioAsset, CharacterAsset, Episode, Job, LocationAsset, Project, VoiceProfile
@@ -260,15 +260,19 @@ def _autopilot_run(ctx: JobContext, stop_at: int, pause_after: list[str], mark) 
                 studio.breakdown(db, user, episode)
             elif stage == "continuity":
                 rep = studio.continuity_check(db, user, episode)
-                mark(stage, "running", f"{len(rep.get('issues', []))} continuity notes")
+                # every scene's end state before any picture is made, so each scene's prompts carry the one before
+                written = scene_chain.ensure_end_states(db, user, project, episode, 1_000_000)
+                mark(stage, "running", f"{len(rep.get('issues', []))} continuity notes"
+                     + (f"; end states written for scenes {written}" if written else ""))
             elif stage == "keyframes":
                 specs = generation.keyframe_specs(db, project, generation.episode_shots(db, episode), only_missing=True)
                 db.commit()
                 run_children(specs, "Keyframes")
-            elif stage == "videos":
-                specs = generation.video_specs(db, project, generation.episode_shots(db, episode), only_missing=True)
+            elif stage == "videos":  # in link order: a shot that continues another starts from its finished clip
+                from ..pipeline.selection import current, is_real
+                need =[s.id for s in generation.episode_shots(db, episode) if not is_real(current(db, s.id, "video"))]
                 db.commit()
-                run_children(specs, "Videos")
+                scene_chain.make_videos_in_order(SessionLocal, run_children, project.id, need, None, "Videos")
             elif stage == "dialogue":
                 lang = project.primary_language
                 shots = generation.episode_shots(db, episode)
@@ -314,7 +318,7 @@ def _autopilot_run(ctx: JobContext, stop_at: int, pause_after: list[str], mark) 
 def produce(ctx: JobContext) -> dict:
     """Produce all: the shot list as written, step by step (keyframes → videos → extensions → voices & lip-sync →
     music → export). No writing or re-planning: only what is missing is made. One budget approval covers the run."""
-    from ..pipeline.selection import current, has_fresh
+    from ..pipeline.selection import current, has_fresh, is_real
 
     p = ctx.payload
     steps = [s for s in generation.PRODUCE_STEPS if s in (p.get("steps") or generation.PRODUCE_STEPS)]
@@ -369,8 +373,12 @@ def produce(ctx: JobContext) -> dict:
             specs: list[dict] = []
             if step == "keyframes":
                 specs = generation.keyframe_specs(db, project, shots, only_missing=True)
-            elif step == "videos":
-                specs = generation.video_specs(db, project, shots, quality, only_missing=True)
+            elif step == "videos":  # in link order: a shot that continues another starts from its finished clip
+                need = [s.id for s in shots if not is_real(current(db, s.id, "video"))]
+                db.commit()
+                res = scene_chain.make_videos_in_order(SessionLocal, run_children, project.id, need, quality, label)
+                done[step] = res["videos"]
+                continue
             elif step == "voices":
                 need = [s for s in shots if budget.Estimator.needs_lipsync(s, project, lang) and not has_fresh(db, s.id, "lipsync", lang)]
                 narr = [s for s in shots if (s.narration or {}).get(lang) and s not in need and not current(db, s.id, "narration", lang)]
