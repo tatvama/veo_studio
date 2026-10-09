@@ -5,16 +5,16 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { tr, useT } from "../../lib/i18n";
 import { addSeason, patchSeason, useSeasons, type Season } from "../../lib/v3";
-import { LoadError, RoomEmpty, SectionCard } from "../room/kit";
-import { Badge, Button, Field, Input, Modal, Select, Skeleton, Textarea } from "../ui";
+import { LoadError, RoomEmpty } from "../room/kit";
+import { Badge, Button, Field, Input, Meter, Modal, Panel, Select, Skeleton, Textarea } from "../ui";
 
 const SEASON_STATUS = ["draft", "writing", "in_production", "delivered", "archived"] as const;
 const STATUS_TONE: Record<string, "neutral" | "info" | "accent" | "ok"> = { draft: "neutral", writing: "info", in_production: "accent", delivered: "ok", archived: "neutral" };
 const EP_TONE: Record<string, "neutral" | "info" | "accent" | "ok" | "warn"> = { draft: "neutral", scripted: "info", in_production: "accent", approved: "ok", delivered: "ok" };
 
 /** Seasons and their episodes. Click an episode to open it; title and status edit inline; "Add season" makes empty episodes. */
-export function SeasonsCard({ pid, currentEid, canEdit, onOpenEpisode, index }: {
-  pid: number; currentEid: number; canEdit: boolean; onOpenEpisode: (eid: number) => void; index?: number;
+export function SeasonsCard({ pid, currentEid, canEdit, onOpenEpisode, index, className }: {
+  pid: number; currentEid: number; canEdit: boolean; onOpenEpisode: (eid: number) => void; index?: number; className?: string;
 }) {
   const t = useT();
   const qc = useQueryClient();
@@ -22,12 +22,13 @@ export function SeasonsCard({ pid, currentEid, canEdit, onOpenEpisode, index }: 
   const [adding, setAdding] = useState(false);
   const refresh = () => { qc.invalidateQueries({ queryKey: ["seasons", pid] }); qc.invalidateQueries({ queryKey: ["project", pid] }); qc.invalidateQueries({ queryKey: ["dashboard"] }); };
 
-  const head = { icon: <Layers />, title: t("Seasons"), description: t("Every episode of the project, grouped by season. Open one to work on it.") };
-  if (isError && !data) return <SectionCard index={index} {...head}><LoadError what={t("Couldn't load the seasons")} onRetry={() => refetch()} /></SectionCard>;
-  if (isLoading || !data) return <SectionCard index={index} {...head}><div className="space-y-2" aria-busy="true"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div></SectionCard>;
+  const head = { index, className, eyebrow: t("Seasons"), icon: <Layers /> };
+  if (isError && !data) return <Panel {...head}><LoadError what={t("Couldn't load the seasons")} onRetry={() => refetch()} /></Panel>;
+  if (isLoading || !data) return <Panel {...head}><div className="space-y-2" aria-busy="true"><Skeleton className="h-16 w-full" /><Skeleton className="h-16 w-full" /></div></Panel>;
 
   return (
-    <SectionCard index={index} {...head} actions={canEdit && <Button size="sm" icon={<Plus className="size-3.5" />} onClick={() => setAdding(true)}>{t("Add season")}</Button>}>
+    <Panel {...head} actions={canEdit && <Button size="sm" icon={<Plus className="size-3.5" />} onClick={() => setAdding(true)}>{t("Add season")}</Button>}>
+      <p className="-mt-1 mb-3 text-xs leading-relaxed text-mute">{t("Every episode of the project, grouped by season. Open one to work on it.")}</p>
       {!data.length ? (
         <RoomEmpty icon={<Layers />} title={t("No seasons yet")} sub={t("A season groups episodes and carries the arc they follow.")}
           action={canEdit ? <Button size="sm" variant="primary" icon={<Plus className="size-3.5" />} onClick={() => setAdding(true)}>{t("Add a season")}</Button> : undefined} />
@@ -37,7 +38,7 @@ export function SeasonsCard({ pid, currentEid, canEdit, onOpenEpisode, index }: 
         </ul>
       )}
       <AddSeasonModal open={adding} pid={pid} next={(data.length ? Math.max(...data.map((s) => s.number)) : 0) + 1} onClose={() => setAdding(false)} onDone={() => { setAdding(false); refresh(); }} />
-    </SectionCard>
+    </Panel>
   );
 }
 
@@ -50,9 +51,9 @@ function SeasonRow({ s, currentEid, canEdit, onOpenEpisode, onSaved }: { s: Seas
     try { await patchSeason(s.id, body); onSaved(); } catch { setTitle(s.title); } finally { setSaving(null); }
   };
   return (
-    <li className="rounded-lg border border-line bg-bg/40 p-3">
+    <li className="rounded-lg border border-line bg-raised/30 p-3">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="shrink-0 rounded-md bg-raised px-1.5 py-0.5 font-mono text-2xs font-semibold text-mute">S{String(s.number).padStart(2, "0")}</span>
+        <span className="mono shrink-0 rounded-md border border-line bg-panel px-1.5 py-0.5 text-2xs font-semibold text-accent-ink">S{String(s.number).padStart(2, "0")}</span>
         <input value={title} disabled={!canEdit} aria-label={t("Season title")} placeholder={t("Season {n}", { n: s.number })}
           onChange={(e) => setTitle(e.target.value)} onBlur={() => { if (title.trim() && title !== s.title) void save({ title: title.trim() }, "title"); else setTitle(s.title); }}
           onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") { setTitle(s.title); e.currentTarget.blur(); } }}
@@ -64,15 +65,21 @@ function SeasonRow({ s, currentEid, canEdit, onOpenEpisode, onSaved }: { s: Seas
         ) : <Badge tone={STATUS_TONE[s.status] ?? "neutral"} dot>{t(s.status.replaceAll("_", " "))}</Badge>}
       </div>
       {s.arc && <p className="mt-1 line-clamp-2 pl-1 text-xs text-mute" title={s.arc}>{s.arc}</p>}
-      <ul className="mt-2 flex flex-wrap gap-1.5">
+      {s.episodes.length > 0 && (
+        <div className="mt-2.5 flex items-center gap-3 pl-1">
+          <Meter className="max-w-40 flex-1" filled={s.episodes.filter((e) => e.status === "approved" || e.status === "delivered").length} total={Math.min(s.episodes.length, 12)} tone="ok" />
+          <span className="mono text-2xs text-dim">{s.episodes.filter((e) => e.status === "approved" || e.status === "delivered").length}/{s.episodes.length} {t("done")}</span>
+        </div>
+      )}
+      <ul className="mt-2.5 flex flex-wrap gap-1.5">
         {s.episodes.map((e) => {
           const on = e.id === currentEid;
           return (
             <li key={e.id}>
               <button type="button" onClick={() => onOpenEpisode(e.id)} aria-current={on ? "true" : undefined}
-                className={clsx("inline-flex h-8 max-w-56 items-center gap-1.5 rounded-lg border px-2.5 text-xs transition-colors",
+                className={clsx("inline-flex h-8 max-w-56 items-center gap-1.5 rounded-lg border px-2.5 text-xs transition-colors max-sm:h-10",
                   on ? "border-accent/50 bg-accent/10 text-ink" : "border-line text-mute hover:border-dim/60 hover:bg-hover hover:text-ink")}>
-                <span className="font-mono font-semibold">E{String(e.number).padStart(2, "0")}</span>
+                <span className="mono font-semibold">E{String(e.number).padStart(2, "0")}</span>
                 <span className="truncate">{e.title || t("Untitled")}</span>
                 <span className={clsx("size-1.5 shrink-0 rounded-full", { neutral: "bg-dim", info: "bg-info", accent: "bg-accent", ok: "bg-ok", warn: "bg-warn" }[EP_TONE[e.status] ?? "neutral"])} title={t(e.status.replaceAll("_", " "))} />
               </button>
