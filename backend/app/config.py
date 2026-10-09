@@ -35,7 +35,11 @@ class Settings(BaseSettings):
     s3_access_key_id: str = ""
     s3_secret_access_key: str = ""
 
-    public_base_url: str = "http://localhost:8100"
+    public_base_url: str = "http://localhost:8100"  # also the MCP server's address and OAuth issuer (HTTPS when public)
+    # MCP server at /mcp (app/mcp_server). Extra Host names it answers to, comma separated ("*" = any; every request
+    # still needs a token). public_base_url's host and localhost are always allowed.
+    mcp_enabled: bool = True
+    mcp_allowed_hosts: str = ""
     frontend_origin: str = "http://localhost:5173"
     cookie_secure: bool = False
 

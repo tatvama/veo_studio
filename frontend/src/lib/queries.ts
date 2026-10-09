@@ -82,3 +82,15 @@ export const useReviewLinks = (xid: number | null) =>
 export const useBoard = (eid: number | undefined) =>
   useQuery({ queryKey: ["board", eid], queryFn: () => api.get<import("./types").Board>(`/api/episodes/${eid}/board`), enabled: !!eid });
 export const useHookInsights =() => useQuery({ queryKey: ["hook-insights"], queryFn: () => api.get<HookInsight[]>("/api/insights/hooks") });
+
+// ── MCP access ───────────────────────────────────────────────────────────────
+import type { McpInfo, McpToken, OAuthRequestView } from "./types";
+
+export const useMcpInfo = () => useQuery({ queryKey: ["mcp", "info"], queryFn: () => api.get<McpInfo>("/api/mcp/info"), staleTime: 60_000 });
+export const useMcpTokens = () => useQuery({ queryKey: ["mcp", "tokens"], queryFn: () => api.get<McpToken[]>("/api/mcp/tokens") });
+/** A pending "connect this app" request (404 = unknown or gone; shown as an expired link, not a toast). */
+export const useOAuthRequest = (rid: string | null) =>
+  useQuery({
+    queryKey: ["oauth-request", rid], enabled: !!rid, retry: false, staleTime: Infinity, refetchOnWindowFocus: false,
+    queryFn: () => api.get<OAuthRequestView>(`/api/oauth/requests/${encodeURIComponent(rid ?? "")}`, { silent: true }),
+  });

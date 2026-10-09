@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { ArrowLeftRight, Ban, ChevronDown, ChevronUp, Loader2, RotateCcw, ShieldAlert, X, XCircle } from "lucide-react";
+import { ArrowLeftRight, Ban, ChevronDown, ChevronUp, Loader2, Play, RotateCcw, ShieldAlert, X, XCircle } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
@@ -19,6 +19,7 @@ const TYPE_LABEL: Record<string, string> = {
   keyframe: "Keyframes", video: "Videos", lipsync: "Lip-sync", voice: "Voices", qc: "Quality checks", sfx: "Sound design", music: "Music",
   export: "Renders", marketing: "Marketing pack", train_identity: "Identity training", character_sheet: "Character sheets", dub: "Dubbing",
   table_read: "Table read", search_index: "Search index", animatic: "Animatic", extend: "Extensions", edit: "Edits", shootout: "Shootout",
+  scene_chain: "Scenes in order",
   voicelock: "Voice lock", narration: "Narration", location_plate: "Location plates", thumbnail: "Thumbnails",
 };
 
@@ -99,7 +100,7 @@ const matches = (f: Filter, j: Job) =>
   || (f === "waiting" && (j.status === "awaiting_approval" || j.status === "proposed")) || (f === "failed" && j.status === "failed")
   || (f === "done" && j.status === "succeeded");
 
-type Act = (j: Job, what: "cancel" | "retry") => void;
+type Act = (j: Job, what: "cancel" | "retry" | "confirm") => void;
 
 /** A thin progress bar. A running job carries a sweeping light. */
 function Bar({ value, tone, running, indeterminate, className }: {
@@ -143,7 +144,8 @@ export default function JobTray({ projectId }: { projectId: number }) {
   const act: Act = async (j, what) => {
     setPending(j.id);
     try {
-      await api.post(`/api/jobs/${j.id}/${what}`);
+      // a proposal (from the Director or an MCP app) starts as a whole batch, after the budget check
+      await api.post(what === "confirm" ? `/api/batches/${j.batch_id}/confirm` : `/api/jobs/${j.id}/${what}`);
       qc.invalidateQueries({ queryKey: ["jobs"] });
     } catch { /* api() showed the error */ } finally { setPending(null); }
   };
@@ -371,6 +373,11 @@ function JobRow({ j, now, pending, onAct, canAct, canApprove, nested }: {
         <span className="flex items-center justify-end gap-1">
           {failed && canAct && (
             <Button size="sm" variant="outline" loading={pending === j.id} icon={<RotateCcw className="size-3.5" />} onClick={() => onAct(j, "retry")}>{t("Retry")}</Button>
+          )}
+          {j.status === "proposed" && canAct && (
+            <Tooltip content={t("Start this proposal (its estimate is in the cost column)")}>
+              <Button size="sm" variant="outline" loading={pending === j.id} icon={<Play className="size-3.5" />} onClick={() => onAct(j, "confirm")}>{t("Start")}</Button>
+            </Tooltip>
           )}
           {canAct && isSafetyBlock(j) && <RecoverButton j={j} />}
           {j.status === "awaiting_approval" && canApprove && (

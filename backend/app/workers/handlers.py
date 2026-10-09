@@ -317,11 +317,13 @@ def keyframe(ctx: JobContext) -> dict:
         shot = db.get(Shot, ctx.shot_id)
         project = _project_of(db, shot)
         cont = None
+        cont_take = None  # the clip whose last frame this keyframe starts from (core/scene_chain.follows reads it)
         src = _continuity_source(db, shot)
         if src:
             pv = current(db, src.id, "video")
             if pv and st.exists(pv.path):
                 cont = ff.extract_frame(st.abs(pv.path), tmp / "prev_last.png", "last")
+                cont_take = pv.id
             else:
                 pk = current(db, src.id, "keyframe")
                 cont = st.abs(pk.path) if pk and st.exists(pk.path) else None
@@ -351,7 +353,7 @@ def keyframe(ctx: JobContext) -> dict:
     with SessionLocal() as db:
         shot = db.get(Shot, ctx.shot_id)
         t = save_take(db, ctx, shot, "keyframe", res.data, res.ext, provider=res.usage.provider, model=res.usage.model,
-                      params={"refs": [l for l, _ in refs], "continuity": bool(cont), "engine": engine,
+                      params={"refs": [l for l, _ in refs], "continuity": bool(cont), "continuity_take_id": cont_take, "engine": engine,
                               "engine_label": model_hub.label(db, engine) if not engine.startswith("lora:") else "Trained identity (LoRA)"},
                       prompt=prompt, cost=res.usage.usd)
         if shot.status in ("draft", "keyframe_ready"):

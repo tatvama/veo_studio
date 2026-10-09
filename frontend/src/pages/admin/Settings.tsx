@@ -17,12 +17,13 @@ import { Alert, Button, Input, Kbd, Page, PageHeader, Select, Skeleton, Textarea
 import { api } from "../../lib/api";
 import { LANG_NAMES, QUALITY_INFO, usdPerSec } from "../../lib/format";
 import { UI_LANGUAGES, useT } from "../../lib/i18n";
-import { useAuthStatus, useIntegrations, useProviderCredit, useSettings } from "../../lib/queries";
+import { useAuthStatus, useIntegrations, useMcpInfo, useMcpTokens, useProviderCredit, useSettings } from "../../lib/queries";
 import type { Role, SettingsPayload } from "../../lib/types";
 import { UnsavedBar } from "./shared/UnsavedBar";
 import { useFlash } from "./shared/useFlash";
 import { useUnsavedGuard } from "./shared/useUnsavedGuard";
 import { Choice, Dollar, NumberInput, Row, Rows, SettingsCard, SliderRow, SwitchRow, TileGroup, ToggleChips } from "./settings/controls";
+import { McpAccessCard } from "./settings/McpAccessCard";
 import { SECTION_IDS, SETTING_SECTION, SettingsChips, SettingsNav, useScrollSpy } from "./settings/Nav";
 import { ProvidersCard } from "./settings/ProvidersCard";
 import { SpendGauge, StatusStrip } from "./settings/Status";
@@ -148,6 +149,8 @@ export default function SettingsPage() {
   const { data, isLoading, isError, isFetching, refetch } = useSettings();
   const { data: keys, isLoading: keysLoading } = useApiKeys(isAdmin);
   const { data: integrations } = useIntegrations();
+  const { data: mcpInfo } = useMcpInfo();
+  const { data: mcpTokens } = useMcpTokens();
   const { data: credit } = useProviderCredit();
   const [draft, setDraft] = useState<Draft | null>(null);
   const [active, select] = useScrollSpy(SECTION_IDS, !!data && !!draft);
@@ -368,6 +371,7 @@ export default function SettingsPage() {
     identity: st("ok", t("Configured")),
     voices: voicesOff ? st("warn", t("{n} on placeholder", { n: voicesOff })) : st("ok", t("All voices ready")),
     integrations: !integrations ? st("idle", "") : !integrations.youtube_ready ? st("warn", t("Needs setup")) : yt.length ? st("ok", t("Connected")) : st("idle", t("Not connected")),
+    mcp: !mcpInfo ? st("idle", "") : !mcpInfo.enabled ? st("warn", t("Server off")) : mcpTokens?.length ? st("ok", t("{n} active", { n: mcpTokens.length })) : st("idle", t("Not set up")),
     keys: missing ? st("bad", t("{n} missing", { n: missing })) : outOfCredit ? st("warn", t("{n} out of credit", { n: outOfCredit }))
       : mocks ? st("warn", t("{n} on placeholder", { n: mocks })) : engines.length && live === engines.length ? st("ok", t("All live")) : st("idle", ""),
     advanced: overrides ? st("info", t("{n} custom", { n: overrides })) : st("idle", t("Defaults")),
@@ -705,11 +709,14 @@ export default function SettingsPage() {
               </Rows>
             </SettingsCard>
 
+            {/* MCP access (per user, every role) */}
+            <McpAccessCard index={10} />
+
             {/* API keys */}
-            <ProvidersCard providers={data.providers} isAdmin={isAdmin} index={10} prices={data.prices} />
+            <ProvidersCard providers={data.providers} isAdmin={isAdmin} index={11} prices={data.prices} />
 
             {/* Advanced */}
-            <SettingsCard id="advanced" index={11} icon={<Wrench className="size-4" />} title={t("Advanced")}
+            <SettingsCard id="advanced" index={12} icon={<Wrench className="size-4" />} title={t("Advanced")}
               sub={t("Only change these if a model is renamed or a price changes. Wrong values can break generation.")}>
               <div className="space-y-6">
                 <div>

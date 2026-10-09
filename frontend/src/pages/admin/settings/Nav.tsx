@@ -1,6 +1,6 @@
 import { clsx } from "clsx";
 import {
-  AudioLines, Boxes, Captions, Coins, Fingerprint, KeyRound, MessagesSquare, PenLine, Plug, ScanFace, SlidersHorizontal, Wrench, type LucideIcon,
+  AudioLines, Bot, Boxes, Captions, Coins, Fingerprint, KeyRound, MessagesSquare, PenLine, Plug, ScanFace, SlidersHorizontal, Wrench, type LucideIcon,
 } from "lucide-react";
 import { motion } from "motion/react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
@@ -34,6 +34,7 @@ export const SETTINGS_GROUPS: { label: string; items: SectionDef[] }[] = [
   {
     label: "Connections", items: [
       { id: "integrations", label: "Integrations", icon: Plug },
+      { id: "mcp", label: "MCP access", icon: Bot },
       { id: "keys", label: "AI services", icon: KeyRound },
     ],
   },

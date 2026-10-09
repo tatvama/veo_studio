@@ -19,3 +19,4 @@ numpy>=1.26
 pg8000>=1.31
 pypdf>=5.0
 anthropic>=1.13,<2
+mcp>=2.3,<3

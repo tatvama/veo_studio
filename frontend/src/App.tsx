@@ -1,7 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { lazy, Suspense, useEffect } from "react";
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { GenerateProvider } from "./components/Generate";
 import { Shell } from "./components/Shell";
 import { ErrorBoundary } from "./components/shell/ErrorBoundary";
@@ -9,7 +9,7 @@ import { useMotionPref } from "./components/shell/theme";
 import { PageSkeleton } from "./components/ui";
 import { useAuthStatus } from "./lib/queries";
 import Home from "./pages/Home";
-import Login from "./pages/Login";
+import Login, { takeReturnPath } from "./pages/Login";
 
 // Pages load on first visit, so the first screen (and public review links) stay light.
 const ApprovalsPage = lazy(() => import("./pages/admin/Approvals"));
@@ -19,6 +19,7 @@ const SettingsPage = lazy(() => import("./pages/admin/Settings"));
 const TeamPage = lazy(() => import("./pages/admin/Team"));
 const BrandKitsPage = lazy(() => import("./pages/BrandKits"));
 const LibraryPage = lazy(() => import("./pages/Library"));
+const OAuthConsentPage = lazy(() => import("./pages/OAuthConsent"));
 const ModelHub = lazy(() => import("./pages/models/ModelHub"));
 const PostersGallery = lazy(() => import("./pages/posters/Gallery"));
 const PosterEditor = lazy(() => import("./pages/posters/Editor"));
@@ -48,6 +49,7 @@ export default function App() {
 function AppRoutes() {
   const qc = useQueryClient();
   const loc = useLocation();
+  const navigate = useNavigate();
   const isPublicReview = loc.pathname.startsWith("/review/");
   const { data, isLoading } = useAuthStatus();
 
@@ -56,6 +58,15 @@ function AppRoutes() {
     window.addEventListener("veo:unauthorized", h);
     return () => window.removeEventListener("veo:unauthorized", h);
   }, [qc]);
+
+  // Back from Google sign-in (which always lands on "/"): return to the page that asked for it, e.g. /oauth/consent?request=…
+  const signedIn = !!data?.user;
+  useEffect(() => {
+    if (!signedIn) return;
+    const to = takeReturnPath();
+    if (to && to !== loc.pathname + loc.search) navigate(to, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [signedIn]);
 
   // Client review links work without an account.
   if (isPublicReview) {
@@ -106,6 +117,7 @@ function AppRoutes() {
               <Route path="/team" element={<TeamPage />} />
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/audit" element={<AuditPage />} />
+              <Route path="/oauth/consent" element={<OAuthConsentPage />} />
               <Route path="/p/:pid/*" element={<ProjectLayout />} />
               {KitGallery && <Route path="/dev/kit" element={<KitGallery />} />}
               <Route path="*" element={<Navigate to="/" replace />} />
