@@ -440,6 +440,41 @@ def register_byteplus(cid: int, body: TrainIn, request: Request, user: User = De
     return jobs.submit(db, user, p, [generation.byteplus_register_spec(body.project_id, ch)])
 
 
+@router.post("/characters/{cid}/byteplus/refresh")
+def refresh_byteplus(cid: int, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
+    """Ask BytePlus again how each registered image stands (accepted, still checking, rejected, deleted)."""
+    from ..providers.base import ProviderError
+    from ..workers.handlers_hub import byteplus_refresh
+    ch = get_or_404(db, Character, cid)
+    if not (ch.provider_assets or {}).get("byteplus"):
+        raise HTTPException(400, "This character isn't registered with BytePlus")
+    try:
+        reg = byteplus_refresh(db, ch)
+    except ProviderError as e:
+        raise HTTPException(502, str(e)[:300]) from e
+    emit(db, None, "bible.updated", {"character_id": cid})
+    return reg
+
+
+@router.delete("/characters/{cid}/byteplus")
+def remove_byteplus(cid: int, request: Request, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
+    """Delete the character's images and group from the BytePlus asset library (Seedance then treats it as unknown)."""
+    from ..models import Job
+    from ..providers.base import ProviderError
+    from ..workers.handlers_hub import byteplus_remove
+    ch = get_or_404(db, Character, cid)
+    running = db.query(Job).filter(Job.type == "byteplus_register", Job.status.in_(jobs.ACTIVE)).all()
+    if any((j.payload or {}).get("character_id") == cid for j in running):
+        raise HTTPException(409, "Registration is still running: stop it first")
+    try:
+        removed = byteplus_remove(db, ch)
+    except ProviderError as e:
+        raise HTTPException(502, str(e)[:300]) from e
+    audit(db, user, "character.unregister_byteplus", ch.name, {"assets": removed}, request=request)
+    emit(db, None, "bible.updated", {"character_id": cid})
+    return {"ok": True, "removed": removed}
+
+
 class VariationsIn(BaseModel):
     count: int = 6
     project_id: int | None = None

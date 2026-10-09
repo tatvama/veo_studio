@@ -408,6 +408,14 @@ Short items to add before the next phase, in this order. Each one builds on what
 | 8 | **Spend safety across providers** | Read OpenRouter credit and BytePlus balance, skip a provider with no credit, ask for approval when the fallback route costs more than the limit, and leave the asset-library key out of the "providers live" count | No job fails for lack of credit when another route can do it |
 | 9 | **Phase 0 on real keys** | Still waiting for Veo billing: run the language matrix and confirm LoRA training | Per-language decision recorded |
 
+**Status (9 October 2026).** Built and tested with mock providers: 3, 4, 5, 6, 7 and 8, plus the code half of 2 (psycopg
+gets `connect_timeout`; the compose file lists the provider keys). Still to do on real keys and servers: 1 (live keys
+check), the rest of 2 (deploy on Coolify), 9 (Phase 0). Not yet confirmed against the live APIs: OpenRouter's
+`input_references` for video, BytePlus `reference_audio` / `reference_video` and asset deletion, and the BytePlus balance
+call (`QueryBalanceAcct`); an unreadable balance never blocks work. New team settings, all off by default except the
+limit: `safety_fallback`, `quota_fallback_routes` (keeps Google first strict while off), `byteplus_auto_register`,
+`fallback_extra_limit_usd` ($0.50).
+
 ---
 
 ## 20. What is reused and what is new

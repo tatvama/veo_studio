@@ -174,7 +174,7 @@ def agent_messages(pid: int, limit: int = 60, user: User = Depends(current_user)
             .limit(min(limit, 300)).all())
     out = []
     for m in reversed(rows):
-        d = m.to_dict(user=user_brief(users.get(m.user_id)))
+        d = director.public(m.to_dict(user=user_brief(users.get(m.user_id))))
         for prop in (d.get("data") or {}).get("proposals", []):
             pending = db.query(Job).filter(Job.batch_id == prop["batch_id"], Job.status == "proposed").count()
             prop["pending"] = pending > 0

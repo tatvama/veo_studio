@@ -1,5 +1,5 @@
 import { clsx } from "clsx";
-import { Archive, Columns2, Cpu, Crown, Eye, Film, History, Image as ImageIcon, Loader2, Maximize2, Mic, Play, ShieldCheck, Sparkles, Swords, Trophy, X } from "lucide-react";
+import { Archive, Columns2, Cpu, Crown, Eye, Film, History, Image as ImageIcon, LifeBuoy, Loader2, Maximize2, Mic, Play, ShieldCheck, Sparkles, Swords, Trophy, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -188,6 +188,9 @@ function TakeCard({ x, aspect, row, showing, canEdit, canReview, comparing, qcOp
   const stale = !!(x as TakeV3).stale;
   const staleReason = ((x as TakeV3).stale_reason || "").trim();
   const isShoot = !!x.params?.shootout;
+  const isDraft = !!x.params?.draft;
+  // engines that blocked the shot before this take was made on another one
+  const recoveredFrom: string[] = Array.isArray(x.params?.recovered_from) ? x.params.recovered_from : [];
   const visual = isVisual(x.kind);
   const src = x.thumb_url || (x.kind === "keyframe" ? x.url : "");
   const engine = !isAudio(x.kind) ? takeEngine(x) : "";
@@ -223,6 +226,16 @@ function TakeCard({ x, aspect, row, showing, canEdit, canReview, comparing, qcOp
           {x.selected && (row || !visual) && <Badge tone="accent"><Crown className="size-3" />{t("in use")}</Badge>}
           {stale && <Badge tone="warn" title={staleReason || t("The shot changed after this take was made")}><History className="size-3" />{t("Stale")}</Badge>}
           {isShoot && <Badge tone="info" title={t("Made in a shootout")}><Swords className="size-3" />{t("shootout")}</Badge>}
+          {isDraft && (
+            <Badge tone="ai" title={t("A cheap low-resolution preview. It doesn't replace a finished clip; Produce all still makes the final clip.")}>
+              <Eye className="size-3" />{t("Draft · {res}", { res: x.params?.resolution || "480p" })}
+            </Badge>
+          )}
+          {recoveredFrom.length > 0 && (
+            <Badge title={t("Made on another engine after {n} engine(s) blocked it", { n: recoveredFrom.length })}>
+              <LifeBuoy className="size-3" />{t("Recovered")}
+            </Badge>
+          )}
           {x.language && <Badge>{LANG_SHORT[x.language] ?? x.language}</Badge>}
           {x.params?.quality && <Badge>{t(QUALITY_INFO[x.params.quality]?.label ?? x.params.quality)}</Badge>}
           {x.params?.mode && <Badge tone="info">{String(x.params.mode).replaceAll("_", " ")}</Badge>}

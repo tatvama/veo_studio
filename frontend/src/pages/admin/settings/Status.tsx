@@ -18,10 +18,12 @@ export function StatusStrip({ providers, keys, team, changeCount, dirtySections,
   providers: ProviderStatus[]; keys: KeyStats | null; team: TeamStatus; changeCount: number; dirtySections: number; errorCount: number; isAdmin: boolean;
 }) {
   const t = useT();
-  const total = providers.length;
-  const live = providers.filter((p) => p.mode === "live").length;
-  const mock = providers.filter((p) => p.mode === "mock").length;
-  const missing = providers.filter((p) => p.mode === "missing").length;
+  // keys that run no generation themselves (the BytePlus asset library) are not engines
+  const engines = providers.filter((p) => p.engine !== false);
+  const total = engines.length;
+  const live = engines.filter((p) => p.mode === "live").length;
+  const mock = engines.filter((p) => p.mode === "mock").length;
+  const missing = engines.filter((p) => p.mode === "missing").length;
   const enginesTone = total === 0 ? "neutral" : live === total ? "ok" : missing > 0 && live === 0 ? "bad" : "warn";
   const enginesSub = total === 0
     ? t("No services reported")

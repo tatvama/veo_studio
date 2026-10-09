@@ -42,7 +42,7 @@ export default function WorldPage() {
 
   return (
     <RoomPage width="wide">
-      <RoomHeader icon={<Globe />} title={t("World")} description={t("Props, wardrobe through the episode, and the state of every scene.")} />
+      <RoomHeader icon={<Globe />} title={t("Props & wardrobe")} description={t("Props, wardrobe through the episode, and the state of every scene.")} />
 
       <StatStrip index={1} className="mb-4" cells={[
         { key: "props", label: t("Props in project"), value: inProject ?? "—", sub: props ? t("{n} more in the library", { n: props.length - (inProject ?? 0) }) : undefined },

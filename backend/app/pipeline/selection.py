@@ -22,8 +22,9 @@ def current(db: Session, shot_id: int, kind: str, language: str | None = None) -
 
 
 def is_real(take: Take | None) -> bool:
-    """A take that is actual work: not a placeholder made in mock mode while that provider now has a key."""
-    if take is None:
+    """A take that is actual work: not a placeholder made in mock mode while that provider now has a key, and not a
+    480p draft (Produce all still makes the final clip of a shot that only has a draft)."""
+    if take is None or (take.params or {}).get("draft"):
         return False
     if (take.params or {}).get("mock"):
         from ..providers.services import provider_mode

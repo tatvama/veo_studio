@@ -24,7 +24,8 @@ from ..pipeline.prompting import (character_refs, compile_keyframe_prompt, compi
                                   shot_lines, video_refs)
 from ..pipeline.selection import current, select
 from ..pipeline.voice import build_dialogue, build_narration, choose_duration
-from ..providers.base import ProviderBlocked, ProviderError, ProviderNotConfigured, RetryableProviderError
+from ..providers.base import (NeedsApproval, ProviderBlocked, ProviderError, ProviderNotConfigured, ProviderOutOfCredit,
+                              RetryableProviderError)
 from ..providers.schema_map import GenRequest
 from ..storage import get_storage
 from .worker import JobContext, handler
@@ -105,22 +106,42 @@ def _prev_shot(db, shot: Shot) -> Shot | None:
             .order_by(Shot.order.desc()).first())
 
 
-def run_chain(ctx: JobContext, chain: str, modes_ok: list[str], build: Callable[[AIModel, str], GenRequest],
-              explicit: str | None = None, skip: list[str] | None = None, expected_s: float = 90):
-    """Try each engine of a chain until one succeeds. Non-retryable failures (safety block, bad input, unsupported)
-    fall through to the next engine, and so does a rate limit (that provider is then paused for every job, see
-    core/ratelimit.py); other transient errors bubble up so the worker retries the job."""
-    with SessionLocal() as db:
-        cands = model_hub.candidates(db, chain, modes_ok, explicit)
-    if skip and len(cands) > 1:
-        rest = [c for c in cands if c[0].id not in skip]
-        cands = rest or cands
-    if not cands:
-        raise ProviderNotConfigured(f"No enabled engine for '{model_hub.CHAIN_LABELS.get(chain, chain)}' that can do "
-                                    f"{'/'.join(modes_ok)}. Enable one in Model Hub → Engines.")
-    attempts: list[dict] = []
-    last: Exception | None = None
-    held = 0.0  # shortest wait among engines held back by a rate limit
+def _run_price(m: AIModel, req: GenRequest) -> float:
+    """Estimated USD for running `req` on engine `m` (0 in mock mode)."""
+    if m.task in ("video", "avatar", "lipsync", "edit"):
+        secs = model_hub.clamp_duration(m, float(req.duration or 8))
+        return model_hub.price_for(m, seconds=secs, resolution=(req.resolution or "720p").lower())
+    return model_hub.price_for(m)
+
+
+class _Run:
+    """What one run_chain call has seen so far: attempts, the last error, rate-limit waits, engines that blocked
+    the content, and fallbacks skipped for costing more than the job may spend without approval."""
+
+    def __init__(self, ctx: JobContext, first: AIModel):
+        self.ctx, self.first = ctx, first
+        self.attempts: list[dict] = []
+        self.last: Exception | None = None
+        self.held = 0.0  # shortest wait among engines held back by a rate limit
+        self.held_google: list[AIModel] = []
+        self.blocked: list[str] = []
+        self.too_dear: list[tuple[float, AIModel]] = []  # (extra USD over what is allowed, engine)
+        with SessionLocal() as db:
+            from ..models import Job
+            job = db.get(Job, ctx.job_id)
+            self.estimate = float(job.cost_estimate or 0) if job else 0.0
+            self.limit = float(settings_store.get_setting(db, "fallback_extra_limit_usd") or 0)
+        self.extra_ok = float(ctx.result.get("extra_ok_usd") or 0)
+
+    def tried(self) -> set[str]:
+        return {a["engine"] for a in self.attempts}
+
+
+def _try_engines(run: _Run, cands: list[tuple[AIModel, str]], build: Callable[[AIModel, str], GenRequest],
+                 expected_s: float):
+    """Try engines in order; returns (model, mode, result) from the first that works, else None (see `run`)."""
+    from ..core import credit
+    ctx = run.ctx
     for m, mode in cands:
         ctx.check_cancel()
         hold = ratelimit.cooling(m.provider)
@@ -129,13 +150,29 @@ def run_chain(ctx: JobContext, chain: str, modes_ok: list[str], build: Callable[
             per_call = model_hub.price_for(m, seconds=8) if m.task in ("video", "avatar", "lipsync", "edit") else model_hub.price_for(m)
             hold = ratelimit.google_spend_wait(per_call)
         if hold:
-            held = min(held or hold, hold)
-            attempts.append({"engine": m.id, "mode": mode, "error": f"rate limited, held back {int(hold)}s"})
+            run.held = min(run.held or hold, hold)
+            if m.provider == "google":
+                run.held_google.append(m)
+            run.attempts.append({"engine": m.id, "mode": mode, "error": f"rate limited, held back {int(hold)}s"})
             continue
         ops = dict(ctx.result.get("ops") or {})
         token = ratelimit.reserve(per_call) if per_call > 0 else None  # count it against the 10-min window now
         try:
             req = build(m, mode)
+            if m.id not in ops:  # (a resumed operation is paid for already)
+                price = _run_price(m, req)
+                if m.id != run.first.id and price > 0:
+                    # a fallback route may cost more than the job was approved for, up to the team's limit
+                    base = max(run.estimate, _run_price(run.first, req))
+                    if price > base + run.limit + run.extra_ok + 1e-6:
+                        run.too_dear.append((round(price - base, 4), m))
+                        run.attempts.append({"engine": m.id, "mode": mode, "price_usd": round(price, 4),
+                                             "error": f"costs ${price:.2f}, over the approved ${base:.2f} + limit"})
+                        continue
+                short = credit.short_of(m.provider, price) if model_hub.provider_mode(m.provider) == "live" else ""
+                if short:
+                    run.attempts.append({"engine": m.id, "mode": mode, "error": short})
+                    continue
             ctx.progress(0.1, f"{m.display_name} · {mode}")
             res = ctx.services.run_model(
                 m, req, on_tick=ctx.tick(m.display_name, expected_s),
@@ -143,32 +180,97 @@ def run_chain(ctx: JobContext, chain: str, modes_ok: list[str], build: Callable[
                 resume=ops.get(m.id))
             model_hub.record_outcome(m.id, True)
             ratelimit.ok(m.provider)
-            return m, mode, res, attempts
+            return m, mode, res
         except RetryableProviderError as e:
             if not e.rate_limited or getattr(e, "cooled", False):
                 raise  # cooled: a step inside build() (e.g. the keyframe) was held back, and has recorded it already
             wait = ratelimit.cool(e.provider or m.provider, e.retry_after)
-            held = min(held or wait, wait)
-            attempts.append({"engine": m.id, "mode": mode, "error": str(e)[:300]})
-            last = e
+            run.held = min(run.held or wait, wait)
+            if m.provider == "google":
+                run.held_google.append(m)
+            run.attempts.append({"engine": m.id, "mode": mode, "error": str(e)[:300]})
+            run.last = e
         except (ProviderBlocked, ProviderError) as e:
-            if str(e) == "cancelled":
+            if str(e) == "cancelled" or isinstance(e, NeedsApproval):
                 raise
             if m.id in ops:  # the saved operation is dead: a retry must start a new one, not poll this one forever
                 ctx.save_result(ops={k: v for k, v in (ctx.result.get("ops") or {}).items() if k != m.id})
-            model_hub.record_outcome(m.id, False)
-            attempts.append({"engine": m.id, "mode": mode, "error": str(e)[:300]})
-            last = e  # an explicit pick only has routes of the same model to fall back on
+            if isinstance(e, ProviderOutOfCredit):
+                credit.hold(e.provider or m.provider, str(e))  # skip this provider for every job for a while
+            else:
+                model_hub.record_outcome(m.id, False)
+            if isinstance(e, ProviderBlocked):
+                run.blocked.append(m.id)
+            run.attempts.append({"engine": m.id, "mode": mode, "error": str(e)[:300]})
+            run.last = e  # an explicit pick only has routes of the same model to fall back on
         finally:
             ratelimit.release(token)
-    if held:
+    return None
+
+
+def run_chain(ctx: JobContext, chain: str, modes_ok: list[str], build: Callable[[AIModel, str], GenRequest],
+              explicit: str | None = None, skip: list[str] | None = None, expected_s: float = 90):
+    """Try each engine of a chain until one succeeds. Non-retryable failures (safety block, bad input, unsupported,
+    no credit) fall through to the next engine, and so does a rate limit (that provider is then paused for every job,
+    see core/ratelimit.py); other transient errors bubble up so the worker retries the job.
+
+    Two opt-in fallbacks look past "Google first": the same model through another provider when Google's quota is
+    used up ("quota_fallback_routes"), and other models when every engine tried blocked the content
+    ("safety_fallback"). A fallback that costs more than the job was approved for (plus "fallback_extra_limit_usd")
+    is skipped; when nothing else works the job waits for approval instead of failing."""
+    from ..core import credit, recovery
+    with SessionLocal() as db:
+        cands = model_hub.candidates(db, chain, modes_ok, explicit)
+        no_credit = credit.holds(db)
+        quota_fallback = bool(settings_store.get_setting(db, "quota_fallback_routes"))
+        safety_fallback = bool(settings_store.get_setting(db, "safety_fallback"))
+    if skip and len(cands) > 1:
+        rest = [c for c in cands if c[0].id not in skip]
+        cands = rest or cands
+    if not cands:
+        if no_credit:
+            raise ProviderOutOfCredit(f"No engine for '{model_hub.CHAIN_LABELS.get(chain, chain)}' can run: "
+                                      f"{', '.join(sorted(no_credit))} has no credit left. Top up, then re-check the "
+                                      "balance in Settings → AI services.")
+        raise ProviderNotConfigured(f"No enabled engine for '{model_hub.CHAIN_LABELS.get(chain, chain)}' that can do "
+                                    f"{'/'.join(modes_ok)}. Enable one in Model Hub → Engines.")
+    run = _Run(ctx, cands[0][0])
+    got = _try_engines(run, cands, build, expected_s)
+    if got is None and run.held_google and quota_fallback and not explicit:
+        # Google is out of quota or rate limited: the same model through another provider (Nano Banana on OpenRouter …)
+        keys = {model_hub.route_key(m) for m in run.held_google} - {""}
+        with SessionLocal() as db:
+            alt = [c for c in model_hub.candidates(db, chain, modes_ok, None, google_first=False)
+                   if c[0].provider != "google" and c[0].id not in run.tried() and model_hub.route_key(c[0]) in keys]
+        if alt:
+            ctx.progress(0.1, "Google is out of quota: the same model through another provider")
+            got = _try_engines(run, alt, build, expected_s)
+    if got is None and run.blocked and safety_fallback and isinstance(run.last, ProviderBlocked):
+        # every engine tried blocked the content: other models, those that take registered characters first
+        with SessionLocal() as db:
+            alt = [c for c in model_hub.candidates(db, chain, modes_ok, None, google_first=False)
+                   if c[0].id not in run.tried() and c[0].id not in (skip or [])]
+            alt = recovery.prefer_registered(db, ctx.shot_id, alt)
+        if alt:
+            ctx.progress(0.1, f"Blocked by a safety filter: trying {alt[0][0].display_name}")
+            got = _try_engines(run, alt, build, expected_s)
+    if got is not None:
+        m, mode, res = got
+        return m, mode, res, run.attempts
+    ctx.save_result(attempts=run.attempts[-12:], blocked_engines=run.blocked)
+    if run.held:
         # every engine that could do this is rate limited: the worker re-queues the job without using up a retry
-        err = RetryableProviderError(f"Rate limited on every engine that can do this; retrying in {int(held)}s. "
-                                     f"{last or ''}".strip(), status=429, provider=getattr(last, "provider", ""),
-                                     retry_after=held)
+        err = RetryableProviderError(f"Rate limited on every engine that can do this; retrying in {int(run.held)}s. "
+                                     f"{run.last or ''}".strip(), status=429, provider=getattr(run.last, "provider", ""),
+                                     retry_after=run.held)
         err.cooled = True  # back-off already recorded per provider
         raise err
-    raise last or ProviderError("all engines failed")
+    if run.too_dear:
+        extra, m = min(run.too_dear, key=lambda t: t[0])
+        raise NeedsApproval(f"{m.display_name} can make this, but costs ${extra:.2f} more than approved. "
+                            f"Earlier engines: {run.last or 'skipped'}"[:500], extra_usd=extra, engine=m.id,
+                            provider=m.provider)
+    raise run.last or ProviderError("all engines failed")
 
 
 def gen_image(ctx: JobContext, prompt: str, refs: list[Path], aspect: str, title: str = "", explicit: str | None = None):
@@ -232,9 +334,11 @@ def keyframe(ctx: JobContext) -> dict:
         ep_no = ep_row.number if ep_row else None
         chars = [db.get(Character, int(c)) for c in (shot.characters or [])]
         trained = [c for c in chars if c and _identity(c, db, ep_no)]
-        # "hero" keyframes use the Pro image model they were priced at
-        explicit = ctx.payload.get("engine") or ("google:image_hero" if ctx.payload.get("hero") else None)
-        ident = _identity(trained[0], db, ep_no) if (len(chars) == 1 and trained and not ctx.payload.get("engine")) else None
+        # "hero" keyframes use the Pro image model they were priced at. A video job that makes its missing keyframe
+        # first names a video engine in its payload: that one is not for the image.
+        own_engine = ctx.payload.get("engine") if ctx.type == "keyframe" else None
+        explicit = own_engine or ("google:image_hero" if ctx.payload.get("hero") else None)
+        ident = _identity(trained[0], db, ep_no) if (len(chars) == 1 and trained and not own_engine) else None
         trainer_cfg = settings_store.get_setting(db, "identity_trainer") or {}
         db.commit()
     ctx.progress(0.2, "Generating keyframe")
@@ -281,6 +385,14 @@ def video(ctx: JobContext) -> dict:
         loras = _loras_for(db, shot, ep_no)
         audio_driven = vm == "audio_driven" and bool(shot_lines(shot, lang)) and not extend and not p.get("no_audio_driven")
         explicit = p.get("engine") or (shot.engine if shot.engine and shot.engine != "auto" else None)
+        draft = bool(p.get("draft"))  # a cheap 480p preview before the final render
+        if extend and not explicit:
+            # a clip is extended by the engine that made it when that engine extends (a Seedance clip by Seedance);
+            # Google's clips keep the extend chain (Veo extends only its own clips, and Fast is the one priced for it)
+            made = current(db, shot.id, "video")
+            maker = db.get(AIModel, (made.params or {}).get("engine") or "") if made else None
+            if maker and maker.provider != "google" and "extend" in ((maker.capabilities or {}).get("modes") or []):
+                explicit = maker.id
         if explicit:
             em = db.get(AIModel, explicit)
             if em and audio_driven and "a2v" not in ((em.capabilities or {}).get("modes") or []):
@@ -366,7 +478,8 @@ def video(ctx: JobContext) -> dict:
         return GenRequest(mode=mode_, prompt=prompt, negative=negative, first_frame=first,
                           last_frame=last_frame if mode_ == "flf" else None, refs=refs if mode_ == "ref2v" else [],
                           audio=audio, video=extend_from, video_uri=extend_uri, duration=duration, aspect=aspect,
-                          resolution="720p" if extend else qm["resolution"], generate_audio=not audio_driven,
+                          resolution="480p" if draft else "720p" if extend else qm["resolution"],
+                          generate_audio=not audio_driven,
                           loras=loras if mode_ in ("i2v", "t2v", "ref2v", "flf") else [], cast_refs=vr)
 
     try:
@@ -379,19 +492,23 @@ def video(ctx: JobContext) -> dict:
     with SessionLocal() as db:
         shot = db.get(Shot, ctx.shot_id)
         prev = current(db, shot.id, "video")
-        params = {"quality": q, "resolution": qm["resolution"], "mode": used, "refs": ref_labels if used == "ref2v" else [],
+        params = {"quality": q, "resolution": "480p" if draft else qm["resolution"], "mode": used,
+                  "refs": ref_labels if used == "ref2v" else [],
                   "engine": m.id, "engine_label": m.display_name, "attempts": attempts,
                   "retake_count": p.get("retake_count", 0), "audio_driven": used == "a2v",
                   "language": lang if (used == "a2v" or vm == "native") else None,
                   "native_language": lang if vm == "native" and bool(shot_lines(shot, lang)) else None,
-                  "loras": bool(loras), "shootout": bool(p.get("shootout"))}
+                  "loras": bool(loras), "shootout": bool(p.get("shootout")), "draft": draft,
+                  "recovered_from": p.get("skip_engines") if p.get("recovery") else None}
         # a dubbing clip (another language spoken by Veo) is a lip-synced take of that language, not the main video
         as_kind = "lipsync" if (native and lang != project.primary_language) else "video"
+        # a draft never pushes aside a finished (non-draft) clip: it stays one click away in the takes
+        keep_final = draft and prev is not None and not (prev.params or {}).get("draft")
         t = save_take(db, ctx, shot, as_kind, res.data, "mp4", language=lang if as_kind == "lipsync" else None,
                       provider=m.provider, model=m.endpoint, params={**params, "method": "native"} if as_kind == "lipsync" else params,
                       prompt=prompt, duration=res.duration_s if not extend else 0.0, cost=res.usage.usd,
                       remote_ref=res.remote_ref, parent=(prev.id if extend and prev else None) or link_parent,
-                      auto_select=not p.get("shootout"))
+                      auto_select=not p.get("shootout") and not keep_final)
         lip_t = None
         if used == "a2v" and as_kind == "video":  # the clip already speaks the line: it is also this language's lip-synced take
             lip_t = save_take(db, ctx, shot, "lipsync", None, "mp4", src_file=st.abs(t.path), language=lang,
@@ -408,7 +525,7 @@ def video(ctx: JobContext) -> dict:
         has_chars = bool(shot.characters)
         code = shot.code
     ctx.save_result(ops={})
-    if has_chars or lip_t or vm == "native":
+    if (has_chars or lip_t or vm == "native") and not draft:  # a draft is a preview: no QC, no automatic retakes
         ctx.enqueue_child("qc", {"take_id": (lip_t or t).id, "retake_count": p.get("retake_count", 0), "quality": q,
                                  "language": lang, "native": native,
                                  "engine": m.id, "tried": [*(p.get("skip_engines") or []), m.id],

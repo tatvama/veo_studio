@@ -8,6 +8,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..core import budget, studio
+from ..core.recovery import blocked_info
 from ..models import (AudioAsset, Character, CharacterAsset, Comment, Episode, Export, Job, Location, LocationAsset, Project,
                       Shot, Take, User, VoiceProfile)
 from ..pipeline.prompting import effective_quality, effective_voice_mode
@@ -53,6 +54,7 @@ def shot_out(db: Session, s: Shot, project: Project, lang: str | None = None) ->
         effective_quality=effective_quality(s, project),
         effective_voice_mode=effective_voice_mode(s, project, lang),
         active_jobs=active,
+        blocked=None if active else blocked_info(db, s),  # a safety filter stopped the last video: offer another engine
         comments=n_comments,
         ref_images=[{**r, "url": url(r.get("path", ""))} for r in (s.ref_images or [])],
     )
@@ -102,9 +104,13 @@ def character_out(db: Session, c: Character, brief: bool = False) -> dict:
             ident["status"] = "cancelled" if j and j.status == "cancelled" else "failed"
             ident["error"] = ident.get("error") or (j.error[:300] if j and j.error else "Training stopped before it finished")
         out["identity"] = ident
+    from ..core.recovery import seedance_ready
+    out["seedance_ready"] = seedance_ready(c)  # registered with BytePlus: Seedance keeps this character's look
     if not brief:
         from ..core import identity as identity_core
+        from ..workers.handlers_hub import auto_register_reason
         out["training"] = identity_core.summary(db, c)
+        out["byteplus_auto"] = auto_register_reason(db, c)  # why it isn't registered by itself ("" = it will be)
         out["assets"] = [a.to_dict(url=url(a.path)) for a in assets]
         from ..core import lock as lock_core
         from ..models import CharacterVersion, Costume

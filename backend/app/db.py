@@ -5,13 +5,26 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Iterator
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, make_url
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from .config import get_settings
 
 _settings = get_settings()
 _is_sqlite = _settings.db_url.startswith("sqlite")
+
+
+
+def _connect_args() -> dict:
+    if _is_sqlite:
+        return {"check_same_thread": False, "timeout": 30}  # SQLite: lock wait
+    if make_url(_settings.db_url).get_driver_name() == "pg8000":
+        return {"timeout": _settings.db_connect_timeout_s}  # TCP connect; keepalive is set on the socket below
+    # psycopg (libpq) rejects `timeout` ("invalid connection option"): it takes connect_timeout, and keepalive probes
+    # as options (same timings as _keepalive(), which only reaches pg8000's socket)
+    return {"connect_timeout": _settings.db_connect_timeout_s, "keepalives": 1, "keepalives_idle": 20,
+            "keepalives_interval": 5, "keepalives_count": 4}
+
 
 _pool = {} if _is_sqlite else {
     "pool_size": _settings.db_pool_size,
@@ -21,8 +34,7 @@ _pool = {} if _is_sqlite else {
 }
 engine = create_engine(
     _settings.db_url,
-    # pg8000 and psycopg both accept `timeout` for the TCP connect; SQLite uses it as the lock wait
-    connect_args={"check_same_thread": False, "timeout": 30} if _is_sqlite else {"timeout": _settings.db_connect_timeout_s},
+    connect_args=_connect_args(),
     pool_pre_ping=True,
     future=True,
     **_pool,

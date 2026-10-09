@@ -48,22 +48,23 @@ function RowsSkeleton() {
 
 export default function Catalog({ admin, ctl, active }: { admin: boolean; ctl: CatalogCtl; active: boolean }) {
   const t = useT();
-  const { filters, refine, sort, view, filtered, update, updateRefine, clear } = ctl;
+  const { filters, refine, sort, view, group, filtered, update, updateRefine, clear } = ctl;
   const refining = refineActive(refine);
 
-  const list = useCatalogPages(filters, sort);
+  // grouped: one card per model, `total` counts cards; otherwise one card per engine
+  const list = useCatalogPages(filters, sort, group);
   const { models, total } = list;
-  const counts = useTaskCounts(filters);
+  const counts = useTaskCounts(filters, group);
   const newQ = useNewModels(true);
   const meta = useCatalogMeta();
   const { data: settings } = useSettings();
-  const { setEnabled, busy } = useModelPatch();
+  const { setEnabled, setRouteEnabled, busy } = useModelPatch();
   const fresh = useMemo(() => (newQ.data?.models ?? []).filter((m) => m.status === "new"), [newQ.data]);
   const providers = useMemo(() => {
-    const set = new Set<string>([...KNOWN_PROVIDERS, ...models.map((m) => m.provider)]);
+    const set = new Set<string>([...KNOWN_PROVIDERS, ...models.flatMap((m) => [m.provider, ...(m.routes ?? []).map((r) => r.provider)])]);
     return [...set].sort((a, b) => providerLabel(a).localeCompare(providerLabel(b)));
   }, [models]);
-  const providerCounts = useProviderCounts(filters, providers);
+  const providerCounts = useProviderCounts(filters, providers, group);
   const providerModes = useMemo(() => Object.fromEntries((settings?.providers ?? []).map((p) => [p.provider, p.mode])), [settings]);
 
   // capability / price / speed are applied here, on the models that are loaded (the API cannot filter on them)
@@ -112,7 +113,7 @@ export default function Catalog({ admin, ctl, active }: { admin: boolean; ctl: C
   }, []);
 
   // changing a filter while scrolled down brings the new results into view
-  const serverKey = `${filters.task}|${filters.status}|${filters.provider}|${filters.mode}|${filters.q}|${sort}`;
+  const serverKey = `${filters.task}|${filters.status}|${filters.provider}|${filters.mode}|${filters.q}|${sort}|${group}`;
   const filterKey = `${serverKey}|${refine.cap.join(",")}|${refine.price.join(",")}|${refine.speed.join(",")}`;
   const firstKey = useRef(filterKey);
   useEffect(() => {
@@ -198,7 +199,7 @@ export default function Catalog({ admin, ctl, active }: { admin: boolean; ctl: C
             <div className="flex min-h-8 flex-wrap items-center gap-x-3 gap-y-1" aria-live="polite">
               <p className="text-sm text-mute">
                 {list.isLoading ? t("Loading models…") : list.isError && !models.length ? null : (
-                  <>{rich(t("Showing {a} of {b} models"), { a: <b className="mono font-semibold text-ink">{shown.toLocaleString()}</b>, b: <b className="mono font-semibold text-ink">{grand.toLocaleString()}</b> })}
+                  <>{rich(group ? t("Showing {a} of {b} models") : t("Showing {a} of {b} engines"), { a: <b className="mono font-semibold text-ink">{shown.toLocaleString()}</b>, b: <b className="mono font-semibold text-ink">{grand.toLocaleString()}</b> })}
                     {filtered && <span className="text-dim"> · {t("filtered")}</span>}</>
                 )}
               </p>
@@ -236,7 +237,8 @@ export default function Catalog({ admin, ctl, active }: { admin: boolean; ctl: C
                     // content-visibility keeps a long catalog cheap; the padding (undone by the margin) leaves room for the corner brackets
                     <div key={m.id} className="-m-1 p-1 [contain-intrinsic-size:auto_372px] [content-visibility:auto]">
                       <ModelCard m={m} index={i} admin={admin} busy={busy === m.id} onToggle={setEnabled} onOpen={setOpenModel}
-                        open={openModel?.id === m.id} comparing={cmpIds.has(m.id)} compareFull={compareFull} onCompare={toggleCompare} />
+                        open={openModel?.id === m.id} comparing={cmpIds.has(m.id)} compareFull={compareFull} onCompare={toggleCompare}
+                        busyRoute={busy && m.routes?.some((r) => r.id === busy) ? busy : null} onToggleRoute={setRouteEnabled} />
                     </div>
                   ))}
                   {isFetchingNextPage && Array.from({ length: 6 }, (_, i) => <CardSkeleton key={`sk${i}`} />)}
@@ -319,8 +321,9 @@ export default function Catalog({ admin, ctl, active }: { admin: boolean; ctl: C
 
       <ModelCompare models={cmpModels} open={cmpOpen} onClose={() => setCmpOpen(false)} onClear={() => { setCmp([]); setCmpOpen(false); }}
         onRemove={toggleCompare} onOpen={(m) => { setCmpOpen(false); setOpenModel(m); }} />
+      {/* the card as it is now in the cache (route switches flipped since it was opened), not as it was clicked */}
       {lastModel.current && (
-        <ModelDetail model={lastModel.current} open={!!openModel} admin={admin} onClose={closeDetail}
+        <ModelDetail model={byId.get(lastModel.current.id) ?? lastModel.current} open={!!openModel} admin={admin} onClose={closeDetail}
           compare={{ on: !!openModel && cmpIds.has(openModel.id), full: compareFull, toggle: () => { if (openModel) toggleCompare(openModel); } }} />
       )}
     </div>

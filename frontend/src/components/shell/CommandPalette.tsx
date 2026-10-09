@@ -16,7 +16,7 @@ import type { UserBrief } from "../../lib/types";
 import { Kbd } from "../ui";
 import { fuzzyScore } from "./fuzzy";
 import { MOD, openDirector, sidebarExpanded, toggleSidebar, SIDEBAR_RAIL_MIN } from "./keys";
-import { getNav, getProjectTabs } from "./nav";
+import { getNav, getProjectSteps, getProjectTabs, tabTitle } from "./nav";
 import { usePrefActions } from "./prefs";
 import { getTemplates } from "./templates";
 import { nextTheme, useMotionPref, useResolvedTheme, useThemePref } from "./theme";
@@ -155,7 +155,9 @@ function PaletteDialog({ user, onClose }: { user: UserBrief; onClose: () => void
   const commands = useMemo<Cmd[]>(() => {
     const go = (to: string) => () => nav(to);
     const out: Cmd[] = [];
-    const tabs = getProjectTabs(t);
+    // Project pages are titled by their step ("Cast › Characters & places"); their keywords keep the old tab names (bible, world…).
+    const steps = getProjectSteps(t);
+    const tabs = getProjectTabs(t).map((tab) => ({ ...tab, title: tabTitle(t, tab, steps) }));
     const recent = (projects ?? []).slice(0, 12);
     const current = recent.find((p) => p.id === currentPid) ?? (projects ?? []).find((p) => p.id === currentPid);
     const swatch = (p: { id: number; thumb_url?: string }) => p.thumb_url
@@ -176,7 +178,7 @@ function PaletteDialog({ user, onClose }: { user: UserBrief; onClose: () => void
     // This project
     if (current) {
       tabs.forEach((tab) => out.push({
-        id: `cur-${tab.to}`, group: "project", label: tab.label, hint: current.title, keywords: tab.keywords,
+        id: `cur-${tab.to}`, group: "project", label: tab.title, hint: current.title, keywords: tab.keywords,
         icon: <tab.icon className="size-4" />, run: go(`/p/${current.id}/${tab.to}`),
       }));
     }
@@ -188,7 +190,7 @@ function PaletteDialog({ user, onClose }: { user: UserBrief; onClose: () => void
         icon: <FolderOpen className="size-4" />, swatch: swatch(p), run: go(`/p/${p.id}/storyboard`), searchOnly: i >= 5,
       });
       tabs.forEach((tab) => out.push({
-        id: `p-${p.id}-${tab.to}`, group: "tabs", label: `${p.title || t("Untitled")} › ${tab.label}`, keywords: tab.keywords,
+        id: `p-${p.id}-${tab.to}`, group: "tabs", label: `${p.title || t("Untitled")} › ${tab.title}`, keywords: tab.keywords,
         icon: <tab.icon className="size-4" />, run: go(`/p/${p.id}/${tab.to}`), searchOnly: true,
       }));
     });
