@@ -8,6 +8,7 @@ import { useUI } from "../../lib/store";
 import type { UserBrief } from "../../lib/types";
 import { Avatar, Kbd, Popover, Segmented, Toggle, Tooltip, type Placement } from "../ui";
 import { MOD } from "./keys";
+import { CurrencySwitch } from "./money";
 import { usePrefActions } from "./prefs";
 import { useMotionPref, useThemePref, type ThemePref } from "./theme";
 
@@ -110,6 +111,10 @@ export function UserMenu({ user, expanded = false, placement = "right-end", dens
           <div>
             <p className="mb-1.5 text-2xs font-semibold uppercase tracking-wide text-dim">{t("Theme")}</p>
             <ThemeSwitch signedIn />
+          </div>
+          <div>
+            <p className="mb-1.5 text-2xs font-semibold uppercase tracking-wide text-dim">{t("Currency")}</p>
+            <CurrencySwitch />
           </div>
           <div>
             <p className="mb-1.5 flex items-center gap-1 text-2xs font-semibold uppercase tracking-wide text-dim"><Languages className="size-3.5" />{t("Interface language")}</p>

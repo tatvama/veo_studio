@@ -1,5 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
+import { RupeeHint } from "../../components/kit/Money";
 import {
   BadgeCheck, Check, ChevronDown, Copy, Eye, EyeOff, FilterX, KeyRound, MessageSquare, RefreshCw, ShieldCheck, Sparkles, UserPlus, Users, type LucideIcon,
 } from "lucide-react";
@@ -446,6 +447,7 @@ function AddTeammateModal({ open, onClose, defaultLimit, googleEnabled }: {
             <span className="mono pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-dim">$</span>
             <Input id="tm-limit" className="pl-6 font-mono" inputMode="decimal" value={form.limit} onChange={(e) => set("limit", e.target.value)} placeholder={t("Default")} aria-invalid={!!errors.limit} />
           </div>
+          <RupeeHint v={form.limit} className="mt-1 pl-1" />
           <ScrollStrip className="mt-2 -mx-1 px-1">
             <div className="flex gap-1.5 pr-4">
               <button type="button" className="cx-chip" aria-pressed={form.limit.trim() === ""} onClick={() => set("limit", "")}>{t("Team default")}</button>

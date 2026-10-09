@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { usd } from "../../../lib/format";
 import { clsx } from "clsx";
 import { KeyRound, Save, Sparkles, Trash2, TriangleAlert, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
@@ -28,7 +29,7 @@ function price(n: unknown): string | null {
   if (n === null || n === undefined || n === "") return null;
   const v = Number(n);
   if (!Number.isFinite(v)) return null;
-  return `$${v.toFixed(3).replace(/0$/, "")}`;
+  return usd(v, 3).replace(/(\.\d\d)0(?=\D|$)/g, "$1");
 }
 function flat(v: unknown): number[] {
   if (typeof v === "number") return [v];

@@ -15,7 +15,7 @@ import YouTubeIntegration from "../../components/growth/YouTubeIntegration";
 import { MOD } from "../../components/shell/keys";
 import { Alert, Button, Input, Kbd, Page, PageHeader, Select, Skeleton, Textarea } from "../../components/ui";
 import { api } from "../../lib/api";
-import { LANG_NAMES, QUALITY_INFO } from "../../lib/format";
+import { LANG_NAMES, QUALITY_INFO, usdPerSec } from "../../lib/format";
 import { UI_LANGUAGES, useT } from "../../lib/i18n";
 import { useAuthStatus, useIntegrations, useSettings } from "../../lib/queries";
 import type { Role, SettingsPayload } from "../../lib/types";
@@ -449,7 +449,7 @@ export default function SettingsPage() {
                     <Select value={draft.lipsync_model ?? "lipsync-2"} disabled={ro} aria-label={t("Lip-sync model")} onChange={(e) => set("lipsync_model", e.target.value)}>
                       {LIPSYNC_MODELS.map((m) => (
                         <option key={m.value} value={m.value}>
-                          {t(m.label)}{lipsyncPrices[m.value] != null ? ` (~$${lipsyncPrices[m.value]}/s)` : ""}
+                          {t(m.label)}{lipsyncPrices[m.value] != null ? ` (~${usdPerSec(Number(lipsyncPrices[m.value]))})` : ""}
                         </option>
                       ))}
                     </Select>

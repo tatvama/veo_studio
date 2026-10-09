@@ -9,7 +9,9 @@ import { Kbd } from "../ui";
 import { Brand } from "./Brand";
 import { MOD } from "./keys";
 import { getNav, getProjectTabs } from "./nav";
+import { RateChip } from "./money";
 import { JobsPill, NotificationsButton, ProviderDots, SpendPill } from "./telemetry";
+import { ThemeButton } from "./ThemeButton";
 import { UserMenu } from "./UserMenu";
 
 interface Crumb { label: string; to?: string }
@@ -70,6 +72,8 @@ export function TopBar({ user }: { user: UserBrief }) {
         <span className="hidden xl:block"><ProviderDots /></span>
         <JobsPill />
         <span className="hidden md:block"><SpendPill /></span>
+        <span className="hidden sm:block"><RateChip /></span>
+        <span className="hidden sm:block"><ThemeButton /></span>
         <NotificationsButton />
         <UserMenu user={user} expanded={false} placement="bottom-end" dense />
       </div>

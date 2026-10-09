@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     # Veo calls wait in the queue instead of crossing it. 0 turns the check off.
     gemini_spend_per_10min: float = 10.0
 
+    # Pin the USD to INR display rate (for example your bank rate). 0 = use the live rate (core/rates.py).
+    usd_inr_rate: float = 0.0
+
     gemini_api_key: str = ""
     elevenlabs_api_key: str = ""
     sync_api_key: str = ""

@@ -1,4 +1,5 @@
 import { tr } from "../../../lib/i18n";
+import { rupeesShort, useCurrency } from "../../../lib/currency";
 import { usd } from "../../../lib/format";
 import type { TeamStatus, UserBrief } from "../../../lib/types";
 
@@ -72,6 +73,8 @@ export function costPerVideoSecond(rows: LedgerRow[]): number | null {
 
 /** Compact money for chart axes: $0, $2.5, $40, $1.2k. */
 export function axisMoney(v: number): string {
+  const { mode, inr } = useCurrency.getState();
+  if (mode === "inr" && inr) return rupeesShort(v * inr);
   if (v >= 1000) return `$${+(v / 1000).toFixed(v >= 10_000 ? 0 : 1)}k`;
   if (v < 1) return `$${+v.toFixed(2)}`;
   return `$${+v.toFixed(v < 10 ? 1 : 0)}`;

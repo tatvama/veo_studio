@@ -1,4 +1,5 @@
 import { CircleCheck, OctagonAlert, TriangleAlert, type LucideIcon } from "lucide-react";
+import { axisMoney } from "./data";
 import { usd } from "../../../lib/format";
 import "../../../styles/admin.css";
 
@@ -31,7 +32,7 @@ export function BudgetMeter({ spent, reserved, cap, tone, label, cells = 40 }: {
         {Array.from({ length: cells }, (_, i) => <i key={i} className={i < spentCells ? "is-spent" : i < heldCells ? "is-held" : undefined} />)}
       </div>
       <div aria-hidden className="mono relative mt-1.5 h-4 text-2xs text-dim">
-        <span className="absolute left-0">$0</span>
+        <span className="absolute left-0">{axisMoney(0)}</span>
         <span className="absolute -translate-x-1/2" style={{ left: "80%" }}>80%</span>
         <span className="absolute right-0">{usd(cap, 0)}</span>
       </div>

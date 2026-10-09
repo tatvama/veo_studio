@@ -4,6 +4,7 @@
  * filter on. No React in here, so the card, table, detail and compare views all agree on the numbers.
  */
 import { Fingerprint, MessageSquareText, Mic, Speech, Volume2, type LucideIcon } from "lucide-react";
+import { usd } from "../../lib/format";
 import type { AIModel } from "../../lib/types";
 
 /* ── capabilities ───────────────────────────────────────────────────────────── */
@@ -68,7 +69,7 @@ export function clipUsd(m: Pick<AIModel, "est_8s_usd" | "price_usd" | "price_uni
 }
 
 /** "$0.050" under ten cents, otherwise "$0.40". Mono figures, so the decimals stay aligned. */
-export const rateText = (v: number) => `$${v < 0.1 ? v.toFixed(3) : v.toFixed(2)}`;
+export const rateText = (v: number) => usd(v, v < 0.1 ? 3 : 2);
 
 /** True when the provider is not live and the number on screen comes from the list price, not a metered estimate. */
 export const isListPrice = (m: Pick<AIModel, "provider_mode">) => m.provider_mode !== "live";

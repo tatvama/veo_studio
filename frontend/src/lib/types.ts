@@ -235,7 +235,7 @@ export interface ReviewLinkRow { token: string; export_id: number; label: string
 export interface IntegrationRow { id: number; provider: string; account_name: string; account_id: string; created_at: string }
 export interface ConsentRow { id: number; kind: string; subject_name: string; character_id: number | null; file_url: string; scope: string; expires_on: string; created_at: string }
 export interface AuditRow { id: number; action: string; target: string; detail: Record<string, any>; ip: string; created_at: string; user: UserBrief | null }
-export interface Prefs { ui_language?: string; theme?: "dark" | "light" | "system"; onboarding_done?: boolean; motion?: "full" | "reduced" }
+export interface Prefs { ui_language?: string; theme?: "dark" | "light" | "system"; onboarding_done?: boolean; motion?: "full" | "reduced"; currency?: "both" | "usd" | "inr" }
 export interface HookInsight { hook: string; avg_view_pct: number | null; views: number; export_id: number; retention: [number, number][] }
 export interface Stroke { color: string; width?: number; points: [number, number][] }
 export interface ReviewComment extends Comment { timecode: number | null; drawing: Stroke[]; guest_name: string; author?: string }

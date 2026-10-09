@@ -61,3 +61,13 @@ At most 450 ms and always reduced-motion aware. Enter with `rise(i)` (38 ms stag
 ## 6. Language and content
 
 All user-visible text goes through `t()` / `tr()`. Indic strings run about 30 % longer: no fixed-width labels. Money is always shown in `money` colour and mono. Product name: **Tatvam AI Studio** (wordmark `TATVAM`, subtitle `AI STUDIO`).
+
+## Money (USD and INR)
+
+Spend is stored and billed in US dollars. The UI can show rupees beside it (preference: Both, USD or INR; live rate from `GET /api/rates`).
+
+- Format money with `usd()` from `lib/format` (a plain string: `$12.40 ≈ ₹1,201`). Never hand-build a `$` string.
+- Use `usdOnly()` for values that are defined in dollars (a cap typed into a field) and `usdPerSec()` for prices per second.
+- Big figures (KPI tiles, hero numbers) go through `Metric`, `Stat` or `AnimatedNumber`, which split the string so the dollars are large and the rupees small beside or under them. For a one-off big figure use `<Money v={...} />`.
+- Chart axes use `axisMoney()`, which follows the mode. Rupees use Indian digit grouping (₹1,03,400) and compact lakh and crore labels (`rupeesShort`).
+- The Shell re-mounts the page when the mode changes or the first rate arrives, so no figure shows a stale format.

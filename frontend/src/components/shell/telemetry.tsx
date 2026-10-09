@@ -2,10 +2,11 @@ import { clsx } from "clsx";
 import { Bell, Cpu, Wallet } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { ago, usd } from "../../lib/format";
+import { ago, usd, usdOnly } from "../../lib/format";
 import { useT } from "../../lib/i18n";
 import { useJobs, useNotifications, useSettings } from "../../lib/queries";
 import { useUI } from "../../lib/store";
+import { Money } from "../kit/Money";
 import { Popover, Progress, ProgressRing, Tooltip } from "../ui";
 
 const RUNNING = new Set(["running"]);
@@ -76,7 +77,7 @@ export function SpendPill() {
     <Tooltip content={t("Team spend this month: {a} of {b}", { a: usd(team.spent_usd), b: usd(team.cap_usd, 0) })} side="bottom">
       <Link to="/costs" aria-label={t("Costs")} className={chip}>
         <ProgressRing value={pct} size={18} stroke={2.5} tone={tone} />
-        <span className="mono hidden text-ink xl:inline">{usd(team.spent_usd)}<span className="text-dim"> / {usd(team.cap_usd, 0)}</span></span>
+        <span className="mono hidden text-ink xl:inline"><Money v={team.spent_usd} /><span className="text-dim"> / {usdOnly(team.cap_usd, 0)}</span></span>
         <Wallet className="size-3.5 text-money xl:hidden" />
       </Link>
     </Tooltip>

@@ -3,6 +3,7 @@ import { Check } from "lucide-react";
 import { useContext, type CSSProperties, type ReactNode } from "react";
 import "../../../styles/console.css";
 import "../../../styles/settings.css";
+import { RupeeHint } from "../../../components/kit/Money";
 import { InView, Input, Panel, Toggle } from "../../../components/ui";
 import { useT } from "../../../lib/i18n";
 import { SECTION_GROUP, SECTION_IDS } from "./Nav";
@@ -106,10 +107,13 @@ export function Dollar({ value, onChange, disabled, placeholder, className, labe
   value: unknown; onChange: (v: string) => void; disabled?: boolean; placeholder?: string; className?: string; label: string; invalid?: boolean;
 }) {
   return (
-    <div className={clsx("relative", className ?? "w-full max-w-44")}>
-      <span aria-hidden className="mono pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-money">$</span>
-      <Input className={clsx("pl-6 font-mono tabular-nums", invalid && "border-bad/60 focus:border-bad")} inputMode="decimal" disabled={disabled} placeholder={placeholder} aria-label={label} aria-invalid={invalid || undefined}
-        value={value === null || value === undefined ? "" : String(value)} onChange={(e) => onChange(e.target.value)} />
+    <div className={className ?? "w-full max-w-44"}>
+      <div className="relative">
+        <span aria-hidden className="mono pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-money">$</span>
+        <Input className={clsx("pl-6 font-mono tabular-nums", invalid && "border-bad/60 focus:border-bad")} inputMode="decimal" disabled={disabled} placeholder={placeholder} aria-label={label} aria-invalid={invalid || undefined}
+          value={value === null || value === undefined ? "" : String(value)} onChange={(e) => onChange(e.target.value)} />
+      </div>
+      <RupeeHint v={value} className="mt-1 pl-1" />
     </div>
   );
 }

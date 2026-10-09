@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useMatch } from "react-router-dom";
 import { useT } from "../lib/i18n";
+import { useMoneyShape, useRatesSync } from "../lib/currency";
 import { useLiveEvents } from "../lib/live";
 import { useUI } from "../lib/store";
 import type { UserBrief } from "../lib/types";
@@ -64,6 +65,8 @@ export function Shell({ user, children }: { user: UserBrief; children: ReactNode
   const t = useT();
   const pm = useMatch("/p/:pid/*");
   useLiveEvents(pm ? Number(pm.params.pid) : null);
+  useRatesSync();
+  const moneyShape = useMoneyShape(); // pages re-mount when the currency mode changes or the first rate arrives, so every figure re-renders
   const entries = useMemo(() => getNav(t, user.role), [t, user.role]);
 
   // Global shortcuts: Ctrl/⌘+K palette, "?" shortcuts sheet.
@@ -98,7 +101,7 @@ export function Shell({ user, children }: { user: UserBrief; children: ReactNode
       <TopBar user={user} />
       <div className="flex min-h-0 flex-1">
         <Rail role={user.role} />
-        <main id="main" tabIndex={-1} className="min-h-0 min-w-0 flex-1 outline-none">{children}</main>
+        <main id="main" key={moneyShape} tabIndex={-1} className="min-h-0 min-w-0 flex-1 outline-none">{children}</main>
       </div>
       <StatusBar />
       <MobileNav user={user} />

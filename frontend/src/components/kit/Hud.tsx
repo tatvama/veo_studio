@@ -1,5 +1,6 @@
 import { cn } from "../../lib/cn";
 import type { ReactNode } from "react";
+import { MoneyText } from "./Money";
 import { AnimatedNumber, rise } from "./Motion";
 import { Sparkline } from "./Stat";
 
@@ -55,7 +56,7 @@ export function Metric({ label, value, unit, format, delta, deltaTone, tone = "n
       <div className="mt-2 flex items-end justify-between gap-3">
         <div className="min-w-0">
           <p className={cn("mono flex items-baseline gap-1 font-medium leading-none tracking-tight", TEXT[tone], size === "lg" ? "text-4xl" : size === "sm" ? "text-xl" : "text-[1.65rem]")}>
-            {typeof value === "number" ? <AnimatedNumber value={value} format={format} /> : value}
+            {typeof value === "number" ? <AnimatedNumber value={value} format={format} /> : <MoneyText text={value} />}
             {unit && <span className="text-sm font-normal text-dim">{unit}</span>}
           </p>
           {(delta || sub) && (

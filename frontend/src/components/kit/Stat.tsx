@@ -1,6 +1,7 @@
 import { cn } from "../../lib/cn";
 import { motion } from "motion/react";
 import { useId, type ReactNode } from "react";
+import { MoneyText } from "./Money";
 import { AnimatedNumber, rise } from "./Motion";
 
 type Tone = "neutral" | "accent" | "ok" | "warn" | "bad" | "info";
@@ -26,7 +27,7 @@ export function Stat({ label, value, format, sub, icon, tone = "neutral", index 
         <span className="eyebrow min-w-0 truncate">{label}</span>
       </div>
       <div className={cn("mono mt-3 text-[1.65rem] font-medium leading-none tracking-tight", toneText[tone])}>
-        {typeof value === "number" ? <AnimatedNumber value={value} format={format} /> : value}
+        {typeof value === "number" ? <AnimatedNumber value={value} format={format} /> : <MoneyText text={value} />}
       </div>
       {sub && <p className="mt-1.5 text-2xs text-dim">{sub}</p>}
       {children}
