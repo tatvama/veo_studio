@@ -23,7 +23,7 @@ export function PlayButton({ playing, onClick }: { playing: boolean; onClick: ()
         type="button"
         onClick={onClick}
         aria-label={playing ? t("Pause (Space)") : t("Play (Space)")}
-        className="mr-1 grid size-9 shrink-0 place-items-center rounded-full bg-accent text-black shadow-[0_6px_16px_-6px_rgb(249_115_22/0.7)] transition-[transform,filter] duration-150 hover:brightness-110 active:scale-90 max-sm:size-10"
+        className="mr-1 grid size-9 shrink-0 place-items-center rounded-full bg-accent text-black shadow-[0_6px_16px_-6px_rgb(34_211_238/0.7)] transition-[transform,filter] duration-150 hover:brightness-110 active:scale-90 max-sm:size-10"
       >
         {playing ? <Pause className="size-4" fill="currentColor" /> : <Play className="ml-0.5 size-4" fill="currentColor" />}
       </button>

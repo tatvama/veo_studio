@@ -231,7 +231,7 @@ export function TransitionBlock({ clip, pps, canEdit, onResize, onResizeEnd, onC
     <Tooltip content={`${tr.type} · ${clip.overlap.toFixed(2)}s — ${t("the two shots overlap here")}`} side="top" delay={300}>
       <div role="button" tabIndex={0} onClick={onClick} aria-label={t("Transition {name}", { name: tr.type })}
         style={{ position: "absolute", left: clip.start * pps, width: w, top: 2, bottom: 2,
-          background: "repeating-linear-gradient(135deg, rgb(249 115 22 / 0.55) 0 6px, rgb(249 115 22 / 0.28) 6px 12px)" }}
+          background: "repeating-linear-gradient(135deg, rgb(34 211 238 / 0.55) 0 6px, rgb(34 211 238 / 0.28) 6px 12px)" }}
         className="z-[5] flex items-center justify-center overflow-hidden rounded-md border-2 border-accent text-black shadow-lift">
         {w > 22 && <Blend className="size-3.5 shrink-0" />}
         {w > 70 && <span className="ml-1 truncate text-2xs font-bold">{tr.type}</span>}

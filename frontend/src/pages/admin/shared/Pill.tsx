@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 
 const TONES = {
   neutral: "border-line bg-raised text-mute",
-  accent: "border-accent/30 bg-accent/8 text-orange-300",
+  accent: "border-accent/30 bg-accent/8 text-accent-ink",
   ok: "border-ok/30 bg-ok/8 text-green-300",
   warn: "border-warn/30 bg-warn/8 text-amber-300",
   bad: "border-bad/30 bg-bad/8 text-red-300",

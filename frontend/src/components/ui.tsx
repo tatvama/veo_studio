@@ -14,6 +14,7 @@ import { Tooltip } from "./kit/Tooltip";
 export { Tooltip } from "./kit/Tooltip";
 export { AnimatedNumber, InView, Reveal, rise, type EnterKind } from "./kit/Motion";
 export { ProgressRing, Sparkline, Stat } from "./kit/Stat";
+export { Meter, Metric, Panel, StatusDot, Tag } from "./kit/Hud";
 export { Page, PageHeader, PageSkeleton, Section, useDocumentTitle } from "./kit/Page";
 export { Avatar, AvatarStack, initials } from "./kit/Avatar";
 export { Menu, Popover, type MenuItemDef, type Placement } from "./kit/Popover";
@@ -122,7 +123,7 @@ export function Card({ className, children, interactive, ...rest }: { className?
   return (
     <div
       className={cn("rounded-xl border border-line bg-panel",
-        clickable && "lift cursor-pointer hover:border-accent/40",
+        clickable && "hud lift cursor-pointer hover:border-accent/40",
         className)}
       {...rest}
     >
@@ -145,13 +146,15 @@ export function SectionTitle({ title, sub, actions }: { title: ReactNode; sub?: 
 
 const badgeTones = {
   neutral: "bg-raised text-mute border-line",
-  accent: "bg-accent/15 text-orange-300 border-accent/30",
+  accent: "bg-accent/12 text-accent-ink border-accent/30",
+  money: "bg-money/12 text-money border-money/30",
+  ai: "bg-ai/12 text-ai border-ai/30",
   ok: "bg-ok/15 text-green-300 border-ok/30",
   warn: "bg-warn/15 text-amber-300 border-warn/30",
   bad: "bg-bad/15 text-red-300 border-bad/30",
   info: "bg-info/15 text-sky-300 border-info/30",
 };
-const dotTones = { neutral: "bg-dim", accent: "bg-accent", ok: "bg-ok", warn: "bg-warn", bad: "bg-bad", info: "bg-info" };
+const dotTones = { neutral: "bg-dim", accent: "bg-accent", money: "bg-money", ai: "bg-ai", ok: "bg-ok", warn: "bg-warn", bad: "bg-bad", info: "bg-info" };
 
 export function Badge({ tone = "neutral", children, className, title, dot }: {
   tone?: keyof typeof badgeTones; children: ReactNode; className?: string; title?: string; dot?: boolean;
@@ -302,9 +305,9 @@ export function Tabs<T extends string>({ value, tabs, onChange, className }: {
           >
             {t.label}
             {t.count !== undefined && t.count !== "" && (
-              <span className={cn("rounded-full px-1.5 py-px text-2xs font-semibold tabular-nums transition-colors", on ? "bg-accent/15 text-accent-ink" : "bg-raised text-dim")}>{t.count}</span>
+              <span className={cn("mono rounded-md px-1.5 py-px text-2xs font-medium transition-colors", on ? "bg-accent/15 text-accent-ink" : "bg-raised text-dim")}>{t.count}</span>
             )}
-            {on && <motion.span layoutId={`tab-${id}`} transition={SPRING} className="absolute inset-x-0 -bottom-px h-0.5 rounded-full bg-accent" />}
+            {on && <motion.span layoutId={`tab-${id}`} transition={SPRING} className="absolute inset-x-1 -bottom-px h-0.5 rounded-full bg-accent shadow-[0_0_10px_var(--color-accent)]" />}
           </button>
         );
       })}
@@ -398,11 +401,12 @@ export function Modal({ open, onClose, title, children, footer, wide, size }: {
             exit={{ opacity: 0, scale: 0.98, y: 8 }}
             transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
             className={cn(
-              "flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-2xl border border-line bg-panel shadow-modal outline-none sm:max-h-[90vh] sm:rounded-2xl",
+              "hud relative flex max-h-[92vh] w-full flex-col overflow-hidden rounded-t-2xl border border-line bg-panel shadow-modal outline-none sm:max-h-[90vh] sm:rounded-2xl",
               MODAL_W[size ?? (wide ? "xl" : "md")],
             )}
             onMouseDown={(e) => e.stopPropagation()}
           >
+            <span aria-hidden className="edge-light pointer-events-none absolute inset-x-0 top-0 h-px" />
             <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-3.5">
               <h3 id={titleId} className="min-w-0 truncate font-semibold tracking-tight">{shown.title}</h3>
               <IconButton title={t("Close")} onClick={onClose} className="-mr-1.5"><X className="size-4" /></IconButton>
@@ -433,7 +437,7 @@ export function Progress({ value, className, indeterminate, size = "md", tone = 
       {indeterminate ? (
         <div className={cn("absolute inset-y-0 left-0 w-2/5 rounded-full", bar)} style={{ animation: "bar-indeterminate 1.3s ease-in-out infinite" }} />
       ) : (
-        <motion.div className={cn("h-full rounded-full", bar)} initial={false} animate={{ width: `${pct}%` }} transition={{ type: "spring", stiffness: 160, damping: 26 }} />
+        <motion.div className={cn("h-full rounded-full", bar)} initial={false} animate={{ width: `${pct}%` }} transition={{ type: "spring", stiffness: 160, damping: 26 }} style={{ boxShadow: "0 0 8px -1px currentColor" }} />
       )}
     </div>
   );

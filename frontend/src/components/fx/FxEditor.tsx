@@ -310,7 +310,7 @@ function LookTile({ label, thumb, filter, selected, disabled, onPick, lut, onRem
       <button type="button" disabled={disabled} onClick={onPick} className="block w-full text-left disabled:opacity-60">
         <span className="relative block aspect-[4/3] overflow-hidden rounded-md bg-raised">
           {thumb ? <img src={thumb} alt="" className="size-full object-cover" style={{ filter }} draggable={false} />
-            : <span className="block size-full bg-gradient-to-br from-orange-400 via-sky-400 to-indigo-500" style={{ filter }} />}
+            : <span className="block size-full bg-gradient-to-br from-cyan-400 via-sky-400 to-indigo-500" style={{ filter }} />}
           {lut && <span className="absolute bottom-1 left-1 rounded bg-black/65 px-1 text-[0.6rem] font-semibold text-white">LUT</span>}
           {selected && <Check className="absolute right-1 top-1 size-3.5 rounded-full bg-accent p-0.5 text-black" strokeWidth={3} />}
         </span>

@@ -174,7 +174,7 @@ export function Choice({ options, value, onChange, disabled, ariaLabel }: {
         return (
           <button key={o.value} type="button" role="radio" aria-checked={on} disabled={disabled} onClick={() => onChange(o.value)}
             className={clsx("flex w-full items-start gap-3 rounded-xl border px-3.5 py-3 text-left transition-[border-color,background-color,box-shadow] duration-150 disabled:cursor-not-allowed disabled:opacity-60",
-              on ? "border-accent/60 bg-accent/8 shadow-[0_0_0_3px_rgb(249_115_22/0.08)]" : "border-line hover:border-dim/50 hover:bg-hover/50")}>
+              on ? "border-accent/60 bg-accent/8 shadow-[0_0_0_3px_rgb(34_211_238/0.08)]" : "border-line hover:border-dim/50 hover:bg-hover/50")}>
             <span className={clsx("mt-0.5 grid size-4 shrink-0 place-items-center rounded-full border transition-colors", on ? "border-accent bg-accent text-black" : "border-dim")}>
               {on && <Check className="size-3" strokeWidth={3} />}
             </span>

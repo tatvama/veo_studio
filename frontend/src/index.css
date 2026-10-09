@@ -1,44 +1,55 @@
 @import "tailwindcss";
 @import "@fontsource-variable/inter/wght.css";
+@import "@fontsource-variable/jetbrains-mono/wght.css";
 
 /* ════════════════════════════════════════════════════════════════════════════
-   VEO Studio design tokens
-   Dark is the default palette. Tailwind v4 emits these as :root vars and every utility reads var(--color-*),
-   so the light theme below simply overrides the same variables.
+   TATVAM AI STUDIO: "Command" design system
+   A mission-control look: near-black blue ground, hairline panels, electric-cyan focus colour, indigo for gradients,
+   amber reserved for money, violet reserved for the Director (AI). Mono type for telemetry and numerals.
+   Dark is the default; the light theme overrides the same variables (Tailwind v4 reads var(--color-*) everywhere).
 
-   Text hierarchy (all AA on panel/raised):  ink  → primary,  mute → secondary (≈8:1),  dim → hints/meta (≈5:1)
-   Surfaces:  bg (page) < panel (cards, sidebars) < raised (inputs, chips) < hover
+   Text hierarchy (AA on panel/raised):  ink → primary,  mute → secondary,  dim → hints/meta
+   Surfaces:  bg (page) < panel (cards, rails) < raised (inputs, chips) < hover
+   Semantic colour:  accent = action/focus · money = spend · ai = Director · ok/warn/bad/info = status
    ════════════════════════════════════════════════════════════════════════════ */
 @theme {
-  --color-bg: #0a0b0f;
-  --color-panel: #111318;
-  --color-raised: #171a21;
-  --color-hover: #1e222b;
-  --color-line: #262b35;
-  --color-ink: #eceef3;
-  --color-mute: #a9afbe;
-  --color-dim: #838a9c;
-  --color-accent: #f97316;
-  --color-accent-ink: #fb923c; /* accent when used as TEXT / icons (darkened in the light theme for contrast) */
-  --color-accent-2: #fbbf24;
-  --color-ok: #22c55e;
-  --color-warn: #f59e0b;
-  --color-bad: #ef4444;
-  --color-info: #38bdf8;
+  --color-bg: #05070b;
+  --color-panel: #0a0e15;
+  --color-raised: #101622;
+  --color-hover: #172033;
+  --color-line: #1a2332;
+  --color-ink: #e9eef7;
+  --color-mute: #9ba8bd;
+  --color-dim: #74829b;
+  --color-accent: #22d3ee;
+  --color-accent-ink: #67e8f9; /* accent as TEXT / icons (darkened in the light theme for contrast) */
+  --color-accent-2: #818cf8;
+  --color-money: #fbbf24;
+  --color-ai: #a78bfa;
+  --color-ok: #34d399;
+  --color-warn: #fbbf24;
+  --color-bad: #fb7185;
+  --color-info: #60a5fa;
 
   --font-sans: "Inter Variable", "Inter", "Segoe UI", "Nirmala UI", "Noto Sans", "Noto Sans Devanagari", "Noto Sans Kannada",
     "Noto Sans Telugu", "Noto Sans Tamil", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", "Cascadia Code", ui-monospace, Consolas, monospace;
+  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", "Cascadia Code", ui-monospace, Consolas, monospace;
 
-  /* 11px is the smallest text in the product (hints, badges, kbd). */
+  /* 11px is the smallest text in the product (hints, badges, kbd, mono eyebrows). */
   --text-2xs: 0.6875rem;
   --text-2xs--line-height: 1rem;
 
-  --shadow-card: 0 1px 0 rgb(255 255 255 / 0.035) inset, 0 1px 2px rgb(0 0 0 / 0.35);
-  --shadow-lift: 0 1px 0 rgb(255 255 255 / 0.05) inset, 0 10px 28px -10px rgb(0 0 0 / 0.65);
-  --shadow-pop: 0 1px 0 rgb(255 255 255 / 0.05) inset, 0 14px 36px -10px rgb(0 0 0 / 0.7), 0 0 0 1px rgb(0 0 0 / 0.25);
-  --shadow-modal: 0 1px 0 rgb(255 255 255 / 0.05) inset, 0 28px 70px -16px rgb(0 0 0 / 0.75);
-  --shadow-glow: 0 0 0 1px rgb(249 115 22 / 0.35), 0 8px 28px -8px rgb(249 115 22 / 0.45);
+  /* Crisper corners than a consumer app: controls 8px, cards 10px, modals 14px. */
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.625rem;
+  --radius-2xl: 0.875rem;
+
+  --shadow-card: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-lift: 0 1px 0 rgb(255 255 255 / 0.05) inset, 0 12px 30px -12px rgb(0 0 0 / 0.7), 0 0 0 1px rgb(34 211 238 / 0.06);
+  --shadow-pop: 0 1px 0 rgb(255 255 255 / 0.05) inset, 0 16px 40px -10px rgb(0 0 0 / 0.75), 0 0 0 1px rgb(0 0 0 / 0.3);
+  --shadow-modal: 0 1px 0 rgb(255 255 255 / 0.05) inset, 0 30px 80px -16px rgb(0 0 0 / 0.8), 0 0 0 1px rgb(34 211 238 / 0.05);
+  --shadow-glow: 0 0 0 1px rgb(34 211 238 / 0.4), 0 8px 28px -8px rgb(34 211 238 / 0.5);
 
   --ease-out-expo: cubic-bezier(0.22, 1, 0.36, 1);
   --ease-spring: cubic-bezier(0.34, 1.4, 0.64, 1);
@@ -47,38 +58,47 @@
 /* Non-colour tokens used by the shell. */
 :root {
   color-scheme: dark;
-  --scrollbar: #2b303b;
-  --scrollbar-hover: #3a404d;
-  --selection: rgb(249 115 22 / 0.35);
-  --shimmer: rgb(255 255 255 / 0.06);
-  --backdrop: rgb(2 3 6 / 0.66);
-  --spotlight: rgb(0 0 0 / 0.62);
+  --scrollbar: #243047;
+  --scrollbar-hover: #34445f;
+  --selection: rgb(34 211 238 / 0.3);
+  --shimmer: rgb(255 255 255 / 0.05);
+  --backdrop: rgb(2 4 8 / 0.7);
+  --spotlight: rgb(0 0 0 / 0.66);
   --elev: var(--shadow-lift);
-  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23a9afbe' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239ba8bd' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
   --sheen: rgb(255 255 255 / 0.03);
+  --grid: rgb(120 160 220 / 0.045);
+  --glow-a: rgb(34 211 238 / 0.075);
+  --glow-b: rgb(129 140 248 / 0.075);
+  --bracket: rgb(34 211 238 / 0.55);
+  --on-accent: #021016;
   --dur-fast: 120ms;
   --dur: 200ms;
   --dur-slow: 360ms;
+  --topbar-h: 3rem;
+  --statusbar-h: 1.625rem;
 }
 
 /* ── Light theme ─────────────────────────────────────────────────────────── */
 :root[data-theme="light"] {
   color-scheme: light;
-  --color-bg: #f5f3ee;
+  --color-bg: #e9edf4;
   --color-panel: #ffffff;
-  --color-raised: #f3f0ea;
-  --color-hover: #ebe7df;
-  --color-line: #e1dcd1;
-  --color-ink: #1a1c22;
-  --color-mute: #4b5160;
-  --color-dim: #656b7a;
-  --color-accent: #f97316;
-  --color-accent-ink: #b4390a;
-  --color-accent-2: #d97706;
-  --color-ok: #16a34a;
+  --color-raised: #f2f5fa;
+  --color-hover: #e6ebf3;
+  --color-line: #d6deea;
+  --color-ink: #0b1220;
+  --color-mute: #44516a;
+  --color-dim: #5a6780;
+  --color-accent: #06b6d4;
+  --color-accent-ink: #0e7490;
+  --color-accent-2: #6366f1;
+  --color-money: #b45309;
+  --color-ai: #7c3aed;
+  --color-ok: #059669;
   --color-warn: #d97706;
-  --color-bad: #dc2626;
-  --color-info: #0284c7;
+  --color-bad: #e11d48;
+  --color-info: #2563eb;
 
   /* Pastel text shades (text-red-300 etc.) are tuned for dark panels; on light panels use deep shades instead. */
   --color-red-100: #b91c1c; --color-red-200: #b91c1c; --color-red-300: #b91c1c;
@@ -99,20 +119,24 @@
   --color-pink-200: #be185d; --color-pink-300: #be185d;
   --color-rose-200: #be123c; --color-rose-300: #be123c;
 
-  --shadow-card: 0 1px 2px rgb(30 25 15 / 0.05), 0 0 0 0 transparent;
-  --shadow-lift: 0 1px 2px rgb(30 25 15 / 0.06), 0 12px 30px -14px rgb(30 25 15 / 0.24);
-  --shadow-pop: 0 1px 2px rgb(30 25 15 / 0.06), 0 14px 36px -12px rgb(30 25 15 / 0.28), 0 0 0 1px rgb(30 25 15 / 0.05);
-  --shadow-modal: 0 1px 2px rgb(30 25 15 / 0.08), 0 28px 70px -18px rgb(30 25 15 / 0.38);
-  --shadow-glow: 0 0 0 1px rgb(249 115 22 / 0.4), 0 8px 24px -8px rgb(249 115 22 / 0.35);
+  --shadow-card: 0 1px 2px rgb(15 25 45 / 0.06), 0 0 0 0 transparent;
+  --shadow-lift: 0 1px 2px rgb(15 25 45 / 0.07), 0 12px 30px -14px rgb(15 25 45 / 0.26);
+  --shadow-pop: 0 1px 2px rgb(15 25 45 / 0.07), 0 14px 36px -12px rgb(15 25 45 / 0.3), 0 0 0 1px rgb(15 25 45 / 0.05);
+  --shadow-modal: 0 1px 2px rgb(15 25 45 / 0.08), 0 28px 70px -18px rgb(15 25 45 / 0.4);
+  --shadow-glow: 0 0 0 1px rgb(6 182 212 / 0.45), 0 8px 24px -8px rgb(6 182 212 / 0.4);
 
-  --scrollbar: #cfc8bc;
-  --scrollbar-hover: #b9b1a3;
-  --selection: rgb(249 115 22 / 0.22);
-  --shimmer: rgb(255 255 255 / 0.75);
-  --backdrop: rgb(28 25 20 / 0.4);
-  --spotlight: rgb(28 25 20 / 0.5);
+  --scrollbar: #c3cddd;
+  --scrollbar-hover: #aab6ca;
+  --selection: rgb(6 182 212 / 0.25);
+  --shimmer: rgb(255 255 255 / 0.8);
+  --backdrop: rgb(15 23 42 / 0.4);
+  --spotlight: rgb(15 23 42 / 0.5);
   --sheen: rgb(255 255 255 / 0.6);
-  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%234b5160' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  --grid: rgb(30 60 110 / 0.06);
+  --glow-a: rgb(6 182 212 / 0.1);
+  --glow-b: rgb(99 102 241 / 0.09);
+  --bracket: rgb(14 116 144 / 0.55);
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2344516a' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
 }
 
 @layer base {
@@ -122,7 +146,7 @@
     color: #f4f4f5;
   }
   :where([data-theme="light"]) :where(.shadow-2xl, .shadow-xl) {
-    --tw-shadow-color: rgb(30 25 15 / 0.18);
+    --tw-shadow-color: rgb(15 25 45 / 0.18);
   }
 
   /* Tailwind v4 leaves buttons with the default arrow; interactive things should feel clickable. */
@@ -163,6 +187,7 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
+  overflow: hidden; /* the app is a fixed-viewport cockpit: panels scroll, the page does not */
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 
@@ -187,6 +212,9 @@ body {
 .text-balance {
   text-wrap: balance;
 }
+
+/* Numerals that line up (tables, counters, telemetry). */
+.num { font-variant-numeric: tabular-nums; font-feature-settings: "tnum" 1; }
 
 /* ── Form controls ───────────────────────────────────────────────────────── */
 select:not([multiple]):not([size]) {
@@ -220,6 +248,71 @@ select option { background: var(--color-panel); color: var(--color-ink); }
   -webkit-backdrop-filter: blur(14px) saturate(1.3);
 }
 
+/* ── HUD toolkit ─────────────────────────────────────────────────────────── */
+/* Workspace ground: two faint colour glows plus a hairline grid that fades toward the edges. Put it on a container
+   (it isolates its stacking context); content inside paints above it. */
+.hud-bg {
+  position: relative;
+  isolation: isolate;
+  background:
+    radial-gradient(62rem 34rem at 6% -12%, var(--glow-a), transparent 62%),
+    radial-gradient(50rem 30rem at 104% 0%, var(--glow-b), transparent 62%),
+    var(--color-bg);
+}
+.hud-bg::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px);
+  background-size: 36px 36px;
+  mask-image: radial-gradient(ellipse 80% 70% at 50% 0%, #000 25%, transparent 78%);
+  -webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 0%, #000 25%, transparent 78%);
+}
+
+/* Corner brackets: two L-shaped ticks in the top-left and bottom-right corners, brighter on hover. Cheap "instrument panel" feel. */
+.hud { position: relative; }
+.hud::before, .hud::after {
+  content: "";
+  position: absolute;
+  width: 9px;
+  height: 9px;
+  pointer-events: none;
+  border: 0 solid var(--bracket);
+  opacity: 0.5;
+  transition: opacity var(--dur) ease, width var(--dur) var(--ease-out-expo), height var(--dur) var(--ease-out-expo);
+}
+.hud::before { top: -1px; left: -1px; border-top-width: 1.5px; border-left-width: 1.5px; border-top-left-radius: 3px; }
+.hud::after { bottom: -1px; right: -1px; border-bottom-width: 1.5px; border-right-width: 1.5px; border-bottom-right-radius: 3px; }
+.hud:hover::before, .hud:hover::after, .hud:focus-within::before, .hud:focus-within::after { opacity: 1; width: 14px; height: 14px; }
+
+/* Small uppercase mono label above a value or section ("eyebrow"). */
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  line-height: 1;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--color-dim);
+}
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+
+/* A bar of light along the top edge of a panel, in the accent gradient. */
+.edge-light {
+  background-image: linear-gradient(90deg, transparent, color-mix(in oklab, var(--color-accent) 70%, transparent) 30%,
+    color-mix(in oklab, var(--color-accent-2) 70%, transparent) 70%, transparent);
+}
+
+/* The wordmark gradient, and a gradient text helper for big numbers. */
+.text-gradient {
+  background-image: linear-gradient(100deg, var(--color-accent-ink), var(--color-accent-2));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
 /* Fades the ends of a horizontally scrolling strip (tab bars, chip rows). */
 .mask-fade-x {
   mask-image: linear-gradient(to right, transparent 0, #000 14px, #000 calc(100% - 22px), transparent 100%);
@@ -232,16 +325,41 @@ select option { background: var(--color-panel); color: var(--color-ink); }
 .no-scrollbar { scrollbar-width: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
 
-/* Primary call-to-action: warm gradient with an inner highlight and a soft coloured shadow. */
+/* Primary call-to-action: electric cyan with an inner highlight and a coloured glow. */
 .btn-primary {
-  background-image: linear-gradient(180deg, #fb923c 0%, #f97316 100%);
-  box-shadow: 0 1px 0 rgb(255 255 255 / 0.3) inset, 0 6px 16px -6px rgb(249 115 22 / 0.65);
+  color: var(--on-accent);
+  background-image: linear-gradient(180deg, #7aeaff 0%, #22d3ee 52%, #0fb7d4 100%);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.4) inset, 0 0 0 1px rgb(34 211 238 / 0.45), 0 8px 22px -8px rgb(34 211 238 / 0.6);
 }
 .btn-primary:hover:not(:disabled) {
-  background-image: linear-gradient(180deg, #fdba74 0%, #fb923c 100%);
-  box-shadow: 0 1px 0 rgb(255 255 255 / 0.35) inset, 0 8px 22px -6px rgb(249 115 22 / 0.75);
+  background-image: linear-gradient(180deg, #9af0ff 0%, #4fdcf3 52%, #22c5e2 100%);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.45) inset, 0 0 0 1px rgb(34 211 238 / 0.6), 0 10px 26px -8px rgb(34 211 238 / 0.75);
 }
 .btn-primary:disabled { box-shadow: none; }
+
+/* ── Telemetry ───────────────────────────────────────────────────────────── */
+/* A pulsing "live" dot. */
+@keyframes live-ping { 0% { transform: scale(0.8); opacity: 0.9; } 80%, 100% { transform: scale(2.6); opacity: 0; } }
+.live-dot { position: relative; display: inline-block; width: 0.4375rem; height: 0.4375rem; border-radius: 9999px; background: var(--color-ok); }
+.live-dot::after { content: ""; position: absolute; inset: 0; border-radius: inherit; background: inherit; animation: live-ping 1.8s ease-out infinite; }
+.live-dot.is-idle { background: var(--color-dim); }
+.live-dot.is-idle::after { animation: none; }
+.live-dot.is-warn { background: var(--color-warn); }
+.live-dot.is-bad { background: var(--color-bad); }
+
+/* Equalizer bars: "work is happening". Heights come from --h per bar. */
+@keyframes eq { 0%, 100% { transform: scaleY(0.35); } 50% { transform: scaleY(1); } }
+.eq { display: inline-flex; align-items: flex-end; gap: 2px; height: 0.875rem; }
+.eq > i { display: block; width: 2px; height: 100%; border-radius: 1px; background: var(--color-accent); transform-origin: bottom; animation: eq 0.9s ease-in-out infinite; }
+.eq > i:nth-child(2) { animation-delay: -0.3s; }
+.eq > i:nth-child(3) { animation-delay: -0.6s; }
+.eq > i:nth-child(4) { animation-delay: -0.15s; }
+.eq.is-idle > i { animation: none; transform: scaleY(0.3); background: var(--color-dim); }
+
+/* A light sweeping across a progress bar. */
+@keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+.sweep { position: relative; overflow: hidden; }
+.sweep::after { content: ""; position: absolute; inset: 0; background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.35), transparent); animation: sweep 1.6s ease-in-out infinite; }
 
 /* ── Motion ──────────────────────────────────────────────────────────────── */
 @keyframes shimmer {
@@ -271,8 +389,8 @@ select option { background: var(--color-panel); color: var(--color-ink); }
 }
 
 @keyframes pulse-ring {
-  0% { box-shadow: 0 0 0 0 rgb(249 115 22 / 0.55); }
-  100% { box-shadow: 0 0 0 10px rgb(249 115 22 / 0); }
+  0% { box-shadow: 0 0 0 0 rgb(34 211 238 / 0.55); }
+  100% { box-shadow: 0 0 0 10px rgb(34 211 238 / 0); }
 }
 
 .pulse-ring {
@@ -354,9 +472,9 @@ select option { background: var(--color-panel); color: var(--color-ink); }
   overflow: clip;
   background-color: var(--color-bg);
   background-image:
-    radial-gradient(42rem 30rem at 15% 10%, rgb(249 115 22 / 0.20), transparent 60%),
-    radial-gradient(36rem 26rem at 85% 15%, rgb(251 191 36 / 0.12), transparent 60%),
-    radial-gradient(40rem 30rem at 50% 100%, rgb(239 68 68 / 0.10), transparent 60%);
+    radial-gradient(42rem 30rem at 15% 10%, rgb(34 211 238 / 0.16), transparent 60%),
+    radial-gradient(36rem 26rem at 85% 15%, rgb(129 140 248 / 0.16), transparent 60%),
+    radial-gradient(40rem 30rem at 50% 100%, rgb(167 139 250 / 0.1), transparent 60%);
   background-size: 140% 140%, 140% 140%, 140% 140%;
   background-repeat: no-repeat;
   animation: aurora 22s ease-in-out infinite;
@@ -366,26 +484,26 @@ select option { background: var(--color-panel); color: var(--color-ink); }
   position: absolute;
   inset: -20%;
   z-index: -1;
-  background: conic-gradient(from 180deg at 50% 50%, transparent 0deg, rgb(249 115 22 / 0.07) 90deg, transparent 180deg, rgb(251 191 36 / 0.06) 270deg, transparent 360deg);
+  background: conic-gradient(from 180deg at 50% 50%, transparent 0deg, rgb(34 211 238 / 0.07) 90deg, transparent 180deg, rgb(129 140 248 / 0.07) 270deg, transparent 360deg);
   filter: blur(60px);
   animation: float-slow 18s ease-in-out infinite;
 }
 .login-bg::after {
-  /* faint film-grain grid */
+  /* faint hairline grid */
   content: "";
   position: absolute;
   inset: 0;
   z-index: -1;
   background-image: linear-gradient(var(--color-line) 1px, transparent 1px), linear-gradient(90deg, var(--color-line) 1px, transparent 1px);
-  background-size: 48px 48px;
-  opacity: 0.25;
+  background-size: 44px 44px;
+  opacity: 0.35;
   mask-image: radial-gradient(ellipse at center, black 20%, transparent 70%);
 }
 :root[data-theme="light"] .login-bg {
   background-image:
-    radial-gradient(42rem 30rem at 15% 10%, rgb(249 115 22 / 0.16), transparent 60%),
-    radial-gradient(36rem 26rem at 85% 15%, rgb(251 191 36 / 0.16), transparent 60%),
-    radial-gradient(40rem 30rem at 50% 100%, rgb(244 114 182 / 0.10), transparent 60%);
+    radial-gradient(42rem 30rem at 15% 10%, rgb(6 182 212 / 0.16), transparent 60%),
+    radial-gradient(36rem 26rem at 85% 15%, rgb(99 102 241 / 0.14), transparent 60%),
+    radial-gradient(40rem 30rem at 50% 100%, rgb(167 139 250 / 0.1), transparent 60%);
 }
 
 /* ── Reduced motion: OS setting or the in-app "Reduce motion" preference ───── */

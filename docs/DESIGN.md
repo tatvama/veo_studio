@@ -1,123 +1,63 @@
-# VEO Studio — design system and UI guide
+# Tatvam AI Studio: "Command" design system
 
-How the interface is built and how to keep it consistent. Applies to every page and component in `frontend/src`.
+A professional production cockpit. The app is a fixed viewport: a top command bar, a slim rail, the work area, a status strip (and a bottom tab bar on phones). Panels scroll; the page does not. Everything is data-dense but calm: hairlines instead of fills, one electric accent, mono type for numbers.
 
-**Feel we are going for:** calm, dense and precise, like Linear / Frame.io / Runway. Dark-first, one warm accent, strong
-hierarchy, quick motion that explains what changed. Never decorative for its own sake.
+## 1. Look
 
----
+| Role | Token | Use |
+| --- | --- | --- |
+| Ground | `bg-bg` | the page behind everything (`hud-bg` adds two faint colour glows and a hairline grid) |
+| Panel | `bg-panel` | rails, cards, panels |
+| Raised | `bg-raised` | inputs, chips, nested blocks |
+| Hover | `bg-hover` | hover and selected rows |
+| Line | `border-line` | the one hairline colour. Never a heavier border |
+| Text | `text-ink` / `text-mute` / `text-dim` | primary / secondary / hints and meta |
+| **Accent** (electric cyan) | `accent`, `text-accent-ink` | focus, the active item, the primary action. One primary button per area |
+| Accent 2 (indigo) | `accent-2` | only in gradients with the accent (wordmark, progress, edge light) |
+| **Money** (amber) | `money` | anything that costs: prices, spend, budget |
+| **AI** (violet) | `ai` | the Director and AI-authored content |
+| Status | `ok` `warn` `bad` `info` | state only, never decoration |
 
-## 1. Tokens (`src/index.css`)
+- **No hex and no `gray-*`** in components. Tokens only; the light theme is the same tokens re-valued.
+- Type: Inter for UI, **JetBrains Mono (`font-mono` / `.mono`) for every number, id, timecode, price and label**. Smallest text is `text-2xs` (11 px). Headings `tracking-tight`. Use `.num` for aligned figures.
+- Corners: controls `rounded-lg` (8 px), cards `rounded-xl` (10 px), modals `rounded-2xl` (14 px). Do not round more than that.
+- Depth comes from hairlines and a faint top highlight, not from big shadows. Glow (`shadow-[0_0_Npx_var(--color-accent)]`) is for the active/live thing only.
 
-Use token classes only. No hex values or `gray-*` / `zinc-*` colours in components (the light theme works by swapping the
-variables). Exception: user data such as brand-kit swatches or drawing strokes (inline `style`).
+## 2. HUD utilities (index.css)
 
-| Token | Use |
-|---|---|
-| `bg-bg` | page background |
-| `bg-panel` | cards, sidebars, inputs, popovers' base |
-| `bg-raised` | chips, secondary buttons, table headers, tooltips, popovers |
-| `bg-hover` | hover state of rows / buttons |
-| `border-line` | every border and divider |
-| `text-ink` | primary text, values, titles |
-| `text-mute` | secondary text, labels, descriptions (≈8:1 contrast) |
-| `text-dim` | hints, timestamps, placeholders (≈5:1 — never for anything the user must read to act) |
-| `text-accent-ink` | accent **text and icons** (deeper orange in the light theme). Use `bg-accent` / `border-accent` for fills. |
-| `text-ok / warn / bad / info` | status text; `bg-ok/12 border-ok/30` for tinted surfaces |
+| Class | What it is |
+| --- | --- |
+| `hud-bg` | workspace ground with glows + grid. Put it on a page's scroll container |
+| `hud` | corner brackets in the top-left and bottom-right, brighter on hover. Panels, stat tiles, modals, interactive cards |
+| `eyebrow` | tiny uppercase mono label (above a value, a section, a field group) |
+| `mono` / `num` | mono type with tabular figures |
+| `edge-light` | a gradient hairline; place `absolute inset-x-4 top-0 h-px` at the top of a panel |
+| `text-gradient` | accent to accent-2 gradient text (wordmark, one hero number per page at most) |
+| `live-dot` (`is-idle` `is-warn` `is-bad`) | a pulsing status dot |
+| `eq` (`is-idle`) | four equalizer bars for "work is running" |
+| `sweep` | a light sweeping across a bar (indeterminate progress) |
+| `gen-ring` | the conic border for something generating right now |
 
-**Type scale** (Inter variable, bundled): `text-2xs` 11px (hints, badges, kbd — the smallest text allowed) · `text-xs` 12 ·
-`text-sm` 14 (default UI text) · `text-base` 16 · `text-lg` 18 (section titles) · `text-xl` 20 · `text-2xl` 24 (page titles) ·
-`text-3xl` 30 (hero). Weights: 400 body, 500 labels/buttons, 600 titles. Headings use `tracking-tight`. Numbers that change
-or align in columns use `tabular-nums`. Never write `text-[10px]` / `text-[9px]`.
+## 3. Components (import from `components/ui`)
 
-**Radius:** controls `rounded-lg` (8) · cards `rounded-xl` (12) · modals `rounded-2xl` (16) · pills/avatars `rounded-full`.
-**Shadows:** `shadow-card` (resting card), `shadow-lift` (hover), `shadow-pop` (popovers, menus), `shadow-modal`, `shadow-glow` (accent focus).
-Bordered panels (`border bg-panel rounded-xl`) get `shadow-card` automatically.
-**Spacing:** 4px grid. Page gutters `px-4 sm:px-6 lg:px-8`; card padding `p-4` (dense) or `p-5`; gaps `gap-2` (inline), `gap-3/4` (grids), `gap-6` (sections).
+- `Panel` is the standard block: `eyebrow` (mono label), `title`, `icon`, `actions`, `flush` for tables/lists, `tone` for a coloured eyebrow and a lit edge. **Every dashboard block is a Panel.**
+- `Metric`: big mono value, unit, delta, sparkline. KPI strips are rows of Metric inside one Panel, or `Stat` tiles.
+- `Meter`: segmented bar (like a battery / flight path). `ProgressRing`: circular progress. `StatusDot`, `Tag` (`KEY value` mono chip), `Badge` (tones: accent, money, ai, ok, warn, bad, info, neutral).
+- `Tabs` (in-page), `Segmented`, `Toggle`, `Select`, `Input`, `Modal`, `Menu`, `Popover`, `Tooltip` are unchanged in API.
+- Project pages use `RoomPage` + `RoomHeader` + `SectionCard` (room/kit); top-level pages use `Page` + `PageHeader`. Both already carry the HUD ground.
 
-## 2. Layout
+## 4. Layout rules
 
-- Every routed page uses `<Page>` + `<PageHeader title subtitle icon actions />` (`components/ui`). It gives the scroll container, the
-  single `<h1>`, consistent padding and an entrance animation. Widths: `narrow` (forms), `default`, `wide` (dashboards, grids), `full`.
-- Group content with `<Section title description actions>`; use `Card`/bordered panels for each block.
-- Grids: `grid gap-4 grid-cols-[repeat(auto-fill,minmax(260px,1fr))]` rather than fixed column counts.
-- Master/detail or settings pages: sticky side navigation (≥1024px) + content column; below that, a horizontal `ScrollStrip`.
-- Toolbars that matter while scrolling are `sticky top-0 z-10 bg-bg/85 backdrop-blur`.
-- Breakpoints: `<768` phone (stack everything, 44px touch targets), `768–1100` compact (slim sidebar, floating Director), `≥1100` docked.
-  Components that live in resizable areas (project header, cards) use **container queries** (`@container` + `@3xl:` …) instead of viewport breakpoints.
-- Long text: titles `truncate` with `title=` / tooltip; descriptions `line-clamp-2`; never let content push a container wider than its parent.
-  Indic strings run ~30% longer than English — leave room.
-- Everything must work with no data (empty state with a next action), while loading (skeleton shaped like the final content) and on error (message + retry).
+- **Bento grids**: `grid gap-4` with `@container` queries, 12 columns on wide, 2 on medium, 1 on narrow. A row mixes one big panel with small ones; avoid a wall of equal cards.
+- **Density**: rows 36 px, panels `p-4`, gaps 12/16. Tables use mono figures, right-aligned numbers, a hairline between rows, and a sticky header.
+- **Hierarchy per page**: header (icon chip + title + one-line purpose + actions) → a KPI/status strip → the main work → secondary panels. Status is shown with an icon and a word, never colour alone.
+- **Navigation**: the global rail (icons) and the project pipeline rail (stages with progress) are the only persistent nav. Pages never add their own top tab row; use `Tabs` for in-page views only.
+- Empty, loading (skeleton) and error (retry) states on every view. Dialogs trap focus. Hit targets are at least 28 px (40 px on phones).
 
-## 3. Components (`import … from "../components/ui"`)
+## 5. Motion
 
-`Button` (primary / secondary / outline / ghost / danger; sm md lg; `loading`, `icon`, `iconRight`, `block`) · `IconButton` (needs `title` → accessible
-name + animated tooltip; `shortcut`, `tipSide`) · `Input` `Textarea` `Select` `SearchField` `Field` · `Toggle` · `Segmented` · `Tabs` (with `count`) ·
-`ScrollStrip` · `Modal` (`size` sm/md/lg/xl; focus trap built in; becomes a bottom sheet on phones) · `Popover` + `Menu` (anchored, flips, keyboard) ·
-`Tooltip` (wrap any single element) · `Badge` (`dot`) · `Alert` (info/warn/bad/ok/accent) · `Card` (`interactive` → hover lift) ·
-`Stat` (KPI tile with count-up) · `Sparkline` · `Progress` (`indeterminate`, `tone`, `size`) · `ProgressRing` · `Skeleton` / `SkeletonText` ·
-`Empty` (animated icon) · `Avatar` / `AvatarStack` · `Kbd` · `AnimatedNumber`.
+At most 450 ms and always reduced-motion aware. Enter with `rise(i)` (38 ms stagger, capped at 14 items); panels do not animate on hover except brackets and edge light. Live things (running jobs, generating tiles) use `eq`, `live-dot` or `gen-ring`. Do not animate lists longer than about 40 items.
 
-Rules of thumb
-- One primary button per view area. Destructive actions are `danger` and confirm.
-- Icon-only controls are always `IconButton` with a `title`. Native `title=` is only for non-interactive text.
-- Form rows: `Field` label above control, hint below (`text-2xs text-dim`). Group related fields in a bordered card with a title.
-- Status is never colour alone: pair with an icon or text.
-- Money always goes through the cost dialog (`useGenerate`) — never spend on a bare click.
+## 6. Language and content
 
-## 4. Motion
-
-All motion is subtle (≤ 450 ms) and respects reduced-motion automatically (global CSS + `MotionConfig`).
-
-| Situation | How |
-|---|---|
-| Page / block entrance | `<div {...rise(i)}>` (CSS, staggered 38 ms per sibling, capped at 14) — also `Reveal`, `InView` for below-the-fold blocks |
-| Cards on hover | `lift` class (translateY −2px + shadow); clickable `Card` already does it |
-| Press | buttons scale to 0.97 (built in) |
-| Appear / disappear of a block | `AnimatePresence` + `motion.div` fade/slide (150–250 ms); lists use `layout` for smooth reflow |
-| Switchers (tabs, segmented, sidebar) | shared `layoutId` sliding indicator (built in) |
-| Numbers (costs, counts, stats) | `AnimatedNumber` / `Stat` |
-| Bars | `Progress` animates with a spring; unknown duration → `indeterminate` |
-| Loading data | **skeletons** shaped like the content. `Spinner` only inside buttons or tiny inline spots |
-| Something generating right now | `gen-ring` class (rotating accent border) + `Progress` |
-| Empty states | `Empty` (floating icon) |
-| Overlays | modal/popover scale+fade, drawers slide with a spring |
-
-```tsx
-// staggered entrance: merge rise()'s class + style with your own
-const r = rise(index);                       // { className: "anim-rise", style: { "--i": index } }
-<li className={clsx("rounded-xl border ...", r.className)} style={r.style}>…</li>
-<Tooltip content={t("Copy")}><button …/></Tooltip>   // wrap exactly ONE element
-```
-
-Don't animate: large lists past ~40 items (only the first screenful), layout properties on scroll, or anything that delays an action.
-Prefer `transform` / `opacity`. Never animate the thing the user is trying to click.
-
-## 5. Accessibility and content
-
-- Every user-visible string goes through `t()` (`const t = useT()`; `tr()` outside React). English text is the key. Placeholders `{n}`.
-- Contrast AA: use `text-mute` for readable secondary text; `text-dim` only for hints. Focus rings are global (`:focus-visible`).
-- Keyboard: every action reachable; dialogs trap focus (built in); menus support arrows + Enter + Esc.
-- Hit targets ≥ 28px on desktop, ≥ 40px on phones.
-- Page `<title>` is set by the shell; a project page sets "Section · Project".
-
-## 6. Per-page QA checklist (what "done" means)
-
-1. Loads with a skeleton (no blank flash, no layout jump) and animates in.
-2. Empty, loading, error and "lots of data" states all look intentional.
-3. At 1280, 1024, 768 and 375 px wide: no horizontal scroll, nothing clipped, nothing overlapping, sensible stacking.
-4. Light theme and dark theme both fine (contrast, borders, shadows, images).
-5. Hindi / Kannada / Telugu / Tamil strings don't break layouts.
-6. Hover, focus-visible, active, disabled and loading states exist on every control.
-7. Tab order and keyboard use are sane; icon buttons have names.
-8. No console errors or warnings; `npx tsc -p . --noEmit` is clean.
-
-## 7. How to look at your work in the Browser pane (for people and agents)
-
-- The pane is small (≈ 882×421). Native size gives the sharpest screenshots. For other widths use `resize_window`
-  (custom sizes up to ~1024 wide render at good quality; wider ones are downscaled — judge layout, not text; mobile preset = 375×812 at 1:1).
-- Open **your own tab** (`tabs_create`, then `navigate`); background tabs screenshot fine. Never touch other tabs.
-- The dev app is already signed in. Do not change the account theme/language: for the light theme run
-  `document.documentElement.dataset.theme = "light"` in your own tab (not persisted; reload resets it).
-- Dev-only audit helper: add `<script src="/__audit.js">` through the console, then `__A.go("/route")`, `__A.check()` returns overflow / contrast /
-  tiny-text / small-target / unnamed-control findings for the current page.
+All user-visible text goes through `t()` / `tr()`. Indic strings run about 30 % longer: no fixed-width labels. Money is always shown in `money` colour and mono. Product name: **Tatvam AI Studio** (wordmark `TATVAM`, subtitle `AI STUDIO`).

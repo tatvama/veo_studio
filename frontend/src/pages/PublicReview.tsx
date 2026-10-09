@@ -40,7 +40,7 @@ function Brand() {
   const t = useT();
   return (
     <div className="flex shrink-0 items-center gap-2.5">
-      <span className="grid size-9 place-items-center rounded-xl bg-linear-to-br from-accent to-accent-2 text-black shadow-[0_6px_18px_-6px_rgb(249_115_22/0.7)]">
+      <span className="grid size-9 place-items-center rounded-xl bg-linear-to-br from-accent to-accent-2 text-black shadow-[0_6px_18px_-6px_rgb(34_211_238/0.7)]">
         <Clapperboard className="size-[18px]" />
       </span>
       <span className="hidden leading-tight sm:block">

@@ -1,3 +1,4 @@
+import { LogoMark } from "../components/shell/Brand";
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import {
@@ -44,17 +45,17 @@ function Brand({ className, compact }: { className?: string; compact?: boolean }
   return (
     <div className={clsx("flex items-center gap-3", className)}>
       <motion.span
-        initial={{ rotate: -14, scale: 0.7 }}
-        animate={{ rotate: 0, scale: 1 }}
-        transition={{ type: "spring", stiffness: 300, damping: 16, delay: 0.1 }}
-        className="grid size-10 shrink-0 place-items-center rounded-xl bg-gradient-to-b from-orange-400 to-orange-500 text-black shadow-lg shadow-accent/30"
+        initial={{ rotate: -30, scale: 0.6, opacity: 0 }}
+        animate={{ rotate: 0, scale: 1, opacity: 1 }}
+        transition={{ type: "spring", stiffness: 260, damping: 16, delay: 0.1 }}
+        className="grid size-11 shrink-0 place-items-center"
       >
-        <Clapperboard className="size-5" />
+        <LogoMark size={44} />
       </motion.span>
       {/* the wordmark drops away below 360px so the language and theme switchers always fit */}
-      <span className={clsx("leading-tight", compact && "max-[359px]:hidden")}>
-        <span className="block text-[15px] font-semibold tracking-tight">VEO Studio</span>
-        <span className="block text-2xs text-dim">{t("AI video studio")}</span>
+      <span className={clsx("leading-none", compact && "max-[359px]:hidden")}>
+        <span className="text-gradient block text-lg font-semibold tracking-[0.22em]">TATVAM</span>
+        <span className="eyebrow mt-1.5 block tracking-[0.32em]">{t("AI STUDIO")}</span>
       </span>
     </div>
   );
