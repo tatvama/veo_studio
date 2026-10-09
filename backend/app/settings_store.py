@@ -32,6 +32,10 @@ DEFAULTS: dict[str, Any] = {
     "text_provider": "gemini",
     "openrouter_text_model": "",
     "openrouter_text_model_pro": "",
+    # Director chat agent: "claude" (Anthropic key, Claude Sonnet 5.5) or "gemini". Claude falls back to Gemini when
+    # there is no Anthropic key; a team that picks Gemini never gets Claude. Effort: low | medium | high | xhigh | max.
+    "director_engine": "claude",
+    "director_claude_effort": "medium",
     # BytePlus asset library: CreateAsset calls per minute (3 on the free Entry tier, 120 Advanced, 300 Premium)
     "byteplus_asset_qpm": 3,
     "qc_threshold": 0.7,
@@ -73,7 +77,7 @@ DEFAULTS: dict[str, Any] = {
 }
 
 # byteplus_iam is the BytePlus access key and secret, saved together as "ACCESS_KEY:SECRET" (asset library only)
-PROVIDERS = ["gemini", "elevenlabs", "sync", "sarvam", "fal", "openrouter", "byteplus", "byteplus_iam"]
+PROVIDERS = ["gemini", "elevenlabs", "sync", "sarvam", "fal", "openrouter", "byteplus", "byteplus_iam", "anthropic"]
 
 
 def get_setting(db: Session, key: str) -> Any:
@@ -172,6 +176,7 @@ def api_key(provider: str) -> str:
         "openrouter": s.openrouter_api_key,
         "byteplus": s.byteplus_api_key,
         "byteplus_iam": f"{s.byteplus_access_key}:{s.byteplus_secret_key}" if s.byteplus_access_key and s.byteplus_secret_key else "",
+        "anthropic": s.anthropic_api_key,
     }.get(provider, "") or ""
 
 
