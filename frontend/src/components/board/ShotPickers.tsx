@@ -2,11 +2,12 @@ import { clsx } from "clsx";
 import {
   AlertTriangle, Check, ChevronDown, Cpu, ImagePlus, Images, Info, MapPin, Plus, Search, UserRound, Volume2, Wand2,
 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { usd } from "../../lib/format";
 import { useT } from "../../lib/i18n";
 import type { Character, VideoEngine, VideoEngines, VideoFit } from "../../lib/types";
-import { Avatar, Badge, Button, Popover, Toggle } from "../ui";
+import { Avatar, Badge, Button, Popover, Toggle, Tooltip } from "../ui";
+import { SeedanceBadge } from "../room/SeedanceBadge";
 import { TONE_TEXT_SM } from "../room/util";
 import { providerName } from "../hub/Chips";
 
@@ -113,6 +114,26 @@ export function FitChips({ fit, className }: { fit: VideoFit; className?: string
   );
 }
 
+/** For a model that takes characters registered with BytePlus (Seedance): whether the shot's characters are registered. */
+function SeedanceCast({ characters }: { characters: Character[] }) {
+  const t = useT();
+  if (!characters.length) return null;
+  const ready = characters.filter((c) => c.seedance_ready).length;
+  if (ready === characters.length) {
+    return <SeedanceBadge tip={ready > 1 ? t("Registered with BytePlus: Seedance keeps these characters' looks") : undefined} />;
+  }
+  const tip = ready ? t("Register the others on their character page (Video character) so Seedance keeps their look")
+    : t("Register them on their character page (Video character) so Seedance keeps their look");
+  return (
+    <Tooltip content={tip}>
+      <Badge tone="warn">{t("{n} of {m} characters registered", { n: ready, m: characters.length })}<span className="sr-only">: {tip}</span></Badge>
+    </Tooltip>
+  );
+}
+
+/** Seedance on BytePlus: takes characters registered in the BytePlus asset library as references. */
+const takesRegistered = (e: VideoEngine | undefined) => !!e?.capabilities?.asset_refs;
+
 export function engineFor(id: string | undefined, data: VideoEngines | undefined, quality: string): VideoEngine | undefined {
   if (!data) return undefined;
   const want = !id || id === "auto" ? data.auto_first?.[quality] : id;
@@ -120,8 +141,10 @@ export function engineFor(id: string | undefined, data: VideoEngines | undefined
 }
 
 /** The shot's video model: Auto (team policy, Google first) or one picked by hand, with what each can use. */
-export function ModelPicker({ value, data, quality, onChange, disabled, needsCharacters }: {
+export function ModelPicker({ value, data, quality, onChange, disabled, needsCharacters, characters }: {
   value: string; data?: VideoEngines; quality: string; onChange: (id: string) => void; disabled?: boolean; needsCharacters: boolean;
+  /** the shot's characters: models that take registered characters (Seedance) show whether they are registered */
+  characters?: Character[];
 }) {
   const t = useT();
   const ref = useRef<HTMLButtonElement>(null);
@@ -133,6 +156,7 @@ export function ModelPicker({ value, data, quality, onChange, disabled, needsCha
   const isPicked = (e: VideoEngine) => !auto && (value === e.id || !!e.routes?.some((r) => r.id === value));
   const list = useMemo(() => (data?.engines ?? []).filter((e) => !onlyChars || e.fit.characters !== "none"), [data, onlyChars]);
   const pick = (id: string) => { onChange(id); setOpen(false); };
+  const cast = (e: VideoEngine | undefined) => takesRegistered(e) && characters?.length ? <SeedanceCast characters={characters} /> : undefined;
 
   return (
     <>
@@ -155,14 +179,14 @@ export function ModelPicker({ value, data, quality, onChange, disabled, needsCha
           <ModelRow selected={auto} onClick={() => pick("auto")}
             title={<><b>{t("Auto")}</b>{data?.auto_first?.[quality] && <span className="text-dim"> · {engineFor("auto", data, quality)?.display_name}</span>}</>}
             sub={data?.google_first ? t("Google first; other providers only for what Google can't do") : t("Team order from Model Hub")}
-            fit={engineFor("auto", data, quality)?.fit} price={engineFor("auto", data, quality)?.est_8s_usd} />
+            fit={engineFor("auto", data, quality)?.fit} price={engineFor("auto", data, quality)?.est_8s_usd} extra={cast(engineFor("auto", data, quality))} />
           {list.map((e) => (
             <ModelRow key={e.id} selected={isPicked(e)} onClick={() => pick(e.id)}
               title={<><span className="font-medium">{(e.routes?.length ?? 0) > 1 ? e.display_name.replace(/ \((OpenRouter|BytePlus)\)$/, "") : e.display_name}</span> <span className="rounded border border-line px-1 font-mono text-2xs text-mute">{providerName(e.provider)}</span>
                 {(e.routes?.length ?? 0) > 1 && <span className="ml-1 text-2xs text-dim" title={e.routes!.map((r) => providerName(r.provider)).join(" → ")}>{t("+{n} routes", { n: e.routes!.length - 1 })}</span>}
                 {e.provider_mode === "mock" && <Badge tone="warn" className="ml-1">{t("mock")}</Badge>}</>}
               sub={`${t("Characters")}: ${t(VIA_LABEL[e.fit.characters])}${e.fit.characters === "refs" ? ` (${t("up to {n}", { n: e.fit.max_refs })})` : ""}${(e.routes?.length ?? 0) > 1 ? ` · ${t("cheapest route first, then {rest}", { rest: e.routes!.slice(1).map((r) => providerName(r.provider)).join(", ") })}` : ""}`}
-              fit={e.fit} price={e.est_8s_usd} warn={needsCharacters && e.fit.characters === "none"} />
+              fit={e.fit} price={e.est_8s_usd} warn={needsCharacters && e.fit.characters === "none"} extra={cast(e)} />
           ))}
           {data && !list.length && <p className="px-2 py-3 text-center text-xs text-dim">{t("No enabled model fits. Turn more on in Model Hub.")}</p>}
         </div>
@@ -173,8 +197,8 @@ export function ModelPicker({ value, data, quality, onChange, disabled, needsCha
   );
 }
 
-function ModelRow({ selected, onClick, title, sub, fit, price, warn }: {
-  selected: boolean; onClick: () => void; title: React.ReactNode; sub: string; fit?: VideoFit; price?: number | null; warn?: boolean;
+function ModelRow({ selected, onClick, title, sub, fit, price, warn, extra }: {
+  selected: boolean; onClick: () => void; title: ReactNode; sub: string; fit?: VideoFit; price?: number | null; warn?: boolean; extra?: ReactNode;
 }) {
   return (
     <button type="button" role="option" aria-selected={selected} onClick={onClick}
@@ -183,6 +207,7 @@ function ModelRow({ selected, onClick, title, sub, fit, price, warn }: {
         <span className="block truncate text-sm">{title}</span>
         <span className={clsx("block text-2xs", warn ? TONE_TEXT_SM.bad : "text-dim")}>{sub}</span>
         {fit && <FitChips fit={fit} className="mt-0.5" />}
+        {extra && <span className="mt-1 flex">{extra}</span>}
       </span>
       {price != null && <span className="mono shrink-0 text-xs text-money">{price > 0 ? `~${usd(price)}` : "—"}</span>}
       {selected && <Check className="mt-0.5 size-4 shrink-0 text-accent-ink" strokeWidth={3} />}
@@ -213,10 +238,12 @@ export function FitNotes({ engine, auto, characters, hasLocation, refCount, hasL
     notes.push({ tone: "info", text: t("{model} takes {n} reference images; the rest reach it through the keyframe.", { model: engine.display_name, n: f.max_refs }) });
   }
   if (hasLines && !f.sound) notes.push({ tone: "info", text: t("This model is silent: the lines are voiced afterwards and lip-synced.") });
-  if (!notes.length) return null;
+  const seedance = takesRegistered(engine) && characters.length > 0;
+  if (!notes.length && !seedance) return null;
   const fix = characters.length && f.characters === "none" ? alternatives.filter((e) => e.fit.characters !== "none").slice(0, 3) : [];
   return (
     <div className="space-y-1">
+      {seedance && <div className="flex px-0.5"><SeedanceCast characters={characters} /></div>}
       {notes.map((n, i) => (
         <p key={i} className={clsx("flex items-start gap-1.5 rounded-md px-2 py-1 text-2xs",
           n.tone === "bad" ? `bg-bad/10 ${TONE_TEXT_SM.bad}` : n.tone === "warn" ? `bg-warn/10 ${TONE_TEXT_SM.warn}` : "bg-raised/60 text-mute")}>

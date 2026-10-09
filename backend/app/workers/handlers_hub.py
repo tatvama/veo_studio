@@ -51,6 +51,112 @@ def register_images(db, ch: Character) -> list[CharacterAsset]:
     return out[:REGISTER_MAX]
 
 
+def _library():
+    from ..config import get_settings
+    from ..providers.byteplus import AssetLibrary
+    s = get_settings()
+    return AssetLibrary(settings_store.api_key("byteplus_iam"), s.byteplus_region, s.byteplus_project)
+
+
+def made_from_photo(db, ch: Character) -> bool:
+    """The character comes from someone's own photo (a real person): never registered automatically."""
+    return db.query(CharacterAsset).filter(CharacterAsset.character_id == ch.id, CharacterAsset.kind == "source",
+                                           CharacterAsset.archived.is_(False)).count() > 0
+
+
+def auto_register_reason(db, ch: Character) -> str:
+    """Why this character isn't registered with BytePlus by itself right now ("" = it would be)."""
+    from ..config import get_settings
+    if not settings_store.get_setting(db, "byteplus_auto_register"):
+        return "Automatic registration is off (Settings → AI services)"
+    mode = provider_mode("byteplus_iam")
+    if mode == "missing":
+        return "No BytePlus access key + secret"
+    if mode == "live" and get_settings().storage_backend != "s3":
+        return "BytePlus fetches images by link, which needs bucket storage"
+    if made_from_photo(db, ch):
+        return "Made from a photo: a real person verifies themselves in the BytePlus console"
+    images = register_images(db, ch)
+    if not images:
+        return "No character sheet yet"
+    reg = (ch.provider_assets or {}).get("byteplus") or {}
+    have = {a.get("source_id") for a in reg.get("assets") or [] if a.get("status") in ("Active", "Processing")}
+    if all(a.id in have for a in images):
+        return "Already registered"
+    return ""
+
+
+def maybe_auto_register(db, user, ch: Character, project_id: int | None = None) -> int | None:
+    """Queue a BytePlus registration when the team asked for it to happen by itself (sheet approved, character
+    locked). Returns the job id, or None when nothing was queued."""
+    from fastapi import HTTPException
+
+    from ..core import generation, jobs
+    from ..models import Job, Project
+    if auto_register_reason(db, ch):
+        return None
+    for j in db.query(Job).filter(Job.type == "byteplus_register", Job.status.in_(jobs.ACTIVE)).all():
+        if (j.payload or {}).get("character_id") == ch.id:
+            return None  # a run that's waiting picks up the newly approved images too
+    p = db.get(Project, project_id) if project_id else None
+    try:
+        out = jobs.submit(db, user, p, [generation.byteplus_register_spec(project_id, ch)], skip_budget=True)
+    except HTTPException:
+        return None  # e.g. a reviewer approved the image: they can't start jobs, the team can register by hand
+    return out["jobs"][0]["id"] if out["jobs"] else None
+
+
+def byteplus_refresh(db, ch: Character) -> dict:
+    """Ask BytePlus for each registered image's status again (accepted, still checking, rejected, deleted)."""
+    reg = dict((ch.provider_assets or {}).get("byteplus") or {})
+    assets = [dict(a) for a in reg.get("assets") or []]
+    if assets and provider_mode("byteplus_iam") == "live":
+        lib = _library()
+        for a in assets:
+            try:
+                info = lib.get_asset(a["asset_id"])
+            except ProviderError as e:
+                if "notfound" not in str(e).lower().replace(".", "").replace(" ", ""):
+                    raise
+                a["status"], a["error"] = "Missing", "No longer in the BytePlus library"
+                continue
+            a["status"] = str(info.get("Status") or a.get("status") or "Processing")
+            if a["status"] == "Failed":
+                a["error"] = str(info.get("FailedReason") or info.get("ErrorMessage") or "rejected by BytePlus review")[:200]
+    if assets:
+        reg["status"] = ("ready" if any(a["status"] == "Active" for a in assets) else
+                         "registering" if any(a["status"] == "Processing" for a in assets) else "failed")
+        if reg["status"] == "failed":
+            reg["error"] = reg.get("error") or "No image is active in BytePlus any more"
+    reg["assets"], reg["checked_at"] = assets, utcnow().isoformat() + "Z"
+    pa = dict(ch.provider_assets or {})
+    pa["byteplus"] = reg
+    ch.provider_assets = pa
+    db.commit()
+    return reg
+
+
+def byteplus_remove(db, ch: Character) -> int:
+    """Delete the character's images and group from the BytePlus asset library, and forget the registration."""
+    reg = (ch.provider_assets or {}).get("byteplus") or {}
+    removed = 0
+    if provider_mode("byteplus_iam") == "live" and (reg.get("assets") or reg.get("group_id")):
+        lib = _library()
+        for a in reg.get("assets") or []:
+            if a.get("asset_id") and a.get("status") != "Missing":
+                lib.delete_asset(a["asset_id"])
+                removed += 1
+        if reg.get("group_id"):
+            lib.delete_group(reg["group_id"])
+    else:
+        removed = len(reg.get("assets") or [])
+    pa = dict(ch.provider_assets or {})
+    pa.pop("byteplus", None)
+    ch.provider_assets = pa
+    db.commit()
+    return removed
+
+
 def _save_reg(ctx: JobContext, cid: int, **values) -> dict:
     with SessionLocal() as db:
         c = db.get(Character, cid)

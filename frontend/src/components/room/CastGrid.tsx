@@ -8,6 +8,7 @@ import { Button, Input, Skeleton, rise } from "../ui";
 import { LEVEL_TEXT, LangChips, LockMeter, PackBar, Portrait, packDone, packOf, voicedLanguages } from "./cast";
 import { LoadError, RoomEmpty } from "./kit";
 import { LEVEL_LABEL, strictnessLevel } from "./look";
+import { SeedanceBadge } from "./SeedanceBadge";
 import { IDENTITY_STATUS } from "./util";
 import { IdChip, code, pad } from "./workspace";
 
@@ -116,6 +117,7 @@ function CharacterCard({ c, index, languages, onOpen, consent }: { c: Character;
           <Portrait src={c.avatar_url} name={c.name} avatar={64} ratio="aspect-[4/5]" imgClassName="transition-transform duration-500 ease-out group-hover:scale-[1.04]">
             <span aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-black/60 to-transparent" />
             <IdOverlay status={c.identity?.status} />
+            {c.seedance_ready && <SeedanceBadge overlay className="absolute right-1.5 top-1.5" />}
           </Portrait>
         </span>
 

@@ -1,5 +1,6 @@
+import { useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle, Check, Coins, Copy, ExternalLink, GitCompareArrows, Info, Layers, ListTree, Lock, Settings2, Tags, Trophy, X,
+  AlertTriangle, Check, Coins, Copy, ExternalLink, GitCompareArrows, Info, KeyRound, Layers, ListTree, Lock, Route, Settings2, Tags, Trophy, X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -12,10 +13,11 @@ import { cn } from "../../lib/cn";
 import { ago, usd } from "../../lib/format";
 import { tr, useT } from "../../lib/i18n";
 import { useModel } from "../../lib/queries";
-import type { AIModel } from "../../lib/types";
-import { providerLabel } from "./catalogData";
+import type { AIModel, ModelRoute } from "../../lib/types";
+import { providerLabel, useRouteCard } from "./catalogData";
 import { CAP_DEFS, clipUsd, hasCap, isListPrice, isTimeBased, perSecond, rateText, speedCells, successPct } from "./modelMeta";
 import { ModelThumb, ProviderBadge, RoutesLine, StateBadge, StatusBadge, TASK_ICON, useModelPatch, type ModelPatchBody } from "./ModelCard";
+import { RouteKeyEditor, RouteTable, RoutesOn, isOn, pageRoutes } from "./RouteList";
 import { SlideOver } from "./SlideOver";
 
 import "../../styles/console.css";
@@ -23,10 +25,17 @@ import "../../styles/models.css";
 
 interface Form { status: string; tier: string; rating: string; price_usd: string; price_unit: string; notes: string; overrides: string }
 
+/** The overrides without the route key: that one has its own editor (Routes tab) and is put back on save. */
+function withoutKey(o: Record<string, any> | undefined): Record<string, any> {
+  const out = { ...(o ?? {}) };
+  delete out.route_key;
+  return out;
+}
+
 const toForm = (m: AIModel): Form => ({
   status: m.status, tier: m.tier || "", rating: m.rating != null ? String(m.rating) : "",
   price_usd: m.price_usd != null ? String(m.price_usd) : "", price_unit: m.price_unit || "", notes: m.notes || "",
-  overrides: JSON.stringify(m.param_overrides ?? {}, null, 2),
+  overrides: JSON.stringify(withoutKey(m.param_overrides), null, 2),
 });
 
 function parseOverrides(text: string): { ok: true; value: Record<string, any> } | { ok: false; error: string } {
@@ -40,7 +49,7 @@ function parseOverrides(text: string): { ok: true; value: Record<string, any> } 
   }
 }
 
-type TabKey = "overview" | "params" | "team";
+type TabKey = "overview" | "routes" | "params" | "team";
 
 /** Whether the model is in the catalog's compare tray (all optional: the detail also works on its own). */
 export interface DetailCompare { on: boolean; full: boolean; toggle: () => void }
@@ -63,6 +72,10 @@ function DetailBody({ model, admin, requestClose, onClose, guard, compare }: {
   const { data: full, isLoading } = useModel(model.id);
   const m: AIModel = { ...model, ...(full ?? {}) };
   const { patch, busy } = useModelPatch();
+  // this model through every provider, switched-off routes too (see useRouteCard); the catalog card's routes until it arrives
+  const routeCard = useRouteCard(m);
+  const cardRoutes = routeCard.data?.routes ?? m.routes;
+  const routes = pageRoutes(m, cardRoutes);
   const [tab, setTabState] = useState<TabKey>("overview");
   const scroller = useRef<HTMLDivElement>(null);
   const setTab = (next: TabKey) => {
@@ -77,11 +90,15 @@ function DetailBody({ model, admin, requestClose, onClose, guard, compare }: {
   const [copied, setCopied] = useState(false);
   const [confirmClose, setConfirmClose] = useState(false);
 
-  // adopt fresh server data when the user hasn't touched the form
+  // adopt fresh server data in every field the user hasn't touched (a route switched in the Routes tab changes the status)
   const serverForm = JSON.stringify(toForm(m));
   useEffect(() => {
     const next = JSON.parse(serverForm) as Form;
-    if (JSON.stringify(form) === JSON.stringify(base)) setForm(next);
+    setForm((f) => {
+      const out = { ...f };
+      for (const k of Object.keys(next) as (keyof Form)[]) if (f[k] === base[k]) out[k] = next[k];
+      return out;
+    });
     setBase(next);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [serverForm]);
@@ -113,7 +130,11 @@ function DetailBody({ model, admin, requestClose, onClose, guard, compare }: {
     if (form.price_usd !== base.price_usd) body.price_usd = priceNum;
     if (form.price_unit !== base.price_unit) body.price_unit = form.price_unit;
     if (form.notes !== base.notes) body.notes = form.notes;
-    if (JSON.stringify(parsed.value) !== JSON.stringify(m.param_overrides ?? {})) body.param_overrides = parsed.value;
+    if (JSON.stringify(parsed.value) !== JSON.stringify(withoutKey(m.param_overrides))) {
+      // the whole object is replaced on the server: keep the route key set by hand
+      const key = m.param_overrides?.route_key;
+      body.param_overrides = { ...(typeof key === "string" ? { route_key: key } : {}), ...parsed.value };
+    }
     if (!Object.keys(body).length) { setBase(form); return; }
     const res = await patch(m, body, tr("Saved {name}", { name: m.display_name }));
     if (res) {
@@ -193,6 +214,7 @@ function DetailBody({ model, admin, requestClose, onClose, guard, compare }: {
         <div data-tabs-sticky className="sticky top-0 z-10 border-b border-line bg-panel/95 px-5 backdrop-blur">
           <Tabs value={tab} onChange={setTab} className="border-b-0" tabs={[
             { value: "overview", label: t("Overview") },
+            { value: "routes", label: t("Routes"), count: routes.length > 1 ? routes.length : undefined },
             { value: "params", label: <span className="flex items-center gap-1.5">{t("Parameters")}{paramsDirty && <span aria-hidden className="size-1.5 rounded-full bg-warn" />}</span>, count: slots.length || undefined },
             { value: "team", label: <span className="flex items-center gap-1.5">{t("Team settings")}{teamDirty && <span aria-hidden className="size-1.5 rounded-full bg-warn" />}</span> },
           ]} />
@@ -202,6 +224,7 @@ function DetailBody({ model, admin, requestClose, onClose, guard, compare }: {
           <AnimatePresence mode="wait" initial={false}>
             <motion.div key={tab} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.16 }} className="space-y-4">
               {tab === "overview" && <Overview m={m} />}
+              {tab === "routes" && <Routes m={m} routes={routes} found={!!cardRoutes} loading={routeCard.isLoading && !cardRoutes} admin={admin} />}
               {tab === "params" && (
                 <Params m={m} pm={pm} slots={slots} loading={isLoading} admin={admin} form={form} set={set} parsed={parsed} />
               )}
@@ -390,6 +413,46 @@ function Overview({ m }: { m: AIModel }) {
           <ExternalLink className="size-4" />{t("Open on fal.ai")}
         </a>
       )}
+    </>
+  );
+}
+
+/**
+ * This model through every provider (each route switched on or off by itself) and the route key that ties them together.
+ * Switches and the key save straight away, apart from the Save in the footer.
+ */
+function Routes({ m, routes, found, loading, admin }: { m: AIModel; routes: ModelRoute[]; found: boolean; loading: boolean; admin: boolean }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const { patch, setRouteEnabled, busy } = useModelPatch();
+  const name = m.display_name || m.endpoint;
+  // the card's first route leads (cheapest live route that is on), when the card was found
+  const lead = found && routes[0] && isOn(routes[0]) ? routes[0].id : null;
+  const saveKey = async (key: string | null) => {
+    const msg = key === null ? tr("Route key of {name} is automatic again", { name })
+      : key === "" ? tr("{name} won't be merged with other engines", { name }) : tr("Route key of {name} set to {key}", { name, key });
+    const res = await patch(m, { route_key: key }, msg);
+    // the key decides which card each engine sits on: regroup every list
+    if (res) void qc.invalidateQueries({ queryKey: ["models"] });
+  };
+  return (
+    <>
+      <Panel eyebrow={t("Routes")} icon={<Route />} actions={routes.length > 1 ? <RoutesOn routes={routes} /> : undefined}>
+        <p className="-mt-1 mb-3 text-xs text-mute">
+          {routes.length > 1 ? t("This model through every provider that runs it. Each route is switched on or off by itself.")
+            : t("No other provider runs this model yet.")}
+        </p>
+        {loading ? (
+          <div className="space-y-2"><Skeleton className="h-11 w-full" /><Skeleton className="h-11 w-full" /><Skeleton className="h-11 w-3/4" /></div>
+        ) : (
+          <RouteTable routes={routes} task={m.task} name={name} currentId={m.id} leadId={lead} admin={admin} busyId={busy}
+            onToggle={(r, on) => void setRouteEnabled(r, on)} />
+        )}
+      </Panel>
+
+      <Panel eyebrow={t("Route key")} icon={<KeyRound />}>
+        <RouteKeyEditor m={m} admin={admin} busy={busy === m.id} onSave={(key) => void saveKey(key)} />
+      </Panel>
     </>
   );
 }

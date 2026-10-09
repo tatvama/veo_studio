@@ -1,17 +1,18 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { Ban, ChevronDown, ChevronUp, Loader2, RotateCcw, ShieldAlert, X, XCircle } from "lucide-react";
+import { ArrowLeftRight, Ban, ChevronDown, ChevronUp, Loader2, RotateCcw, ShieldAlert, X, XCircle } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
 import { ago, secs, usd } from "../lib/format";
-import { useT } from "../lib/i18n";
-import { useAuthStatus, useJobs } from "../lib/queries";
+import { tr, useT } from "../lib/i18n";
+import { useAuthStatus, useJobs, useShotAlternatives } from "../lib/queries";
 import { useUI } from "../lib/store";
-import { ROLE_RANK, type Job } from "../lib/types";
+import { ROLE_RANK, type Job, type SubmitResult } from "../lib/types";
 import "../styles/console.css";
 import "../styles/director.css";
+import { useGenerate } from "./Generate";
 import { Button, IconButton, StatusDot, Tooltip } from "./ui";
 
 const TYPE_LABEL: Record<string, string> = {
@@ -72,6 +73,8 @@ function spanSeconds(j: Job, now: number): number | null {
 }
 
 const jobCost = (j: Job) => j.cost_actual || j.cost_estimate || 0;
+/** A shot's video that a provider's safety filter refused (the error text the worker writes). */
+const isSafetyBlock = (j: Job) => j.status === "failed" && j.type === "video" && !!j.shot_id && (j.error || "").startsWith("Blocked by safety filter");
 
 interface Group { key: string; jobs: Job[]; newest: number; state: "active" | "failed" | "done" }
 
@@ -369,6 +372,7 @@ function JobRow({ j, now, pending, onAct, canAct, canApprove, nested }: {
           {failed && canAct && (
             <Button size="sm" variant="outline" loading={pending === j.id} icon={<RotateCcw className="size-3.5" />} onClick={() => onAct(j, "retry")}>{t("Retry")}</Button>
           )}
+          {canAct && isSafetyBlock(j) && <RecoverButton j={j} />}
           {j.status === "awaiting_approval" && canApprove && (
             <Link to="/approvals" className="cx-chip" data-tone="warn"><ShieldAlert />{t("Approvals")}</Link>
           )}
@@ -383,5 +387,37 @@ function JobRow({ j, now, pending, onAct, canAct, canApprove, nested }: {
         </span>
       </td>
     </tr>
+  );
+}
+
+/** "Another engine": retry a shot's blocked video on the best other engine, with its price on the button before it is spent. */
+function RecoverButton({ j }: { j: Job }) {
+  const t = useT();
+  const qc = useQueryClient();
+  const { submit } = useGenerate();
+  const [busy, setBusy] = useState(false);
+  const sid = j.shot_id as number;
+  const { data } = useShotAlternatives(sid, "recover");
+  const o = data?.options[0];
+  // only while this job is still what blocks the shot (not once it was retried or replaced)
+  if (!o || data?.blocked?.job_id !== j.id) return null;
+  const price = usd(o.est_usd);
+  const go = async () => {
+    setBusy(true);
+    try {
+      const r = await submit(() => api.post<SubmitResult>(`/api/shots/${sid}/recover`, { engine: o.id }), tr("Retry on {engine}", { engine: o.display_name }));
+      if (!r) return;
+      qc.invalidateQueries({ queryKey: ["shot-alternatives", sid] });
+      qc.invalidateQueries({ queryKey: ["shot", sid] });
+      qc.invalidateQueries({ queryKey: ["episode"] });
+    } finally { setBusy(false); }
+  };
+  return (
+    <Tooltip content={o.uses_registered ? t("Retry on {engine} · {price}. It keeps the characters' look.", { engine: o.display_name, price })
+      : t("Retry on {engine} · {price}", { engine: o.display_name, price })}>
+      <Button size="sm" variant="outline" loading={busy} icon={<ArrowLeftRight className="size-3.5" />} onClick={() => void go()}>
+        {t("Another engine")}<span className="mono text-money">{price}</span>
+      </Button>
+    </Tooltip>
   );
 }

@@ -49,10 +49,15 @@ def provider_mode(provider: str) -> str:
 
 
 def provider_status() -> list[dict[str, Any]]:
+    """Each key's mode. `engine` is False for keys that run no generation themselves (the BytePlus asset library key):
+    they are not counted as "providers live"."""
     out = []
     for p, label in PROVIDER_LABELS.items():
-        out.append({"provider": p, "label": label, "mode": provider_mode(p)})
+        out.append({"provider": p, "label": label, "mode": provider_mode(p), "engine": p not in KEY_ONLY})
     return out
+
+
+KEY_ONLY = {"byteplus_iam"}
 
 
 def _require(provider: str) -> str:
@@ -468,6 +473,8 @@ class Services:
         if _require(m.provider) == "mock":
             return _mock_engine(m, req, seconds)
         if m.provider == "openrouter":
+            if task == "image":
+                return self._openrouter_image(m, req)
             return self._openrouter_video(m, req, seconds, on_tick, on_request, resume)
         if m.provider == "byteplus":
             if task == "image":
@@ -543,6 +550,21 @@ class Services:
         return MediaResult(data, "mp4", Usage("openrouter", m.endpoint, m.task, dur, "seconds", cost), duration_s=dur,
                            remote_ref=f"openrouter:{vid}", meta={"job": vid})
 
+    # ── OpenRouter images (Nano Banana, Seedream … as extra keyframe routes) ──
+    def _openrouter_image(self, m, req) -> MediaResult:
+        from ..core.model_hub import price_for
+        from .links import media_link
+        refs: list[str] = []
+        if req.mode == "i2i":
+            paths = [p for p in [*req.refs, *([req.first_frame] if req.first_frame else [])] if p and p.exists()]
+            refs = [media_link(p, provider="OpenRouter") for p in paths[: int((m.capabilities or {}).get("max_refs") or 8)]]
+        aspects = (m.capabilities or {}).get("aspects") or []
+        aspect = req.aspect if not aspects or req.aspect in aspects else ""
+        data, mime, billed = self.openrouter().image(m.endpoint, req.prompt, refs, aspect, req.seed)
+        ext = "jpg" if "jpeg" in mime else "webp" if "webp" in mime else "png"
+        cost = billed if billed is not None else price_for(m)  # what OpenRouter charged, else the catalog price
+        return MediaResult(data, ext, Usage("openrouter", m.endpoint, "image", 1, "images", cost))
+
     # ── BytePlus (Seedance video, Seedream images) ───────────────────────────
     def _seedance(self, m, req, seconds: float, on_tick, on_request, resume) -> MediaResult:
         client = self.ark()
@@ -553,18 +575,39 @@ class Services:
         except ProviderBlocked:
             # the keyframe tripped Seedance's real-person filter: when the shot's characters are registered in the
             # asset library, make the clip from those (and the location) as reference images instead
-            if req.mode in ("i2v", "flf") and byteplus_assets([p for _, p in req.cast_refs]):
+            if req.mode in ("i2v", "flf", "a2v") and byteplus_assets([p for _, p in req.cast_refs]):
                 return self._seedance_run(client, m, req, seconds, on_tick, on_request, as_reference=True)
             raise
 
     def _seedance_run(self, client, m, req, seconds: float, on_tick, on_request, as_reference: bool) -> MediaResult:
+        import math
+
         from .links import media_link
         caps = m.capabilities or {}
         resolution = _pick(caps.get("resolutions"), req.resolution) or "720p"
         prompt = _avoid(req.prompt, req.negative)
         content: list[dict[str, Any]] = []
         ratio = req.aspect
-        if req.mode in ("i2v", "flf") and not as_reference and req.first_frame:
+        if req.mode == "extend" and req.video:
+            # the clip's last seconds go in as reference video; Seedance continues from them
+            clip = _tail(req.video, 5.0)
+            content.append({"type": "video_url", "role": "reference_video",
+                            "video_url": {"url": media_link(clip, data_uri_ok=False, provider="BytePlus")}})
+            prompt = ("Extend [Video 1]: continue the same shot seamlessly from its last frame, with the same people, "
+                      "place, light and camera. " + prompt)
+        elif req.mode == "a2v" and req.audio:
+            # dialogue from the recorded voice: the line goes in as reference audio and the character speaks it; the
+            # keyframe and the cast (registered characters as asset:// entries) say who is speaking and where
+            labelled = ([] if as_reference or not req.first_frame else [("the opening frame of the shot", req.first_frame)])
+            images = _seedance_refs([*labelled, *req.cast_refs], int(caps.get("max_refs") or 9))
+            content += [{"type": "image_url", "image_url": {"url": url}, "role": "reference_image"} for _, url in images]
+            content.append({"type": "audio_url", "role": "reference_audio", "audio_url": {"url": _audio_link(req.audio)}})
+            prompt = (_legend([(label, None) for label, _ in images]) + "[Audio 1] is the line spoken in this shot: the "
+                      "speaker's lips and expression follow it exactly, word for word. " + prompt)
+            lo = int(((caps.get("durations") or {}).get("min") or 4) if isinstance(caps.get("durations"), dict) else 4)
+            hi = int(((caps.get("durations") or {}).get("max") or 15) if isinstance(caps.get("durations"), dict) else 15)
+            seconds = float(max(lo, min(math.ceil(seconds), hi)))  # long enough for the whole line
+        elif req.mode in ("i2v", "flf") and not as_reference and req.first_frame:
             content.append({"type": "image_url", "image_url": {"url": media_link(req.first_frame, provider="BytePlus")},
                             "role": "first_frame"})
             if req.mode == "flf" and req.last_frame:
@@ -600,8 +643,22 @@ class Services:
         tokens = float((task.get("usage") or {}).get("completion_tokens") or 0)
         rate = float((m.capabilities or {}).get("price_per_m_tokens") or 0)
         cost = tokens * rate / 1e6 if tokens and rate else price_for(m, seconds=dur, resolution=resolution)
-        return MediaResult(data, "mp4", Usage("byteplus", m.endpoint, m.task, dur, "seconds", cost), duration_s=dur,
-                           remote_ref=f"byteplus:{tid}", meta={"task": tid, "tokens": tokens})
+        usage = Usage("byteplus", m.endpoint, m.task, dur, "seconds", cost)
+        meta = {"task": tid, "tokens": tokens, "resolution": resolution}
+        if req.mode == "a2v" and req.audio and Path(req.audio).exists():
+            # the recorded line is the soundtrack, exactly as recorded (the model's own audio may drift from it)
+            out = ff.mux_audio(tmp, Path(req.audio), tmp.with_name("spoken.mp4"))
+            return MediaResult(out.read_bytes(), "mp4", usage, duration_s=dur, remote_ref=f"byteplus:{tid}", meta=meta)
+        if req.mode == "extend" and req.video and Path(req.video).exists():
+            # Seedance returns only the continuation: join it to the clip so the take is the whole extended shot
+            src = Path(req.video)
+            w, h = ff.video_size(src)
+            a = ff.normalize_clip(src, tmp.with_name("a.mp4"), w, h)
+            b = ff.normalize_clip(tmp, tmp.with_name("b.mp4"), w, h)
+            out = ff.concat([a, b], tmp.with_name("extended.mp4"))
+            return MediaResult(out.read_bytes(), "mp4", usage, duration_s=ff.duration(out), remote_ref=f"byteplus:{tid}",
+                               meta={**meta, "added_s": dur})
+        return MediaResult(data, "mp4", usage, duration_s=dur, remote_ref=f"byteplus:{tid}", meta=meta)
 
     def _seedream(self, m, req) -> MediaResult:
         from ..core.model_hub import price_for
@@ -631,6 +688,28 @@ def _pick(supported: list[str] | None, want: str) -> str:
         return ""
     by_low = {str(r).lower(): str(r) for r in supported}
     return by_low.get((want or "").lower()) or by_low.get("720p") or str(supported[0])
+
+
+def _tail(video: Path, seconds: float) -> Path:
+    """The last `seconds` of a clip (the whole clip when it is short)."""
+    video = Path(video)
+    if ff.duration(video) <= seconds + 0.5:
+        return video
+    out = _tmp() / "tail.mp4"
+    ff.run(["-sseof", f"-{seconds:.2f}", "-i", video, "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-pix_fmt", "yuv420p", "-c:a", "aac", out])
+    return out
+
+
+def _audio_link(path: Path) -> str:
+    """A link to a voice recording: the bucket link, else a base64 data URI (BytePlus takes audio inline)."""
+    from ..storage import get_storage
+    url = get_storage().public_url(Path(path))
+    if url:
+        return url
+    data = Path(path).read_bytes()
+    mime = "audio/wav" if data[:4] == b"RIFF" else "audio/mpeg"
+    return f"data:{mime};base64,{base64.b64encode(data).decode()}"
 
 
 def _avoid(prompt: str, negative: str) -> str:

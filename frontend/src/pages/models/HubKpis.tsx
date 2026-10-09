@@ -35,7 +35,8 @@ export default function HubKpis({ meta, error, onRetry, onShow }: { meta: ModelL
   const counts = meta?.counts ?? {};
   const total = (counts.enabled ?? 0) + (counts.new ?? 0) + (counts.disabled ?? 0);
   const last = meta?.last_sync ?? {};
-  const providers = settings?.providers ?? [];
+  // keys that run no generation themselves (the BytePlus asset library) are not providers behind engines
+  const providers = (settings?.providers ?? []).filter((p) => p.engine !== false);
   const live = providers.filter((p) => p.mode === "live").length;
   const mock = providers.filter((p) => p.mode === "mock").length;
   const missing = providers.filter((p) => p.mode === "missing").length;

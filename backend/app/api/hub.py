@@ -1,6 +1,8 @@
-"""Model Hub API: catalog, engine policy (chains), per-shot engine choice and shootouts."""
+"""Model Hub API: catalog, engine policy (chains), per-shot engine choice and shootouts, blocked-shot recovery and
+480p drafts, and provider balances."""
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -29,8 +31,7 @@ def model_out(m: AIModel, est_seconds: float = 8.0, groups: dict[str, list[AIMod
     d = m.to_dict()
     d.pop("param_map", None)
     d["provider_mode"] = provider_mode(m.provider)
-    d["price_label"] = (f"${m.price_usd:g}/{m.price_unit or 'run'}" if m.price_usd is not None
-                        else ("catalog price" if m.builtin else "price unknown"))
+    d["price_label"] = _price_label(m)
     d["est_8s_usd"] = round(model_hub.price_for(m, seconds=est_seconds), 4) if m.task in ("video", "avatar", "lipsync", "edit") else None
     d["unmapped_required"] = (m.param_map or {}).get("unmapped_required", [])
     d["route_key"] = model_hub.route_key(m)
@@ -43,7 +44,22 @@ def route_out(m: AIModel) -> dict:
     video = m.task in ("video", "avatar", "lipsync", "edit")
     return {"id": m.id, "provider": m.provider, "display_name": m.display_name, "provider_mode": provider_mode(m.provider),
             "est_8s_usd": round(model_hub.price_for(m, seconds=8.0), 4) if video else None,
-            "price_usd": m.price_usd, "price_unit": m.price_unit, "modes": (m.capabilities or {}).get("modes") or []}
+            "price_usd": m.price_usd, "price_unit": m.price_unit, "modes": (m.capabilities or {}).get("modes") or [],
+            "status": m.status, "endpoint": m.endpoint, "price_label": _price_label(m),
+            "route_key_set": isinstance((m.param_overrides or {}).get("route_key"), str)}
+
+
+def _price_label(m: AIModel) -> str:
+    return (f"${m.price_usd:g}/{m.price_unit or 'run'}" if m.price_usd is not None
+            else ("catalog price" if m.builtin else "price unknown"))
+
+
+def card_out(group: list[AIModel]) -> dict:
+    """One Model Hub card: the model's lead route (cheapest switched-on live one) with all its routes."""
+    d = model_out(group[0])
+    d["routes"] = [route_out(r) for r in group]
+    d["routes_on"] = sum(r.status == "enabled" for r in group)
+    return d
 
 
 SORTS = ("newest", "name", "price", "rating", "uses")
@@ -51,9 +67,11 @@ SORTS = ("newest", "name", "price", "rating", "uses")
 
 @router.get("/models")
 def list_models(task: str | None = None, status: str | None = None, q: str | None = None, provider: str | None = None,
-                mode: str | None = None, sort: str = "newest", limit: int = 400, offset: int = 0,
-                user: User = Depends(current_user), db: Session = Depends(get_db)):
-    """Catalog list. `total` is the number of matches before paging; use limit/offset to page (max 1000 per call)."""
+                mode: str | None = None, sort: str = "newest", limit: int = 400, offset: int = 0, group: bool = False,
+                route_key: str | None = None, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Catalog list. `total` is the number of matches before paging; use limit/offset to page (max 1000 per call).
+    group=true: one card per model (its routes through every provider together, the cheapest live route leading);
+    `total` and paging then count cards. route_key: only the engines that run that model (every route of it)."""
     query = db.query(AIModel)
     if task:
         query = query.filter(AIModel.task.in_(task.split(",")))
@@ -79,11 +97,21 @@ def list_models(task: str | None = None, status: str | None = None, q: str | Non
     rows = query.order_by(AIModel.builtin.desc(), *order).all()
     if mode:  # modes live in JSON, so filter in Python before paging
         rows = [m for m in rows if mode in ((m.capabilities or {}).get("modes") or [])]
-    total = len(rows)
-    start = max(offset, 0)
-    rows = rows[start:start + max(1, min(limit, 1000))]
+    if route_key:  # worked out per row (or set by hand), so filter in Python too
+        rows = [m for m in rows if model_hub.route_key(m) == route_key]
     last = settings_store.get_setting(db, "hub_last_sync") or {}
     counts = {s: db.query(AIModel).filter(AIModel.status == s).count() for s in ("enabled", "new", "disabled", "retired")}
+    start, size = max(offset, 0), max(1, min(limit, 1000))
+    if group:
+        if sort == "price":  # the lead route's price decides where the card sits
+            cards = sorted(model_hub.catalog_groups(rows),
+                           key=lambda g: (g[0].price_usd is None, g[0].price_usd or 0, g[0].display_name))
+        else:
+            cards = model_hub.catalog_groups(rows)
+        return {"models": [card_out(g) for g in cards[start:start + size]], "total": len(cards), "offset": start,
+                "last_sync": last, "counts": counts, "grouped": True}
+    total = len(rows)
+    rows = rows[start:start + size]
     groups = model_hub.route_groups(db)
     return {"models": [model_out(m, groups=groups) for m in rows], "total": total, "offset": start, "last_sync": last,
             "counts": counts}
@@ -138,6 +166,12 @@ class ModelPatch(BaseModel):
     price_usd: float | None = None
     price_unit: str | None = None
     param_overrides: dict[str, Any] | None = None
+    # the model this engine runs, shared by its routes through other providers. null = worked out from the name
+    # again; "" = never merged with any other engine
+    route_key: str | None = None
+
+
+ROUTE_KEY = re.compile(r"^[a-z0-9][a-z0-9.\-]{0,59}$")
 
 
 @router.patch("/models/{model_id:path}")
@@ -149,12 +183,23 @@ def patch_model(model_id: str, body: ModelPatch, request: Request, admin: User =
         raise HTTPException(400, "status must be enabled, disabled or new")
     if "price_usd" in data:
         m.price_source = "manual"
+    if "route_key" in data:
+        key = data.pop("route_key")
+        over = dict(data.get("param_overrides", m.param_overrides) or {})
+        if key is None:
+            over.pop("route_key", None)
+        else:
+            key = key.strip().lower()
+            if key and not ROUTE_KEY.match(key):
+                raise HTTPException(400, "A route key is lowercase letters, digits, dots and dashes, e.g. seedance-2.5")
+            over["route_key"] = key
+        data["param_overrides"] = over
     for k, v in data.items():
         setattr(m, k, v)
     audit(db, admin, "models.update", m.id, data, request=request, commit=False)
     db.commit()
     emit(db, None, "models.updated", {"model_id": m.id})
-    return model_out(m)
+    return model_out(m, groups=model_hub.route_groups(db))
 
 
 # ── per-shot engines & shootout ──────────────────────────────────────────────
@@ -278,3 +323,94 @@ def mark_winner(tid: int, user: User = Depends(require("reviewer")), db: Session
     s = db.get(Shot, t.shot_id)
     emit(db, db.get(Episode, s.episode_id).project_id, "shot.updated", {"shot_id": s.id, "winner": t.id}, user_id=user.id)
     return take_out(t)
+
+
+# ── blocked-shot recovery and 480p drafts ────────────────────────────────────
+
+def _shot_project(db: Session, sid: int) -> tuple[Shot, Project]:
+    s = get_or_404(db, Shot, sid)
+    return s, db.get(Project, db.get(Episode, s.episode_id).project_id)
+
+
+@router.get("/shots/{sid}/alternatives")
+def shot_alternatives(sid: int, purpose: str = "recover", user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Other engines for this shot with the price of this shot on each. purpose=recover (after a safety block: not the
+    engines that blocked it, engines that keep registered characters first) or draft (480p, cheapest first)."""
+    from ..core import recovery
+    if purpose not in ("recover", "draft"):
+        raise HTTPException(400, "purpose must be recover or draft")
+    s, p = _shot_project(db, sid)
+    blocked = recovery.blocked_info(db, s)
+    opts = recovery.options(db, s, p, purpose, (blocked or {}).get("engines") if purpose == "recover" else None)
+    return {"blocked": blocked, "options": opts, "cast": recovery.cast_status(db, s),
+            "safety_fallback": bool(settings_store.get_setting(db, "safety_fallback"))}
+
+
+class EngineIn(BaseModel):
+    engine: str | None = None
+
+
+def _pick_option(db: Session, opts: list[dict], engine: str | None, what: str) -> dict:
+    """The named engine among the options (any route of a listed model counts), else the first option."""
+    if not opts:
+        raise HTTPException(400, f"No other engine can {what} this shot. Switch one on in Model Hub, or add a key.")
+    if not engine:
+        return opts[0]
+    hit = next((o for o in opts if o["id"] == engine), None)
+    if hit is None:
+        key = model_hub.route_key(db.get(AIModel, engine), engine)
+        hit = next((o for o in opts if key and model_hub.route_key(db.get(AIModel, o["id"])) == key), None)
+        if hit is not None:
+            hit = {**hit, "id": engine}  # run the route that was named; the router still falls back to the others
+    if hit is None:
+        raise HTTPException(400, f"{engine} can't {what} this shot")
+    return hit
+
+
+@router.post("/shots/{sid}/recover")
+def recover_shot(sid: int, body: EngineIn, request: Request, user: User = Depends(require("creator")),
+                 db: Session = Depends(get_db)):
+    """Retry a shot a safety filter blocked, on another engine (the first option unless one is named)."""
+    from ..core import recovery
+    s, p = _shot_project(db, sid)
+    blocked = recovery.blocked_info(db, s)
+    skip = (blocked or {}).get("engines") or []
+    pick = _pick_option(db, recovery.options(db, s, p, "recover", skip), body.engine, "make")
+    audit(db, user, "shot.recover", s.code, {"engine": pick["id"], "blocked": skip}, request=request, commit=False)
+    spec = jobs.spec("video", payload={"engine": pick["id"], "recovery": True, "skip_engines": skip},
+                     project_id=p.id, episode_id=s.episode_id, shot_id=s.id, estimate=pick["est_usd"],
+                     label=f"Retry {s.code} on {pick['display_name']}")
+    return jobs.submit(db, user, p, [spec])
+
+
+@router.post("/shots/{sid}/draft")
+def draft_shot(sid: int, body: EngineIn, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
+    """A cheap 480p preview of the shot (Seedance and other engines that render 480p). It doesn't replace a finished
+    clip, gets no QC, and Produce all still makes the final clip."""
+    from ..core import recovery
+    s, p = _shot_project(db, sid)
+    pick = _pick_option(db, recovery.options(db, s, p, "draft"), body.engine, "draft")
+    spec = jobs.spec("video", payload={"engine": pick["id"], "draft": True}, project_id=p.id, episode_id=s.episode_id,
+                     shot_id=s.id, estimate=pick["est_usd"], label=f"Draft {s.code} 480p ({pick['display_name']})")
+    return jobs.submit(db, user, p, [spec])
+
+
+# ── provider balances ────────────────────────────────────────────────────────
+
+@router.get("/providers/credit")
+def provider_credit(user: User = Depends(current_user)):
+    """OpenRouter and BytePlus balances as last read, and providers skipped for lack of credit."""
+    from ..core import credit
+    return {"providers": credit.status()}
+
+
+@router.post("/providers/credit/refresh")
+def refresh_credit(admin: User = Depends(require("admin")), db: Session = Depends(get_db)):
+    """Read the balances again and lift the "no credit" holds (after a top-up). A provider still at zero is held again."""
+    from ..core import credit
+    credit.release(db)
+    db.commit()
+    for p in credit.METERED:
+        credit.balance(p, refresh=True)
+    emit(db, None, "providers.credit", {"refreshed": True})
+    return {"providers": credit.status()}

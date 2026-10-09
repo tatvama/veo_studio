@@ -147,6 +147,12 @@ def decide_approval(db: Session, user: User, approval_id: int, approve: bool) ->
     for j in db.query(Job).filter(Job.batch_id == a.batch_id, Job.status == "awaiting_approval").all():
         j.status = "queued" if approve else "cancelled"
         j.approved_by = user.id
+        r = dict(j.result or {})
+        if r.get("extra_asked_usd"):  # a pricier fallback route was asked for mid-run (workers/handlers.run_chain)
+            asked = float(r.pop("extra_asked_usd"))
+            if approve:
+                r["extra_ok_usd"] = round(float(r.get("extra_ok_usd") or 0) + asked, 4)
+            j.result = r
         if not approve:
             j.finished_at = utcnow()
     emit(db, a.project_id, "approval.decided", {"approval_id": a.id, "status": a.status, "by": user.name or user.email},

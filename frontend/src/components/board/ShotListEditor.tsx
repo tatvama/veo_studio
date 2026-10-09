@@ -409,7 +409,7 @@ function ShotCast({ shot, cast, pickers, disabled, hasLocation, onToggle, onEngi
         )}
       </div>
       <ModelPicker value={engineId} data={pickers.engines} quality={pickers.quality} onChange={onEngine} disabled={disabled}
-        needsCharacters={inShot.length > 0} />
+        needsCharacters={inShot.length > 0} characters={inShot} />
       <FitNotes engine={engine} auto={engineId === "auto"} characters={inShot} hasLocation={hasLocation}
         refCount={shot.ref_images?.length ?? 0} hasLines={shot.lines.some((l) => l.text.trim())}
         alternatives={pickers.engines?.engines ?? []} onSwitch={onEngine} />
