@@ -31,6 +31,13 @@ services:
       - ./data/studio:/data
     ports:
       - "8100:8100"
+    healthcheck:
+      # liveness only (no database), so a slow database never gets the web app restarted; readiness: /api/health/ready
+      test: ["CMD", "python", "-m", "app.health", "api"]
+      interval: 30s
+      timeout: 6s
+      start_period: 60s
+      retries: 3
     depends_on:
       db:
         condition: service_healthy
@@ -42,6 +49,13 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://veo:${POSTGRES_PASSWORD}@db:5432/veo
     command: ["python", "-m", "app.workers.run"]
+    healthcheck:
+      # the worker has no web port: it is healthy while its job loop keeps beating (every few seconds)
+      test: ["CMD", "python", "-m", "app.health", "worker"]
+      interval: 30s
+      timeout: 6s
+      start_period: 60s
+      retries: 3
     volumes:
       - ./data/studio:/data
     depends_on:

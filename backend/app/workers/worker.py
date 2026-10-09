@@ -233,8 +233,10 @@ class Worker:
         return sum(1 for t in self.running.values() if GROUP_OF.get(t, "misc") == group)
 
     def loop(self) -> None:
+        from .. import health
         last_prune = 0.0
         while not self.stop_event.is_set():
+            health.beat()  # the worker container's health check reads this
             try:
                 claimed = self.claim()
             except Exception as e:  # keep the loop alive

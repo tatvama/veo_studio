@@ -10,9 +10,10 @@ RUN npm run build
 
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
-# ffmpeg (with libass + harfbuzz for Indic captions) and Noto fonts for Devanagari, Kannada, Telugu and Tamil
+# ffmpeg (with libass + harfbuzz for Indic captions), Noto fonts for Devanagari, Kannada, Telugu and Tamil,
+# and curl so platform health checks (Coolify) can probe the app from inside the container
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      ffmpeg fonts-noto-core fonts-noto-ui-core fontconfig ca-certificates \
+      ffmpeg fonts-noto-core fonts-noto-ui-core fontconfig ca-certificates curl \
     && rm -rf /var/lib/apt/lists/* && fc-cache -f
 WORKDIR /app
 COPY backend/requirements.txt backend/requirements.txt
@@ -26,4 +27,7 @@ ENV CAPTION_FONT="Noto Sans" MEDIA_ROOT=/data/media DATA_ROOT=/data/db
 VOLUME ["/data"]
 EXPOSE 8100
 WORKDIR /app/backend
+# Liveness probe without curl or the database: /api/health/live answers as long as the server does.
+# The worker container overrides this with `python -m app.health worker` (see docker-compose.yml).
+HEALTHCHECK --interval=30s --timeout=6s --start-period=60s --retries=3 CMD ["python", "-m", "app.health", "api"]
 CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8100", "--proxy-headers", "--forwarded-allow-ips=*"]
