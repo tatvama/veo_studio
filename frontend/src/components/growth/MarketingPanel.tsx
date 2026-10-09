@@ -4,15 +4,17 @@ import { Check, Download, Hash, ImageIcon, Lightbulb, Loader2, Megaphone, Messag
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import "../../styles/console.css";
 import { api } from "../../lib/api";
 import { LANG_NAMES, LANG_SHORT } from "../../lib/format";
 import { useT } from "../../lib/i18n";
 import { useMarketing, useSettings } from "../../lib/queries";
 import type { Episode, MarketingPack, Project, SubmitResult } from "../../lib/types";
 import { useGenerate } from "../Generate";
-import { Badge, Button, Empty, Segmented, Skeleton, Tabs } from "../ui";
+import { RoomEmpty } from "../room/kit";
+import { Badge, Button, Panel, Segmented, Skeleton, Tabs } from "../ui";
 import {
-  agoT, CardHeader, CharCount, Chip, CopyButton, CostConfirm, copyText, estimateImages, listItem, platformLabel, useActiveJobs,
+  agoT, CharCount, Chip, CopyButton, CostConfirm, copyText, estimateImages, listItem, platformLabel, useActiveJobs,
 } from "./common";
 
 type Copy = NonNullable<MarketingPack["copies"]>[number];
@@ -71,19 +73,19 @@ function GenerateDialog({ open, onClose, project, eid }: { open: boolean; onClos
     >
       <div className="space-y-4">
         <div>
-          <p className="mb-2 text-xs font-medium text-mute">{t("Platforms")}</p>
+          <p className="eyebrow mb-2">{t("Platforms")}</p>
           <div className="flex flex-wrap gap-1.5">
             {PLATFORM_CHOICES.map((p) => (
-              <Chip key={p} active={platforms.includes(p)} onClick={() => setPlatforms(toggle(platforms, p))}
+              <Chip key={p} active={platforms.includes(p)} onClick={() => setPlatforms(toggle(platforms, p))} tone="ai"
                 icon={platforms.includes(p) ? <Check className="size-3" strokeWidth={3} /> : undefined}>{t(platformLabel(p))}</Chip>
             ))}
           </div>
         </div>
         <div>
-          <p className="mb-2 text-xs font-medium text-mute">{t("Languages")}</p>
+          <p className="eyebrow mb-2">{t("Languages")}</p>
           <div className="flex flex-wrap gap-1.5">
             {project.languages.map((l) => (
-              <Chip key={l} active={langs.includes(l)} onClick={() => setLangs(toggle(langs, l))}
+              <Chip key={l} active={langs.includes(l)} onClick={() => setLangs(toggle(langs, l))} tone="ai"
                 icon={langs.includes(l) ? <Check className="size-3" strokeWidth={3} /> : undefined}>{t(LANG_NAMES[l] ?? l)}</Chip>
             ))}
           </div>
@@ -98,7 +100,7 @@ function Block({ icon, label, right, children }: { icon?: React.ReactNode; label
   return (
     <div>
       <div className="mb-2 flex items-center gap-2">
-        <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-mute">{icon}{label}</p>
+        <p className="eyebrow flex items-center gap-1.5 [&>svg]:size-3.5">{icon}{label}</p>
         <div className="ml-auto flex items-center gap-1.5">{right}</div>
       </div>
       {children}
@@ -113,14 +115,14 @@ function CopyView({ c }: { c: Copy }) {
   const everything = [c.titles[0] ?? "", "", c.description, "", tags.join(" ")].join("\n").trim();
   return (
     <motion.div {...listItem} className="space-y-5">
-      <Block icon={<Type className="size-3.5" />} label={t("Title options")} right={<CopyButton text={everything} what={t("Title, description and hashtags")} label={t("Copy all")} />}>
-        <ol className="divide-y divide-line overflow-hidden rounded-xl border border-line">
+      <Block icon={<Type />} label={t("Title options")} right={<CopyButton text={everything} what={t("Title, description and hashtags")} label={t("Copy all")} />}>
+        <ol className="cx-block divide-y divide-line overflow-hidden" data-tone="ai">
           {c.titles.map((title, i) => (
             <li key={i} className="group flex items-center gap-3 px-3.5 py-2.5 text-sm transition-colors hover:bg-hover/40">
-              <span className="grid size-5 shrink-0 place-items-center rounded-full bg-raised text-2xs font-semibold text-mute">{i + 1}</span>
+              <span className="mono grid size-5 shrink-0 place-items-center rounded-md bg-ai/12 text-2xs font-medium text-ai">{i + 1}</span>
               <span className="min-w-0 flex-1 leading-snug">{title}</span>
               <CharCount n={title.length} limit={lim.title} soft={lim.titleSoft} className="max-sm:hidden" />
-              <span className="font-mono text-2xs tabular-nums text-dim sm:hidden">{title.length}</span>
+              <span className="mono text-2xs text-dim sm:hidden">{title.length}</span>
               <CopyButton size="icon" text={title} what={t("Title")} />
             </li>
           ))}
@@ -128,15 +130,15 @@ function CopyView({ c }: { c: Copy }) {
       </Block>
 
       <Block label={t("Description")} right={<><CharCount n={c.description.length} limit={lim.desc} /><CopyButton size="icon" text={c.description} what={t("Description")} /></>}>
-        <p className="max-h-48 overflow-y-auto whitespace-pre-line rounded-xl border border-line bg-raised/40 px-3.5 py-3 text-sm leading-relaxed">
+        <p className="cx-block max-h-48 overflow-y-auto whitespace-pre-line px-3.5 py-3 text-sm leading-relaxed" data-tone="ai">
           {c.description || <span className="text-dim">—</span>}
         </p>
       </Block>
 
-      <Block icon={<Hash className="size-3.5" />} label={t("Hashtags")}
+      <Block icon={<Hash />} label={t("Hashtags")}
         right={<>
-          {lim.tags ? <span className={clsx("font-mono text-2xs tabular-nums", tags.length > lim.tags ? "text-red-300" : "text-dim")}>{tags.length}/{lim.tags}</span>
-            : <span className="font-mono text-2xs tabular-nums text-dim">{tags.length}</span>}
+          {lim.tags ? <span className={clsx("mono text-2xs", tags.length > lim.tags ? "text-bad" : "text-dim")}>{tags.length}/{lim.tags}</span>
+            : <span className="mono text-2xs text-dim">{tags.length}</span>}
           {!!tags.length && <CopyButton size="icon" text={tags.join(" ")} what={t("Hashtags")} />}
         </>}>
         <div className="flex flex-wrap gap-1.5">
@@ -145,8 +147,8 @@ function CopyView({ c }: { c: Copy }) {
       </Block>
 
       {c.pinned_comment && (
-        <Block icon={<MessageSquareText className="size-3.5" />} label={t("Pinned comment")} right={<CopyButton size="icon" text={c.pinned_comment} what={t("Pinned comment")} />}>
-          <p className="rounded-xl border border-line bg-raised/40 px-3.5 py-3 text-sm leading-relaxed">{c.pinned_comment}</p>
+        <Block icon={<MessageSquareText />} label={t("Pinned comment")} right={<CopyButton size="icon" text={c.pinned_comment} what={t("Pinned comment")} />}>
+          <p className="cx-block px-3.5 py-3 text-sm leading-relaxed" data-tone="ai">{c.pinned_comment}</p>
         </Block>
       )}
     </motion.div>
@@ -159,8 +161,8 @@ function HashChip({ tag }: { tag: string }) {
   const [done, setDone] = useState(false);
   return (
     <button type="button" title={t("Copy")} onClick={async () => { if (await copyText(tag, t("Hashtag"))) { setDone(true); setTimeout(() => setDone(false), 1200); } }}
-      className={clsx("inline-flex h-7 items-center gap-1 rounded-md border px-2 text-xs font-medium leading-none transition-colors active:scale-95 max-sm:h-9",
-        done ? "border-ok/40 bg-ok/12 text-green-300" : "border-info/30 bg-info/10 text-sky-300 hover:bg-info/20")}>
+      className={clsx("mono inline-flex h-7 items-center gap-1 rounded-lg border px-2 text-xs leading-none transition-colors active:scale-95 max-sm:h-9",
+        done ? "border-ok/40 bg-ok/12 text-ok" : "border-ai/30 bg-ai/10 text-ai hover:bg-ai/20")}>
       {done && <Check className="size-3" strokeWidth={3} />}{tag}
     </button>
   );
@@ -214,38 +216,36 @@ export default function MarketingPanel({ project, episode, canEdit }: { project:
   };
 
   return (
-    <section className="@container rounded-xl border border-line bg-panel p-4 sm:p-5">
-      <CardHeader
-        icon={<Megaphone className="size-4" />}
-        title={t("Marketing pack")}
-        sub={pack?.at ? t("Titles, descriptions, hashtags and thumbnails · made {when}", { when: agoT(pack.at) })
-          : t("Titles, descriptions, hashtags and thumbnails for each platform and language.")}
-        actions={<>
-          {running.length > 0 && (
-            <Badge tone={waiting ? "warn" : "accent"}>
-              {waiting ? t("Waiting for approval") : <><Loader2 className="size-3 animate-spin" />{t("Generating…")}</>}
-            </Badge>
-          )}
-          {canEdit && (
-            <Button size="sm" className="max-sm:h-10" variant={has ? "outline" : "primary"} disabled={running.length > 0}
-              icon={has ? <RefreshCw className="size-3.5" /> : <Sparkles className="size-3.5" />} onClick={() => setOpen(true)}>
-              {has ? t("Regenerate") : t("Generate pack")}
-            </Button>
-          )}
-        </>}
-      />
+    <Panel id="marketing-pack" index={5} tone="ai" eyebrow={t("AI copy")} icon={<Megaphone />} title={t("Marketing pack")}
+      actions={<>
+        {running.length > 0 && (
+          <Badge tone={waiting ? "warn" : "ai"}>
+            {waiting ? t("Waiting for approval") : <><Loader2 className="size-3 animate-spin" />{t("Generating…")}</>}
+          </Badge>
+        )}
+        {canEdit && (
+          <Button size="sm" className="max-sm:h-10" variant={has ? "outline" : "primary"} disabled={running.length > 0}
+            icon={has ? <RefreshCw className="size-3.5" /> : <Sparkles className="size-3.5" />} onClick={() => setOpen(true)}>
+            {has ? t("Regenerate") : t("Generate pack")}
+          </Button>
+        )}
+      </>}>
+      <div className="@container">
+        <p className="mb-4 text-xs leading-relaxed text-mute">
+          {pack?.at ? t("Titles, descriptions, hashtags and thumbnails · made {when}", { when: agoT(pack.at) })
+            : t("Titles, descriptions, hashtags and thumbnails for each platform and language.")}
+        </p>
 
-      {isLoading ? (
-        <div className="grid gap-6 @3xl:grid-cols-[minmax(0,1fr)_320px]" aria-hidden>
-          <div className="space-y-4"><Skeleton className="h-9 w-2/3" /><Skeleton className="h-32 rounded-xl" /><Skeleton className="h-24 rounded-xl" /></div>
-          <div className="space-y-3"><Skeleton className="h-4 w-32" /><div className="grid grid-cols-3 gap-2"><Skeleton className="aspect-[9/16] rounded-lg" /><Skeleton className="aspect-[9/16] rounded-lg" /><Skeleton className="aspect-[9/16] rounded-lg" /></div></div>
-        </div>
-      ) : !has ? (
-        <Empty icon={<Megaphone className="size-7" />} title={t("No marketing pack yet")}
-          sub={t("Generate platform-ready titles, descriptions, hashtags and three thumbnail options from this episode's hook and script.")}
-          action={canEdit ? <Button variant="primary" icon={<Sparkles className="size-4" />} disabled={running.length > 0} onClick={() => setOpen(true)}>{t("Generate pack")}</Button> : undefined} />
-      ) : (
-        <div className="@container">
+        {isLoading ? (
+          <div className="grid gap-6 @3xl:grid-cols-[minmax(0,1fr)_320px]" aria-hidden>
+            <div className="space-y-4"><Skeleton className="h-9 w-2/3" /><Skeleton className="h-32 rounded-xl" /><Skeleton className="h-24 rounded-xl" /></div>
+            <div className="space-y-3"><Skeleton className="h-4 w-32" /><div className="grid grid-cols-3 gap-2"><Skeleton className="aspect-[9/16] rounded-lg" /><Skeleton className="aspect-[9/16] rounded-lg" /><Skeleton className="aspect-[9/16] rounded-lg" /></div></div>
+          </div>
+        ) : !has ? (
+          <RoomEmpty icon={<Megaphone />} title={t("No marketing pack yet")}
+            sub={t("Generate platform-ready titles, descriptions, hashtags and three thumbnail options from this episode's hook and script.")}
+            action={canEdit ? <Button variant="primary" icon={<Sparkles className="size-4" />} disabled={running.length > 0} onClick={() => setOpen(true)}>{t("Generate pack")}</Button> : undefined} />
+        ) : (
           <div className="grid gap-x-8 gap-y-6 @3xl:grid-cols-[minmax(0,1fr)_320px]">
             <div className="min-w-0">
               {copies.length ? (
@@ -268,10 +268,10 @@ export default function MarketingPanel({ project, episode, canEdit }: { project:
             <aside className="space-y-6">
               <div>
                 <div className="mb-2 flex items-center gap-2">
-                  <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-mute"><ImageIcon className="size-3.5" />{t("Thumbnail options")}</p>
+                  <p className="eyebrow flex items-center gap-1.5"><ImageIcon className="size-3.5" />{t("Thumbnail options")}</p>
                   {chosen && canEdit && (
                     <button type="button" onClick={() => pick(chosen.path)} disabled={!!picking}
-                      className="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-2xs font-medium text-mute transition-colors hover:bg-hover hover:text-ink"><X className="size-3" />{t("Clear")}</button>
+                      className="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-2xs font-medium text-mute transition-colors hover:bg-hover hover:text-ink max-sm:h-9"><X className="size-3" />{t("Clear")}</button>
                   )}
                 </div>
                 {files.length ? (
@@ -294,7 +294,7 @@ export default function MarketingPanel({ project, episode, canEdit }: { project:
                             {picking === f.path && <span className="absolute inset-0 grid place-items-center bg-bg/60"><Loader2 className="size-4 animate-spin" /></span>}
                           </button>
                           <a href={f.url} download title={t("Download")} aria-label={t("Download")} onClick={(e) => e.stopPropagation()}
-                            className="absolute right-1.5 top-1.5 grid size-7 place-items-center rounded-md bg-black/60 max-sm:size-9 text-white opacity-0 backdrop-blur-sm transition-opacity hover:bg-black/80 focus-visible:opacity-100 group-hover:opacity-100 max-md:opacity-100">
+                            className="absolute right-1.5 top-1.5 grid size-7 place-items-center rounded-md bg-black/60 text-white opacity-0 backdrop-blur-sm transition-opacity hover:bg-black/80 focus-visible:opacity-100 group-hover:opacity-100 max-md:opacity-100 max-sm:size-9">
                             <Download className="size-3.5" />
                           </a>
                           <p className={clsx("truncate px-2 py-1.5 text-2xs", sel ? "font-semibold text-accent-ink" : "text-mute")} title={f.concept}>{sel ? t("Picked") : f.overlay_text}</p>
@@ -305,7 +305,7 @@ export default function MarketingPanel({ project, episode, canEdit }: { project:
                 ) : ideas.length ? (
                   <ul className="space-y-2">
                     {ideas.map((th, i) => (
-                      <li key={i} className="rounded-xl border border-line px-3.5 py-2.5 text-sm">
+                      <li key={i} className="cx-block px-3.5 py-2.5 text-sm" data-tone="ai">
                         <p className="font-medium">{th.overlay_text}</p>
                         <p className="mt-0.5 text-xs text-mute">{th.concept}</p>
                       </li>
@@ -321,18 +321,18 @@ export default function MarketingPanel({ project, episode, canEdit }: { project:
               </div>
 
               {tips.length > 0 && (
-                <div className="rounded-xl border border-line bg-raised/40 p-3.5">
-                  <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-mute"><Lightbulb className="size-3.5 text-accent-ink" />{t("Posting tips")}</p>
+                <div className="cx-block p-3.5" data-tone="ai">
+                  <p className="eyebrow mb-2.5 flex items-center gap-1.5 !text-ai"><Lightbulb className="size-3.5" />{t("Posting tips")}</p>
                   <ul className="space-y-1.5 text-sm text-mute">
-                    {tips.map((tip, i) => <li key={i} className="flex gap-2"><span className="mt-2 size-1 shrink-0 rounded-full bg-accent" /><span className="leading-snug">{tip}</span></li>)}
+                    {tips.map((tip, i) => <li key={i} className="flex gap-2"><span className="mt-2 size-1 shrink-0 rounded-full bg-ai" /><span className="leading-snug">{tip}</span></li>)}
                   </ul>
                 </div>
               )}
             </aside>
           </div>
-        </div>
-      )}
+        )}
+      </div>
       {canEdit && <GenerateDialog open={open} onClose={() => setOpen(false)} project={project} eid={eid} />}
-    </section>
+    </Panel>
   );
 }

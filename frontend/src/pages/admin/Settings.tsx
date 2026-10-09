@@ -2,28 +2,33 @@ import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import {
   AudioLines, Boxes, Captions, Coins, Fingerprint, Languages, Lock, MessagesSquare, PenLine, Plug, RotateCcw, Save, ScanFace, Settings2,
-  SlidersHorizontal, Wrench,
+  SlidersHorizontal, TriangleAlert, Wrench,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { Notice } from "../../components/growth/common";
+import "../../styles/console.css";
+import "../../styles/settings.css";
+import { LoadError } from "../../components/growth/common";
 import { CAPTION_STYLES } from "../../components/growth/RenderOptions";
 import YouTubeIntegration from "../../components/growth/YouTubeIntegration";
-import { AnimatedNumber, Button, Input, Page, PageHeader, Progress, Segmented, Select, Skeleton, Textarea } from "../../components/ui";
+import { MOD } from "../../components/shell/keys";
+import { Alert, Button, Input, Kbd, Page, PageHeader, Select, Skeleton, Textarea } from "../../components/ui";
 import { api } from "../../lib/api";
-import { LANG_NAMES, QUALITY_INFO, usd } from "../../lib/format";
+import { LANG_NAMES, QUALITY_INFO } from "../../lib/format";
 import { UI_LANGUAGES, useT } from "../../lib/i18n";
-import { useAuthStatus, useSettings } from "../../lib/queries";
+import { useAuthStatus, useIntegrations, useSettings } from "../../lib/queries";
 import type { Role, SettingsPayload } from "../../lib/types";
 import { UnsavedBar } from "./shared/UnsavedBar";
 import { useFlash } from "./shared/useFlash";
 import { useUnsavedGuard } from "./shared/useUnsavedGuard";
-import { Choice, Dollar, NumberInput, Row, Rows, SettingsCard, SliderRow, SwitchRow, ToggleChips } from "./settings/controls";
+import { Choice, Dollar, NumberInput, Row, Rows, SettingsCard, SliderRow, SwitchRow, TileGroup, ToggleChips } from "./settings/controls";
 import { SECTION_IDS, SETTING_SECTION, SettingsChips, SettingsNav, useScrollSpy } from "./settings/Nav";
 import { ProvidersCard } from "./settings/ProvidersCard";
+import { SpendGauge, StatusStrip } from "./settings/Status";
+import { SectionStateContext, StateTag, type SectionStatus } from "./settings/state";
+import { useApiKeys } from "./settings/useApiKeys";
 
-import { Pill } from "./shared/Pill";
 // Keys the backend accepts in PATCH /api/settings (settings_store.DEFAULTS). `engine_policy` is managed in the Model Hub.
 const EDITABLE = [
   "team_monthly_cap_usd", "alert_thresholds", "creator_default_monthly_limit_usd", "default_quality_mode", "auto_retake",
@@ -110,14 +115,18 @@ function parseJsonObject(text: string): { ok: true; value: Record<string, unknow
   }
 }
 
+/** Page frame while loading: header, system strip, section list and a few panels, all as skeletons. */
 function SettingsSkeleton() {
   return (
-    <Page width="default">
-      <div className="mb-6 flex items-center gap-3"><Skeleton className="size-10 rounded-xl" /><div className="space-y-2"><Skeleton className="h-6 w-40" /><Skeleton className="h-3.5 w-72" /></div></div>
-      <div className="lg:grid lg:grid-cols-[200px_minmax(0,1fr)] lg:gap-8">
-        <div className="hidden space-y-2 lg:block">{Array.from({ length: 9 }, (_, i) => <Skeleton key={i} className="h-8 w-full" />)}</div>
-        <div className="space-y-5">
-          {[220, 260, 340].map((h, i) => <Skeleton key={i} className="w-full rounded-xl" style={{ height: h }} />)}
+    <Page width="wide">
+      <div aria-busy="true">
+        <div className="mb-6 flex items-center gap-3"><Skeleton className="size-10 rounded-xl" /><div className="space-y-2"><Skeleton className="h-6 w-40" /><Skeleton className="h-3.5 w-72 max-w-[60vw]" /></div></div>
+        <Skeleton className="mb-4 h-24 w-full rounded-xl max-sm:h-48" />
+        <div className="cx-split">
+          <aside className="max-[900px]:hidden"><Skeleton className="h-[26rem] w-full rounded-xl" /></aside>
+          <div className="min-w-0 space-y-4">
+            {[220, 260, 340].map((h, i) => <Skeleton key={i} className="w-full rounded-xl" style={{ height: h }} />)}
+          </div>
         </div>
       </div>
     </Page>
@@ -132,7 +141,9 @@ export default function SettingsPage() {
   const { data: auth } = useAuthStatus();
   const role: Role = auth?.user?.role ?? "viewer";
   const isAdmin = role === "admin";
-  const { data, isLoading } = useSettings();
+  const { data, isLoading, isError, isFetching, refetch } = useSettings();
+  const { data: keys, isLoading: keysLoading } = useApiKeys(isAdmin);
+  const { data: integrations } = useIntegrations();
   const [draft, setDraft] = useState<Draft | null>(null);
   const [active, select] = useScrollSpy(SECTION_IDS, !!data && !!draft);
   const [thresholdsText, setThresholdsText] = useState("");
@@ -184,19 +195,22 @@ export default function SettingsPage() {
   const set = (k: string, v: unknown) => setDraft((d) => (d ? { ...d, [k]: v } : d));
 
   const base = data?.settings ?? {};
-  const { changes, errors } = useMemo(() => {
+  const { changes, errors, errorBy } = useMemo(() => {
     const changes: Record<string, unknown> = {};
     const errors: string[] = [];
-    if (!draft) return { changes, errors };
+    /** First problem per section, so the section list can flag it. */
+    const errorBy: Record<string, string> = {};
+    if (!draft) return { changes, errors, errorBy };
     for (const k of EDITABLE) {
+      const fail = (msg: string) => { errors.push(msg); if (!(SETTING_SECTION[k] in errorBy)) errorBy[SETTING_SECTION[k]] = msg; };
       let v: unknown = draft[k];
       if (k === "alert_thresholds") {
         const th = parseThresholds(thresholdsText);
-        if (!th) { errors.push(t("Alert levels must be numbers separated by commas, for example 50, 80, 100")); continue; }
+        if (!th) { fail(t("Alert levels must be numbers separated by commas, for example 50, 80, 100")); continue; }
         v = th;
       } else if (k === "prices") {
         const p = parseJsonObject(pricesText);
-        if (!p.ok) { errors.push(t("Price overrides: {e}", { e: p.error })); continue; }
+        if (!p.ok) { fail(t("Price overrides: {e}", { e: p.error })); continue; }
         v = p.value;
       } else if (k === "models") {
         v = Object.fromEntries(Object.entries((draft.models ?? {}) as Record<string, string>)
@@ -208,7 +222,7 @@ export default function SettingsPage() {
         else {
           const n = Number(raw === "" ? NaN : raw);
           if (!Number.isFinite(n) || n < spec.min || n > spec.max || (spec.int && !Number.isInteger(n))) {
-            errors.push(spec.int
+            fail(spec.int
               ? t("{label} must be a whole number from {min} to {max}", { label: t(spec.label), min: spec.min, max: spec.max })
               : t("{label} must be a number from {min} to {max}", { label: t(spec.label), min: spec.min, max: spec.max.toLocaleString() }));
             continue;
@@ -219,23 +233,31 @@ export default function SettingsPage() {
         const it = (draft.identity_trainer ?? {}) as Record<string, unknown>;
         const steps = Number(it.steps), scale = Number(it.scale), minImages = Number(it.min_images);
         const trainer = String(it.trainer ?? "").trim(), inference = String(it.inference ?? "").trim();
-        if (!trainer || !inference) { errors.push(t("Identity training needs both a trainer and an inference model")); continue; }
-        if (!Number.isInteger(steps) || steps < 100 || steps > 10000) { errors.push(t("Training steps must be a whole number from 100 to 10000")); continue; }
-        if (!Number.isFinite(scale) || scale <= 0 || scale > 2) { errors.push(t("Identity strength must be between 0.1 and 2")); continue; }
-        if (!Number.isInteger(minImages) || minImages < 4 || minImages > 100) { errors.push(t("Minimum photos must be a whole number from 4 to 100")); continue; }
+        if (!trainer || !inference) { fail(t("Identity training needs both a trainer and an inference model")); continue; }
+        if (!Number.isInteger(steps) || steps < 100 || steps > 10000) { fail(t("Training steps must be a whole number from 100 to 10000")); continue; }
+        if (!Number.isFinite(scale) || scale <= 0 || scale > 2) { fail(t("Identity strength must be between 0.1 and 2")); continue; }
+        if (!Number.isInteger(minImages) || minImages < 4 || minImages > 100) { fail(t("Minimum photos must be a whole number from 4 to 100")); continue; }
         v = { ...it, trainer, inference, steps, scale, min_images: minImages };
       } else if (k === "make_webhook_url") {
         v = String(v ?? "").trim();
-        if (v && !/^https?:\/\//i.test(v as string)) { errors.push(t("Webhook address must start with https://")); continue; }
+        if (v && !/^https?:\/\//i.test(v as string)) { fail(t("Webhook address must start with https://")); continue; }
       }
       if (!same(v, base[k])) changes[k] = v;
     }
-    return { changes, errors };
+    return { changes, errors, errorBy };
   }, [draft, thresholdsText, pricesText, base, t]);
 
   const changeCount = Object.keys(changes).length;
   const dirty = changeCount > 0 || errors.length > 0;
-  const dirtySections = useMemo(() => new Set(Object.keys(changes).map((k) => SETTING_SECTION[k]).filter(Boolean)), [changes]);
+  /** Unsaved changes per section (drives the amber dot + count in the section list). */
+  const dirtyCount = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const k of Object.keys(changes)) {
+      const s = SETTING_SECTION[k];
+      if (s) m[s] = (m[s] ?? 0) + 1;
+    }
+    return m;
+  }, [changes]);
 
   const save = async () => {
     if (errors.length) return void toast.error(errors[0]);
@@ -260,6 +282,15 @@ export default function SettingsPage() {
   };
   useUnsavedGuard(isAdmin && dirty, () => { if (!saving) void save(); });
 
+  if (isError && !data) {
+    return (
+      <Page width="wide">
+        <PageHeader icon={<Settings2 className="size-5" />} title={t("Settings")}
+          subtitle={t("Team budget, generation defaults, quality checks, delivery, integrations and AI service keys.")} />
+        <LoadError title={t("We couldn't load the settings")} onRetry={() => void refetch()} retrying={isFetching} />
+      </Page>
+    );
+  }
   if (isLoading || !data || !draft) return <SettingsSkeleton />;
 
   const ro = !isAdmin;
@@ -277,6 +308,7 @@ export default function SettingsPage() {
     : langs.map((code) => ({ value: code, label: t(LANG_NAMES[code]) })));
   const nativeLangs = (Array.isArray(draft.native_dialogue_languages) ? draft.native_dialogue_languages : []) as string[];
   const it = (draft.identity_trainer ?? {}) as Record<string, any>;
+  const baseIt = (base.identity_trainer ?? {}) as Record<string, any>;
   const setIt = (k: string, v: unknown) => set("identity_trainer", { ...it, [k]: v });
   const num = (k: string, fallback: number) => {
     const n = Number(draft[k]);
@@ -284,6 +316,11 @@ export default function SettingsPage() {
   };
   const capPct = team.cap_usd ? (team.spent_usd / team.cap_usd) * 100 : 0;
   const bad = (k: string) => numBad(k, draft[k]);
+  /** A value that differs from what is saved (or is being edited into something the server would reject). */
+  const ch = (k: string) => k in changes || numBad(k, draft[k]);
+  const itCh = (f: string, numeric?: boolean) => numeric
+    ? Number(it[f]) !== Number(baseIt[f])
+    : String(it[f] ?? "").trim() !== String(baseIt[f] ?? "").trim();
   const itSteps = Number(it.steps), itScale = Number(it.scale), itMin = Number(it.min_images);
 
   const setModel = (key: string, val: string) => {
@@ -298,9 +335,46 @@ export default function SettingsPage() {
     set("models", next);
   };
   const pricesParsed = parseJsonObject(pricesText);
+  const thresholds = parseThresholds(thresholdsText);
+  const webhook = String(draft.make_webhook_url ?? "").trim();
+  const webhookBad = !!webhook && !/^https?:\/\//i.test(webhook);
+  const ttsMap = draft.tts_provider_by_language as Record<string, string>;
+  const baseTtsMap = (base.tts_provider_by_language ?? {}) as Record<string, string>;
+
+  // ── health of each section (the glyph in the section list and the panel header) ──
+  const live = data.providers.filter((p) => p.mode === "live").length;
+  const mocks = data.providers.filter((p) => p.mode === "mock").length;
+  const missing = data.providers.filter((p) => p.mode === "missing").length;
+  const voicesOff = langs.filter((l) => { const m = providerMode[ttsMap[l] ?? "gemini"]; return !!m && m !== "live"; }).length;
+  const overrides = Object.keys(baseModelOverrides).length + Object.keys((base.prices ?? {}) as Record<string, unknown>).length;
+  const yt = (integrations?.accounts ?? []).filter((a) => a.provider === "youtube");
+  const st = (tone: SectionStatus["tone"], label: string): SectionStatus => ({ tone, label });
+  const status: Record<string, SectionStatus> = {
+    budget: capPct >= 100 ? st("bad", t("Cap reached")) : capPct >= 80 ? st("warn", t("Near the cap")) : team.cap_usd ? st("ok", t("Within budget")) : st("idle", t("No cap set")),
+    generation: draft.google_first === false ? st("warn", t("May use fal")) : st("ok", t("Google first")),
+    quality: draft.auto_retake ? st("ok", t("Retakes on")) : st("idle", t("Retakes off")),
+    dialogue: String(draft.dialogue_method) === "native" && !nativeLangs.length ? st("warn", t("No native languages")) : st("ok", t("Configured")),
+    delivery: st("ok", t("Configured")),
+    room: num("critic_rounds", 0) > 0 ? st("ok", t("Critic on")) : st("idle", t("Critic off")),
+    hub: draft.hub_auto_sync === false ? st("idle", t("Manual updates")) : st("ok", t("Auto-sync on")),
+    identity: st("ok", t("Configured")),
+    voices: voicesOff ? st("warn", t("{n} on placeholder", { n: voicesOff })) : st("ok", t("All voices ready")),
+    integrations: !integrations ? st("idle", "") : !integrations.youtube_ready ? st("warn", t("Needs setup")) : yt.length ? st("ok", t("Connected")) : st("idle", t("Not connected")),
+    keys: missing ? st("bad", t("{n} missing", { n: missing })) : mocks ? st("warn", t("{n} on placeholder", { n: mocks })) : data.providers.length ? st("ok", t("All live")) : st("idle", ""),
+    advanced: overrides ? st("info", t("{n} custom", { n: overrides })) : st("idle", t("Defaults")),
+  };
+  for (const sec of Object.keys(errorBy)) status[sec] = st("bad", t("Needs fixing"));
+  const keyStats = isAdmin
+    ? {
+      loading: keysLoading, total: data.providers.length,
+      present: (keys ?? []).filter((k) => k.source !== "missing").length,
+      saved: (keys ?? []).filter((k) => k.source === "admin").length,
+      env: (keys ?? []).filter((k) => k.source === "env").length,
+    }
+    : null;
 
   return (
-    <Page width="default">
+    <Page width="wide">
       <PageHeader
         icon={<Settings2 className="size-5" />}
         title={t("Settings")}
@@ -308,7 +382,7 @@ export default function SettingsPage() {
         actions={isAdmin ? (
           <>
             {dirty && <Button variant="ghost" icon={<RotateCcw className="size-4" />} onClick={discard}>{t("Discard")}</Button>}
-            <Button variant="primary" icon={<Save className="size-4" />} loading={saving} disabled={!dirty || !!errors.length} onClick={save}>
+            <Button variant="secondary" icon={<Save className="size-4" />} loading={saving} disabled={!dirty || !!errors.length} onClick={save}>
               {changeCount ? t("Save changes ({n})", { n: changeCount }) : t("Save changes")}
             </Button>
           </>
@@ -316,220 +390,216 @@ export default function SettingsPage() {
       />
 
       {ro && (
-        <Notice tone="info" icon={<Lock className="mt-0.5 size-4 shrink-0 text-info" />} className="mb-5">
+        <Alert tone="info" icon={<Lock className="size-4" />} className="mb-4">
           {t("You're viewing settings read-only. Only admins can change them.")}
-        </Notice>
+        </Alert>
       )}
 
-      <SettingsChips active={active} onSelect={select} dirty={dirtySections} />
+      <div className="mb-4">
+        <StatusStrip providers={data.providers} keys={keyStats} team={team} changeCount={changeCount} dirtySections={Object.keys(dirtyCount).length}
+          errorCount={errors.length} isAdmin={isAdmin} />
+      </div>
 
-      <div className="lg:grid lg:grid-cols-[196px_minmax(0,1fr)] lg:gap-10">
-        <SettingsNav active={active} onSelect={select} dirty={dirtySections} />
+      <SettingsChips active={active} onSelect={select} dirty={dirtyCount} status={status} />
 
-        <div className="min-w-0 space-y-5">
-          {/* Budget */}
-          <SettingsCard id="budget" index={0} icon={<Coins className="size-4" />} title={t("Budget")} sub={t("Monthly spending limits for the whole team.")}>
-            <div className="mb-5 rounded-xl border border-line bg-raised/40 p-4">
-              <div className="flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
-                <div>
-                  <p className="text-xs font-medium text-mute">{t("This month")}</p>
-                  <p className="mt-1 text-2xl font-semibold leading-none tabular-nums tracking-tight">
-                    <AnimatedNumber value={team.spent_usd} format={(n) => usd(n)} />
-                    <span className="ml-2 text-sm font-normal text-mute">{team.cap_usd ? t("spent of {cap}", { cap: usd(team.cap_usd) }) : t("spent")}</span>
-                  </p>
-                </div>
-                <Link to="/costs" className="-my-2 py-2 text-xs font-medium text-accent-ink hover:underline">{t("See all costs")} →</Link>
-              </div>
-              <Progress value={team.cap_usd ? team.spent_usd / team.cap_usd : 0} size="lg" tone={capPct >= 100 ? "bad" : capPct >= 80 ? "warn" : "accent"} className="mt-3.5" />
-              <p className="mt-2 text-xs text-dim">{t("{usd} reserved for running jobs", { usd: usd(team.reserved_usd) })}</p>
-            </div>
-            <Rows>
-              <Row label={t("Team monthly cap")} hint={t("Nobody can spend past this. 0 = no cap.")}>
-                <Dollar label={t("Team monthly cap")} value={draft.team_monthly_cap_usd} disabled={ro} invalid={bad("team_monthly_cap_usd")} onChange={(v) => set("team_monthly_cap_usd", v)} />
-              </Row>
-              <Row label={t("Default creator limit (per month)")} hint={t("Used when a creator has no personal limit. Blank = no limit.")}>
-                <Dollar label={t("Default creator limit (per month)")} value={draft.creator_default_monthly_limit_usd} disabled={ro} placeholder={t("No limit")} invalid={bad("creator_default_monthly_limit_usd")}
-                  onChange={(v) => set("creator_default_monthly_limit_usd", v)} />
-              </Row>
-              <Row label={t("Alert me at (% of cap)")} hint={t("Comma list. Admins are alerted when spending crosses each level.")}>
-                <div className="w-48"><Input value={thresholdsText} disabled={ro} placeholder="50, 80, 100" aria-label={t("Alert me at (% of cap)")} aria-invalid={!parseThresholds(thresholdsText) || undefined}
-                  className={clsx(!parseThresholds(thresholdsText) && "border-bad/60 focus:border-bad")} onChange={(e) => setThresholdsText(e.target.value)} /></div>
-              </Row>
-            </Rows>
-          </SettingsCard>
+      <SectionStateContext.Provider value={{ active, status, dirty: dirtyCount }}>
+        <div className="cx-split">
+          <aside className="max-[900px]:hidden">
+            <SettingsNav active={active} onSelect={select} dirty={dirtyCount} status={status} />
+          </aside>
 
-          {/* Generation defaults */}
-          <SettingsCard id="generation" index={1} icon={<SlidersHorizontal className="size-4" />} title={t("Generation defaults")} sub={t("Used by new projects.")}>
-            <Rows>
-              <SwitchRow label={t("Google first (your Gemini key)")}
-                hint={draft.google_first !== false
-                  ? t("Keyframes, videos and edits use only Google. If Google's quota is reached, jobs wait for it instead of moving to fal. fal is used only for what Google can't do (e.g. lip-sync) or when you pick a fal engine for a shot.")
-                  : t("Off: when a Google engine fails or is rate-limited, the job moves to the next engine in the chain (fal), which bills your fal balance.")}
-                checked={draft.google_first !== false} disabled={ro} onChange={(v) => set("google_first", v)} />
-              <Row stack label={t("Default video quality")} hint={t(QUALITY_INFO[quality]?.desc ?? "")}>
-                <div className={clsx("overflow-x-auto", ro && "pointer-events-none opacity-60")}>
-                  <Segmented
-                    value={quality}
-                    onChange={(v) => set("default_quality_mode", v)}
-                    aria-label={t("Default video quality")}
+          <div className="min-w-0 space-y-4">
+            {/* Budget */}
+            <SettingsCard id="budget" index={0} icon={<Coins className="size-4" />} title={t("Budget")} sub={t("Monthly spending limits for the whole team.")}>
+              <SpendGauge spent={team.spent_usd} cap={team.cap_usd} reserved={team.reserved_usd} thresholds={thresholds} />
+              <Rows>
+                <Row label={t("Team monthly cap")} hint={t("Nobody can spend past this. 0 = no cap.")} changed={ch("team_monthly_cap_usd")}>
+                  <Dollar label={t("Team monthly cap")} value={draft.team_monthly_cap_usd} disabled={ro} invalid={bad("team_monthly_cap_usd")} onChange={(v) => set("team_monthly_cap_usd", v)} />
+                </Row>
+                <Row label={t("Default creator limit (per month)")} hint={t("Used when a creator has no personal limit. Blank = no limit.")} changed={ch("creator_default_monthly_limit_usd")}>
+                  <Dollar label={t("Default creator limit (per month)")} value={draft.creator_default_monthly_limit_usd} disabled={ro} placeholder={t("No limit")} invalid={bad("creator_default_monthly_limit_usd")}
+                    onChange={(v) => set("creator_default_monthly_limit_usd", v)} />
+                </Row>
+                <Row label={t("Alert me at (% of cap)")} hint={t("Comma list. Admins are alerted when spending crosses each level.")} changed={"alert_thresholds" in changes || !thresholds}>
+                  <div className="w-full max-w-44"><Input value={thresholdsText} disabled={ro} placeholder="50, 80, 100" aria-label={t("Alert me at (% of cap)")} aria-invalid={!thresholds || undefined}
+                    className={clsx("font-mono tabular-nums", !thresholds && "border-bad/60 focus:border-bad")} onChange={(e) => setThresholdsText(e.target.value)} /></div>
+                </Row>
+              </Rows>
+            </SettingsCard>
+
+            {/* Generation defaults */}
+            <SettingsCard id="generation" index={1} icon={<SlidersHorizontal className="size-4" />} title={t("Generation defaults")} sub={t("Used by new projects.")}>
+              <Rows>
+                <SwitchRow label={t("Google first (your Gemini key)")}
+                  hint={draft.google_first !== false
+                    ? t("Keyframes, videos and edits use only Google. If Google's quota is reached, jobs wait for it instead of moving to fal. fal is used only for what Google can't do (e.g. lip-sync) or when you pick a fal engine for a shot.")
+                    : t("Off: when a Google engine fails or is rate-limited, the job moves to the next engine in the chain (fal), which bills your fal balance.")}
+                  checked={draft.google_first !== false} disabled={ro} changed={ch("google_first")} onChange={(v) => set("google_first", v)} />
+                <Row stack label={t("Default video quality")} hint={t(QUALITY_INFO[quality]?.desc ?? "")} changed={ch("default_quality_mode")}>
+                  <TileGroup ariaLabel={t("Default video quality")} value={quality} disabled={ro} onChange={(v) => set("default_quality_mode", v)}
                     options={Object.entries(QUALITY_INFO).map(([value, q]) => ({
                       value,
                       title: t(q.desc),
-                      label: <span>{t(q.label)} <span className="text-xs font-normal text-dim">{q.price}</span></span>,
-                    }))}
-                  />
-                </div>
-              </Row>
-              <Row label={t("Lip-sync model")} hint={t("Used when a voice is recorded first and the mouth is matched afterwards.")}>
-                <div className="w-full sm:w-72">
-                  <Select value={draft.lipsync_model ?? "lipsync-2"} disabled={ro} aria-label={t("Lip-sync model")} onChange={(e) => set("lipsync_model", e.target.value)}>
-                    {LIPSYNC_MODELS.map((m) => (
-                      <option key={m.value} value={m.value}>
-                        {t(m.label)}{lipsyncPrices[m.value] != null ? ` (~$${lipsyncPrices[m.value]}/s)` : ""}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-              </Row>
-            </Rows>
-          </SettingsCard>
+                      label: t(q.label),
+                      sub: <span className="text-money">{q.price}</span>,
+                    }))} />
+                </Row>
+                <Row label={t("Lip-sync model")} hint={t("Used when a voice is recorded first and the mouth is matched afterwards.")} changed={ch("lipsync_model")}>
+                  <div className="w-full max-w-md">
+                    <Select value={draft.lipsync_model ?? "lipsync-2"} disabled={ro} aria-label={t("Lip-sync model")} onChange={(e) => set("lipsync_model", e.target.value)}>
+                      {LIPSYNC_MODELS.map((m) => (
+                        <option key={m.value} value={m.value}>
+                          {t(m.label)}{lipsyncPrices[m.value] != null ? ` (~$${lipsyncPrices[m.value]}/s)` : ""}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
+                </Row>
+              </Rows>
+            </SettingsCard>
 
-          {/* Quality control */}
-          <SettingsCard id="quality" index={2} icon={<ScanFace className="size-4" />} title={t("Quality control")}
-            sub={t("Every new take is checked for the right faces, extra people, garbled text and lip-sync. Failing takes can be retried automatically.")}>
-            <Rows>
-              <SwitchRow label={t("Automatic retakes")} hint={t("Re-shoot a take that fails the check, trying another engine.")}
-                checked={!!draft.auto_retake} disabled={ro} onChange={(v) => set("auto_retake", v)} />
-              <Row label={t("Max retakes per shot")} hint={t("0 to 5. Each retake costs money.")}>
-                <NumberInput label={t("Max retakes per shot")} min={0} max={5} step={1} disabled={ro || !draft.auto_retake} invalid={bad("max_auto_retakes")} value={draft.max_auto_retakes}
-                  onChange={(v) => set("max_auto_retakes", v)} />
-              </Row>
-              <SliderRow label={t("Visual check strictness")} hint={t("AI review score a take needs to pass")} value={num("qc_threshold", 0.7)} min={0} max={1} step={0.05}
-                disabled={ro} onChange={(v) => set("qc_threshold", v)} left={t("Relaxed")} right={t("Strict")} />
-              <SliderRow label={t("Face match threshold")} hint={t("Face similarity to the character photos · 0.36 ≈ same person")} value={num("face_match_threshold", 0.36)}
-                min={0.2} max={0.6} step={0.01} disabled={ro} onChange={(v) => set("face_match_threshold", v)} left={t("Looser")} right={t("Stricter")} />
-              <SwitchRow label={t("Lip-sync check")} hint={t("AI watches dubbed and lip-synced clips with sound and scores the mouth movement.")}
-                checked={!!draft.lipsync_qc} disabled={ro} onChange={(v) => set("lipsync_qc", v)} />
-              <SliderRow label={t("Lip-sync pass score")} value={num("lipsync_qc_threshold", 0.6)} min={0} max={1} step={0.05}
-                disabled={ro || !draft.lipsync_qc} onChange={(v) => set("lipsync_qc_threshold", v)} left={t("Relaxed")} right={t("Strict")} />
-            </Rows>
-          </SettingsCard>
+            {/* Quality control */}
+            <SettingsCard id="quality" index={2} icon={<ScanFace className="size-4" />} title={t("Quality control")}
+              sub={t("Every new take is checked for the right faces, extra people, garbled text and lip-sync. Failing takes can be retried automatically.")}>
+              <Rows>
+                <SwitchRow label={t("Automatic retakes")} hint={t("Re-shoot a take that fails the check, trying another engine.")}
+                  checked={!!draft.auto_retake} disabled={ro} changed={ch("auto_retake")} onChange={(v) => set("auto_retake", v)} />
+                <Row label={t("Max retakes per shot")} hint={t("0 to 5. Each retake costs money.")} changed={ch("max_auto_retakes")}>
+                  <NumberInput label={t("Max retakes per shot")} min={0} max={5} step={1} disabled={ro || !draft.auto_retake} invalid={bad("max_auto_retakes")} value={draft.max_auto_retakes}
+                    onChange={(v) => set("max_auto_retakes", v)} />
+                </Row>
+                <SliderRow label={t("Visual check strictness")} hint={t("AI review score a take needs to pass")} value={num("qc_threshold", 0.7)} min={0} max={1} step={0.05}
+                  disabled={ro} changed={ch("qc_threshold")} onChange={(v) => set("qc_threshold", v)} left={t("Relaxed")} right={t("Strict")} />
+                <SliderRow label={t("Face match threshold")} hint={t("Face similarity to the character photos · 0.36 ≈ same person")} value={num("face_match_threshold", 0.36)}
+                  min={0.2} max={0.6} step={0.01} disabled={ro} changed={ch("face_match_threshold")} onChange={(v) => set("face_match_threshold", v)} left={t("Looser")} right={t("Stricter")} />
+                <SwitchRow label={t("Lip-sync check")} hint={t("AI watches dubbed and lip-synced clips with sound and scores the mouth movement.")}
+                  checked={!!draft.lipsync_qc} disabled={ro} changed={ch("lipsync_qc")} onChange={(v) => set("lipsync_qc", v)} />
+                <SliderRow label={t("Lip-sync pass score")} value={num("lipsync_qc_threshold", 0.6)} min={0} max={1} step={0.05}
+                  disabled={ro || !draft.lipsync_qc} changed={ch("lipsync_qc_threshold")} onChange={(v) => set("lipsync_qc_threshold", v)} left={t("Relaxed")} right={t("Strict")} />
+              </Rows>
+            </SettingsCard>
 
-          {/* Dialogue & dubbing */}
-          <SettingsCard id="dialogue" index={3} icon={<MessagesSquare className="size-4" />} title={t("Dialogue & dubbing")}
-            sub={t("How speaking shots are made. Projects and individual shots can override this.")}>
-            <Rows>
-              <Row stack label={t("Dialogue method")}>
-                <Choice ariaLabel={t("Dialogue method")} options={DIALOGUE_METHODS} value={String(draft.dialogue_method ?? "audio_first")} disabled={ro}
-                  onChange={(v) => set("dialogue_method", v)} />
-              </Row>
-              <Row stack label={t("Languages Veo may speak itself")}
-                hint={t("Native dialogue is only used in these languages (speech and lips in one pass). Every other language is recorded with TTS and lip-synced. Decide the list from your Phase 0 test.")}>
-                <ToggleChips ariaLabel={t("Languages Veo may speak itself")} options={nativeOptions} value={nativeLangs} disabled={ro}
-                  onChange={(v) => set("native_dialogue_languages", v)} />
-                {!nativeLangs.length && <p className="mt-2 text-xs text-amber-300">{t("With no language ticked, native dialogue is never used; shots fall back to audio first.")}</p>}
-              </Row>
-              <Row stack label={t("Dubbing into other languages")}>
-                <Choice ariaLabel={t("Dubbing into other languages")} options={DUB_METHODS} value={String(draft.dub_method ?? "redub")} disabled={ro} onChange={(v) => set("dub_method", v)} />
-              </Row>
-              <SwitchRow label={t("Check the spoken words")}
-                hint={t("After a spoken clip (native or lip-synced), AI listens and checks that it said the scripted words in the right language. Failing takes are flagged.")}
-                checked={draft.dialogue_words_qc !== false} disabled={ro} onChange={(v) => set("dialogue_words_qc", v)} />
-              <SliderRow label={t("Words match threshold")} hint={t("Share of the scripted words a take must get right to pass.")}
-                value={num("dialogue_words_threshold", 0.75)} min={0} max={1} step={0.05} disabled={ro || draft.dialogue_words_qc === false}
-                onChange={(v) => set("dialogue_words_threshold", v)} left={t("Lenient")} right={t("Exact")} />
-              <SwitchRow label={t("Outfit check")}
-                hint={t("Fail a take whose outfit does not match the scene's wardrobe, when the character lock asks for costume continuity.")}
-                checked={draft.outfit_qc !== false} disabled={ro} onChange={(v) => set("outfit_qc", v)} />
-            </Rows>
-          </SettingsCard>
+            {/* Dialogue & dubbing */}
+            <SettingsCard id="dialogue" index={3} icon={<MessagesSquare className="size-4" />} title={t("Dialogue & dubbing")}
+              sub={t("How speaking shots are made. Projects and individual shots can override this.")}>
+              <Rows>
+                <Row stack label={t("Dialogue method")} changed={ch("dialogue_method")}>
+                  <Choice ariaLabel={t("Dialogue method")} options={DIALOGUE_METHODS} value={String(draft.dialogue_method ?? "audio_first")} disabled={ro}
+                    onChange={(v) => set("dialogue_method", v)} />
+                </Row>
+                <Row stack label={t("Languages Veo may speak itself")} changed={ch("native_dialogue_languages")}
+                  hint={t("Native dialogue is only used in these languages (speech and lips in one pass). Every other language is recorded with TTS and lip-synced. Decide the list from your Phase 0 test.")}>
+                  <ToggleChips ariaLabel={t("Languages Veo may speak itself")} options={nativeOptions} value={nativeLangs} disabled={ro}
+                    onChange={(v) => set("native_dialogue_languages", v)} />
+                  {!nativeLangs.length && (
+                    <p className="mt-2 flex items-start gap-1.5 text-xs text-amber-300">
+                      <TriangleAlert aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+                      {t("With no language ticked, native dialogue is never used; shots fall back to audio first.")}
+                    </p>
+                  )}
+                </Row>
+                <Row stack label={t("Dubbing into other languages")} changed={ch("dub_method")}>
+                  <Choice ariaLabel={t("Dubbing into other languages")} options={DUB_METHODS} value={String(draft.dub_method ?? "redub")} disabled={ro} onChange={(v) => set("dub_method", v)} />
+                </Row>
+                <SwitchRow label={t("Check the spoken words")}
+                  hint={t("After a spoken clip (native or lip-synced), AI listens and checks that it said the scripted words in the right language. Failing takes are flagged.")}
+                  checked={draft.dialogue_words_qc !== false} disabled={ro} changed={ch("dialogue_words_qc")} onChange={(v) => set("dialogue_words_qc", v)} />
+                <SliderRow label={t("Words match threshold")} hint={t("Share of the scripted words a take must get right to pass.")}
+                  value={num("dialogue_words_threshold", 0.75)} min={0} max={1} step={0.05} disabled={ro || draft.dialogue_words_qc === false} changed={ch("dialogue_words_threshold")}
+                  onChange={(v) => set("dialogue_words_threshold", v)} left={t("Lenient")} right={t("Exact")} />
+                <SwitchRow label={t("Outfit check")}
+                  hint={t("Fail a take whose outfit does not match the scene's wardrobe, when the character lock asks for costume continuity.")}
+                  checked={draft.outfit_qc !== false} disabled={ro} changed={ch("outfit_qc")} onChange={(v) => set("outfit_qc", v)} />
+              </Rows>
+            </SettingsCard>
 
-          {/* Captions & delivery */}
-          <SettingsCard id="delivery" index={4} icon={<Captions className="size-4" />} title={t("Captions & delivery")} sub={t("Defaults for every render. Each episode can pick its own caption style on the Export page.")}>
-            <Rows>
-              <Row stack label={t("Default caption style")} hint={t(CAPTION_STYLES.find((c) => c.value === draft.caption_style)?.desc ?? "")}>
-                <div className={clsx("overflow-x-auto", ro && "pointer-events-none opacity-60")}>
-                  <Segmented value={String(draft.caption_style ?? "karaoke")} onChange={(v) => set("caption_style", v)} aria-label={t("Default caption style")}
+            {/* Captions & delivery */}
+            <SettingsCard id="delivery" index={4} icon={<Captions className="size-4" />} title={t("Captions & delivery")} sub={t("Defaults for every render. Each episode can pick its own caption style on the Export page.")}>
+              <Rows>
+                <Row stack label={t("Default caption style")} hint={t(CAPTION_STYLES.find((c) => c.value === draft.caption_style)?.desc ?? "")} changed={ch("caption_style")}>
+                  <TileGroup ariaLabel={t("Default caption style")} value={String(draft.caption_style ?? "karaoke")} disabled={ro} onChange={(v) => set("caption_style", v)}
                     options={CAPTION_STYLES.map((c) => ({ value: c.value, label: t(c.label), title: t(c.desc) }))} />
-                </div>
-              </Row>
-              <SwitchRow label={t("Auto-reframe")} hint={t("When a clip's shape differs from the export (e.g. 16:9 → 9:16), crop around the main face instead of the centre.")}
-                checked={draft.auto_reframe !== false} disabled={ro} onChange={(v) => set("auto_reframe", v)} />
-              <SwitchRow label={t("Automatic sound effects")} hint={t("Autopilot designs ambience and spot effects for each episode (ElevenLabs; small cost).")}
-                checked={!!draft.sfx_auto} disabled={ro} onChange={(v) => set("sfx_auto", v)} />
-              <Row label={t("Default interface language")} hint={t("For people who haven't picked their own language yet.")}>
-                <div className="w-full sm:w-56">
-                  <Select value={draft.ui_default_language ?? "en"} disabled={ro} aria-label={t("Default interface language")} onChange={(e) => set("ui_default_language", e.target.value)}>
-                    {Object.entries(UI_LANGUAGES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                  </Select>
-                </div>
-              </Row>
-            </Rows>
-          </SettingsCard>
+                </Row>
+                <SwitchRow label={t("Auto-reframe")} hint={t("When a clip's shape differs from the export (e.g. 16:9 → 9:16), crop around the main face instead of the centre.")}
+                  checked={draft.auto_reframe !== false} disabled={ro} changed={ch("auto_reframe")} onChange={(v) => set("auto_reframe", v)} />
+                <SwitchRow label={t("Automatic sound effects")} hint={t("Autopilot designs ambience and spot effects for each episode (ElevenLabs; small cost).")}
+                  checked={!!draft.sfx_auto} disabled={ro} changed={ch("sfx_auto")} onChange={(v) => set("sfx_auto", v)} />
+                <Row label={t("Default interface language")} hint={t("For people who haven't picked their own language yet.")} changed={ch("ui_default_language")}>
+                  <div className="w-full max-w-md">
+                    <Select value={draft.ui_default_language ?? "en"} disabled={ro} aria-label={t("Default interface language")} onChange={(e) => set("ui_default_language", e.target.value)}>
+                      {Object.entries(UI_LANGUAGES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                    </Select>
+                  </div>
+                </Row>
+              </Rows>
+            </SettingsCard>
 
-          {/* Writers' room */}
-          <SettingsCard id="room" index={5} icon={<PenLine className="size-4" />} title={t("Writers' room")} sub={t("The AI critic reviews scripts and asks for rewrites until they score high enough.")}>
-            <Rows>
-              <Row label={t("Critic rounds")} hint={t("Rewrite rounds per run. 0 to 5.")}>
-                <NumberInput label={t("Critic rounds")} min={0} max={5} step={1} disabled={ro} invalid={bad("critic_rounds")} value={draft.critic_rounds} onChange={(v) => set("critic_rounds", v)} />
-              </Row>
-              <Row label={t("Critic pass score")} hint={t("Out of 10. Stop rewriting once the script reaches this.")}>
-                <NumberInput label={t("Critic pass score")} min={0} max={10} step={0.5} disabled={ro} invalid={bad("critic_min_score")} value={draft.critic_min_score} onChange={(v) => set("critic_min_score", v)} />
-              </Row>
-            </Rows>
-          </SettingsCard>
+            {/* Writers' room */}
+            <SettingsCard id="room" index={5} icon={<PenLine className="size-4" />} title={t("Writers' room")} sub={t("The AI critic reviews scripts and asks for rewrites until they score high enough.")}>
+              <Rows>
+                <Row label={t("Critic rounds")} hint={t("Rewrite rounds per run. 0 to 5.")} changed={ch("critic_rounds")}>
+                  <NumberInput label={t("Critic rounds")} min={0} max={5} step={1} disabled={ro} invalid={bad("critic_rounds")} value={draft.critic_rounds} onChange={(v) => set("critic_rounds", v)} />
+                </Row>
+                <Row label={t("Critic pass score")} hint={t("Out of 10. Stop rewriting once the script reaches this.")} changed={ch("critic_min_score")}>
+                  <NumberInput label={t("Critic pass score")} min={0} max={10} step={0.5} disabled={ro} invalid={bad("critic_min_score")} value={draft.critic_min_score} onChange={(v) => set("critic_min_score", v)} />
+                </Row>
+              </Rows>
+            </SettingsCard>
 
-          {/* Model Hub */}
-          <SettingsCard id="hub" index={6} icon={<Boxes className="size-4" />} title={t("Model Hub")}
-            sub={<>{t("Keep the list of video, voice and image models up to date.")} <Link to="/models" className="font-medium text-accent-ink hover:underline">{t("Open Model Hub")}</Link></>}>
-            <Rows>
-              <SwitchRow label={t("Check for new models automatically")} hint={t("Syncs the fal.ai catalogue and prices in the background.")}
-                checked={draft.hub_auto_sync !== false} disabled={ro} onChange={(v) => set("hub_auto_sync", v)} />
-              <Row label={t("Check every (hours)")} hint={t("1 to 720.")}>
-                <NumberInput label={t("Check every (hours)")} min={1} max={720} step={1} disabled={ro || draft.hub_auto_sync === false} invalid={bad("hub_sync_hours")} value={draft.hub_sync_hours}
-                  onChange={(v) => set("hub_sync_hours", v)} />
-              </Row>
-              <SwitchRow label={t("Turn on new models straight away")} hint={t("Off = new models wait as \"new\" until an admin enables them. Safer for costs.")}
-                checked={!!draft.hub_auto_enable} disabled={ro} onChange={(v) => set("hub_auto_enable", v)} />
-            </Rows>
-          </SettingsCard>
+            {/* Model Hub */}
+            <SettingsCard id="hub" index={6} icon={<Boxes className="size-4" />} title={t("Model Hub")}
+              sub={<>{t("Keep the list of video, voice and image models up to date.")} <Link to="/models" className="font-medium text-accent-ink hover:underline">{t("Open Model Hub")}</Link></>}>
+              <Rows>
+                <SwitchRow label={t("Check for new models automatically")} hint={t("Syncs the fal.ai catalogue and prices in the background.")}
+                  checked={draft.hub_auto_sync !== false} disabled={ro} changed={ch("hub_auto_sync")} onChange={(v) => set("hub_auto_sync", v)} />
+                <Row label={t("Check every (hours)")} hint={t("1 to 720.")} changed={ch("hub_sync_hours")}>
+                  <NumberInput label={t("Check every (hours)")} min={1} max={720} step={1} disabled={ro || draft.hub_auto_sync === false} invalid={bad("hub_sync_hours")} value={draft.hub_sync_hours}
+                    onChange={(v) => set("hub_sync_hours", v)} />
+                </Row>
+                <SwitchRow label={t("Turn on new models straight away")} hint={t("Off = new models wait as \"new\" until an admin enables them. Safer for costs.")}
+                  checked={!!draft.hub_auto_enable} disabled={ro} changed={ch("hub_auto_enable")} onChange={(v) => set("hub_auto_enable", v)} />
+              </Rows>
+            </SettingsCard>
 
-          {/* Identity training */}
-          <SettingsCard id="identity" index={7} icon={<Fingerprint className="size-4" />} title={t("Identity training")}
-            sub={t("Trains a small model of a character's face from their approved photos so keyframes keep the same person (fal.ai).")}>
-            <Rows>
-              <Row stack label={t("Trainer model")}>
-                <Input className="font-mono text-xs" disabled={ro} aria-label={t("Trainer model")} value={it.trainer ?? ""} onChange={(e) => setIt("trainer", e.target.value)} />
-              </Row>
-              <Row stack label={t("Image model that uses the trained face")}>
-                <Input className="font-mono text-xs" disabled={ro} aria-label={t("Image model that uses the trained face")} value={it.inference ?? ""} onChange={(e) => setIt("inference", e.target.value)} />
-              </Row>
-              <Row label={t("Training steps")} hint={t("More steps = closer likeness, longer and pricier.")}>
-                <NumberInput label={t("Training steps")} min={100} max={10000} step={100} disabled={ro} invalid={!Number.isInteger(itSteps) || itSteps < 100 || itSteps > 10000} value={it.steps} onChange={(v) => setIt("steps", v)} />
-              </Row>
-              <Row label={t("Identity strength")} hint={t("How strongly the trained face is applied (0.1–2).")}>
-                <NumberInput label={t("Identity strength")} min={0.1} max={2} step={0.05} disabled={ro} invalid={!Number.isFinite(itScale) || itScale <= 0 || itScale > 2} value={it.scale} onChange={(v) => setIt("scale", v)} />
-              </Row>
-              <Row label={t("Minimum photos")} hint={t("Approved character images needed before training.")}>
-                <NumberInput label={t("Minimum photos")} min={4} max={100} step={1} disabled={ro} invalid={!Number.isInteger(itMin) || itMin < 4 || itMin > 100} value={it.min_images} onChange={(v) => setIt("min_images", v)} />
-              </Row>
-            </Rows>
-          </SettingsCard>
+            {/* Identity training */}
+            <SettingsCard id="identity" index={7} icon={<Fingerprint className="size-4" />} title={t("Identity training")}
+              sub={t("Trains a small model of a character's face from their approved photos so keyframes keep the same person (fal.ai).")}>
+              <Rows>
+                <Row stack label={t("Trainer model")} changed={itCh("trainer")}>
+                  <Input className="font-mono text-xs" disabled={ro} aria-label={t("Trainer model")} value={it.trainer ?? ""} onChange={(e) => setIt("trainer", e.target.value)} />
+                </Row>
+                <Row stack label={t("Image model that uses the trained face")} changed={itCh("inference")}>
+                  <Input className="font-mono text-xs" disabled={ro} aria-label={t("Image model that uses the trained face")} value={it.inference ?? ""} onChange={(e) => setIt("inference", e.target.value)} />
+                </Row>
+                <Row label={t("Training steps")} hint={t("More steps = closer likeness, longer and pricier.")} changed={itCh("steps", true)}>
+                  <NumberInput label={t("Training steps")} min={100} max={10000} step={100} disabled={ro} invalid={!Number.isInteger(itSteps) || itSteps < 100 || itSteps > 10000} value={it.steps} onChange={(v) => setIt("steps", v)} />
+                </Row>
+                <Row label={t("Identity strength")} hint={t("How strongly the trained face is applied (0.1–2).")} changed={itCh("scale", true)}>
+                  <NumberInput label={t("Identity strength")} min={0.1} max={2} step={0.05} disabled={ro} invalid={!Number.isFinite(itScale) || itScale <= 0 || itScale > 2} value={it.scale} onChange={(v) => setIt("scale", v)} />
+                </Row>
+                <Row label={t("Minimum photos")} hint={t("Approved character images needed before training.")} changed={itCh("min_images", true)}>
+                  <NumberInput label={t("Minimum photos")} min={4} max={100} step={1} disabled={ro} invalid={!Number.isInteger(itMin) || itMin < 4 || itMin > 100} value={it.min_images} onChange={(v) => setIt("min_images", v)} />
+                </Row>
+              </Rows>
+            </SettingsCard>
 
-          {/* Voices */}
-          <SettingsCard id="voices" index={8} icon={<AudioLines className="size-4" />} title={t("Voices")} sub={t("Which voice service speaks each language.")}>
-            <Notice tone="accent" icon={<Languages className="mt-0.5 size-4 shrink-0 text-accent-ink" />} className="mb-4">
-              {t("Pick the winner of your Phase 0 listening test for each language.")}
-            </Notice>
-            <Rows>
-              {langs.map((lang) => {
-                const val = (draft.tts_provider_by_language as Record<string, string>)[lang] ?? "gemini";
-                const mode = providerMode[val];
-                return (
-                  <Row key={lang} label={t(LANG_NAMES[lang])}>
-                    <div className="flex items-center gap-2">
-                      {mode && mode !== "live" && <Pill tone={mode === "mock" ? "warn" : "bad"} dot>{mode === "mock" ? t("Mock") : t("No key")}</Pill>}
-                      <div className="w-full sm:w-64">
+            {/* Voices */}
+            <SettingsCard id="voices" index={8} icon={<AudioLines className="size-4" />} title={t("Voices")} sub={t("Which voice service speaks each language.")}>
+              <Alert tone="accent" icon={<Languages className="size-4" />} className="mb-4">
+                {t("Pick the winner of your Phase 0 listening test for each language.")}
+              </Alert>
+              <Rows>
+                {langs.map((lang) => {
+                  const val = ttsMap[lang] ?? "gemini";
+                  const mode = providerMode[val];
+                  return (
+                    <Row key={lang} label={t(LANG_NAMES[lang])} changed={!same(ttsMap[lang], baseTtsMap[lang])}
+                      hint={mode ? (
+                        <StateTag tone={mode === "live" ? "ok" : mode === "mock" ? "warn" : "bad"} live={mode === "live"} title={mode === "mock" ? t("Mock — free placeholder") : undefined}>
+                          {mode === "live" ? t("Live") : mode === "mock" ? t("Placeholder") : t("No key")}
+                        </StateTag>
+                      ) : undefined}>
+                      <div className="w-full max-w-md">
                         <Select value={val} disabled={ro} aria-label={t(LANG_NAMES[lang])}
                           onChange={(e) => set("tts_provider_by_language", { ...draft.tts_provider_by_language, [lang]: e.target.value })}>
                           {TTS_PROVIDERS.map((p) => (
@@ -539,82 +609,94 @@ export default function SettingsPage() {
                           ))}
                         </Select>
                       </div>
-                    </div>
-                  </Row>
-                );
-              })}
-            </Rows>
-          </SettingsCard>
+                    </Row>
+                  );
+                })}
+              </Rows>
+            </SettingsCard>
 
-          {/* Integrations */}
-          <SettingsCard id="integrations" index={9} icon={<Plug className="size-4" />} title={t("Integrations")} sub={t("Connect the studio to your channels and other tools.")}>
-            <Rows>
-              <div><YouTubeIntegration role={role} /></div>
-              <Row stack label={t("Make.com webhook address")} hint={t("When an export finishes we send its details here (for Instagram and other channels). Leave blank to turn off.")}>
-                <Input type="url" value={draft.make_webhook_url ?? ""} disabled={ro} placeholder="https://hook.eu2.make.com/…" aria-label={t("Make.com webhook address")}
-                  className={clsx(!!String(draft.make_webhook_url ?? "").trim() && !/^https?:\/\//i.test(String(draft.make_webhook_url).trim()) && "border-bad/60 focus:border-bad")}
-                  onChange={(e) => set("make_webhook_url", e.target.value)} />
-              </Row>
-            </Rows>
-          </SettingsCard>
+            {/* Integrations */}
+            <SettingsCard id="integrations" index={9} icon={<Plug className="size-4" />} title={t("Integrations")} sub={t("Connect the studio to your channels and other tools.")}>
+              <Rows>
+                <div><YouTubeIntegration role={role} /></div>
+                <Row stack label={t("Make.com webhook address")} hint={t("When an export finishes we send its details here (for Instagram and other channels). Leave blank to turn off.")}
+                  changed={"make_webhook_url" in changes || webhookBad}>
+                  <Input type="url" value={draft.make_webhook_url ?? ""} disabled={ro} placeholder="https://hook.eu2.make.com/…" aria-label={t("Make.com webhook address")}
+                    aria-invalid={webhookBad || undefined}
+                    className={clsx("font-mono text-xs", webhookBad && "border-bad/60 focus:border-bad")}
+                    onChange={(e) => set("make_webhook_url", e.target.value)} />
+                </Row>
+              </Rows>
+            </SettingsCard>
 
-          {/* API keys */}
-          <ProvidersCard providers={data.providers} isAdmin={isAdmin} index={10} />
+            {/* API keys */}
+            <ProvidersCard providers={data.providers} isAdmin={isAdmin} index={10} prices={data.prices} />
 
-          {/* Advanced */}
-          <SettingsCard id="advanced" index={11} icon={<Wrench className="size-4" />} title={t("Advanced")}
-            sub={t("Only change these if a model is renamed or a price changes. Wrong values can break generation.")}>
-            <div className="space-y-6">
-              <div>
-                <h3 className="mb-2 text-sm font-medium">{t("Model names")}</h3>
-                <div className="divide-y divide-line overflow-hidden rounded-xl border border-line">
-                  {Object.keys(data.models).map((key) => {
-                    const overridden = key in modelOverrides;
-                    const pendingReset = !overridden && key in baseModelOverrides;
-                    const value = overridden ? modelOverrides[key] : pendingReset ? "" : data.models[key];
-                    return (
-                      <div key={key} className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2">
-                        <div className="w-full shrink-0 sm:w-44">
-                          <p className="truncate text-xs font-medium">{t(MODEL_LABELS[key] ?? key)}</p>
-                          <p className="truncate font-mono text-2xs text-dim">{key}</p>
-                        </div>
-                        <div className="min-w-0 flex-1 basis-56">
-                          <Input className="h-8 font-mono text-xs" value={value} disabled={ro} aria-label={t(MODEL_LABELS[key] ?? key)}
+            {/* Advanced */}
+            <SettingsCard id="advanced" index={11} icon={<Wrench className="size-4" />} title={t("Advanced")}
+              sub={t("Only change these if a model is renamed or a price changes. Wrong values can break generation.")}>
+              <div className="space-y-6">
+                <div>
+                  <h3 className="mb-2 flex items-center gap-2 text-sm font-medium">
+                    {t("Model names")}
+                    <span className="mono rounded-md border border-line bg-raised/60 px-1.5 py-0.5 text-2xs font-normal text-dim">{Object.keys(data.models).length}</span>
+                  </h3>
+                  <div className="cx-block overflow-hidden">
+                    {Object.keys(data.models).map((key) => {
+                      const overridden = key in modelOverrides;
+                      const pendingReset = !overridden && key in baseModelOverrides;
+                      const value = overridden ? modelOverrides[key] : pendingReset ? "" : data.models[key];
+                      const modelChanged = !same(modelOverrides[key], baseModelOverrides[key]);
+                      return (
+                        <div key={key} className="st-model">
+                          <div className="min-w-0">
+                            <p className="flex items-center gap-2 text-xs font-medium">
+                              {modelChanged && (
+                                <>
+                                  <i aria-hidden className="st-dot" />
+                                  <span className="sr-only">{t("Unsaved changes")}</span>
+                                </>
+                              )}
+                              <span className="min-w-0 truncate">{t(MODEL_LABELS[key] ?? key)}</span>
+                            </p>
+                            <p className="truncate font-mono text-2xs text-dim">{key}</p>
+                            {overridden && (
+                              <button type="button" title={t("Go back to the built-in model")} disabled={ro} onClick={() => resetModel(key)}
+                                className="-ml-1.5 mt-0.5 rounded-md px-1.5 py-1 text-2xs font-medium text-accent-ink hover:bg-hover disabled:opacity-50 max-sm:py-2.5">
+                                {t("custom · reset")}
+                              </button>
+                            )}
+                          </div>
+                          <Input className="h-8 font-mono text-xs max-sm:h-10" value={value} disabled={ro} aria-label={t(MODEL_LABELS[key] ?? key)}
                             placeholder={pendingReset ? t("Default — shown after saving") : undefined}
                             onChange={(e) => setModel(key, e.target.value)} />
                         </div>
-                        <span className="w-[84px] shrink-0 text-right">
-                          {overridden && (
-                            <button type="button" title={t("Go back to the built-in model")} disabled={ro} onClick={() => resetModel(key)}
-                              className="rounded-md px-1.5 py-1 text-2xs font-medium text-accent-ink hover:bg-hover disabled:opacity-50">
-                              {t("custom · reset")}
-                            </button>
-                          )}
-                        </span>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
+                </div>
+                <div>
+                  <h3 className="text-sm font-medium">{t("Price overrides (JSON)")}</h3>
+                  <p className="mb-2 mt-0.5 max-w-[62ch] text-xs text-mute">{t("Only add what you want to change. Overrides merge one level deep, so give every resolution for a video model you change.")}</p>
+                  <Textarea className="min-h-[200px] font-mono text-xs" spellCheck={false} disabled={ro} value={pricesText} aria-label={t("Price overrides (JSON)")}
+                    aria-invalid={!pricesParsed.ok || undefined}
+                    placeholder={'{\n  "lipsync_per_second": { "lipsync-2": 0.05 }\n}'} onChange={(e) => setPricesText(e.target.value)} />
+                  {!pricesParsed.ok && <p className="mt-1.5 text-xs text-red-300">{t("Not valid yet: {e}", { e: pricesParsed.error })}</p>}
+                  <details className="cx-block mt-3 px-3 py-2">
+                    <summary className="cursor-pointer text-xs font-medium text-mute max-sm:py-2">{t("Current prices in use")}</summary>
+                    <pre className="cx-scroll mt-2 max-h-72 font-mono text-2xs leading-relaxed text-dim">{pretty(data.prices)}</pre>
+                  </details>
                 </div>
               </div>
-              <div>
-                <h3 className="text-sm font-medium">{t("Price overrides (JSON)")}</h3>
-                <p className="mb-2 mt-0.5 text-xs text-mute">{t("Only add what you want to change. Overrides merge one level deep, so give every resolution for a video model you change.")}</p>
-                <Textarea className="min-h-[200px] font-mono text-xs" spellCheck={false} disabled={ro} value={pricesText} aria-label={t("Price overrides (JSON)")}
-                  placeholder={'{\n  "lipsync_per_second": { "lipsync-2": 0.05 }\n}'} onChange={(e) => setPricesText(e.target.value)} />
-                {!pricesParsed.ok && <p className="mt-1.5 text-xs text-red-300">{t("Not valid yet: {e}", { e: pricesParsed.error })}</p>}
-                <details className="mt-3 rounded-xl border border-line bg-raised/40 px-3 py-2">
-                  <summary className="cursor-pointer text-xs font-medium text-mute">{t("Current prices in use")}</summary>
-                  <pre className="mt-2 max-h-72 overflow-auto font-mono text-2xs leading-relaxed text-dim">{pretty(data.prices)}</pre>
-                </details>
-              </div>
-            </div>
-          </SettingsCard>
+            </SettingsCard>
+          </div>
         </div>
-      </div>
+      </SectionStateContext.Provider>
 
       <div className="h-24" aria-hidden />
       {isAdmin && (
-        <UnsavedBar show={dirty} saved={savedFlash && !dirty} saving={saving} error={errors[0]} onDiscard={discard} onSave={save}
+        <UnsavedBar show={dirty} saved={savedFlash && !dirty} saving={saving} error={errors[0]} onDiscard={discard} onSave={save} count={changeCount}
+          shortcut={<><Kbd>{MOD}</Kbd><Kbd>S</Kbd></>}
           savedLabel={savedCount === 1 ? t("Settings saved (1 change)") : t("Settings saved ({n} changes)", { n: savedCount })}
           message={changeCount === 1 ? t("You have 1 unsaved change.") : t("You have {n} unsaved changes.", { n: changeCount })} />
       )}

@@ -1,6 +1,7 @@
-/** The locked brand facts: logo, colours, tagline, CTA and product assets from the brand kit. Nothing here is generated. */
+/** The locked brand facts, as a compact fact sheet: logo, colours, tagline, CTA and product assets from the brand kit. Nothing here is generated. */
 import { clsx } from "clsx";
 import { Lock, Package } from "lucide-react";
+import type { ReactNode } from "react";
 import { useT } from "../../lib/i18n";
 import type { BrandKit } from "../../lib/types";
 import { Alert, Input } from "../ui";
@@ -22,9 +23,19 @@ export function Swatches({ colors, size = "md" }: { colors: string[]; size?: "sm
     <span className="inline-flex items-center gap-1">
       {colors.slice(0, 6).map((c, i) => (
         // user data: brand colours are the one allowed inline colour
-        <span key={`${c}${i}`} title={c} className={clsx("rounded-full ring-1 ring-inset ring-white/15", size === "sm" ? "size-3" : "size-4")} style={{ background: c }} />
+        <span key={`${c}${i}`} title={c} className={clsx("rounded-md border border-line", size === "sm" ? "size-3.5" : "size-5")} style={{ background: c }} />
       ))}
     </span>
+  );
+}
+
+/** One key / value row of the sheet: a mono eyebrow on the left, the value on the right. */
+function Row({ k, children, center }: { k: ReactNode; children: ReactNode; center?: boolean }) {
+  return (
+    <div className={clsx("grid grid-cols-[5.25rem_minmax(0,1fr)] gap-3 px-3.5 py-2", center ? "items-center" : "items-start")}>
+      <dt className="eyebrow pt-[3px]">{k}</dt>
+      <dd className="min-w-0 text-sm">{children}</dd>
+    </div>
   );
 }
 
@@ -40,52 +51,55 @@ export default function BrandFacts({ facts, cta, onCta, compact, className }: {
     );
   }
   const ctaValue = cta ?? facts.cta;
+  const fonts = [facts.fonts?.heading, facts.fonts?.body].filter(Boolean) as string[];
   return (
-    <section aria-label={t("Locked brand facts")} className={clsx("rounded-xl border border-accent/30 bg-accent/5", className)}>
-      <header className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-accent/20 px-4 py-2.5">
-        <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-accent/15 text-accent-ink"><Lock className="size-3.5" /></span>
+    <section aria-label={t("Locked brand facts")} data-tone="accent" className={clsx("cx-block overflow-hidden", className)}>
+      <header className="flex items-center gap-3 border-b border-line px-3.5 py-2.5">
+        <span className="grid size-10 shrink-0 place-items-center overflow-hidden rounded-lg border border-line bg-raised">
+          {facts.logo_url ? <img src={facts.logo_url} alt={t("Logo")} className="max-h-full max-w-full object-contain p-1" /> : <span className="text-2xs text-dim">{t("No logo")}</span>}
+        </span>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold leading-tight">{t("Locked brand facts")} <span className="font-normal text-mute">· {facts.name}</span></p>
-          <p className="text-xs text-mute">{t("These never change, no model may invent them.")}</p>
+          <p className="eyebrow flex items-center gap-1.5 !text-accent-ink"><Lock className="size-3" />{t("Locked brand facts")}</p>
+          <p className="mt-1.5 truncate text-sm font-semibold leading-none" title={facts.name}>{facts.name}</p>
         </div>
       </header>
-      <div className={clsx("grid gap-x-5 gap-y-3 px-4 py-3", compact ? "@md:grid-cols-2" : "@md:grid-cols-[auto_minmax(0,1fr)]")}>
-        {!compact && (
-          <div className="flex items-start gap-3 @md:flex-col">
-            <div className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-xl border border-line bg-raised">
-              {facts.logo_url ? <img src={facts.logo_url} alt={t("Logo")} className="max-h-full max-w-full object-contain p-1.5" /> : <span className="text-2xs text-dim">{t("No logo")}</span>}
-            </div>
-            <Swatches colors={facts.colors} />
-          </div>
+      <dl className="divide-y divide-line">
+        {facts.colors.length > 0 && (
+          <Row k={t("Colours")} center>
+            <span className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <Swatches colors={facts.colors} size={compact ? "sm" : "md"} />
+              {!compact && <span className="mono truncate text-2xs uppercase text-dim">{facts.colors.slice(0, 3).join(" ")}</span>}
+            </span>
+          </Row>
         )}
-        <dl className="grid gap-x-4 gap-y-2 text-sm @md:grid-cols-[auto_minmax(0,1fr)]">
-          {compact && facts.colors.length > 0 && (<><dt className="text-xs font-medium text-mute">{t("Colours")}</dt><dd><Swatches colors={facts.colors} size="sm" /></dd></>)}
-          <dt className="text-xs font-medium text-mute">{t("Tagline")}</dt>
-          <dd className={clsx("min-w-0 truncate", !facts.tagline && "text-dim")} title={facts.tagline}>{facts.tagline || t("none")}</dd>
-          <dt className="self-center text-xs font-medium text-mute">{t("CTA")}</dt>
-          <dd className="min-w-0">
-            {onCta ? (
-              <Input value={ctaValue} onChange={(e) => onCta(e.target.value)} placeholder={facts.cta || t("e.g. Follow for Part 2")} aria-label={t("CTA")} className="!h-8 text-xs" />
-            ) : (
-              <span className={clsx("truncate", !ctaValue && "text-dim")}>{ctaValue || t("none")}</span>
-            )}
-          </dd>
-          {facts.product_assets.length > 0 && (
-            <>
-              <dt className="text-xs font-medium text-mute">{t("Products")}</dt>
-              <dd className="flex flex-wrap gap-1">
-                {facts.product_assets.map((a, i) => (
-                  <span key={`${a.path}${i}`} className="inline-flex max-w-full items-center gap-1 rounded-md border border-line bg-raised px-1.5 py-0.5 text-2xs text-mute">
-                    <Package className="size-3 shrink-0" /><span className="truncate">{a.label || t("Product {n}", { n: i + 1 })}</span>
-                  </span>
-                ))}
-              </dd>
-            </>
+        <Row k={t("Tagline")}>
+          <span className={clsx("block break-words", !facts.tagline && "text-dim")}>{facts.tagline || t("none")}</span>
+        </Row>
+        <Row k={t("CTA")} center>
+          {onCta ? (
+            <Input value={ctaValue} onChange={(e) => onCta(e.target.value)} placeholder={facts.cta || t("e.g. Follow for Part 2")} aria-label={t("CTA")} className="!h-8 text-xs" />
+          ) : (
+            <span className={clsx("block break-words font-medium", !ctaValue && "font-normal text-dim")}>{ctaValue || t("none")}</span>
           )}
-          <dt className="text-xs font-medium text-mute">{t("End card")}</dt>
-          <dd className="text-mute">{facts.end_card?.enabled ? t("{n}s with the tagline and CTA", { n: facts.end_card.seconds ?? 3 }) : t("off in this kit")}</dd>
-        </dl>
-      </div>
+        </Row>
+        {!compact && facts.website && <Row k={t("Website")}><span className="mono block truncate text-xs text-mute" title={facts.website}>{facts.website}</span></Row>}
+        {!compact && fonts.length > 0 && <Row k={t("Fonts")}><span className="mono block truncate text-xs text-mute" title={fonts.join(" / ")}>{fonts.join(" / ")}</span></Row>}
+        {facts.product_assets.length > 0 && (
+          <Row k={t("Products")}>
+            <span className="flex flex-wrap gap-1">
+              {facts.product_assets.map((a, i) => (
+                <span key={`${a.path}${i}`} className="inline-flex max-w-full items-center gap-1 rounded-md border border-line bg-raised px-1.5 py-0.5 text-2xs text-mute">
+                  <Package className="size-3 shrink-0" /><span className="truncate">{a.label || t("Product {n}", { n: i + 1 })}</span>
+                </span>
+              ))}
+            </span>
+          </Row>
+        )}
+        <Row k={t("End card")}>
+          <span className="text-xs text-mute">{facts.end_card?.enabled ? t("{n}s with the tagline and CTA", { n: facts.end_card.seconds ?? 3 }) : t("off in this kit")}</span>
+        </Row>
+      </dl>
+      <p className="border-t border-line px-3.5 py-2 text-2xs text-dim">{t("These never change, no model may invent them.")}</p>
     </section>
   );
 }

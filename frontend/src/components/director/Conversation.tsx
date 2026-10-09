@@ -1,11 +1,12 @@
 import { clsx } from "clsx";
-import { ArrowDown, Check, Copy, Sparkles, Zap } from "lucide-react";
+import { ArrowDown, Check, Copy, Zap } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ago } from "../../lib/format";
 import { getUiLanguage, tr, useT } from "../../lib/i18n";
 import type { AgentMessage, UserBrief } from "../../lib/types";
+import "../../styles/console.css";
 import { Alert, Button, rise, Skeleton } from "../ui";
 import { ConfirmCard } from "./ConfirmCard";
 import { Proposal, type Decision } from "./Proposal";
@@ -87,28 +88,28 @@ function CopyButton({ text }: { text: string }) {
           toast.error(tr("Couldn't copy"));
         }
       }}
-      className="-my-1 grid size-7 place-items-center rounded-md text-dim transition-colors hover:bg-hover hover:text-ink"
+      className="grid size-7 shrink-0 place-items-center rounded-md text-dim opacity-0 transition-[opacity,color,background-color] hover:bg-hover hover:text-ink focus-visible:opacity-100 group-focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:size-8 pointer-coarse:opacity-100"
     >
       {done ? <Check className="size-3.5 text-ok" /> : <Copy className="size-3.5" />}
     </button>
   );
 }
 
-/** Time / sender line under a bubble. Always laid out (no jumping), only visible on hover / focus / touch. */
-function Meta({ iso, label, align, children }: { iso: string; label: string; align: "left" | "right"; children?: React.ReactNode }) {
+const clock = (iso: string) => {
+  try { return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); } catch { return ""; }
+};
+
+/** The header strip of a message block: mono role label on the left, timestamp (and a copy button) on the right. */
+function BlockHead({ iso, children, copy, tone }: { iso: string; children: React.ReactNode; copy?: React.ReactNode; tone: "ai" | "you" }) {
   return (
-    <div
-      className={clsx(
-        "mt-0.5 flex h-5 items-center gap-1 px-1 text-2xs text-dim opacity-0 transition-opacity duration-150",
-        "group-hover:opacity-100 group-focus-within:opacity-100 pointer-coarse:opacity-100",
-        align === "right" && "justify-end",
-      )}
-    >
-      <span className="truncate">{label}</span>
-      <span aria-hidden>·</span>
-      <time dateTime={iso} title={fullTime(iso)} className="shrink-0">{ago(iso)}</time>
-      {children}
-    </div>
+    <header className="flex h-7 items-center gap-2 border-b border-line/60 pl-3 pr-1.5">
+      <span className={clsx("mono flex min-w-0 items-center gap-1.5 truncate text-2xs font-medium uppercase tracking-[0.14em]", tone === "ai" ? "text-ai" : "text-accent-ink")}>
+        {children}
+      </span>
+      <span className="flex-1" />
+      <time dateTime={iso} title={`${fullTime(iso)} · ${ago(iso)}`} className="mono shrink-0 text-2xs tabular-nums text-dim">{clock(iso)}</time>
+      {copy}
+    </header>
   );
 }
 
@@ -118,7 +119,7 @@ const Row = memo(function Row({ item, me, boot, canEdit, decisions, busy, onDeci
   confirmBusy: Record<string, "yes" | "no">; onConfirm: (messageId: number, id: string, approve: boolean) => void;
 }) {
   const t = useT();
-  const { m, head, tail, day } = item;
+  const { m, head, day } = item;
   const mine = m.role === "user";
   const proposals = m.data?.proposals ?? [];
   const confirmations = m.data?.confirmations ?? [];
@@ -131,83 +132,82 @@ const Row = memo(function Row({ item, me, boot, canEdit, decisions, busy, onDeci
 
   return (
     <motion.div
-      initial={boot ? false : { opacity: 0, y: 10, scale: 0.98 }}
-      animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ duration: 0.3, ease: EASE }}
-      style={{ transformOrigin: mine ? "right bottom" : "left bottom" }}
-      className={clsx(head && !day && "mt-4", day && "mt-2")}
+      initial={boot ? false : { opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.28, ease: EASE }}
+      className={clsx(head && !day ? "mt-3.5" : "mt-1.5", day && "mt-2")}
     >
       {day && (
-        <div className="mb-3 mt-2 flex items-center gap-3 text-2xs font-medium text-dim" role="separator">
+        <div className="mono mb-3 mt-2 flex items-center gap-3 text-2xs font-medium uppercase tracking-[0.14em] text-dim" role="separator">
           <span className="h-px flex-1 bg-line" /> {day} <span className="h-px flex-1 bg-line" />
         </div>
       )}
       {mine ? (
-        <div className="group flex flex-col items-end">
-          {head && !isMe && <p className="mb-0.5 px-1 text-2xs font-medium text-mute">{sender}</p>}
-          <div
-            title={tail ? undefined : fullTime(m.created_at)}
-            className="max-w-[88%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-accent/20 bg-accent/12 px-3.5 py-2 text-sm leading-relaxed text-ink [overflow-wrap:anywhere]"
-          >
-            {m.content}
-          </div>
-          {tail && <Meta iso={m.created_at} label={sender} align="right" />}
+        <div className="dr-msg cx-block group overflow-hidden" data-from="user">
+          <BlockHead iso={m.created_at} tone="you">{sender}</BlockHead>
+          <div className="whitespace-pre-wrap break-words px-3 py-2.5 text-sm leading-relaxed text-ink [overflow-wrap:anywhere]">{m.content}</div>
         </div>
       ) : (
-        <div className="group flex items-start gap-2">
-          <div className="w-7 shrink-0">{head && <DirectorMark size={28} />}</div>
-          <div className="min-w-0 flex-1">
-            {hasText && (
-              <div
-                title={tail ? undefined : fullTime(m.created_at)}
-                className="w-fit max-w-full rounded-2xl rounded-bl-md border border-line bg-raised px-3.5 py-2.5 text-sm leading-relaxed text-ink"
-              >
+        <div className="group min-w-0">
+          {hasText ? (
+            <div className="dr-msg cx-block overflow-hidden" data-from="director" data-tone="ai">
+              <BlockHead iso={m.created_at} tone="ai" copy={body.trim() ? <CopyButton text={body} /> : null}>
+                <DirectorMark size={16} />{sender}
+              </BlockHead>
+              <div className="px-3 py-2.5 text-sm leading-relaxed text-ink">
                 {note && <p className={clsx("border-line text-2xs italic leading-snug text-dim", body.trim() && "mb-2 border-b pb-2")}>{note}</p>}
                 {body.trim() && <RichText text={body} />}
               </div>
-            )}
-            {proposals.length > 0 && (
-              <div className="mt-2 space-y-2">
-                {proposals.map((p) => (
-                  <Proposal
-                    key={p.batch_id}
-                    p={p}
-                    decision={decisions[p.batch_id]}
-                    busy={busy[p.batch_id]}
-                    canEdit={canEdit}
-                    onApprove={() => onDecide(p.batch_id, "approve")}
-                    onReject={() => onDecide(p.batch_id, "reject")}
-                  />
-                ))}
-              </div>
-            )}
-            {confirmations.length > 0 && (
-              <div className="mt-2 space-y-2">
-                {confirmations.map((c) => (
-                  <ConfirmCard key={c.id} item={c} busy={confirmBusy[c.id]} canEdit={canEdit} onAnswer={(yes) => onConfirm(m.id, c.id, yes)} />
-                ))}
-              </div>
-            )}
-            {done.length > 0 && (
-              <ul className="mt-2 space-y-1 px-1">
+            </div>
+          ) : (
+            <p className="mono flex items-center gap-1.5 px-0.5 text-2xs uppercase tracking-[0.14em] text-ai">
+              <DirectorMark size={16} />{sender}
+              <time dateTime={m.created_at} title={`${fullTime(m.created_at)} · ${ago(m.created_at)}`} className="ml-1 normal-case tracking-normal text-dim">{clock(m.created_at)}</time>
+            </p>
+          )}
+          {proposals.length > 0 && (
+            <div className="mt-2 space-y-2">
+              {proposals.map((p) => (
+                <Proposal
+                  key={p.batch_id}
+                  p={p}
+                  decision={decisions[p.batch_id]}
+                  busy={busy[p.batch_id]}
+                  canEdit={canEdit}
+                  onApprove={() => onDecide(p.batch_id, "approve")}
+                  onReject={() => onDecide(p.batch_id, "reject")}
+                />
+              ))}
+            </div>
+          )}
+          {confirmations.length > 0 && (
+            <div className="mt-2 space-y-2">
+              {confirmations.map((c) => (
+                <ConfirmCard key={c.id} item={c} busy={confirmBusy[c.id]} canEdit={canEdit} onAnswer={(yes) => onConfirm(m.id, c.id, yes)} />
+              ))}
+            </div>
+          )}
+          {done.length > 0 && (
+            <div className="cx-block mt-2 px-3 py-2">
+              <p className="mono mb-1.5 text-2xs font-medium uppercase tracking-[0.14em] text-dim">{t("Done")}</p>
+              <ul className="space-y-1">
                 {done.slice(0, 6).map((a, i) => (
                   <li key={i} className="flex items-start gap-1.5 text-2xs leading-snug text-mute">
-                    <Zap className="mt-px size-3 shrink-0 text-accent-ink" />
+                    <Zap className="mt-px size-3 shrink-0 text-ai" />
                     <span className="min-w-0 break-words">{a}</span>
                   </li>
                 ))}
-                {done.length > 6 && <li className="pl-[18px] text-2xs text-dim">{t("+{n} more", { n: done.length - 6 })}</li>}
+                {done.length > 6 && <li className="mono pl-[18px] text-2xs text-dim">{t("+{n} more", { n: done.length - 6 })}</li>}
               </ul>
-            )}
-            {tail && <Meta iso={m.created_at} label={sender} align="left">{body.trim() ? <CopyButton text={body} /> : null}</Meta>}
-          </div>
+            </div>
+          )}
         </div>
       )}
     </motion.div>
   );
 });
 
-/** Shown while the Director is working: dots, a label, and after a few seconds the elapsed time. */
+/** Shown while the Director is working: a "transmitting" block with violet eq bars, a label, and after a few seconds the elapsed time. */
 function Thinking() {
   const t = useT();
   const [secs, setSecs] = useState(0);
@@ -223,13 +223,20 @@ function Thinking() {
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, transition: { duration: 0.12 } }}
       transition={{ duration: 0.25, ease: EASE }}
-      className="mt-4 flex items-start gap-2"
+      className="mt-3.5"
     >
-      <DirectorMark size={28} working />
-      <div className="flex items-center gap-2.5 rounded-2xl rounded-bl-md border border-line bg-raised px-3.5 py-2.5 text-sm text-mute">
-        <ThinkingDots />
-        <span>{secs >= 12 ? t("Still on it — bigger steps take a little longer") : t("Director is working…")}</span>
-        {secs >= 5 && <span className="text-xs tabular-nums text-dim">{secs}s</span>}
+      <div className="dr-msg cx-block overflow-hidden" data-from="director" data-tone="ai">
+        <header className="flex h-7 items-center gap-2 border-b border-line/60 px-3">
+          <span className="mono flex items-center gap-1.5 text-2xs font-medium uppercase tracking-[0.14em] text-ai"><DirectorMark size={16} working />{t("Director")}</span>
+          <span className="flex-1" />
+          <span className="eq is-ai" aria-hidden><i /><i /><i /><i /></span>
+        </header>
+        <div className="flex items-center gap-2.5 px-3 py-2.5 text-sm text-mute">
+          <ThinkingDots />
+          <span>{secs >= 12 ? t("Still on it — bigger steps take a little longer") : t("Director is working…")}</span>
+          {secs >= 5 && <span className="mono ml-auto text-xs tabular-nums text-dim">{secs}s</span>}
+        </div>
+        <div aria-hidden className="sweep h-0.5 bg-ai/25" />
       </div>
     </motion.div>
   );
@@ -240,35 +247,29 @@ function EmptyState({ canEdit, suggestions, onPick, name }: { canEdit: boolean; 
   const first = name?.trim().split(/\s+/)[0];
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-1 py-4 text-center">
-      <div className="relative mb-4 anim-pop">
-        <span aria-hidden className="anim-glow absolute inset-0 -m-5 rounded-full bg-accent/20 blur-2xl" />
-        <div className="anim-float relative grid size-14 place-items-center rounded-2xl bg-gradient-to-br from-accent to-accent-2 text-black shadow-glow">
-          <Sparkles className="size-6" />
-        </div>
+      <div className="anim-pop relative mb-4">
+        <span aria-hidden className="anim-glow absolute inset-0 -m-6 rounded-full bg-ai/20 blur-2xl" />
+        <DirectorMark size={56} square className="relative !rounded-xl" />
       </div>
-      {first && <p className="anim-rise mb-0.5 text-xs font-medium text-accent-ink" style={rise(1).style}>{t("Hi {name}", { name: first })}</p>}
+      <p className="anim-rise mono mb-2 flex items-center gap-1.5 text-2xs font-medium uppercase tracking-[0.18em] text-ai" style={rise(1).style}>
+        <span aria-hidden className="live-dot is-idle" />{t("Director")} · {t("Standby")}
+      </p>
+      {first && <p className="anim-rise mb-0.5 text-xs font-medium text-mute" style={rise(1).style}>{t("Hi {name}", { name: first })}</p>}
       <h3 className="anim-rise text-lg font-semibold tracking-tight" style={rise(2).style}>{t("Tell me what you want.")}</h3>
       <p className="anim-rise mt-1.5 max-w-[34ch] text-sm leading-relaxed text-mute" style={rise(3).style}>
         {t("I can write hooks and scripts, build characters and voices, plan shots, generate keyframes and videos, lip-sync, dub into Hindi / Kannada / Telugu / Tamil, and export. Paid steps show the cost first, and anything that would replace your work asks before it happens.")}
       </p>
       {canEdit && (
         <>
-          <p className="anim-rise mb-2 mt-6 text-2xs font-semibold uppercase tracking-[0.12em] text-dim" style={rise(4).style}>{t("Try one of these")}</p>
-          <div className="flex flex-wrap justify-center gap-2">
+          <p className="anim-rise mono mb-2 mt-6 flex w-full items-center gap-3 text-2xs font-medium uppercase tracking-[0.14em] text-dim" style={rise(4).style}>
+            <span aria-hidden className="h-px flex-1 bg-line" />{t("Try one of these")}<span aria-hidden className="h-px flex-1 bg-line" />
+          </p>
+          <div className="flex flex-wrap justify-center gap-1.5">
             {suggestions.map((s, i) => {
               const r = rise(i + 5);
               return (
-                <button
-                  key={s.order}
-                  type="button"
-                  onClick={() => onPick(s.order)}
-                  className={clsx(
-                    "group flex h-8 max-w-full items-center gap-1.5 rounded-full border border-line bg-raised/60 px-3 text-xs text-mute transition-[color,border-color,background-color,transform] hover:border-accent/50 hover:bg-accent/8 hover:text-ink active:scale-95",
-                    r.className,
-                  )}
-                  style={r.style}
-                >
-                  <s.icon className="size-3.5 shrink-0 text-dim transition-colors group-hover:text-accent-ink" />
+                <button key={s.order} type="button" onClick={() => onPick(s.order)} className={clsx("dr-chip max-w-full", r.className)} style={r.style}>
+                  <s.icon />
                   <span className="truncate">{s.label}</span>
                 </button>
               );
@@ -282,13 +283,12 @@ function EmptyState({ canEdit, suggestions, onPick, name }: { canEdit: boolean; 
 
 function SkeletonThread() {
   return (
-    <div aria-hidden className="space-y-4">
-      <div className="flex justify-end"><Skeleton className="h-9 w-40 rounded-2xl" /></div>
-      <div className="flex gap-2">
-        <Skeleton className="size-7 shrink-0 rounded-full" />
-        <div className="space-y-1.5"><Skeleton className="h-4 w-56 rounded-xl" /><Skeleton className="h-4 w-44 rounded-xl" /><Skeleton className="h-4 w-28 rounded-xl" /></div>
+    <div aria-hidden className="space-y-3">
+      <div className="cx-block overflow-hidden"><Skeleton className="h-7 rounded-none" /><div className="p-3"><Skeleton className="h-4 w-40 rounded-md" /></div></div>
+      <div className="cx-block overflow-hidden" data-tone="ai">
+        <Skeleton className="h-7 rounded-none" />
+        <div className="space-y-1.5 p-3"><Skeleton className="h-4 w-56 rounded-md" /><Skeleton className="h-4 w-44 rounded-md" /><Skeleton className="h-4 w-28 rounded-md" /></div>
       </div>
-      <div className="flex justify-end"><Skeleton className="h-9 w-28 rounded-2xl" /></div>
     </div>
   );
 }
@@ -382,7 +382,7 @@ export function Conversation({ messages, loading, failed, onRetry, pending, send
   };
 
   return (
-    <div className="relative min-h-0 flex-1">
+    <div className="dr-log relative min-h-0 flex-1">
       <div
         ref={scroller}
         onScroll={onScroll}
@@ -390,7 +390,7 @@ export function Conversation({ messages, loading, failed, onRetry, pending, send
         aria-live="polite"
         aria-relevant="additions text"
         aria-label={t("Director chat")}
-        className="mask-fade-y h-full overflow-y-auto overscroll-contain px-3 py-5"
+        className="mask-fade-y h-full overflow-y-auto overscroll-contain px-3 py-4"
       >
         <div ref={content} className="flex min-h-full flex-col">
           {loading && <SkeletonThread />}
@@ -416,15 +416,19 @@ export function Conversation({ messages, loading, failed, onRetry, pending, send
             {pendingShown && pending && (
               <motion.div
                 key="pending"
-                initial={{ opacity: 0, y: 10, scale: 0.98 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, transition: { duration: 0.1 } }}
-                transition={{ duration: 0.28, ease: EASE }}
-                style={{ transformOrigin: "right bottom" }}
-                className="mt-4 flex justify-end"
+                transition={{ duration: 0.26, ease: EASE }}
+                className="mt-3.5"
               >
-                <div className="max-w-[88%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md border border-accent/20 bg-accent/12 px-3.5 py-2 text-sm leading-relaxed text-ink opacity-90 [overflow-wrap:anywhere]">
-                  {pending.text}
+                <div className="dr-msg cx-block overflow-hidden opacity-90" data-from="user">
+                  <header className="flex h-7 items-center gap-2 border-b border-line/60 px-3">
+                    <span className="mono text-2xs font-medium uppercase tracking-[0.14em] text-accent-ink">{t("You")}</span>
+                    <span className="flex-1" />
+                    <span className="mono text-2xs text-dim">{t("Sending…")}</span>
+                  </header>
+                  <div className="whitespace-pre-wrap break-words px-3 py-2.5 text-sm leading-relaxed text-ink [overflow-wrap:anywhere]">{pending.text}</div>
                 </div>
               </motion.div>
             )}
@@ -444,7 +448,7 @@ export function Conversation({ messages, loading, failed, onRetry, pending, send
             exit={{ opacity: 0, y: 8, scale: 0.9 }}
             transition={{ duration: 0.18, ease: EASE }}
             aria-label={t("Scroll to the latest message")}
-            className="absolute bottom-3 left-1/2 flex h-8 -translate-x-1/2 items-center gap-1.5 rounded-full border border-line bg-panel/95 px-3 text-xs font-medium text-ink shadow-pop backdrop-blur transition-colors hover:bg-hover"
+            className="mono absolute bottom-3 left-1/2 flex h-8 -translate-x-1/2 items-center gap-1.5 rounded-lg border border-ai/40 bg-panel/95 px-3 text-2xs font-medium uppercase tracking-[0.12em] text-ai shadow-pop backdrop-blur transition-colors hover:bg-hover max-sm:h-10"
           >
             <ArrowDown className="size-3.5" />
             {unseen > 0 ? t("New message") : t("Latest")}

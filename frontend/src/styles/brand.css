@@ -51,7 +51,7 @@
     background: color-mix(in oklab, var(--color-raised) 35%, transparent);
     transition: border-color var(--dur-fast) ease, background-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
   }
-  .bk-drop:hover:not([aria-disabled="true"]) { border-color: color-mix(in oklab, var(--color-accent) 50%, var(--color-line)); background: color-mix(in oklab, var(--color-accent) 4%, var(--color-panel)); }
+  .bk-drop[data-state="idle"]:hover:not([aria-disabled="true"]) { border-color: color-mix(in oklab, var(--color-accent) 50%, var(--color-line)); background: color-mix(in oklab, var(--color-accent) 4%, var(--color-panel)); }
   .bk-drop[data-state="over"] {
     border-style: solid; border-color: var(--color-accent); background: color-mix(in oklab, var(--color-accent) 10%, var(--color-panel));
     box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-accent) 18%, transparent), inset 0 0 28px color-mix(in oklab, var(--color-accent) 12%, transparent);

@@ -73,3 +73,35 @@ export const stopJob = (jid: number) => api.post(`/api/jobs/${jid}/cancel`);
 /** How many renders a choice makes: languages × aspects × (full length + each cut-down). */
 export const variantCount = (b: Pick<CampaignBody, "languages" | "aspects" | "durations">) =>
   Math.max(1, b.languages.length) * Math.max(1, b.aspects.length) * (1 + b.durations.length);
+
+/** Short human label for an aspect ratio (where it is shown). */
+export const ASPECT_LABEL: Record<Aspect, string> = { "9:16": "Shorts / Reels", "16:9": "YouTube", "1:1": "Square" };
+
+/** The choices a stored campaign was run with, as an estimate request (so the board can price its tiles). */
+export function bodyOfState(s: CampaignState): CampaignBody {
+  const uniq = <T,>(xs: T[]) => Array.from(new Set(xs));
+  return {
+    languages: s.languages?.length ? s.languages : uniq(s.variants.map((v) => v.language)),
+    aspects: s.aspects?.length ? s.aspects : uniq(s.variants.map((v) => v.aspect)),
+    durations: s.durations ?? uniq(s.variants.filter((v) => v.cut).map((v) => v.duration)).sort((a, b) => a - b),
+    brand_kit_id: s.brand_facts?.brand_kit_id ?? null,
+    cta: s.brand_facts?.cta ?? "",
+    captions: s.captions ?? true,
+    publish: false,
+    brief: { product: s.brief?.product ?? "", audience: s.brief?.audience ?? "", tone: s.brief?.tone ?? "" },
+  };
+}
+
+/** What one language costs to dub, and what one render cell costs, read from an estimate's plan items. */
+export function priceOf(items: PlanItem[] | undefined) {
+  const dub = new Map<string, number>();
+  const cell = new Map<string, number>();
+  for (const it of items ?? []) {
+    if (it.kind === "dub" && it.language) dub.set(it.language, (dub.get(it.language) ?? 0) + it.usd);
+    else if (it.kind === "export" && it.language && it.aspect) {
+      const k = `${it.language}|${it.aspect}|${it.duration ?? ""}`;
+      cell.set(k, (cell.get(k) ?? 0) + it.usd);
+    }
+  }
+  return { dub, cell };
+}

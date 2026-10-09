@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import { Rocket, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useRef, useState, type CSSProperties } from "react";
+import { useMemo, useRef, useState, type CSSProperties } from "react";
 import { toast } from "sonner";
 import { api } from "../lib/api";
 import { usd } from "../lib/format";
@@ -17,6 +17,8 @@ import { ModeSwitch, type AgentMode } from "./director/ModeSwitch";
 import type { Decision } from "./director/Proposal";
 import { DirectorMark, useSuggestions } from "./director/shared";
 import { DIRECTOR_MAX, DIRECTOR_MIN, useResizableWidth } from "./director/useResizable";
+import "../styles/console.css";
+import "../styles/director.css";
 import { Button, IconButton } from "./ui";
 
 /** Unsent text per project: survives closing and re-opening the panel. */
@@ -54,6 +56,17 @@ export default function AgentPanel() {
   const mode: AgentMode = project.agent_mode === "autopilot" ? "autopilot" : "copilot";
   const ap = project.autopilot || {};
   const apRunning = ap.status === "running";
+
+  // Proposals and confirmations that are waiting for you, and what the proposals would cost (shown in the header telemetry).
+  const awaiting = useMemo(() => {
+    let n = 0, total = 0;
+    for (const m of messages ?? []) {
+      for (const p of m.data?.proposals ?? []) if (p.pending && !decisions[p.batch_id]) { n++; total += p.total_usd; }
+      for (const c of m.data?.confirmations ?? []) if (c.status === "pending") n++;
+    }
+    return { n, total };
+  }, [messages, decisions]);
+  const link = sending ? "working" : apRunning ? "autopilot" : ap.status === "paused" ? "paused" : "standby";
 
   const edit = (v: string) => { setText(v); drafts.set(project.id, v); };
 
@@ -172,59 +185,92 @@ export default function AgentPanel() {
         {...handleProps}
         className="group absolute inset-y-0 -left-1.5 z-20 hidden w-3 cursor-col-resize touch-none select-none outline-none sm:block"
       >
-        <span aria-hidden className={clsx("absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 rounded-full bg-accent transition-opacity duration-150",
+        <span aria-hidden className={clsx("absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 rounded-full bg-ai transition-opacity duration-150",
           dragging ? "opacity-90" : "opacity-0 group-hover:opacity-60 group-focus-visible:opacity-90")} />
-        <span aria-hidden className={clsx("absolute left-1/2 top-1/2 h-9 w-1 -translate-x-1/2 -translate-y-1/2 rounded-full transition-colors duration-150",
-          dragging ? "bg-accent" : "bg-line group-hover:bg-accent/70 group-focus-visible:bg-accent")} />
+        <span aria-hidden className={clsx("absolute left-1/2 top-1/2 flex h-9 w-1.5 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center gap-[3px] rounded-full transition-colors duration-150",
+          dragging ? "bg-ai/25" : "bg-line group-hover:bg-ai/20 group-focus-visible:bg-ai/25")}>
+          {[0, 1, 2].map((i) => <span key={i} className={clsx("size-[3px] rounded-full transition-colors", dragging ? "bg-ai" : "bg-dim group-hover:bg-ai group-focus-visible:bg-ai")} />)}
+        </span>
       </div>
 
-      <header className="relative shrink-0 border-b border-line px-3 pb-2.5 pt-3">
-        <div className="flex items-center gap-2.5">
-          <DirectorMark size={34} square working={sending || apRunning} />
-          <div className="min-w-0 flex-1">
-            <h2 className="text-sm font-semibold leading-tight tracking-tight">{t("Director")}</h2>
-            <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-2xs leading-snug text-mute">
-              {apRunning ? (
-                <>
-                  <span aria-hidden className="size-1.5 shrink-0 animate-pulse rounded-full bg-info" />
-                  <span className="truncate text-info">{t("Autopilot is running: {stage}", { stage: String(ap.stage ?? "") })}</span>
-                </>
-              ) : ap.status === "paused" ? (
-                <span className="truncate text-warn">{t("Autopilot is waiting for your review (Brief tab)")}</span>
-              ) : (
-                <span className="truncate">{mode === "autopilot" ? t("Starts paid steps within budget") : t("Shows the cost and waits for your OK")}</span>
-              )}
-            </p>
+      <header className="relative shrink-0 border-b border-line">
+        <span aria-hidden className="dr-glow pointer-events-none absolute inset-0" />
+        <span aria-hidden className="dr-edge pointer-events-none absolute inset-x-0 top-0" />
+        <div className="relative px-3 pb-3 pt-3">
+          <div className="flex items-center gap-2.5">
+            <DirectorMark size={36} square working={sending || apRunning} />
+            <div className="min-w-0 flex-1">
+              <p className="mono text-2xs font-medium uppercase tracking-[0.16em] text-ai">{t("AI co-pilot")}</p>
+              <h2 className="mt-1 text-sm font-semibold leading-tight tracking-tight">{t("Director")}</h2>
+            </div>
+            <IconButton title={t("Close")} tipSide="bottom" onClick={() => setAgentOpen(false)}><X className="size-4" /></IconButton>
           </div>
-          <IconButton title={t("Close")} tipSide="bottom" onClick={() => setAgentOpen(false)}><X className="size-4" /></IconButton>
-        </div>
-        <div className="mt-2.5">
-          <ModeSwitch mode={mode} onChange={onMode} disabled={!canEdit || modeBusy} />
-        </div>
-        <AnimatePresence initial={false}>
-          {confirmAuto && (
-            <motion.div
-              key="confirm"
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: "auto", opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-              className="overflow-hidden"
-              onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); setConfirmAuto(false); } }}
-            >
-              <div className="mt-2.5 rounded-xl border border-warn/30 bg-warn/8 p-3">
-                <p className="flex items-center gap-1.5 text-xs font-semibold text-ink"><Rocket className="size-3.5 text-warn" />{t("Auto-approve paid steps?")}</p>
-                <p className="mt-1 text-xs leading-relaxed text-mute">
-                  {t("When you ask the Director for something paid, it will start right away, without waiting for your OK. It still stays inside the project budget and your team's limits.")}
-                </p>
-                <div className="mt-2.5 flex gap-2">
-                  <Button size="sm" variant="primary" onClick={() => void applyMode("autopilot")} autoFocus>{t("Auto-approve")}</Button>
-                  <Button size="sm" variant="ghost" onClick={() => setConfirmAuto(false)}>{t("Keep asking me")}</Button>
+
+          <p className="mt-2 flex min-w-0 items-center gap-1.5 text-2xs leading-snug text-mute">
+            {apRunning ? (
+              <>
+                <span aria-hidden className="size-1.5 shrink-0 animate-pulse rounded-full bg-info" />
+                <span className="truncate text-info">{t("Autopilot is running: {stage}", { stage: String(ap.stage ?? "") })}</span>
+              </>
+            ) : ap.status === "paused" ? (
+              <span className="truncate text-warn">{t("Autopilot is waiting for your review (Brief tab)")}</span>
+            ) : (
+              <span className="truncate">{mode === "autopilot" ? t("Starts paid steps within budget") : t("Shows the cost and waits for your OK")}</span>
+            )}
+          </p>
+
+          {/* telemetry: link state, messages in the log, and what is waiting for you */}
+          <dl className="mt-2.5 grid grid-cols-3 divide-x divide-line overflow-hidden rounded-lg border border-line bg-bg/40">
+            <div className="min-w-0 px-2.5 py-1.5">
+              <dt className="mono text-2xs uppercase tracking-[0.14em] text-dim">{t("Link")}</dt>
+              <dd className="mono mt-1 flex items-center gap-1.5 text-xs font-medium leading-none">
+                <span aria-hidden className={clsx("live-dot shrink-0", link === "standby" && "is-idle", link === "paused" && "is-warn")} />
+                <span className={clsx("truncate", link === "working" ? "text-ai" : link === "autopilot" ? "text-info" : link === "paused" ? "text-warn" : "text-mute")}>
+                  {link === "working" ? t("Working") : link === "autopilot" ? t("Autopilot") : link === "paused" ? t("Paused") : t("Standby")}
+                </span>
+              </dd>
+            </div>
+            <div className="min-w-0 px-2.5 py-1.5">
+              <dt className="mono text-2xs uppercase tracking-[0.14em] text-dim">{t("Log")}</dt>
+              <dd className="mono mt-1 text-xs font-medium leading-none text-ink">{messages?.length ?? 0}</dd>
+            </div>
+            <div className="min-w-0 px-2.5 py-1.5">
+              <dt className="mono text-2xs uppercase tracking-[0.14em] text-dim">{t("Awaiting")}</dt>
+              <dd className="mono mt-1 flex items-baseline gap-1.5 text-xs font-medium leading-none">
+                <span className={awaiting.n ? "text-warn" : "text-ink"}>{awaiting.n}</span>
+                {awaiting.total > 0 && <span className="truncate text-money">{usd(awaiting.total)}</span>}
+              </dd>
+            </div>
+          </dl>
+
+          <div className="mt-2.5">
+            <ModeSwitch mode={mode} onChange={onMode} disabled={!canEdit || modeBusy} />
+          </div>
+          <AnimatePresence initial={false}>
+            {confirmAuto && (
+              <motion.div
+                key="confirm"
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: "auto", opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                className="overflow-hidden"
+                onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); setConfirmAuto(false); } }}
+              >
+                <div className="mt-2.5 rounded-lg border border-warn/35 bg-warn/8 p-3">
+                  <p className="flex items-center gap-1.5 text-xs font-semibold text-ink"><Rocket className="size-3.5 text-warn" />{t("Auto-approve paid steps?")}</p>
+                  <p className="mt-1 text-xs leading-relaxed text-mute">
+                    {t("When you ask the Director for something paid, it will start right away, without waiting for your OK. It still stays inside the project budget and your team's limits.")}
+                  </p>
+                  <div className="mt-2.5 grid grid-cols-2 gap-2">
+                    <Button size="sm" variant="primary" onClick={() => void applyMode("autopilot")} autoFocus>{t("Auto-approve")}</Button>
+                    <Button size="sm" variant="ghost" onClick={() => setConfirmAuto(false)}>{t("Keep asking me")}</Button>
+                  </div>
                 </div>
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
       </header>
 
       <Conversation

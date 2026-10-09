@@ -1,16 +1,17 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Clapperboard, ImagePlus, Lock, Palette, Plus, Type } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { toast } from "sonner";
 import { Notice } from "../components/growth/common";
-import { Button, Empty, Field, Input, Modal, Page, PageHeader, Skeleton, rise } from "../components/ui";
+import { Button, Empty, Field, Input, Metric, Modal, Page, PageHeader, Panel, Skeleton, rise } from "../components/ui";
 import { api } from "../lib/api";
 import { useT } from "../lib/i18n";
 import { useAuthStatus, useBrandKits, useProjects } from "../lib/queries";
 import { ROLE_RANK, type BrandKit } from "../lib/types";
 import { KitEditor } from "./brand/KitEditor";
 import { KitList } from "./brand/KitList";
+import "../styles/console.css";
 
 function NewKitModal({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (k: BrandKit) => void }) {
   const t = useT();
@@ -69,8 +70,8 @@ function EmptyKits({ canEdit, onNew }: { canEdit: boolean; onNew: () => void }) 
         {perks.map((p, i) => {
           const r = rise(i + 2);
           return (
-            <li key={p.title} className={`rounded-xl border border-line bg-panel p-4 ${r.className}`} style={r.style}>
-              <span className="grid size-8 place-items-center rounded-lg bg-accent/12 text-accent-ink">{p.icon}</span>
+            <li key={p.title} className={`cx-block hud p-4 ${r.className}`} style={r.style}>
+              <span className="grid size-8 place-items-center rounded-lg border border-accent/25 bg-accent/10 text-accent-ink">{p.icon}</span>
               <p className="mt-3 text-sm font-semibold">{p.title}</p>
               <p className="mt-1 text-xs leading-relaxed text-mute">{p.text}</p>
             </li>
@@ -91,8 +92,20 @@ export default function BrandKitsPage() {
   const { data: projects } = useProjects();
   const [selected, setSelected] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
+  const editor = useRef<HTMLDivElement>(null);
   const list = kits ?? [];
   const kit = list.find((k) => k.id === selected) ?? list[0];
+
+  // picking a card in the gallery brings its editor into view
+  const pick = (id: number) => {
+    setSelected(id);
+    const calm = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    requestAnimationFrame(() => editor.current?.scrollIntoView({ behavior: calm ? "auto" : "smooth", block: "start" }));
+  };
+
+  const inUse = new Set((projects ?? []).filter((p) => p.brand_kit_id).map((p) => p.id)).size;
+  const withLogo = list.filter((k) => !!k.logo_url).length;
+  const productImages = list.reduce((a, k) => a + (k.product_urls?.length ?? 0), 0);
 
   return (
     <Page width="wide">
@@ -110,16 +123,27 @@ export default function BrandKitsPage() {
       )}
 
       {isLoading ? (
-        <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)] 2xl:grid-cols-[260px_minmax(0,1fr)]">
-          <div className="space-y-2">{Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-[84px] rounded-xl" />)}</div>
-          <div className="space-y-5"><Skeleton className="h-20 rounded-xl" /><Skeleton className="h-48 rounded-xl" /><Skeleton className="h-40 rounded-xl" /></div>
+        <div className="space-y-4" aria-busy="true">
+          <Panel flush><div className="cx-kpis">{Array.from({ length: 4 }, (_, i) => <div key={i}><Skeleton className="mb-3 h-3 w-20" /><Skeleton className="h-7 w-14" /></div>)}</div></Panel>
+          <div className="grid gap-3 sm:grid-cols-[repeat(auto-fill,minmax(15.5rem,1fr))]">{Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-40 rounded-xl" />)}</div>
+          <div className="grid gap-5 min-[900px]:grid-cols-[15rem_minmax(0,1fr)]"><Skeleton className="h-64 rounded-xl" /><Skeleton className="h-64 rounded-xl" /></div>
         </div>
       ) : !list.length ? (
         <EmptyKits canEdit={canEdit} onNew={() => setCreating(true)} />
       ) : (
-        <div className="grid gap-6 lg:grid-cols-[220px_minmax(0,1fr)] 2xl:grid-cols-[260px_minmax(0,1fr)]">
-          <KitList kits={list} selectedId={kit?.id} onSelect={setSelected} onNew={() => setCreating(true)} canEdit={canEdit} projects={projects} />
-          <div className="min-w-0">
+        <div className="space-y-4">
+          <Panel flush index={0}>
+            <div className="cx-kpis" role="group" aria-label={t("Brand kit totals")}>
+              <Metric label={t("Brand kits")} value={list.length} size="md" />
+              <Metric label={t("Projects branded")} value={inUse} sub={projects?.length ? t("of {n} projects", { n: projects.length }) : undefined} tone={inUse ? "accent" : "neutral"} size="md" />
+              <Metric label={t("With a logo")} value={withLogo} sub={t("of {n} kits", { n: list.length })} size="md" />
+              <Metric label={t("Product images")} value={productImages} size="md" />
+            </div>
+          </Panel>
+
+          <KitList kits={list} selectedId={kit?.id} onSelect={pick} onNew={() => setCreating(true)} canEdit={canEdit} projects={projects} />
+
+          <div ref={editor} className="min-w-0 scroll-mt-4">
             <AnimatePresence mode="wait" initial={false}>
               {kit && (
                 <motion.div key={kit.id} initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -8 }}

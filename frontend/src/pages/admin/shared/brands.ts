@@ -27,11 +27,14 @@ export function brandMark(provider: string | null | undefined): string {
   return (words[0][0] + words[1][0]);
 }
 
-/** Colour classes cycled across services, tokens only. */
+/**
+ * Colour classes cycled across services, tokens only (categorical identity colours: no status colours, and not money amber
+ * because spend bars already use it). `stroke` is the same colour as a CSS variable for inline SVG.
+ */
 export const SERIES = [
-  { bar: "bg-accent", soft: "bg-accent/8 text-accent-ink", dot: "bg-accent" },
-  { bar: "bg-info", soft: "bg-info/8 text-sky-300", dot: "bg-info" },
-  { bar: "bg-ok", soft: "bg-ok/8 text-green-300", dot: "bg-ok" },
-  { bar: "bg-accent-2", soft: "bg-accent-2/8 text-yellow-300", dot: "bg-accent-2" },
-  { bar: "bg-warn", soft: "bg-warn/8 text-amber-300", dot: "bg-warn" },
+  { bar: "bg-accent", soft: "bg-accent/10 text-accent-ink", dot: "bg-accent", stroke: "var(--color-accent)" },
+  { bar: "bg-accent-2", soft: "bg-accent-2/12 text-accent-2", dot: "bg-accent-2", stroke: "var(--color-accent-2)" },
+  { bar: "bg-info", soft: "bg-info/10 text-info", dot: "bg-info", stroke: "var(--color-info)" },
+  { bar: "bg-ai", soft: "bg-ai/10 text-ai", dot: "bg-ai", stroke: "var(--color-ai)" },
+  { bar: "bg-mute", soft: "bg-raised text-mute", dot: "bg-mute", stroke: "var(--color-mute)" },
 ] as const;

@@ -5,6 +5,7 @@ import {
 import { motion } from "motion/react";
 import { useMemo } from "react";
 import { useT, useUiLanguage } from "../../lib/i18n";
+import "../../styles/director.css";
 
 /** One quick order. `order` is the English text that is sent (the Director routes on it); `label` is the translated chip text. */
 export interface Suggestion { order: string; label: string; icon: LucideIcon }
@@ -28,17 +29,12 @@ export function useSuggestions(): Suggestion[] {
   ], [t, lang]);
 }
 
-/** The Director's face: a soft accent tile. `working` adds the rotating "generating" ring. */
+/** The Director's mark: a violet tile with a ping ring. `working` pings faster ("on air"); otherwise it breathes slowly. */
 export function DirectorMark({ size = 28, working, square, className }: { size?: number; working?: boolean; square?: boolean; className?: string }) {
   return (
     <span
       aria-hidden
-      className={clsx(
-        "relative grid shrink-0 place-items-center border border-accent/25 bg-accent/15 text-accent-ink",
-        square ? "rounded-xl" : "rounded-full",
-        working && "gen-ring",
-        className,
-      )}
+      className={clsx("dr-mark", square ? "rounded-lg" : "rounded-full", working ? "is-working" : "", className)}
       style={{ width: size, height: size }}
     >
       <Bot style={{ width: Math.round(size * 0.54), height: Math.round(size * 0.54) }} />
@@ -46,14 +42,14 @@ export function DirectorMark({ size = 28, working, square, className }: { size?:
   );
 }
 
-/** Three softly bouncing dots (the "thinking" indicator). */
+/** Three softly bouncing dots (the "thinking" indicator), in the Director's violet. */
 export function ThinkingDots({ className }: { className?: string }) {
   return (
     <span aria-hidden className={clsx("inline-flex h-4 items-center gap-1", className)}>
       {[0, 1, 2].map((i) => (
         <motion.span
           key={i}
-          className="size-1.5 rounded-full bg-accent-ink"
+          className="size-1.5 rounded-full bg-ai"
           animate={{ y: [0, -3, 0], opacity: [0.35, 1, 0.35] }}
           transition={{ duration: 1.1, repeat: Infinity, ease: "easeInOut", delay: i * 0.15 }}
         />

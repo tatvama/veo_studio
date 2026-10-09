@@ -26,7 +26,7 @@
   .cx-table tbody tr[aria-selected="true"] > td:first-child, .cx-table tbody tr[data-selected="true"] > td:first-child { box-shadow: inset 2px 0 0 var(--color-accent); }
   .cx-table .cx-r { text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
   .cx-table .cx-mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 0.75rem; color: var(--color-dim); }
-  .cx-table .cx-fit { width: 1%; white-space: nowrap; }
+  .cx-table .cx-fit { width: 1px; white-space: nowrap; }
   .cx-table.is-dense tbody td { height: 2rem; padding-block: 0.25rem; }
   /* phones: the first column stays put while the rest scrolls sideways */
   @media (max-width: 640px) {
@@ -37,7 +37,7 @@
   /* ── KPI strip ────────────────────────────────────────────────────────────
      <Panel flush><div class="cx-kpis"><Metric …/><Metric …/></div></Panel>
      Cells are separated by a hairline (the container paints the gap), and reflow from 4 across down to 1. */
-  .cx-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 1px; overflow: hidden; border-radius: inherit; background: var(--color-line); }
+  .cx-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); gap: 1px; overflow: hidden; border-radius: 0.5625rem; background: var(--color-line); }
   .cx-kpis > * { min-width: 0; padding: 0.875rem 1rem; background: var(--color-panel); }
 
   /* ── Chips ────────────────────────────────────────────────────────────────
@@ -60,6 +60,7 @@
   .cx-chip[data-tone="money"][aria-pressed="true"], .cx-chip[data-tone="money"].is-on { color: var(--color-money); border-color: color-mix(in oklab, var(--color-money) 45%, transparent); background: color-mix(in oklab, var(--color-money) 12%, transparent); }
   .cx-chip[data-tone="ok"][aria-pressed="true"], .cx-chip[data-tone="ok"].is-on { color: var(--color-ok); border-color: color-mix(in oklab, var(--color-ok) 45%, transparent); background: color-mix(in oklab, var(--color-ok) 12%, transparent); }
   .cx-chip[data-tone="warn"][aria-pressed="true"], .cx-chip[data-tone="warn"].is-on { color: var(--color-warn); border-color: color-mix(in oklab, var(--color-warn) 45%, transparent); background: color-mix(in oklab, var(--color-warn) 12%, transparent); }
+  .cx-chip[data-tone="info"][aria-pressed="true"], .cx-chip[data-tone="info"].is-on { color: var(--color-info); border-color: color-mix(in oklab, var(--color-info) 45%, transparent); background: color-mix(in oklab, var(--color-info) 12%, transparent); }
   .cx-chip[data-tone="bad"][aria-pressed="true"], .cx-chip[data-tone="bad"].is-on { color: var(--color-bad); border-color: color-mix(in oklab, var(--color-bad) 45%, transparent); background: color-mix(in oklab, var(--color-bad) 12%, transparent); }
   .cx-chip[aria-pressed="true"] .cx-n, .cx-chip.is-on .cx-n { color: inherit; opacity: 0.8; }
   @media (max-width: 640px) { .cx-chip { height: 2.25rem; } }
@@ -71,10 +72,12 @@
   .cx-block[data-tone="money"] { border-color: color-mix(in oklab, var(--color-money) 28%, var(--color-line)); }
   .cx-block[data-tone="accent"] { border-color: color-mix(in oklab, var(--color-accent) 32%, var(--color-line)); background: color-mix(in oklab, var(--color-accent) 6%, var(--color-panel)); }
   .cx-block[data-tone="bad"] { border-color: color-mix(in oklab, var(--color-bad) 32%, var(--color-line)); background: color-mix(in oklab, var(--color-bad) 6%, var(--color-panel)); }
+  .cx-block[data-tone="info"] { border-color: color-mix(in oklab, var(--color-info) 30%, var(--color-line)); }
   .cx-block[data-tone="ok"] { border-color: color-mix(in oklab, var(--color-ok) 30%, var(--color-line)); }
 
   /* ── Monitor ──────────────────────────────────────────────────────────────
-     A media tile like a broadcast monitor: dark bed, hairline, faint scanlines. Add `hud` for corner brackets. */
+     A media tile like a broadcast monitor: dark bed, hairline, faint scanlines (drawn with ::after). Do NOT put `hud` on the same element
+     (it also draws with ::before/::after and the brackets would be clipped by overflow): wrap the monitor in a `hud` element instead. */
   .cx-monitor { position: relative; overflow: hidden; border: 1px solid var(--color-line); border-radius: 0.625rem; background: black; }
   .cx-monitor::after {
     content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0.5;

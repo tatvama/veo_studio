@@ -65,7 +65,7 @@ function inline(text: string): ReactNode[] {
   for (let m = INLINE.exec(text); m; m = INLINE.exec(text)) {
     if (m.index > last) out.push(text.slice(last, m.index));
     const key = m.index;
-    if (m[1] !== undefined) out.push(<code key={key} className="rounded bg-hover px-1 py-px font-mono text-[0.92em] text-ink">{m[1]}</code>);
+    if (m[1] !== undefined) out.push(<code key={key} className="rounded border border-line bg-raised px-1 py-px font-mono text-[0.92em] text-ink">{m[1]}</code>);
     else if (m[2] !== undefined) out.push(<strong key={key} className="font-semibold text-ink">{m[2]}</strong>);
     else if (m[3] !== undefined) out.push(<em key={key}>{m[3]}</em>);
     else if (m[4] !== undefined) {
@@ -74,7 +74,7 @@ function inline(text: string): ReactNode[] {
           className="text-accent-ink underline decoration-accent/40 underline-offset-2 transition-colors hover:decoration-accent">{m[4]}</a>,
       );
     } else if (m[5] !== undefined) {
-      out.push(<span key={key} className="whitespace-nowrap rounded-md bg-accent/12 px-1 py-px font-mono text-[0.92em] font-medium text-accent-ink">{m[5]}</span>);
+      out.push(<span key={key} className="whitespace-nowrap rounded-md border border-accent/25 bg-accent/10 px-1 py-px font-mono text-[0.92em] font-medium text-accent-ink">{m[5]}</span>);
     }
     last = m.index + m[0].length;
   }
@@ -113,7 +113,7 @@ export const RichText = memo(function RichText({ text, className }: { text: stri
               </ol>
             );
           case "code":
-            return <pre key={bi} className="overflow-x-auto rounded-lg bg-hover p-2.5 font-mono text-xs leading-relaxed text-ink">{b.text}</pre>;
+            return <pre key={bi} className="overflow-x-auto rounded-lg border border-line bg-raised p-2.5 font-mono text-xs leading-relaxed text-ink">{b.text}</pre>;
           default:
             return (
               <p key={bi}>

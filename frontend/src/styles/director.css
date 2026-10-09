@@ -47,7 +47,11 @@
   .dr-msg[data-from="user"] { --dr-rail: var(--color-accent); }
 
   /* The input: a command line. The ring glows violet on focus. */
-  .dr-input { transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease, background-color var(--dur-fast) ease; }
+  .dr-input {
+    border: 1px solid var(--color-line); border-radius: 0.5rem; background: color-mix(in oklab, var(--color-raised) 50%, transparent);
+    transition: border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease, background-color var(--dur-fast) ease;
+  }
+  .dr-input:hover { border-color: color-mix(in oklab, var(--color-dim) 40%, var(--color-line)); }
   .dr-input:focus-within {
     border-color: color-mix(in oklab, var(--color-ai) 60%, transparent); background: var(--color-bg);
     box-shadow: 0 0 0 3px color-mix(in oklab, var(--color-ai) 14%, transparent);

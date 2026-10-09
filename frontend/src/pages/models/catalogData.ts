@@ -7,7 +7,9 @@ import { useCallback, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../../lib/api";
 import type { AIModel, ModelList } from "../../lib/types";
+import { CAP_KEYS, NO_REFINE, PRICE_KEYS, SPEED_KEYS, refineActive, refineCount, type Refine } from "./modelMeta";
 
+export { NO_REFINE, type Refine };
 export const PAGE_SIZE = 48;
 
 export type Sort = "newest" | "name" | "price" | "rating" | "uses";
@@ -43,15 +45,21 @@ function writePref(key: string, v: string) {
 
 export interface CatalogCtl {
   filters: Filters;
+  /** Refinements the API cannot filter on (capability, price band, speed tier). Applied to the loaded models in the browser. */
+  refine: Refine;
   sort: Sort;
   view: View;
   /** True when anything other than sort / view differs from the defaults. */
   filtered: boolean;
   update: (patch: Partial<Filters>) => void;
+  updateRefine: (patch: Partial<Refine>) => void;
   clear: () => void;
   setSort: (s: Sort) => void;
   setView: (v: View) => void;
 }
+
+const REFINE_PARAMS = ["cap", "price", "speed"] as const;
+const listParam = (raw: string | null, allowed: readonly string[]) => (raw ? raw.split(",").filter((x) => allowed.includes(x)) : []);
 
 /** Filters live in the URL (shareable, survive reloads); sort and view are remembered per browser. */
 export function useCatalogFilters(): CatalogCtl {
@@ -61,6 +69,10 @@ export function useCatalogFilters(): CatalogCtl {
   const filters = useMemo<Filters>(() => ({
     q: sp.get("q") ?? "", task: sp.get("task") ?? "", status: sp.get("status") ?? "", provider: sp.get("provider") ?? "", mode: sp.get("mode") ?? "",
   }), [sp]);
+  const capParam = sp.get("cap"), priceParam = sp.get("price"), speedParam = sp.get("speed");
+  const refine = useMemo<Refine>(() => ({
+    cap: listParam(capParam, CAP_KEYS), price: listParam(priceParam, PRICE_KEYS), speed: listParam(speedParam, SPEED_KEYS),
+  }), [capParam, priceParam, speedParam]);
   const update = useCallback((patch: Partial<Filters>) => {
     setSp((prev) => {
       const next = new URLSearchParams(prev);
@@ -68,12 +80,31 @@ export function useCatalogFilters(): CatalogCtl {
       return next;
     }, { replace: true });
   }, [setSp]);
-  const clear = useCallback(() => update({ ...NO_FILTERS }), [update]);
+  const updateRefine = useCallback((patch: Partial<Refine>) => {
+    setSp((prev) => {
+      const next = new URLSearchParams(prev);
+      for (const [k, v] of Object.entries(patch)) { if (v && v.length) next.set(k, v.join(",")); else next.delete(k); }
+      return next;
+    }, { replace: true });
+  }, [setSp]);
+  const clear = useCallback(() => {
+    setSp((prev) => {
+      const next = new URLSearchParams(prev);
+      for (const k of [...Object.keys(NO_FILTERS), ...REFINE_PARAMS]) next.delete(k);
+      return next;
+    }, { replace: true });
+  }, [setSp]);
   const setSort = useCallback((s: Sort) => { setSortState(s); writePref("veo-hub-sort", s); }, []);
   const setView = useCallback((v: View) => { setViewState(v); writePref("veo-hub-view", v); }, []);
-  const filtered = !!(filters.q || filters.task || filters.status || filters.provider || filters.mode);
+  const filtered = !!(filters.q || filters.task || filters.status || filters.provider || filters.mode) || refineActive(refine);
   // one stable object, so memoised children only re-render when a filter really changes
-  return useMemo(() => ({ filters, sort, view, filtered, update, clear, setSort, setView }), [filters, sort, view, filtered, update, clear, setSort, setView]);
+  return useMemo(() => ({ filters, refine, sort, view, filtered, update, updateRefine, clear, setSort, setView }),
+    [filters, refine, sort, view, filtered, update, updateRefine, clear, setSort, setView]);
+}
+
+/** How many filters (other than the task chips) are on: the number on the phone "Filters" button. */
+export function activeFilterCount(f: Filters, r: Refine): number {
+  return [f.status, f.provider, f.mode].filter(Boolean).length + refineCount(r);
 }
 
 /** The paged list. Pages load on demand; changing a filter keeps the previous results on screen until the new ones arrive. */
@@ -137,6 +168,38 @@ export function useTaskCounts(f: Filters): Record<string, number | undefined> {
   const key = results.map((r) => r.data ?? "").join("|");
   // eslint-disable-next-line react-hooks/exhaustive-deps
   return useMemo(() => Object.fromEntries(tasks.map((task, i) => [task, results[i].data])), [key]);
+}
+
+/** How many models match the current search / status / task / mode for each provider (the provider rail counts). */
+export function useProviderCounts(f: Filters, providers: string[]): Record<string, number | undefined> {
+  const list = ["", ...providers];
+  const rest = { q: f.q, status: f.status, task: f.task, mode: f.mode };
+  const results = useQueries({
+    queries: list.map((provider) => ({
+      queryKey: ["models", "facet", "provider", { ...rest, provider }],
+      queryFn: () => api.get<ModelList>(`/api/models?${qsOf({ ...rest, provider, limit: 1 })}`),
+      select: (d: ModelList) => d.total,
+      placeholderData: keepPreviousData,
+      staleTime: 60_000,
+      refetchOnWindowFocus: false,
+    })),
+  });
+  const key = list.join(",") + "|" + results.map((r) => r.data ?? "").join("|");
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  return useMemo(() => Object.fromEntries(list.map((p, i) => [p, results[i].data])), [key]);
+}
+
+/**
+ * Every enabled engine, cheapest first (one request, shared by the KPI strip). Independent of the catalog filters, so the
+ * "cheapest / fastest / cost range" tiles always describe what the studio can actually use today.
+ */
+export function useEnabledEngines() {
+  return useQuery({
+    queryKey: ["models", "enabled-engines"],
+    queryFn: () => api.get<ModelList>("/api/models?status=enabled&sort=price&limit=400"),
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
 }
 
 /** Merge a PATCH / GET response into every cached list (flat lists and infinite pages alike). */

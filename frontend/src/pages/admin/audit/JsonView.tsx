@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import "../../../styles/admin.css";
 
 const TOKEN = /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g;
 
@@ -14,10 +15,10 @@ export function JsonView({ value, className }: { value: unknown; className?: str
     const [full, str, colon, word, num] = m;
     if (str !== undefined) {
       out.push(colon
-        ? <span key={i++}><span className="text-sky-300">{str}</span><span className="text-dim">{colon}</span></span>
-        : <span key={i++} className="text-green-300">{str}</span>);
-    } else if (word) out.push(<span key={i++} className="text-amber-300">{word}</span>);
-    else if (num) out.push(<span key={i++} className="text-accent-ink">{num}</span>);
+        ? <span key={i++}><span className="ad-jk">{str}</span><span className="text-dim">{colon}</span></span>
+        : <span key={i++} className="ad-js">{str}</span>);
+    } else if (word) out.push(<span key={i++} className="ad-jw">{word}</span>);
+    else if (num) out.push(<span key={i++} className="ad-jn">{num}</span>);
     else out.push(full);
     last = at + full.length;
   }

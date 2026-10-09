@@ -14,6 +14,8 @@ import { CapChips, NewTag, ProviderBadge } from "./Chips";
 import { videoPurpose, type EnginePurpose } from "./EnginePicker";
 import { engineShort, isAutoEngine } from "./util";
 
+import "../../styles/console.css";
+
 const MAX = 4;
 const letter = (i: number) => String.fromCharCode(65 + i);
 
@@ -81,9 +83,9 @@ export default function ShootoutModal({ shot, open, onClose, onStarted, purpose:
       title={<span className="flex items-center gap-2"><Swords className="size-4 text-accent-ink" />{t("Engine shootout · {code}", { code: shot.code })}</span>}
       footer={<>
         <span className="mr-auto flex items-center gap-2 self-center text-xs text-mute">
-          <span className="tabular-nums">{t("{n} of {max} picked", { n: picked.length, max: MAX })}</span>
+          <span className="mono">{t("{n} of {max} picked", { n: picked.length, max: MAX })}</span>
           <span aria-hidden className="h-3 w-px bg-line" />
-          <span className="font-medium text-ink"><AnimatedNumber value={total} format={(n) => usd(n)} duration={0.5} /></span>
+          <span className="mono font-medium text-money"><AnimatedNumber value={total} format={(n) => usd(n)} duration={0.5} /></span>
         </span>
         <Button variant="ghost" onClick={onClose}>{t("Cancel")}</Button>
         <Button variant="primary" disabled={!ok} loading={busy} icon={<Coins className="size-4" />} onClick={run}>
@@ -119,10 +121,10 @@ export default function ShootoutModal({ shot, open, onClose, onStarted, purpose:
               return (
                 <motion.button key={e.id} type="button" onClick={() => toggle(e.id)} disabled={full} aria-pressed={on}
                   whileHover={full ? undefined : { y: -2 }} whileTap={full ? undefined : { scale: 0.99 }} transition={{ duration: 0.15, ease: "easeOut" }}
-                  className={clsx("relative flex flex-col gap-2 rounded-xl border p-3 text-left transition-[border-color,background-color,box-shadow] disabled:cursor-not-allowed disabled:opacity-45",
+                  className={clsx("hud relative flex flex-col gap-2 rounded-xl border p-3 text-left transition-[border-color,background-color,box-shadow] disabled:cursor-not-allowed disabled:opacity-45",
                     on ? "border-accent bg-accent/10 shadow-glow" : "border-line bg-panel hover:border-dim/60 hover:bg-raised")}>
                   <span className="flex items-start gap-2.5">
-                    <span className={clsx("mt-0.5 grid size-6 shrink-0 place-items-center rounded-md border text-xs font-bold transition-colors",
+                    <span className={clsx("mono mt-0.5 grid size-6 shrink-0 place-items-center rounded-md border text-xs font-bold transition-colors",
                       on ? "border-accent bg-accent text-black" : "border-line text-transparent")}>
                       {on ? letter(order) : <Check className="size-3.5" />}
                     </span>
@@ -137,13 +139,13 @@ export default function ShootoutModal({ shot, open, onClose, onStarted, purpose:
                       </span>
                     </span>
                     <span className="shrink-0 text-right">
-                      <span className="block text-sm font-semibold tabular-nums">{e.estimate_usd != null ? usd(e.estimate_usd) : "—"}</span>
-                      <span className="block text-2xs text-dim">{e.price_label}</span>
+                      <span className="mono block text-sm font-semibold text-money">{e.estimate_usd != null ? usd(e.estimate_usd) : "—"}</span>
+                      <span className="mono block text-2xs text-dim">{e.price_label}</span>
                     </span>
                   </span>
-                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-line/60 pt-2">
+                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-line pt-2">
                     <CapChips model={e} />
-                    {data?.auto_chain.includes(e.id) && <span className="ml-auto text-2xs text-dim">{t("in Auto chain")}</span>}
+                    {data?.auto_chain.includes(e.id) && <span className="mono ml-auto text-2xs text-dim">{t("in Auto chain")}</span>}
                   </span>
                 </motion.button>
               );
@@ -155,15 +157,15 @@ export default function ShootoutModal({ shot, open, onClose, onStarted, purpose:
         <AnimatePresence initial={false}>
           {picked.length > 0 && (
             <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} className="overflow-hidden">
-              <div className="rounded-xl border border-line bg-raised/40">
+              <div className="cx-block">
                 <ul className="flex flex-wrap gap-2 p-2.5" aria-label={t("Your lineup")}>
                   <AnimatePresence initial={false}>
                     {picked.map((id, i) => (
                       <motion.li key={id} layout initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.9 }} transition={{ duration: 0.16 }}
                         className="flex items-center gap-2 rounded-lg border border-line bg-panel py-1 pl-1 pr-1.5 text-sm">
-                        <span className="grid size-6 place-items-center rounded-md bg-accent text-xs font-bold text-black">{letter(i)}</span>
+                        <span className="mono grid size-6 place-items-center rounded-md bg-accent text-xs font-bold text-black">{letter(i)}</span>
                         <span className="max-w-[220px] truncate">{nameOf(id)}</span>
-                        <span className="tabular-nums text-mute">{usd(byId[id]?.estimate_usd ?? 0)}</span>
+                        <span className="mono text-money">{usd(byId[id]?.estimate_usd ?? 0)}</span>
                         <button type="button" onClick={() => toggle(id)} aria-label={t("Remove {name}", { name: nameOf(id) })}
                           className="grid size-5 place-items-center rounded text-dim transition-colors hover:bg-hover hover:text-ink"><X className="size-3.5" /></button>
                       </motion.li>
@@ -171,8 +173,8 @@ export default function ShootoutModal({ shot, open, onClose, onStarted, purpose:
                   </AnimatePresence>
                 </ul>
                 <div className="flex items-center justify-between border-t border-line px-3 py-2 text-sm">
-                  <span className="font-medium">{t("Total estimate")}</span>
-                  <span className="text-lg font-semibold tabular-nums"><AnimatedNumber value={total} format={(n) => usd(n)} duration={0.5} /></span>
+                  <span className="eyebrow">{t("Total estimate")}</span>
+                  <span className="mono text-lg font-semibold text-money"><AnimatedNumber value={total} format={(n) => usd(n)} duration={0.5} /></span>
                 </div>
               </div>
               <p className="mt-2 flex items-start gap-1.5 text-xs text-dim">

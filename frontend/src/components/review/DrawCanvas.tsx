@@ -4,7 +4,8 @@ import { motion } from "motion/react";
 import { useEffect, useRef } from "react";
 import { useT } from "../../lib/i18n";
 import type { Stroke } from "../../lib/types";
-import { Button, IconButton } from "../ui";
+import { Button } from "../ui";
+import { BarButton } from "./parts";
 
 /** Pen colours are user data (stored with the comment), so they are plain values rather than theme tokens. */
 export const PEN_COLORS = ["#ef4444", "#f59e0b", "#facc15", "#22c55e", "#38bdf8", "#a855f7", "#ffffff"];
@@ -119,51 +120,94 @@ export function DrawCanvas({ width, height, strokes, editable = false, color = P
 }
 
 /**
- * Pen toolbar. Docks between the picture and the player controls (so it never covers the frame being annotated and
- * stays usable on a phone, where it wraps onto two lines).
+ * Pen palette (colour, size, undo, clear, done). `vertical` is a slim rail docked beside the picture (so it never covers the
+ * frame being annotated); `horizontal` docks between the picture and the player controls and wraps on a phone.
  */
-export function DrawToolbar({ color, setColor, size, setSize, count, onUndo, onClear, onDone }: {
+export function DrawToolbar({ color, setColor, size, setSize, count, onUndo, onClear, onDone, orientation = "horizontal" }: {
   color: string; setColor: (c: string) => void; size: number; setSize: (s: number) => void; count: number;
-  onUndo: () => void; onClear: () => void; onDone: () => void;
+  onUndo: () => void; onClear: () => void; onDone: () => void; orientation?: "horizontal" | "vertical";
 }) {
   const t = useT();
+  const vertical = orientation === "vertical";
+
+  const colours = (
+    <div className={vertical ? "grid grid-cols-2 gap-0.5" : "flex flex-wrap items-center"} role="radiogroup" aria-label={t("Pen colour")}>
+      {PEN_COLORS.map((c) => (
+        <button key={c} type="button" role="radio" aria-checked={color === c} aria-label={`${t("Pen colour")} ${c}`} onClick={() => setColor(c)}
+          className="grid size-7 place-items-center rounded-full transition-transform hover:scale-110 max-sm:size-9">
+          <span className={clsx("block size-4 rounded-full border border-black/30 shadow-sm transition-[box-shadow,transform]",
+            color === c && "scale-110 ring-2 ring-accent ring-offset-2 ring-offset-panel")} style={{ background: c }} />
+        </button>
+      ))}
+    </div>
+  );
+  const sizes = (
+    <div className={vertical ? "flex flex-col gap-0.5" : "flex items-center"} role="radiogroup" aria-label={t("Pen size")}>
+      {PEN_SIZES.map((s) => (
+        <button key={s} type="button" role="radio" aria-checked={size === s} aria-label={`${t("Pen size")} ${s}`} onClick={() => setSize(s)}
+          className={clsx("grid place-items-center rounded-md transition-colors hover:bg-hover", vertical ? "h-7 w-full" : "size-7 max-sm:size-9", size === s && "bg-hover ring-1 ring-inset ring-line")}>
+          <span className="rounded-full bg-ink" style={{ width: 3 + s * 0.8, height: 3 + s * 0.8 }} />
+        </button>
+      ))}
+    </div>
+  );
+  const edit = (
+    <div className={clsx("flex items-center", vertical && "justify-center gap-0.5")}>
+      <BarButton label={t("Undo (Ctrl+Z)")} disabled={!count} onClick={onUndo} size="sm"><Undo2 className="size-4" /></BarButton>
+      <BarButton label={t("Clear drawing")} disabled={!count} onClick={onClear} size="sm"><Trash2 className="size-4" /></BarButton>
+    </div>
+  );
+  const done = (
+    <Button size="sm" variant="primary" icon={<Check className="size-3.5" />} onClick={onDone} title={t("Done (D)")} className={vertical ? "w-full px-0" : undefined}>
+      {vertical ? <span className="sr-only">{t("Done")}</span> : t("Done")}
+    </Button>
+  );
+
+  if (vertical) {
+    return (
+      <motion.div
+        initial={{ width: 0, opacity: 0 }}
+        animate={{ width: 72, opacity: 1 }}
+        exit={{ width: 0, opacity: 0 }}
+        transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+        className="max-h-full shrink-0 self-start overflow-x-hidden overflow-y-auto"
+        role="toolbar"
+        aria-label={t("Drawing tools")}
+      >
+        <div className="flex w-[72px] flex-col gap-2 rounded-xl border border-accent/30 bg-raised/50 p-1.5">
+          <p className="eyebrow flex items-center justify-center gap-1 pt-1.5 !text-accent-ink"><PenLine className="size-3" aria-hidden />{t("Pen")}</p>
+          {colours}
+          <span aria-hidden className="h-px bg-line" />
+          {sizes}
+          <span aria-hidden className="h-px bg-line" />
+          {edit}
+          {done}
+        </div>
+      </motion.div>
+    );
+  }
+
   return (
     <motion.div
       initial={{ height: 0, opacity: 0 }}
       animate={{ height: "auto", opacity: 1 }}
       exit={{ height: 0, opacity: 0 }}
       transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-      className="shrink-0 overflow-hidden border-t border-accent/30 bg-accent/[0.06]"
+      className="shrink-0 overflow-hidden"
       role="toolbar"
       aria-label={t("Drawing tools")}
     >
-      <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 px-3 py-1.5">
-        <PenLine className="size-4 shrink-0 text-accent-ink" aria-hidden />
-        <div className="flex items-center" role="radiogroup" aria-label={t("Pen colour")}>
-          {PEN_COLORS.map((c) => (
-            <button key={c} type="button" role="radio" aria-checked={color === c} aria-label={`${t("Pen colour")} ${c}`} onClick={() => setColor(c)}
-              className={clsx("grid size-7 place-items-center rounded-full transition-transform hover:scale-110 max-sm:size-9")}>
-              <span className={clsx("block size-4 rounded-full border border-black/30 shadow-sm transition-[box-shadow,transform]",
-                color === c && "scale-110 ring-2 ring-accent ring-offset-2 ring-offset-panel")} style={{ background: c }} />
-            </button>
-          ))}
+      <div className="px-2 pt-2">
+        <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5 rounded-xl border border-accent/30 bg-accent/[0.06] px-3 py-1.5">
+          <p className="eyebrow flex items-center gap-1.5 !text-accent-ink"><PenLine className="size-3.5" aria-hidden />{t("Pen")}</p>
+          {colours}
+          <span aria-hidden className="hidden h-5 w-px bg-line sm:block" />
+          {sizes}
+          <span aria-hidden className="hidden h-5 w-px bg-line sm:block" />
+          {edit}
+          <div className="flex-1" />
+          {done}
         </div>
-        <span className="hidden h-5 w-px bg-line sm:block" />
-        <div className="flex items-center" role="radiogroup" aria-label={t("Pen size")}>
-          {PEN_SIZES.map((s) => (
-            <button key={s} type="button" role="radio" aria-checked={size === s} aria-label={`${t("Pen size")} ${s}`} onClick={() => setSize(s)}
-              className={clsx("grid size-7 place-items-center rounded-md transition-colors hover:bg-hover max-sm:size-9", size === s && "bg-hover ring-1 ring-inset ring-line")}>
-              <span className="rounded-full bg-ink" style={{ width: 3 + s * 0.8, height: 3 + s * 0.8 }} />
-            </button>
-          ))}
-        </div>
-        <span className="hidden h-5 w-px bg-line sm:block" />
-        <div className="flex items-center">
-          <IconButton title={t("Undo (Ctrl+Z)")} disabled={!count} onClick={onUndo} className="!size-7 max-sm:!size-9"><Undo2 className="size-4" /></IconButton>
-          <IconButton title={t("Clear drawing")} disabled={!count} onClick={onClear} className="!size-7 max-sm:!size-9"><Trash2 className="size-4" /></IconButton>
-        </div>
-        <div className="flex-1" />
-        <Button size="sm" variant="primary" icon={<Check className="size-3.5" />} onClick={onDone} title={t("Done (D)")}>{t("Done")}</Button>
       </div>
     </motion.div>
   );

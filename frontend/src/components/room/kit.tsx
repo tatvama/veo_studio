@@ -40,7 +40,7 @@ export function RoomHeader({ icon, title, description, actions, status }: {
       <div className="flex min-w-0 flex-1 basis-72 items-center gap-3">
         <span className="hud grid size-10 shrink-0 place-items-center rounded-lg border border-accent/25 bg-accent/10 text-accent-ink [&>svg]:size-5">{icon}</span>
         <div className="min-w-0">
-          <h1 className="truncate text-lg font-semibold leading-tight tracking-tight">{title}</h1>
+          <h1 className="truncate pb-0.5 text-lg font-semibold leading-snug tracking-tight">{title}</h1>
           {description && <p className="mt-0.5 line-clamp-2 max-w-3xl text-sm text-mute">{description}</p>}
         </div>
       </div>

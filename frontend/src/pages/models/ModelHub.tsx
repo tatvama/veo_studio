@@ -1,20 +1,23 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { Boxes, CheckCircle2, Clock, RefreshCw, Route, Sparkles } from "lucide-react";
+import { Boxes, RefreshCw, Route } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { announce } from "../../components/Generate";
-import { agoT } from "../../components/growth/common";
 import { useIsAdmin } from "../../components/hub/util";
-import { Button, Page, PageHeader, Progress, Skeleton, Stat, Tabs, Tooltip } from "../../components/ui";
+import { Button, Page, PageHeader, Progress, Tabs, Tooltip } from "../../components/ui";
 import { api } from "../../lib/api";
 import { tr, useT } from "../../lib/i18n";
 import { useJobs } from "../../lib/queries";
 import type { SubmitResult } from "../../lib/types";
 import { useCatalogFilters, useCatalogMeta } from "./catalogData";
 import Catalog from "./Catalog";
+import HubKpis from "./HubKpis";
 import PolicyEditor from "./PolicyEditor";
+
+import "../../styles/console.css";
+import "../../styles/models.css";
 
 type TabKey = "catalog" | "policy";
 const SYNC_TIMEOUT_MS = 6 * 60_000;
@@ -29,7 +32,7 @@ export default function ModelHub() {
   useEffect(() => { if (tab === "policy") setSeenPolicy(true); }, [tab]);
   const [sync, setSync] = useState<{ jobIds: number[]; since: string; started: number } | null>(null);
   const [starting, setStarting] = useState(false);
-  const { data: meta } = useCatalogMeta(sync ? 4000 : false);
+  const { data: meta, isError: metaError, refetch: refetchMeta } = useCatalogMeta(sync ? 4000 : false);
   const { data: active } = useJobs(undefined, "active");
   const doneRef = useRef(false);
 
@@ -69,9 +72,8 @@ export default function ModelHub() {
 
   const counts = meta?.counts ?? {};
   const total = (counts.enabled ?? 0) + (counts.new ?? 0) + (counts.disabled ?? 0);
-  const last = meta?.last_sync ?? {};
 
-  // stat tiles double as shortcuts into the catalog
+  // KPI cells double as shortcuts into the catalog
   const showCatalog = (status: string) => {
     setTab("catalog");
     ctl.update({ status, task: "", provider: "", mode: "", q: "" });
@@ -100,8 +102,8 @@ export default function ModelHub() {
       <AnimatePresence initial={false}>
         {sync && (
           <motion.div key="sync" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.22 }} className="-mt-3 mb-5 overflow-hidden">
-            <div className="rounded-xl border border-accent/30 bg-accent/5 px-4 py-3">
+            transition={{ duration: 0.22 }} className="-mt-3 mb-5 overflow-hidden" role="status">
+            <div className="cx-block px-4 py-3" data-tone="accent">
               <p className="mb-2 flex items-center gap-2 text-sm"><RefreshCw className="size-3.5 animate-spin text-accent-ink" />{t("Checking the providers for new engines and prices…")}</p>
               <Progress indeterminate size="sm" />
             </div>
@@ -109,26 +111,7 @@ export default function ModelHub() {
         )}
       </AnimatePresence>
 
-      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-        {!meta ? Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-[104px] rounded-xl" />) : (
-          <>
-            <StatButton onClick={() => showCatalog("")}>
-              <Stat index={0} icon={<Boxes className="size-4" />} label={t("In catalog")} value={total}
-                sub={counts.retired ? t("{n} retired", { n: counts.retired }) : t("Across all providers")} />
-            </StatButton>
-            <StatButton onClick={() => showCatalog("enabled")}>
-              <Stat index={1} tone="ok" icon={<CheckCircle2 className="size-4" />} label={t("Enabled")} value={counts.enabled ?? 0}
-                sub={counts.disabled ? t("{n} disabled", { n: counts.disabled }) : t("Ready to use")} />
-            </StatButton>
-            <StatButton onClick={() => showCatalog("new")} highlight={!!counts.new}>
-              <Stat index={2} tone={counts.new ? "accent" : "neutral"} icon={<Sparkles className="size-4" />} label={t("New to review")} value={counts.new ?? 0}
-                sub={counts.new ? t("{n} waiting for review", { n: counts.new }) : last.new_count ? t("{n} found in the last sync", { n: last.new_count }) : t("Nothing waiting")} />
-            </StatButton>
-            <Stat index={3} icon={<Clock className="size-4" />} label={t("Last sync")} value={last.at ? agoT(last.at) : t("Never")}
-              sub={last.at ? [last.total != null && t("{n} listed", { n: last.total }), last.priced != null && t("{n} priced", { n: last.priced })].filter(Boolean).join(" · ") : t("Run a sync to discover engines")} />
-          </>
-        )}
-      </div>
+      <HubKpis meta={meta} error={metaError} onRetry={() => void refetchMeta()} onShow={showCatalog} />
 
       <div id="hub-catalog" className="mb-5 scroll-mt-4">
         <Tabs value={tab} onChange={setTab} tabs={[
@@ -150,14 +133,5 @@ function TabPane({ active, children }: { active: boolean; children: ReactNode })
       animate={active ? { opacity: 1, y: 0 } : { opacity: 0, y: 6 }} transition={{ duration: 0.2, ease: "easeOut" }}>
       {children}
     </motion.div>
-  );
-}
-
-/** Makes a stat tile act as a button (lifts on hover, keyboard focusable). Its name is the tile's own text. */
-function StatButton({ children, onClick, highlight }: { children: ReactNode; onClick: () => void; highlight?: boolean }) {
-  return (
-    <button type="button" onClick={onClick} className={clsx("lift block rounded-xl text-left", highlight && "ring-1 ring-accent/40")}>
-      {children}
-    </button>
   );
 }

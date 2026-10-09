@@ -4,32 +4,32 @@ import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useT } from "../../lib/i18n";
 import type { Stroke } from "../../lib/types";
-import { Tooltip } from "../ui";
 import { CommentsPanel, Composer } from "./CommentsPanel";
 import { DrawCanvas, DrawToolbar, PEN_COLORS, PEN_SIZES } from "./DrawCanvas";
+import { BarButton } from "./parts";
 import { ReviewPlayer, type PlayerHandle } from "./ReviewPlayer";
 import {
   createClock, formatTC, frameOf, isTypingTarget, lsGet, lsSet, sortComments, useClockThrottled, useElementWidth, type Marker, type RComment,
 } from "./utils";
+import "../../styles/review.css";
 
 export interface NewComment { body: string; timecode: number | null; drawing: Stroke[] }
 
-/** Container width from which the player and the comments sit side by side. */
 /** Width (px) from which the player and the comments sit side by side. */
 export const WORKSPACE_WIDE = 700;
 const WIDE = WORKSPACE_WIDE;
 
 /**
- * Player + frame drawing + timecoded comments. Used by the internal Review page and the public client review page;
- * the caller supplies the comments and how to add / resolve them.
+ * The review monitor: player + frame drawing + the timecoded comment console. Used by the internal Review page and the
+ * public client review page; the caller supplies the comments and how to add / resolve them.
  *
- * Layout adapts to the width of its own box: side by side when wide (it then fills the height of its parent), stacked
- * when narrow. When stacked, `mobileFill` makes the comment list take the remaining height of the parent (phone app
- * layout) instead of a fixed height.
+ * Layout adapts to the width of its own box: monitor + comment sidebar side by side when wide (it then fills the height
+ * of its parent), stacked when narrow. Stacked, the monitor stays pinned to the top while the comments flow below it and
+ * the composer sticks to the bottom edge. With `mobileFill` (phone app layout) the comments are a bottom sheet instead.
  */
 export function ReviewWorkspace({
   src, poster, fps, peaks, durationHint, aspectHint, comments, loadingComments, commentsError, onRetryComments, canComment, notice, onAdd, onResolve, guest,
-  simple = false, mobileFill = false, layout, stageMax, panelClassName, toolbarExtra, header, className, shortcutsExtra,
+  simple = false, mobileFill = false, layout, stageMax, panelClassName, toolbarExtra, header, className, shortcutsExtra, monitorLabel,
 }: {
   src: string; poster?: string; fps: number; peaks?: number[]; durationHint?: number; aspectHint?: number; comments: RComment[];
   loadingComments?: boolean; commentsError?: boolean; onRetryComments?: () => void; canComment: boolean; notice?: ReactNode; onAdd: (c: NewComment) => Promise<void>;
@@ -37,12 +37,19 @@ export function ReviewWorkspace({
   mobileFill?: boolean; /** Force the arrangement; when omitted it follows the width of this component. */ layout?: "wide" | "stacked";
   stageMax?: string; panelClassName?: string; toolbarExtra?: ReactNode; header?: ReactNode; className?: string;
   shortcutsExtra?: [string, string][];
+  /** Version label for the monitor HUD (e.g. "Final EN · 9:16 · #12"). */
+  monitorLabel?: string;
 }) {
   const t = useT();
   const [rootRef, width] = useElementWidth<HTMLDivElement>();
   const wide = layout ? layout === "wide" : width >= WIDE;
   /** Phones: the comments live in a bottom sheet so the picture stays big. */
   const phone = !wide && mobileFill;
+  /** Stacked page layout: the monitor is pinned while the comments scroll underneath. */
+  const sticky = !wide && !mobileFill;
+  const stickRef = useRef<HTMLDivElement>(null);
+  const [stickH, setStickH] = useState(0);
+  const [ratio, setRatio] = useState(aspectHint ?? 16 / 9);
   const [sheetOpen, setSheetOpen] = useState(false);
   const clock = useMemo(() => createClock(), []);
   const time = useClockThrottled(clock, 100);
@@ -58,6 +65,15 @@ export function ReviewWorkspace({
   const [useTc, setUseTc] = useState(true);
   const [pinned, setPinned] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    const el = stickRef.current;
+    if (!sticky || !el) { setStickH(0); return; }
+    const ro = new ResizeObserver(() => setStickH(el.offsetHeight));
+    ro.observe(el);
+    setStickH(el.offsetHeight);
+    return () => ro.disconnect();
+  }, [sticky]);
 
   const sorted = useMemo(() => sortComments(comments), [comments]);
   const markers: Marker[] = useMemo(() => sorted.filter((c) => c.timecode != null).map((c) => ({
@@ -200,17 +216,21 @@ export function ReviewWorkspace({
       ref={rootRef}
       className={clsx(
         "min-h-0",
-        wide ? "grid h-full grid-cols-[minmax(0,1fr)_clamp(300px,36%,380px)] grid-rows-[minmax(0,1fr)] gap-4"
+        wide ? "grid h-full grid-cols-[minmax(0,1fr)_clamp(300px,34%,400px)] grid-rows-[minmax(0,1fr)] gap-4"
           : mobileFill ? "flex h-full flex-col gap-2" : "flex flex-col gap-3",
         className,
       )}
+      style={sticky && stickH ? ({ "--rv-stick": `${stickH}px` } as React.CSSProperties) : undefined}
     >
-      <div className={clsx("flex min-h-0 min-w-0 flex-col gap-2", wide && "h-full", !wide && mobileFill && "flex-1")}>
+      <div
+        ref={sticky ? stickRef : undefined}
+        className={clsx("flex min-h-0 min-w-0 flex-col gap-2", wide && "h-full", !wide && mobileFill && "flex-1", sticky && "sticky top-0 z-20 bg-bg/95 pb-1 backdrop-blur-sm")}
+      >
         {header}
         <ReviewPlayer
           className={fillPlayer ? "min-h-0 flex-1" : undefined}
           fill={fillPlayer}
-          stageMax={stageMax}
+          stageMax={stageMax ?? (sticky ? "min(32dvh, 320px)" : undefined)}
           handleRef={player}
           src={src}
           poster={poster}
@@ -218,6 +238,8 @@ export function ReviewWorkspace({
           peaks={peaks}
           durationHint={durationHint}
           aspectHint={aspectHint}
+          label={monitorLabel}
+          onVideoRatio={setRatio}
           clock={clock}
           markers={markers}
           activeMarker={activeId}
@@ -242,45 +264,43 @@ export function ReviewWorkspace({
           stageOverlay={
             <AnimatePresence>
               {drawMode && (
-                <motion.div key="draw-chip" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.18 }}
-                  className="pointer-events-none absolute left-2 top-2 z-20 inline-flex items-center gap-1.5 rounded-full bg-accent px-2.5 py-1 font-mono text-2xs font-semibold text-black shadow-lg">
-                  <PenLine className="size-3" />{formatTC(pinned ?? time, fps, true)}
+                <motion.div key="draw-chip" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 6 }} transition={{ duration: 0.18 }}
+                  className="pointer-events-none absolute bottom-2 left-2 z-20">
+                  <span className="rv-chip" data-tone="accent"><PenLine />{formatTC(pinned ?? time, fps, true)}</span>
                 </motion.div>
               )}
             </AnimatePresence>
           }
-          dock={
+          dock={(side: boolean) => (
             <AnimatePresence initial={false}>
               {drawMode && (
-                <DrawToolbar key="pen" color={color} setColor={setColor} size={size} setSize={setSize} count={draft.length}
-                  onUndo={undo} onClear={() => setDraft([])} onDone={finishDraw} />
+                <DrawToolbar key={side ? "pen-v" : "pen-h"} orientation={side ? "vertical" : "horizontal"} color={color} setColor={setColor} size={size} setSize={setSize}
+                  count={draft.length} onUndo={undo} onClear={() => setDraft([])} onDone={finishDraw} />
               )}
             </AnimatePresence>
-          }
+          )}
           toolbar={
             <>
               {toolbarExtra}
               {canComment && (
-                <Tooltip content={t("Draw on the frame (D)")}>
-                  <button
-                    type="button"
-                    onClick={toggleDraw}
-                    aria-pressed={drawMode}
-                    aria-label={t("Draw on the frame (D)")}
-                    className={clsx("mr-0.5 inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium transition-colors max-sm:h-10 max-sm:px-3",
-                      drawMode ? "bg-accent text-black" : "text-mute hover:bg-hover hover:text-ink")}
-                  >
-                    <PenLine className="size-4" /><span className="@max-lg:hidden">{t("Draw")}</span>
-                  </button>
-                </Tooltip>
+                <BarButton
+                  label={t("Draw on the frame (D)")}
+                  onClick={toggleDraw}
+                  aria-pressed={drawMode}
+                  className={clsx("mr-0.5 px-2.5 text-xs font-medium", drawMode && "bg-accent text-black hover:bg-accent hover:text-black", sticky && "@max-sm:hidden")}
+                >
+                  <PenLine className="size-4" /><span className="@max-lg:hidden">{t("Draw")}</span>
+                </BarButton>
               )}
             </>
           }
         />
       </div>
       <CommentsPanel
-        className={clsx(wide ? "h-full" : phone ? "shrink-0" : "h-[min(72vh,560px)]", panelClassName)}
+        className={clsx(wide ? "h-full" : phone ? "shrink-0" : "min-h-[320px]", panelClassName)}
         sheet={phone ? { open: sheetOpen, onToggle: () => setSheetOpen((o) => !o), height: "min(44dvh, 400px)", onAdd: canComment ? openComposer : undefined } : undefined}
+        flow={sticky}
+        aspect={ratio}
         comments={sorted}
         fps={fps}
         time={time}

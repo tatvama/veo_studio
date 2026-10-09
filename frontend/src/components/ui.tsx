@@ -242,7 +242,7 @@ export function Toggle({ checked, onChange, label, disabled }: { checked: boolea
         onClick={() => onChange(!checked)}
         className={cn("relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border p-0.5 transition-colors duration-200",
           // invisible padding grows the click target a little without changing the look
-          "before:absolute before:-inset-x-1 before:-inset-y-1 before:content-['']",
+          "before:absolute before:-inset-x-1.5 before:-inset-y-2.5 before:content-['']",
           checked ? "border-transparent bg-accent" : "border-line bg-raised hover:bg-hover")}
       >
         <motion.span

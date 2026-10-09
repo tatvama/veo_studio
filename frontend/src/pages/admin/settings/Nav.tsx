@@ -4,12 +4,15 @@ import {
 } from "lucide-react";
 import { motion } from "motion/react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
-import { ScrollStrip } from "../../../components/ui";
+import "../../../styles/console.css";
+import "../../../styles/settings.css";
+import { Panel, ScrollStrip } from "../../../components/ui";
 import { useT } from "../../../lib/i18n";
+import { StatusGlyph, type SectionStatus } from "./state";
 
 export interface SectionDef { id: string; label: string; icon: LucideIcon }
 
-/** Sections in page order, grouped for the side navigation. Labels are i18n keys. */
+/** Sections in page order, grouped for the section list. Labels are i18n keys. */
 export const SETTINGS_GROUPS: { label: string; items: SectionDef[] }[] = [
   { label: "Team", items: [{ id: "budget", label: "Budget", icon: Coins }] },
   {
@@ -39,6 +42,8 @@ export const SETTINGS_GROUPS: { label: string; items: SectionDef[] }[] = [
 
 export const SECTION_IDS = SETTINGS_GROUPS.flatMap((g) => g.items.map((i) => i.id));
 const ALL: SectionDef[] = SETTINGS_GROUPS.flatMap((g) => g.items);
+/** Group label (an i18n key) for each section id, for the panel eyebrows. */
+export const SECTION_GROUP: Record<string, string> = Object.fromEntries(SETTINGS_GROUPS.flatMap((g) => g.items.map((i) => [i.id, g.label])));
 
 /** Which section each saved setting lives in (to mark sections with unsaved edits). */
 export const SETTING_SECTION: Record<string, string> = {
@@ -97,8 +102,25 @@ export function useScrollSpy(ids: string[], ready = true): [string, (id: string)
 
 const SPRING = { type: "spring", stiffness: 520, damping: 40, mass: 0.7 } as const;
 
-/** ≥1024px: sticky vertical list in groups. */
-export function SettingsNav({ active, onSelect, dirty }: { active: string; onSelect: (id: string) => void; dirty: Set<string> }) {
+/** Amber dot + count: this many unsaved changes live in the section. */
+function Unsaved({ n, className }: { n: number; className?: string }) {
+  const t = useT();
+  if (n <= 0) return null;
+  return (
+    <span title={t("Unsaved changes")} className={clsx("st-unsaved mono text-amber-300", className)}>
+      <i aria-hidden className="st-dot" />
+      <span aria-hidden>{n}</span>
+      <span className="sr-only">{t("Unsaved changes")}: {n}</span>
+    </span>
+  );
+}
+
+const IDLE: SectionStatus = { tone: "idle", label: "" };
+
+/** ≥900px: the left pane of the console. A sticky list of sections in groups; the lit one has the accent edge, each carries its health glyph and unsaved count. */
+export function SettingsNav({ active, onSelect, dirty, status }: {
+  active: string; onSelect: (id: string) => void; dirty: Record<string, number>; status: Record<string, SectionStatus>;
+}) {
   const t = useT();
   const uid = useId();
   const box = useRef<HTMLDivElement>(null);
@@ -112,50 +134,59 @@ export function SettingsNav({ active, onSelect, dirty }: { active: string; onSel
     else if (top + item.offsetHeight > el.scrollTop + el.clientHeight - 8) el.scrollTo({ top: top + item.offsetHeight - el.clientHeight + 24, behavior: "smooth" });
   }, [active]);
   return (
-    <nav aria-label={t("Sections")} className="hidden lg:sticky lg:top-6 lg:block lg:self-start">
-      <div ref={box} className="relative max-h-[calc(100vh-3rem)] space-y-5 overflow-y-auto pb-2 pr-1">
-        {SETTINGS_GROUPS.map((g) => (
-          <div key={g.label}>
-            <p className="mb-1 px-2.5 text-2xs font-semibold uppercase tracking-wider text-dim">{t(g.label)}</p>
-            <ul className="space-y-0.5">
-              {g.items.map(({ id, label, icon: Icon }) => {
-                const on = active === id;
-                return (
-                  <li key={id}>
-                    <a href={`#${id}`} aria-current={on ? "true" : undefined} onClick={(e) => { e.preventDefault(); onSelect(id); }}
-                      className={clsx("relative flex h-8 items-center gap-2.5 rounded-lg px-2.5 text-sm font-medium transition-colors", on ? "text-ink" : "text-mute hover:text-ink")}>
-                      {on && <motion.span layoutId={`settings-nav-${uid}`} transition={SPRING} className="absolute inset-0 rounded-lg bg-accent/10 ring-1 ring-inset ring-accent/20" />}
-                      {!on && <span aria-hidden className="absolute inset-0 rounded-lg opacity-0 transition-opacity hover:bg-hover/60 hover:opacity-100" />}
-                      <Icon className={clsx("relative size-4 shrink-0", on && "text-accent-ink")} />
-                      <span className="relative min-w-0 flex-1 truncate">{t(label)}</span>
-                      {dirty.has(id) && <span title={t("Unsaved changes")} className="relative size-1.5 shrink-0 rounded-full bg-warn" />}
-                    </a>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        ))}
-      </div>
+    <nav aria-label={t("Sections")}>
+      <Panel flush>
+        <div ref={box} className="relative max-h-[calc(100dvh-9rem)] overflow-y-auto p-2">
+          {SETTINGS_GROUPS.map((g) => (
+            <div key={g.label} className="[&:not(:first-child)]:mt-3">
+              <p className="eyebrow px-2.5 pb-1.5 pt-1">{t(g.label)}</p>
+              <ul className="space-y-0.5">
+                {g.items.map(({ id, label, icon: Icon }) => {
+                  const on = active === id;
+                  const st = status[id] ?? IDLE;
+                  return (
+                    <li key={id}>
+                      <a href={`#${id}`} aria-current={on ? "true" : undefined} onClick={(e) => { e.preventDefault(); onSelect(id); }} className="st-nav-item">
+                        {on && (
+                          <motion.span aria-hidden layoutId={`settings-nav-${uid}`} transition={SPRING} className="absolute inset-0 rounded-lg bg-accent/[0.09]">
+                            <span className="absolute inset-y-1.5 left-0 w-0.5 rounded-full bg-accent shadow-[0_0_8px_var(--color-accent)]" />
+                          </motion.span>
+                        )}
+                        <Icon className="relative" />
+                        <span className="relative min-w-0 flex-1 truncate">{t(label)}</span>
+                        <Unsaved n={dirty[id] ?? 0} className="relative" />
+                        {st.label && <StatusGlyph status={st} className="relative" />}
+                      </a>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ))}
+        </div>
+      </Panel>
     </nav>
   );
 }
 
-/** <1024px: chips that scroll sideways and stay at the top of the page. */
-export function SettingsChips({ active, onSelect, dirty }: { active: string; onSelect: (id: string) => void; dirty: Set<string> }) {
+/** <900px: the same list as a strip of chips that scrolls sideways and stays pinned at the top of the page. */
+export function SettingsChips({ active, onSelect, dirty, status }: {
+  active: string; onSelect: (id: string) => void; dirty: Record<string, number>; status: Record<string, SectionStatus>;
+}) {
   const t = useT();
   return (
-    <div className="sticky top-0 z-20 -mx-4 mb-4 border-b border-line bg-bg/85 px-4 py-2 backdrop-blur-md sm:-mx-6 sm:px-6 lg:hidden">
+    <div className="sticky top-0 z-20 -mx-4 mb-4 border-y border-line bg-bg/85 px-4 py-2 backdrop-blur-md sm:-mx-6 sm:px-6 min-[900px]:hidden">
       <ScrollStrip className="flex gap-1.5" aria-label={t("Sections")} role="navigation">
         {ALL.map(({ id, label, icon: Icon }) => {
           const on = active === id;
+          const st = status[id];
           return (
             <a key={id} href={`#${id}`} data-active={on} aria-current={on ? "true" : undefined} onClick={(e) => { e.preventDefault(); onSelect(id); }}
-              className={clsx("inline-flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-sm font-medium transition-colors",
-                on ? "border-accent/45 bg-accent/12 text-ink" : "border-line text-mute hover:border-dim/50 hover:text-ink")}>
-              <Icon className={clsx("size-3.5", on && "text-accent-ink")} />
+              className={clsx("cx-chip max-sm:h-10", on && "is-on")}>
+              <Icon />
               {t(label)}
-              {dirty.has(id) && <span className="size-1.5 rounded-full bg-warn" />}
+              <Unsaved n={dirty[id] ?? 0} />
+              {st && (st.tone === "bad" || st.tone === "warn") && <StatusGlyph status={st} />}
             </a>
           );
         })}

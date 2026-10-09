@@ -63,6 +63,18 @@
   .ad-state[data-tone="info"] { --c: var(--color-info); }
   .ad-state[data-tone="neutral"] { --c: var(--color-dim); }
 
+  /* Small state text (a sentence, not a chip): the tone mixed with ink so 11-12px text keeps contrast in both themes. */
+  .ad-tx { color: color-mix(in oklab, var(--c, var(--color-mute)) 70%, var(--color-ink)); }
+  .ad-tx[data-tone="warn"] { --c: var(--color-warn); }
+  .ad-tx[data-tone="bad"] { --c: var(--color-bad); }
+  .ad-tx[data-tone="ok"] { --c: var(--color-ok); }
+
+  /* ── KPI strip, wrapping flavour ──────────────────────────────────────────────
+     Like .cx-kpis but a wrapping flex row: the cells of an incomplete last row grow to fill it, so no empty grid slot shows the
+     hairline colour. Put inside <Panel flush>. */
+  .ad-kpis { display: flex; flex-wrap: wrap; gap: 1px; overflow: hidden; border-radius: 0.5625rem; background: var(--color-line); }
+  .ad-kpis > * { flex: 1 1 11rem; min-width: 0; padding: 0.875rem 1rem; background: var(--color-panel); }
+
   /* ── Toolbar above a data grid: search + filters on one wrapping row, hairline below ─ */
   .ad-bar-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; padding: 0.625rem 0.75rem; border-bottom: 1px solid var(--color-line); }
 
@@ -70,7 +82,7 @@
   .ad-foot {
     display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0.5rem;
     border-top: 1px solid var(--color-line); background: color-mix(in oklab, var(--color-raised) 40%, transparent);
-    padding: 0.5rem 0.75rem; font-size: 0.75rem; color: var(--color-mute); border-radius: 0 0 0.75rem 0.75rem;
+    padding: 0.5rem 0.75rem; font-size: 0.75rem; color: var(--color-mute); border-radius: 0 0 0.625rem 0.625rem;
   }
 
   /* ── Detail strip under an expanded table row ─ */

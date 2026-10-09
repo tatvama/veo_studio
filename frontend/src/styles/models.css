@@ -75,7 +75,7 @@
   .hub-node[data-skip="true"] { border-style: dashed; border-color: color-mix(in oklab, var(--color-warn) 45%, var(--color-line)); }
   .hub-node[data-primary="true"] { border-color: color-mix(in oklab, var(--color-accent) 42%, var(--color-line)); }
   .hub-node[data-dragging="true"] { border-color: var(--color-accent); background: var(--color-raised); box-shadow: 0 0 0 1px var(--color-accent), 0 10px 24px -12px rgb(0 0 0 / 0.55); }
-  .hub-arrow { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.25rem; min-width: 2.75rem; color: var(--color-dim); }
+  .hub-arrow { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.25rem; min-width: 4rem; color: var(--color-dim); white-space: nowrap; }
   .hub-arrow > svg { width: 1.125rem; height: 1.125rem; }
   .hub-arrow > .hub-arrow-line { display: block; width: 1.5rem; height: 1px; background: currentColor; opacity: 0.5; }
   @media (max-width: 640px) {
