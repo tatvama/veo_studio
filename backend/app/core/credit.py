@@ -5,6 +5,9 @@
 * Balances are read where the provider allows it (OpenRouter: the key's limit, and the account credit with a
   management key; BytePlus: the billing API with the access key + secret). A known balance below a clip's price
   skips that route too. An unknown balance never blocks anything.
+* BytePlus reports only prepaid cash. An account on automatic billing pays by card, and a savings plan pays first,
+  so its cash reads $0 while it can still pay. That balance is shown but never skips work; a real "no credit" answer
+  from a job still holds BytePlus.
 """
 from __future__ import annotations
 
@@ -20,6 +23,7 @@ from ..events import emit
 HOLD_MINUTES = 30
 BALANCE_TTL = timedelta(minutes=10)
 METERED = ("openrouter", "byteplus")  # providers whose balance the studio can read
+CASH_ONLY = ("byteplus",)  # their balance leaves out card billing and savings plans: shown, never a reason to skip
 
 
 def _parse(ts: str | None) -> datetime | None:
@@ -100,14 +104,14 @@ def balance(provider: str, refresh: bool = False) -> dict[str, Any]:
         if row["usd"] is not None and row["usd"] > 0 and held(db, provider):
             release(db, provider)  # topped up
         db.commit()
-    if row["usd"] is not None and row["usd"] <= 0:
+    if row["usd"] is not None and row["usd"] <= 0 and provider not in CASH_ONLY:
         hold(provider, f"{provider} balance is ${row['usd']:.2f}")
     return {"provider": provider, **row}
 
 
 def short_of(provider: str, usd: float) -> str:
     """Why this provider can't pay for a run of `usd` ("" when it can, or when its balance is unknown)."""
-    if provider not in METERED or usd <= 0:
+    if provider not in METERED or provider in CASH_ONLY or usd <= 0:
         return ""
     b = balance(provider)
     if b["usd"] is not None and b["usd"] < usd:
@@ -119,5 +123,6 @@ def status() -> list[dict[str, Any]]:
     """Balances and holds for the Settings page."""
     with SessionLocal() as db:
         h = holds(db)
-    return [{**balance(p), "held": bool(h.get(p)), "hold_reason": (h.get(p) or {}).get("reason", ""),
-             "hold_until": (h.get(p) or {}).get("until")} for p in METERED]
+    return [{**balance(p), "cash_only": p in CASH_ONLY, "held": bool(h.get(p)),
+             "hold_reason": (h.get(p) or {}).get("reason", ""), "hold_until": (h.get(p) or {}).get("until")}
+            for p in METERED]

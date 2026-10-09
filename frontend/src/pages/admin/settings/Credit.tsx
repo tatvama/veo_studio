@@ -73,8 +73,15 @@ export function CreditLine({ provider, isAdmin }: { provider: string; isAdmin: b
           </span>
         ) : c?.usd != null ? (
           <>
-            <span className={clsx("mono text-sm font-medium", c.usd <= 0 ? "text-red-300" : "text-money")}>{usd(c.usd)}</span>
+            <span className={clsx("mono text-sm font-medium", c.usd > 0 ? "text-money" : c.cash_only ? "text-mute" : "text-red-300")}>{usd(c.usd)}</span>
             {keyLimitOnly && <span className="text-2xs text-dim">{t("left on this key's spending limit")}</span>}
+            {c.cash_only && (
+              <Tooltip content={t("BytePlus reports only prepaid cash. Usage billed to your card (automatic billing) or paid from a savings plan isn't counted here, so this balance never stops work. If the account really can't pay, the first job that fails pauses BytePlus.")}>
+                <span tabIndex={0} className="inline-flex cursor-help items-center gap-1 rounded text-2xs text-dim outline-none focus-visible:ring-2 focus-visible:ring-accent/50">
+                  {t("prepaid cash · card billing and savings plans not shown")}<Info aria-hidden className="size-3" />
+                </span>
+              </Tooltip>
+            )}
           </>
         ) : (
           <Tooltip content={<>{unknownWhy(c, t)} {t("Work is never stopped because a balance is unknown.")}</>}>

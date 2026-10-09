@@ -155,6 +155,8 @@ export interface ProviderStatus { provider: string; label: string; mode: "live" 
 /** A provider's balance as last read, and whether the router skips it for lack of credit (GET /api/providers/credit). */
 export interface ProviderCredit {
   provider: string; usd: number | null; checked_at: string | null; error: string; detail: Record<string, any>;
+  /** The balance is prepaid cash only (BytePlus): card billing and savings plans aren't in it, so it never skips work. */
+  cash_only?: boolean;
   held: boolean; hold_reason: string; hold_until: string | null;
 }
 

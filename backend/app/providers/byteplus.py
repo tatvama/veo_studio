@@ -269,8 +269,16 @@ class AssetLibrary:
             raise
 
     def balance(self) -> float | None:
-        """The account's available balance in USD (billing OpenAPI). None when this key can't read it."""
-        res = self.call("QueryBalanceAcct", {}, service="billing", version="2022-01-01", host=BILLING_HOST)
+        """The account's prepaid cash in USD (billing OpenAPI). None when this key can't read it. Card billing and
+        savings plans are not in it: core/credit.py shows it but never skips BytePlus over it."""
+        try:
+            res = self.call("QueryBalanceAcct", {}, service="billing", version="2022-01-01", host=BILLING_HOST)
+        except ProviderError as e:
+            if e.status in (401, 403) and "billing:" in str(e):
+                raise ProviderError("This access key can't read the balance: give its IAM user the "
+                                    "BillingCenterReadOnlyAccess policy in the BytePlus console.",
+                                    status=e.status, provider=P) from e
+            raise
         for k in ("AvailableBalance", "CashBalance"):
             if res.get(k) not in (None, ""):
                 try:
