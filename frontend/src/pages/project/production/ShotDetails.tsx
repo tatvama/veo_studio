@@ -13,8 +13,9 @@ import type { Character, DialogueLine, Shot } from "../../../lib/types";
 import { createProp, useCostumes, useProps, type ShotV3Fields } from "../../../lib/v3";
 import { useProjectCtx } from "../context";
 import { Collapse } from "./Collapse";
+import { DraftButton } from "./Recovery";
 
-/** The Details tab: the shot as a set of folding sections (shot, engine, dialogue, sound, advanced). */
+/** The Details tab: a blocked-shot notice when there is one, then the shot as folding sections (shot, engine, dialogue, sound, advanced). */
 export function Details({ shot, form, setForm, lang, lines, disabled, hasLines, lipEngine, setLipEngine, onShootout }: {
   shot: Shot; form: Partial<Shot>; setForm: (f: Partial<Shot>) => void; lang: string; lines: DialogueLine[]; disabled: boolean;
   hasLines: boolean; lipEngine: string; setLipEngine: (id: string) => void; onShootout: () => void;
@@ -359,7 +360,7 @@ function PropsPicker({ projectId, value, disabled, onChange }: { projectId: numb
   );
 }
 
-/** Engine choice for the shot, the lip-sync engine for the next run, and the shootout entry point. */
+/** Engine choice for the shot, the lip-sync engine for the next run, and the shootout and 480p draft entry points. */
 function EngineCard({ shot, canEdit, hasLines, lipEngine, setLipEngine, onShootout }: {
   shot: Shot; canEdit: boolean; hasLines: boolean; lipEngine: string; setLipEngine: (id: string) => void; onShootout: () => void;
 }) {
@@ -367,9 +368,12 @@ function EngineCard({ shot, canEdit, hasLines, lipEngine, setLipEngine, onShooto
   return (
     <Collapse memo="engine" title={t("Engine")} icon={<Cpu />} summary={t("The model that makes this shot. Auto follows your team's routing policy.")}
       actions={canEdit ? (
-        <Tooltip content={t("Generate this shot with 2–4 engines and pick the best")} side="left">
-          <Button size="sm" variant="outline" icon={<Swords className="size-3.5" />} onClick={onShootout}>{t("Shootout")}</Button>
-        </Tooltip>
+        <div className="flex shrink-0 items-center gap-1">
+          <DraftButton shot={shot} />
+          <Tooltip content={t("Generate this shot with 2–4 engines and pick the best")} side="left">
+            <Button size="sm" variant="outline" icon={<Swords className="size-3.5" />} onClick={onShootout}>{t("Shootout")}</Button>
+          </Tooltip>
+        </div>
       ) : undefined}>
       <div className="space-y-2">
         <EnginePicker key={shot.id} shot={shot} canEdit={canEdit} embedded />

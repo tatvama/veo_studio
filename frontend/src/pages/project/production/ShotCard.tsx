@@ -1,7 +1,7 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { clsx } from "clsx";
-import { AudioLines, Check, Cpu, Film, History, Image as ImageIcon, MessageSquare, Mic, Play, ShieldCheck } from "lucide-react";
+import { AudioLines, Check, Cpu, Film, History, Image as ImageIcon, MessageSquare, Mic, Play, ShieldAlert, ShieldCheck } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { memo, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { QcMini } from "../../../components/hub/Qc";
@@ -13,6 +13,7 @@ import { LANG_SHORT } from "../../../lib/format";
 import { useT } from "../../../lib/i18n";
 import type { Shot } from "../../../lib/types";
 import { fmtDur } from "./instruments";
+import { joinNames } from "./Recovery";
 import { displayMedia, isStale, qcFailed, shotStages, staleReason, thumbRatio, type StageState } from "./shotMeta";
 
 /** Amber "Stale" pill: the shot changed after this take was made. The tooltip says what changed. */
@@ -24,6 +25,22 @@ export function StaleBadge({ reason, className }: { reason: string; className?: 
       <span role="img" aria-label={tip}
         className={clsx("mono inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md border border-warn/35 bg-warn/12 px-1.5 text-2xs font-medium leading-none text-warn", className)}>
         <History className="size-3" />{t("Stale")}
+      </span>
+    </Tooltip>
+  );
+}
+
+/** Red "Blocked" pill: a safety filter stopped the shot's latest video. The tooltip says whose filter and what to do. */
+function BlockedBadge({ engines }: { engines: string[] }) {
+  const t = useT();
+  const tip = engines.length === 1 ? t("Blocked by {engine}'s safety filter — open the shot to retry on another engine", { engine: engines[0] })
+    : engines.length ? t("Blocked by the safety filters of {engines} — open the shot to retry on another engine", { engines: joinNames(engines) })
+    : t("Blocked by a safety filter — open the shot to retry on another engine");
+  return (
+    <Tooltip content={tip}>
+      <span role="img" aria-label={tip}
+        className="mono inline-flex h-4 shrink-0 items-center gap-0.5 rounded border border-bad/40 bg-bad/15 px-1 text-2xs font-semibold leading-none text-bad">
+        <ShieldAlert className="size-3" />{t("Blocked")}
       </span>
     </Tooltip>
   );
@@ -68,6 +85,7 @@ export const ShotCard = memo(function ShotCard({ shot, lang, aspect, index, sele
   const qcBad = qcFailed(shot);
   const qcRan = shot.video?.qc?.passed !== undefined || shot.lipsync?.qc?.passed !== undefined;
   const ls = LANG_SHORT[lang] ?? lang;
+  const blockedNoVideo = !!shot.blocked && !shot.video;
 
   useEffect(() => () => window.clearTimeout(timer.current), []);
   // dragging, or the card changing under the pointer, ends the preview
@@ -120,6 +138,7 @@ export const ShotCard = memo(function ShotCard({ shot, lang, aspect, index, sele
               <span aria-hidden className={clsx("size-1.5 shrink-0 rounded-full", LED[shot.status] ?? LED.draft)} title={t(shot.status.replaceAll("_", " "))} />
               <span className="mono text-2xs font-semibold tracking-wide text-ink">{code}</span>
               {lock && <LockMark name={lock.name} />}
+              {shot.blocked && <BlockedBadge engines={shot.blocked.engine_labels ?? []} />}
               <span className="flex-1" />
               {shot.comments > 0 && (
                 <span title={t("{n} comment(s)", { n: shot.comments })} className="mono inline-flex items-center gap-0.5 rounded bg-info/15 px-1 text-2xs font-semibold leading-4 text-info">
@@ -202,7 +221,8 @@ export const ShotCard = memo(function ShotCard({ shot, lang, aspect, index, sele
               <div>
                 <div className="grid grid-cols-5 gap-1.5">
                   <Seg icon={<ImageIcon />} state={st.kf} label={st.kf === "done" ? t("Keyframe ready") : t("No keyframe yet")} />
-                  <Seg icon={<Film />} state={st.vid} label={st.vid === "done" ? t("Video ready") : t("No video yet")} />
+                  <Seg icon={<Film />} state={blockedNoVideo ? "bad" : st.vid}
+                    label={blockedNoVideo ? t("Video blocked by a safety filter") : st.vid === "done" ? t("Video ready") : t("No video yet")} />
                   <Seg icon={<Mic />} state={st.voice ?? "na"}
                     label={st.voice === null ? t("No spoken lines in this language.") : st.voice === "done" ? t("Voice ready ({lang})", { lang: ls }) : t("Voice not generated yet ({lang})", { lang: ls })} />
                   <Seg icon={<AudioLines />} state={st.lip ?? "na"}

@@ -1,6 +1,6 @@
 import { clsx } from "clsx";
 import {
-  AudioLines, Boxes, Captions, Coins, Fingerprint, KeyRound, MessagesSquare, PenLine, Plug, ScanFace, SlidersHorizontal, Wrench, type LucideIcon,
+  AudioLines, Bot, Boxes, Captions, Coins, Fingerprint, KeyRound, MessagesSquare, PenLine, Plug, ScanFace, SlidersHorizontal, Wrench, type LucideIcon,
 } from "lucide-react";
 import { motion } from "motion/react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
@@ -34,6 +34,7 @@ export const SETTINGS_GROUPS: { label: string; items: SectionDef[] }[] = [
   {
     label: "Connections", items: [
       { id: "integrations", label: "Integrations", icon: Plug },
+      { id: "mcp", label: "MCP access", icon: Bot },
       { id: "keys", label: "AI services", icon: KeyRound },
     ],
   },
@@ -49,7 +50,9 @@ export const SECTION_GROUP: Record<string, string> = Object.fromEntries(SETTINGS
 export const SETTING_SECTION: Record<string, string> = {
   team_monthly_cap_usd: "budget", alert_thresholds: "budget", creator_default_monthly_limit_usd: "budget",
   default_quality_mode: "generation", lipsync_model: "generation", google_first: "generation", cheapest_route: "generation",
-  text_provider: "generation", openrouter_text_model: "generation",
+  text_provider: "generation", openrouter_text_model: "generation", director_engine: "generation",
+  quota_fallback_routes: "generation", safety_fallback: "generation", fallback_extra_limit_usd: "generation",
+  byteplus_auto_register: "generation",
   auto_retake: "quality", max_auto_retakes: "quality", qc_threshold: "quality", face_match_threshold: "quality", lipsync_qc: "quality", lipsync_qc_threshold: "quality",
   auto_scene_continuity: "quality", keyframe_qc: "quality", keyframe_auto_retake: "quality", keyframe_qc_threshold: "quality",
   dialogue_method: "dialogue", dub_method: "dialogue", native_dialogue_languages: "dialogue", dialogue_words_qc: "dialogue",

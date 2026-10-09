@@ -766,3 +766,50 @@ class ReviewLink(Base, Serializable):
     created_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
     revoked: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+# ── MCP access (mcp_server/) ─────────────────────────────────────────────────
+
+class ApiToken(Base, Serializable):
+    """A bearer token for the MCP server: a personal access token made on the Settings page, or an OAuth access /
+    refresh token issued to an MCP client (claude.ai, Claude Desktop) after the user approved it. Only a hash is kept."""
+    __tablename__ = "api_tokens"
+    _hidden = ("token_hash",)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    name: Mapped[str] = mapped_column(String(120), default="")
+    kind: Mapped[str] = mapped_column(String(20), default="personal")  # personal | oauth_access | oauth_refresh
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    prefix: Mapped[str] = mapped_column(String(16), default="")  # first characters, to recognise it in the list
+    scopes: Mapped[Any] = mapped_column(JSON, default=list)  # read | write | spend
+    project_ids: Mapped[Any] = mapped_column(JSON, default=list)  # empty = every project
+    client_id: Mapped[str] = mapped_column(String(200), default="")  # OAuth client the token was issued to
+    resource: Mapped[str] = mapped_column(String(500), default="")
+    pair_id: Mapped[str] = mapped_column(String(40), default="")  # an access token and its refresh token share it
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class OAuthClient(Base, Serializable):
+    """An MCP client that registered itself (OAuth dynamic client registration)."""
+    __tablename__ = "oauth_clients"
+    client_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), default="")
+    info: Mapped[Any] = mapped_column(JSON, default=dict)  # the full registration (redirect URIs, auth method, …)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class OAuthRequest(Base, Serializable):
+    """One sign-in attempt by an MCP client: waits for the user on the consent page, then holds the one-time code."""
+    __tablename__ = "oauth_requests"
+    id: Mapped[str] = mapped_column(String(40), primary_key=True)  # shown in the consent page link
+    client_id: Mapped[str] = mapped_column(String(64), index=True)
+    params: Mapped[Any] = mapped_column(JSON, default=dict)  # redirect_uri, code_challenge, scopes, state, resource
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending | approved | denied | used
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    scopes: Mapped[Any] = mapped_column(JSON, default=list)  # what the user granted
+    code_hash: Mapped[str] = mapped_column(String(64), default="", index=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)

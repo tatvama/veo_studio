@@ -22,7 +22,7 @@ JOB_LABELS = {
     "character_expressions": "Expressions", "location_images": "Location images", "voice_design": "Voice design",
     "voice_preview": "Voice preview", "omni_edit": "Omni edit", "animatic": "Animatic", "export": "Export",
     "dub": "Dub episode", "autopilot": "Autopilot", "produce": "Produce all", "identity_variations": "Photo variations",
-    "design_image": "Poster image",
+    "design_image": "Poster image", "scene_chain": "Scenes in order",
 }
 
 
@@ -48,7 +48,7 @@ def _duplicate(db: Session, s: dict) -> bool:
     return False
 
 
-RUNS = ("autopilot", "produce")  # each makes every missing shot: two at once on one episode would pay twice
+RUNS = ("autopilot", "produce", "scene_chain")  # each makes every missing shot: two at once on one episode would pay twice
 
 
 def _one_run_per_episode(db: Session, specs: list[dict]) -> None:
@@ -147,6 +147,12 @@ def decide_approval(db: Session, user: User, approval_id: int, approve: bool) ->
     for j in db.query(Job).filter(Job.batch_id == a.batch_id, Job.status == "awaiting_approval").all():
         j.status = "queued" if approve else "cancelled"
         j.approved_by = user.id
+        r = dict(j.result or {})
+        if r.get("extra_asked_usd"):  # a pricier fallback route was asked for mid-run (workers/handlers.run_chain)
+            asked = float(r.pop("extra_asked_usd"))
+            if approve:
+                r["extra_ok_usd"] = round(float(r.get("extra_ok_usd") or 0) + asked, 4)
+            j.result = r
         if not approve:
             j.finished_at = utcnow()
     emit(db, a.project_id, "approval.decided", {"approval_id": a.id, "status": a.status, "by": user.name or user.email},

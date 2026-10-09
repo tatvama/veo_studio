@@ -1,4 +1,5 @@
-"""The Director agent loop (Gemini function calling over the Interactions API) + a keyword mock for keyless use."""
+"""The Director agent loop: Claude (director_claude.py) or Gemini function calling over the Interactions API, plus a
+keyword mock for keyless use."""
 from __future__ import annotations
 
 import json
@@ -45,19 +46,45 @@ def _call(c: AgentCtx, name: str, args: Any) -> dict:
         return {"error": str(detail)[:500]}
 
 
+def engine(db: Session) -> str:
+    """Who answers the chat: "claude", "gemini" or "mock". Claude when the team prefers it (the default) and the Anthropic
+    key is live; Gemini when its key is live and the team picked Gemini or there is no Anthropic key; else the mock.
+    A team that picked Gemini never gets Claude."""
+    pref = settings_store.get_setting(db, "director_engine")
+    claude, gemini = provider_mode("anthropic"), provider_mode("gemini")
+    if pref != "gemini" and claude == "live":
+        return "claude"
+    if gemini == "live" and (pref == "gemini" or claude != "live"):
+        return "gemini"
+    return "mock"
+
+
+def public(d: dict) -> dict:
+    """A chat message for the UI, without the stored Claude conversation (raw API messages, only the engine needs them)."""
+    data = d.get("data")
+    if isinstance(data, dict) and "claude" in data:
+        d = {**d, "data": {k: v for k, v in data.items() if k != "claude"}}
+    return d
+
+
 def run(db: Session, user: User, project: Project, episode: Episode | None, message: str,
         selection: dict | None = None) -> list[dict]:
     selection = selection or {}
-    _save(db, project, user, "user", message, {"selection": selection})
+    um = _save(db, project, user, "user", message, {"selection": selection})
     c = AgentCtx(db=db, user=user, project=project, episode=episode)
-    if provider_mode("gemini") != "live":
-        text = _mock_agent(c, message)
-    else:
+    eng = engine(db)
+    extra: dict = {}
+    if eng == "claude":
+        from . import director_claude
+        text, extra = director_claude.run(c, message, selection, um.id)
+    elif eng == "gemini":
         text = _live_agent(c, message, selection)
+    else:
+        text = _mock_agent(c, message)
     msg = _save(db, project, None, "assistant", text, {"proposals": c.proposals, "actions": c.actions,
                                                          "confirmations": c.confirmations,
-                                                         "interaction_id": getattr(c, "_iid", "")})
-    return [msg.to_dict()]
+                                                         "interaction_id": getattr(c, "_iid", ""), "engine": eng, **extra})
+    return [public(msg.to_dict())]
 
 
 def _summary(tool: str, out: dict) -> str:
@@ -124,7 +151,10 @@ def confirm(db: Session, user: User, project: Project, message_id: int, item_id:
     data["confirmations"] = items
     msg.data = data  # new dict so the JSON column is saved
     db.commit()
-    _save(db, project, None, "assistant", reply, {"actions": [reply] if item["status"] == "done" else []})
+    # "confirm" lets the next Claude turn say what happened (this reply is not part of its stored conversation)
+    _save(db, project, None, "assistant", reply, {"actions": [reply] if item["status"] == "done" else [],
+                                                  "confirm": {"what": item.get("what"), "tool": item["tool"],
+                                                              "status": item["status"]}})
     return item
 
 
@@ -170,7 +200,7 @@ def _live_agent(c: AgentCtx, message: str, selection: dict) -> str:
     return text or "Done. " + "; ".join(c.actions)
 
 
-# ── keyword mock (no Gemini key) ─────────────────────────────────────────────
+# ── keyword mock (no Anthropic or Gemini key) ────────────────────────────────
 
 def _lang_in(msg: str) -> str | None:
     low = msg.lower()
@@ -257,4 +287,8 @@ def _mock_agent(c: AgentCtx, msg: str) -> str:
     if c.confirmations:  # the action is waiting for the user's OK, so nothing above actually happened yet
         w = c.confirmations[-1]
         out = [f"Before I do that — {w['what'].lower()}: {w['detail']} Confirm below if you want it."]
-    return "(Mock agent — add a Gemini key for the real Director.)\n" + "\n".join(out)
+    if settings_store.get_setting(c.db, "director_engine") == "gemini" and provider_mode("anthropic") == "live":
+        banner = "(Mock agent — the Director is set to Gemini, which has no key. Add a Gemini key or pick Claude in Settings.)"
+    else:
+        banner = "(Mock agent — add an Anthropic or Gemini key for the real Director.)"
+    return banner + "\n" + "\n".join(out)

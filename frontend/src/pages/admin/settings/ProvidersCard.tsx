@@ -14,6 +14,7 @@ import type { ProviderStatus } from "../../../lib/types";
 import { ConfirmDialog } from "../shared/ConfirmDialog";
 import { brandMark, brandName } from "../shared/brands";
 import { SettingsCard } from "./controls";
+import { CreditLine, METERED } from "./Credit";
 import { StateTag, type StatusTone } from "./state";
 import { useApiKeys } from "./useApiKeys";
 
@@ -63,6 +64,12 @@ function costFacts(provider: string, prices: Record<string, any> | undefined, t:
     case "sarvam":
       add("Voice / 1k letters", price(tts.sarvam));
       break;
+    case "anthropic": {
+      const claude = Object.entries((prices.text_per_million ?? {}) as Record<string, { in?: number; out?: number }>).find(([m]) => m.startsWith("claude"))?.[1];
+      add("Chat / 1M tokens in", price(claude?.in));
+      add("Chat / 1M tokens out", price(claude?.out));
+      break;
+    }
     case "sync": {
       const l = flat(prices.lipsync_per_second);
       if (l.length) {
@@ -95,6 +102,7 @@ export function ProvidersCard({ providers, isAdmin, index, prices }: { providers
     qc.invalidateQueries({ queryKey: ["api-keys"] }),
     qc.invalidateQueries({ queryKey: ["settings"] }),
     qc.invalidateQueries({ queryKey: ["providers"] }),
+    qc.invalidateQueries({ queryKey: ["provider-credit"] }),
   ]);
 
   const saveKey = async (p: ProviderStatus) => {
@@ -225,6 +233,8 @@ export function ProvidersCard({ providers, isAdmin, index, prices }: { providers
                       </div>
                     )}
                   </div>
+
+                  {p.mode === "live" && METERED.includes(p.provider) && <CreditLine provider={p.provider} isAdmin={isAdmin} />}
 
                   <AnimatePresence initial={false}>
                     {isAdmin && isEditing && (

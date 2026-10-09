@@ -23,11 +23,12 @@ from ..db import SessionLocal, utcnow
 from ..events import emit, prune
 from ..models import Job, Shot
 from ..pipeline.ffmpeg import FFmpegError
-from ..providers.base import ProviderBlocked, ProviderError, ProviderNotConfigured, RetryableProviderError, Usage
+from ..providers.base import (NeedsApproval, ProviderBlocked, ProviderError, ProviderNotConfigured,
+                              RetryableProviderError, Usage)
 from ..providers.services import Services
 
 HANDLERS: dict[str, Callable[["JobContext"], dict | None]] = {}
-ORCHESTRATORS = {"dub", "autopilot", "produce", "campaign"}
+ORCHESTRATORS = {"dub", "autopilot", "produce", "campaign", "scene_chain"}
 GROUP_OF = {"video": "video", "omni_edit": "video", "lipsync": "lipsync", "voicelock": "audio", "voice": "audio",
             "voice_design": "audio", "voice_preview": "audio", "music": "audio", "sfx": "audio", "table_read": "audio",
             "export": "render", "animatic": "render", "keyframe": "image", "character_sheet": "image",
@@ -197,7 +198,7 @@ class Worker:
 
     def start(self) -> None:
         from . import (handlers, handlers_campaign, handlers_design, handlers_growth, handlers_hub,  # noqa: F401
-                       handlers_room)  # (registers handlers)
+                       handlers_room, handlers_scene)  # (registers handlers)
 
         self.recover()
         self.thread = threading.Thread(target=self.loop, name="worker-loop", daemon=True)
@@ -313,6 +314,11 @@ class Worker:
             result = fn(ctx) or {}
         except Cancelled:
             status, error = "cancelled", "Cancelled"
+        except NeedsApproval as e:
+            # a fallback route costs more than this job was approved for: wait for a producer instead of spending
+            status, error, refund = "awaiting_approval", str(e), True
+            result = {"extra_asked_usd": e.extra_usd, "extra_engine": e.engine}
+            self._ask_extra(job_id, e)
         except ProviderBlocked as e:
             status, error = "failed", f"Blocked by safety filter: {e}"
         except ProviderNotConfigured as e:
@@ -356,8 +362,9 @@ class Worker:
                     job.attempts = max(0, (job.attempts or 1) - 1)
                 if status == "succeeded":
                     job.progress, job.message = 1.0, job.message or "Done"
-                if status in ("succeeded", "failed", "cancelled"):
-                    job.finished_at = utcnow()
+                if status in ("succeeded", "failed", "cancelled", "awaiting_approval"):
+                    if status != "awaiting_approval":
+                        job.finished_at = utcnow()
                     if job.shot_id:
                         busy = db.query(Job).filter(Job.shot_id == job.shot_id, Job.id != job.id,
                                                     Job.status.in_(("queued", "running"))).count()
@@ -368,6 +375,32 @@ class Worker:
                 db.commit()
                 emit(db, job.project_id, "job.updated", {"job_id": job.id, "status": status, "type": job.type,
                                                           "error": error[:300], "shot_id": job.shot_id})
+
+
+    @staticmethod
+    def _ask_extra(job_id: int, e: NeedsApproval) -> None:
+        """One approval request per batch for fallback costs: a second job of the same batch adds its amount."""
+        from ..core import budget
+        from ..models import Approval, Project, User
+        with SessionLocal() as db:
+            job = db.get(Job, job_id)
+            if not job:
+                return
+            pending = db.query(Approval).filter(Approval.batch_id == job.batch_id, Approval.status == "pending").first()
+            if pending:
+                pending.amount_usd = round((pending.amount_usd or 0) + e.extra_usd, 4)
+                pending.summary = (pending.summary + f"; {job.label}")[:500]
+            else:
+                user = db.get(User, job.requested_by) if job.requested_by else None
+                if user is None:
+                    user = db.query(User).filter(User.role == "admin").first()
+                project = db.get(Project, job.project_id) if job.project_id else None
+                budget.request_approval(db, batch_id=job.batch_id or f"job-{job.id}", user=user, project=project,
+                                        amount=e.extra_usd, needs_role="producer", summary=f"{job.label}: {e.engine}",
+                                        reason=f"Fallback engine costs ${e.extra_usd:.2f} more than approved. {e}"[:500])
+                if not job.batch_id:
+                    job.batch_id = f"job-{job.id}"
+            db.commit()
 
 
 _worker: Worker | None = None

@@ -52,6 +52,19 @@ class ProviderNotConfigured(ProviderError):
     pass
 
 
+class ProviderOutOfCredit(ProviderError):
+    """The account has no credit or balance left. The router skips that provider for a while (core/credit.py)."""
+
+
+class NeedsApproval(ProviderError):
+    """A fallback engine would cost more than the job was approved for: the job waits for someone to approve it."""
+
+    def __init__(self, message: str, *, extra_usd: float, engine: str = "", provider: str = ""):
+        super().__init__(message, provider=provider)
+        self.extra_usd = extra_usd
+        self.engine = engine
+
+
 def _seconds(v: Any) -> float | None:
     try:
         return float(str(v).strip().rstrip("s")) if v not in (None, "") else None

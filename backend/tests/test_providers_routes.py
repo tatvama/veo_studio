@@ -317,6 +317,7 @@ def test_openrouter_catalog_sync(client, monkeypatch):
                "supported_durations": [5, 10], "supported_resolutions": ["720p"], "pricing_skus": {"duration_seconds": "0.112"}},
               {"id": "black-forest-labs/flux-video-upscale", "name": "Flux Upscale", "pricing_skus": {}}]
     monkeypatch.setattr(openrouter, "list_video_models", lambda http=None: listed)
+    monkeypatch.setattr(openrouter, "list_image_models", lambda http=None: [])
     real_key = settings_store.api_key
     monkeypatch.setattr(settings_store, "api_key", lambda p: "or-key" if p == "openrouter" else real_key(p))
     with SessionLocal() as db:

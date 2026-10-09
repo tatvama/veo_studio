@@ -141,6 +141,28 @@ def test_previous_frame_by_default_within_a_scene_only(client: TestClient):
             db.commit()
 
 
+def test_keyframe_from_the_previous_clip_counts_as_linked(client: TestClient):
+    """The previous shot's finished clip gives the keyframe its first frame, and the take records which clip it was,
+    so core/scene_chain sees the link as followed."""
+    from app.core import scene_chain
+    from app.pipeline.selection import current
+    c = client
+    s = _setup(c)
+    s1, s2 = s["shots"][:2]
+    ok(c.post(f"/api/shots/{s1}/video", headers=H, json={}))
+    wait_jobs(c, s["pid"], timeout=600)
+    with SessionLocal() as db:
+        db.get(Shot, s2).continuity_from_prev = True  # an explicit link, as the breakdown sets inside a scene
+        db.commit()
+    ok(c.post(f"/api/shots/{s2}/keyframe", headers=H, json={}))
+    wait_jobs(c, s["pid"])
+    with SessionLocal() as db:
+        sv, kf = current(db, s1, "video"), current(db, s2, "keyframe")
+        assert kf.params["continuity_take_id"] == sv.id and kf.params["anchor"]
+        assert any(l.startswith("the shot before (last frame)") for l in kf.params["refs"])
+        assert scene_chain.follows(kf, sv) and scene_chain.link_status(db, db.get(Shot, s2))["status"] == "ok"
+
+
 def test_explicit_links_and_pinned_anchor_win(client: TestClient):
     c = client
     s = _setup(c)

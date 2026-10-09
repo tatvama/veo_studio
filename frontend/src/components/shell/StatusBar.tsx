@@ -23,7 +23,7 @@ export function StatusBar() {
   const { data } = useSettings();
   const { first, running, waiting } = useTicker();
   const setShortcutsOpen = useUI((s) => s.setShortcutsOpen);
-  const modes = data?.providers ?? [];
+  const modes = (data?.providers ?? []).filter((p) => p.engine !== false); // the asset library key runs no engine
   const live = modes.some((p) => p.mode === "live");
   const allMock = modes.length > 0 && !live;
   return (

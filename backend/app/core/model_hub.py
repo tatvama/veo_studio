@@ -40,11 +40,13 @@ def _seedance(key: str, endpoint: str, name: str, tier: str, per_m: float, max_s
     return {"id": f"byteplus:{key}", "provider": "byteplus", "endpoint": endpoint, "task": "video", "family": name,
             "maker": "bytedance", "display_name": f"{name} (BytePlus)", "tier": tier,
             "price_usd": prices["720p"], "price_unit": "second", "price_source": "estimate" if estimate else "catalog",
-            "capabilities": {"modes": ["t2v", "i2v", "flf", "ref2v"], "durations": {"min": 4, "max": max_s},
+            # a2v: the recorded line goes in as reference audio and the character speaks it; extend: the last seconds
+            # of a clip go in as reference video and Seedance continues it; 480p makes cheap drafts
+            "capabilities": {"modes": ["t2v", "i2v", "flf", "ref2v", "a2v", "extend"], "durations": {"min": 4, "max": max_s},
                              "resolutions": ["480p", "720p", "1080p"], "aspects": SEEDANCE_ASPECTS, "native_audio": True,
-                             "max_refs": 9, "speech_in_video": True, "audio_driven": False, "lora_input": False,
-                             "lipsync_to_audio": False, "asset_refs": True, "price_per_m_tokens": per_m,
-                             "price_by_resolution": prices}}
+                             "max_refs": 9, "speech_in_video": True, "audio_driven": True, "lora_input": False,
+                             "lipsync_to_audio": False, "asset_refs": True, "draft_resolution": "480p",
+                             "price_per_m_tokens": per_m, "price_by_resolution": prices}}
 
 
 BUILTINS: list[dict[str, Any]] = [
@@ -101,12 +103,13 @@ DEFAULT_POLICY: dict[str, list[str]] = {
     "video.hero": ["google:video_hero", "fal:fal-ai/kling-video/o3/4k/reference-to-video",
                    "fal:alibaba/wan-3.0-prime/image-to-video", "fal:bytedance/seedance-2.5/image-to-video"],
     "dialogue": ["fal:minimax/h3-max/lip-sync/image-to-video", "fal:fal-ai/kling-video/ai-avatar/v2/pro",
-                 "fal:lightricks/ltx-2.5/audio-to-video/pro", "fal:fal-ai/sync-lipsync/v3/image-to-video"],
+                 "fal:lightricks/ltx-2.5/audio-to-video/pro", "fal:fal-ai/sync-lipsync/v3/image-to-video",
+                 "byteplus:seedance-2.0"],
     "lipsync": ["sync:lipsync", "fal:fal-ai/sync-lipsync/v3", "fal:fal-ai/heygen/v3/lipsync/precision", "fal:veed/lipsync/v2",
                 "sync:lipsync_pro"],
     "image": ["google:image", "fal:google/nano-banana-2.1", "fal:bytedance/seedream/v5/pro/edit"],
     "edit": ["google:omni", "fal:google/gemini-omni-flash/v1.1/edit", "fal:minimax/h3-max/recast"],
-    "extend": ["google:video_balanced", "fal:minimax/h3-max-turbo/extend-video"],
+    "extend": ["google:video_balanced", "fal:minimax/h3-max-turbo/extend-video", "byteplus:seedance-2.0"],
 }
 CHAIN_LABELS = {
     "video.saver": "Video — Saver", "video.balanced": "Video — Balanced", "video.hero": "Video — Hero",
@@ -235,29 +238,42 @@ def sync_catalog(full_schemas: bool = False) -> dict[str, Any]:
 
 
 def sync_openrouter() -> dict[str, Any]:
-    """Pull OpenRouter's video catalog (only once the team has an OpenRouter key). Its list is short and curated, so
-    the first sync switches every usable model on; later arrivals wait for review unless auto-enable is on."""
+    """Pull OpenRouter's video and image catalogs (only once the team has an OpenRouter key). Its lists are short and
+    curated, so the first sync switches every usable model on; later arrivals wait for review unless auto-enable is on.
+    Image models (Nano Banana, Seedream …) become extra routes of the keyframe chain's models."""
     if not settings_store.api_key("openrouter"):
         return {"skipped": "no OpenRouter key"}
-    listed = or_api.list_video_models()
+    by_id = {r["id"]: r for r in (or_api.model_row(m) for m in or_api.list_video_models())}
+    images_ok = True
+    try:  # a failing image catalog must not lose the video one
+        for m in or_api.list_image_models():
+            r = or_api.image_model_row(m)
+            if r["price_usd"] is None:  # the image list has no prices: each model's endpoints do
+                r["price_usd"] = or_api.image_price(r["endpoint"])
+            by_id.setdefault(r["id"], r)
+    except Exception as e:
+        images_ok = False
+        print(f"[hub] OpenRouter image catalog: {e}")
+    listed = list(by_id.values())
     now = utcnow()
     with SessionLocal() as db:
         auto_enable = bool(settings_store.get_setting(db, "hub_auto_enable"))
         existing = {m.id: m for m in db.query(AIModel).filter(AIModel.provider == "openrouter").all()}
         first_sync = not existing
+        first_images = not any(m.task == "image" for m in existing.values())
         new_ids: list[str] = []
         seen: set[str] = set()
-        for item in listed:
-            f = or_api.model_row(item)
+        for f in listed:
             seen.add(f["id"])
             row = existing.get(f["id"])
             usable = f["capabilities"].get("usable", True)
             if row is None:
-                status = ("enabled" if usable else "disabled") if (first_sync or auto_enable) else "new"
+                first = first_sync or (first_images and f["task"] == "image")
+                status = ("enabled" if usable else "disabled") if (first or auto_enable) else "new"
                 row = AIModel(id=f["id"], provider="openrouter", endpoint=f["endpoint"], first_seen=now, status=status,
                               tier=_tier_guess(f["endpoint"]))
                 db.add(row)
-                if not first_sync:
+                if not first:
                     new_ids.append(f["id"])
             for k in ("display_name", "family", "maker", "description", "category", "task", "capabilities", "released_at"):
                 setattr(row, k, f[k])
@@ -268,7 +284,7 @@ def sync_openrouter() -> dict[str, Any]:
             row.last_seen = now
         retired = 0
         for mid, row in existing.items():
-            if mid not in seen and row.status != "retired":
+            if mid not in seen and row.status != "retired" and (images_ok or row.task != "image"):
                 row.status = "retired"
                 retired += 1
         db.commit()
@@ -381,6 +397,22 @@ def route_groups(db: Session) -> dict[str, list[AIModel]]:
     return out
 
 
+def lead_order(m: AIModel) -> tuple:
+    """How the routes of one model are ranked: switched on, live, cheapest, then direct before resellers."""
+    return (m.status != "enabled", provider_mode(m.provider) != "live", round(price_for(m), 3),
+            PROVIDER_RANK.get(m.provider, 9))
+
+
+def catalog_groups(rows: list[AIModel]) -> list[list[AIModel]]:
+    """Catalog rows grouped by the model they run, in the order given (one card per model in the Model Hub).
+    Each group's first row is its lead route; a row with no known family is a group of its own."""
+    groups: dict[str, list[AIModel]] = {}
+    for m in rows:
+        key = route_key(m)
+        groups.setdefault(f"{m.task}:{key}" if key else f"id:{m.id}", []).append(m)
+    return [sorted(g, key=lead_order) if len(g) > 1 else g for g in groups.values()]
+
+
 def _fits(m: AIModel | None, modes_ok: list[str], need_refs: int, explicit: bool) -> tuple[AIModel, str] | None:
     if not m or m.status == "retired" or (not explicit and m.status != "enabled"):
         return None
@@ -408,12 +440,16 @@ def route_order(pairs: list[tuple[AIModel, str]], modes_ok: list[str]) -> list[t
 # ── router ───────────────────────────────────────────────────────────────────
 
 def candidates(db: Session, chain: str, modes_ok: list[str], explicit: str | None = None,
-               need_refs: int = 0) -> list[tuple[AIModel, str]]:
+               need_refs: int = 0, google_first: bool | None = None) -> list[tuple[AIModel, str]]:
     """Ordered (model, mode) pairs to try. An explicit engine (shot setting / shootout) wins: only that model is
-    used, through its other routes too when they are on. Each chain engine brings its model's other routes."""
+    used, through its other routes too when they are on. Each chain engine brings its model's other routes.
+    Providers held for lack of credit are left out (core/credit.py). `google_first` overrides the team setting
+    (the safety and quota fallbacks look past Google on purpose)."""
+    from . import credit
     ids = [explicit] if explicit and explicit != "auto" else policy(db).get(chain, [])
     cheapest = settings_store.get_setting(db, "cheapest_route") is not False
     groups = route_groups(db)
+    no_credit = set(credit.holds(db))
     out: list[tuple[AIModel, str]] = []
     seen: set[str] = set()
     for mid in ids:
@@ -427,7 +463,7 @@ def candidates(db: Session, chain: str, modes_ok: list[str], explicit: str | Non
         else:
             pairs = route_order([*([own] if own else []), *others], modes_ok)
         for t in pairs:
-            if t[0].id not in seen:
+            if t[0].id not in seen and t[0].provider not in no_credit:
                 seen.add(t[0].id)
                 out.append(t)
     # a live engine exists: never fall through to a mock one (a placeholder would be saved as real work);
@@ -435,7 +471,9 @@ def candidates(db: Session, chain: str, modes_ok: list[str], explicit: str | Non
     live = [t for t in out if provider_mode(t[0].provider) == "live"]
     if live:
         out = live
-    if not explicit and settings_store.get_setting(db, "google_first") is not False:
+    if google_first is None:
+        google_first = settings_store.get_setting(db, "google_first") is not False
+    if not explicit and google_first:
         google = [t for t in out if t[0].provider == "google"]
         if google:  # Google can do it: use only Google (other providers stay for what Google can't do, or when picked
             return google  # by hand; turn Google first off to use the cheapest route of every model)

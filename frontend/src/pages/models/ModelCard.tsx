@@ -10,14 +10,18 @@ import { api } from "../../lib/api";
 import { cn } from "../../lib/cn";
 import { usd } from "../../lib/format";
 import { tr, useT } from "../../lib/i18n";
-import type { AIModel } from "../../lib/types";
+import type { AIModel, ModelRoute } from "../../lib/types";
 import { patchModelInCache, providerLabel, refreshAfterModelChange } from "./catalogData";
 import { capRows, clipUsd, isListPrice, perSecond, purposeText, rateText, speedCells, successPct } from "./modelMeta";
+import { CardRoutes, RoutesOn, cardStatus } from "./RouteList";
 
 import "../../styles/console.css";
 import "../../styles/models.css";
 
-export type ModelPatchBody = Partial<Pick<AIModel, "status" | "tier" | "rating" | "notes" | "price_usd" | "price_unit" | "param_overrides">>;
+/** `route_key`: null works it out from the name again, "" keeps the engine apart from every other. */
+export type ModelPatchBody = Partial<Pick<AIModel, "status" | "tier" | "rating" | "notes" | "price_usd" | "price_unit" | "param_overrides">> & {
+  route_key?: string | null;
+};
 
 export const modelPath = (id: string) => `/api/models/${id.split("/").map(encodeURIComponent).join("/")}`;
 
@@ -26,7 +30,7 @@ export function useModelPatch() {
   const qc = useQueryClient();
   const [busy, setBusy] = useState<string | null>(null);
   // stable identities, so memoised cards don't re-render when something unrelated changes
-  const patch = useCallback(async (m: AIModel, body: ModelPatchBody, success?: string): Promise<AIModel | undefined> => {
+  const patch = useCallback(async (m: Pick<AIModel, "id">, body: ModelPatchBody, success?: string): Promise<AIModel | undefined> => {
     setBusy(m.id);
     try {
       const res = await api.patch<AIModel>(modelPath(m.id), body);
@@ -42,7 +46,12 @@ export function useModelPatch() {
   }, [qc]);
   const setEnabled = useCallback((m: AIModel, on: boolean) =>
     patch(m, { status: on ? "enabled" : "disabled" }, on ? tr("{name} enabled", { name: m.display_name }) : tr("{name} disabled", { name: m.display_name })), [patch]);
-  return { patch, setEnabled, busy };
+  // one route of a model: the toast names the provider, since every route has the same name
+  const setRouteEnabled = useCallback((r: ModelRoute, on: boolean) => {
+    const vars = { name: r.display_name, provider: providerLabel(r.provider) };
+    return patch(r, { status: on ? "enabled" : "disabled" }, on ? tr("{name} on {provider} switched on", vars) : tr("{name} on {provider} switched off", vars));
+  }, [patch]);
+  return { patch, setEnabled, setRouteEnabled, busy };
 }
 
 export const TASK_ICON: Record<string, typeof Film> = {
@@ -302,9 +311,14 @@ export function CompareToggle({ name, on, onToggle, disabled, className }: { nam
 
 /* ── spec-sheet card (grid view) ────────────────────────────────────────────── */
 
-export const ModelCard = memo(function ModelCard({ m, admin, busy, onToggle, onOpen, index, open, comparing, compareFull, onCompare }: {
+/**
+ * One engine, or (grouped catalog) one model led by its cheapest live route. A model with several routes lists them, each
+ * with its own on/off switch for admins, in place of the single switch.
+ */
+export const ModelCard = memo(function ModelCard({ m, admin, busy, onToggle, onOpen, index, open, comparing, compareFull, onCompare, busyRoute, onToggleRoute }: {
   m: AIModel; admin: boolean; busy: boolean; onToggle: (m: AIModel, on: boolean) => void; onOpen: (m: AIModel) => void; index?: number;
   open?: boolean; comparing?: boolean; compareFull?: boolean; onCompare?: (m: AIModel) => void;
+  busyRoute?: string | null; onToggleRoute?: (r: ModelRoute, on: boolean) => void;
 }) {
   const t = useT();
   const name = m.display_name || m.endpoint;
@@ -315,15 +329,18 @@ export const ModelCard = memo(function ModelCard({ m, admin, busy, onToggle, onO
   // only the first screenful animates in; later pages just appear
   const r = index !== undefined && index < 12 ? rise(index) : null;
   const ok = successPct(m);
+  const routes = m.routes ?? [];
+  const multi = routes.length > 1;
+  const status = cardStatus(m);
   return (
-    <article data-status={m.status} data-open={open || undefined} style={r?.style}
+    <article data-status={status} data-open={open || undefined} style={r?.style}
       className={cn("hud hub-card group relative flex h-full flex-col gap-3 rounded-xl border bg-panel p-3.5", r?.className)}>
       <button type="button" onClick={() => onOpen(m)} aria-label={t("Open {name}", { name })} className="absolute inset-0 z-[1] rounded-xl outline-offset-[-2px]" />
 
       <div className="pointer-events-none flex items-center justify-between gap-2">
         <ProviderBadge m={m} />
         <span className="flex shrink-0 items-center gap-1">
-          {m.status !== "enabled" && <StatusBadge status={m.status} />}
+          {status !== "enabled" && <StatusBadge status={status} />}
           <StateBadge m={m} />
         </span>
       </div>
@@ -347,7 +364,8 @@ export const ModelCard = memo(function ModelCard({ m, admin, busy, onToggle, onO
         </div>
         <CapRow m={m} />
         {mapped ? <SpecTags m={m} modes={3} /> : <span className="text-2xs text-dim">{t("Details not mapped yet")}</span>}
-        <RoutesLine m={m} />
+        {/* a grouped card lists its routes below; "Also on" is for the one-card-per-engine view */}
+        {!m.routes && <RoutesLine m={m} />}
         {m.unmapped_required?.length > 0 && (
           <p className="flex items-center gap-1 text-2xs text-warn" title={m.unmapped_required.join(", ")}>
             <AlertTriangle className="size-3 shrink-0" /><span className="truncate">{t("Needs mapping: {fields}", { fields: m.unmapped_required.slice(0, 3).join(", ") })}</span>
@@ -356,6 +374,8 @@ export const ModelCard = memo(function ModelCard({ m, admin, busy, onToggle, onO
       </div>
 
       <MeterPair m={m} className="pointer-events-none" />
+
+      {multi && <CardRoutes m={m} admin={admin} busyId={busyRoute ?? null} onToggle={onToggleRoute} />}
 
       <div className="mt-auto flex flex-col gap-2.5 border-t border-line pt-3">
         <div className="pointer-events-none flex items-end justify-between gap-3">
@@ -367,7 +387,7 @@ export const ModelCard = memo(function ModelCard({ m, admin, busy, onToggle, onO
         </div>
         <div className="relative z-[2] flex items-center justify-between gap-2">
           {onCompare ? <CompareToggle name={name} on={!!comparing} disabled={compareFull} onToggle={() => onCompare(m)} /> : <span />}
-          <EnableToggle m={m} admin={admin} busy={busy} onToggle={(on) => onToggle(m, on)} />
+          {multi ? <RoutesOn routes={routes} /> : <EnableToggle m={m} admin={admin} busy={busy} onToggle={(on) => onToggle(m, on)} />}
         </div>
       </div>
     </article>
@@ -386,6 +406,10 @@ export const ModelRow = memo(function ModelRow({ m, admin, busy, onToggle, onOpe
   const { value, exact } = perSecond(m);
   const clip = clipUsd(m);
   const lit = capRows(m).filter((r) => r.on);
+  // grouped: the row is the model's lead route; the others are counted here and switched on the model page
+  const routes = m.routes ?? [];
+  const multi = routes.length > 1;
+  const status = cardStatus(m);
   return (
     <tr onClick={() => onOpen(m)} data-selected={open || undefined} className="group cursor-pointer">
       <td className="cx-stick max-w-[20rem]">
@@ -393,7 +417,16 @@ export const ModelRow = memo(function ModelRow({ m, admin, busy, onToggle, onOpe
           className="block max-w-full truncate rounded text-left text-sm font-medium text-ink hover:text-accent-ink">{name}</button>
         <p className="mono max-w-[18rem] truncate text-2xs text-dim" title={m.id}>{modelSubtitle(m)}</p>
       </td>
-      <td><span className="inline-flex items-center gap-2"><ProviderBadge m={m} /></span></td>
+      <td>
+        <span className="inline-flex items-center gap-2">
+          <ProviderBadge m={m} />
+          {multi && (
+            <span className="mono inline-flex items-center gap-0.5 text-2xs text-dim" title={`${t("Routes")}: ${routes.map((x) => providerLabel(x.provider)).join(" · ")}`}>
+              <Route className="size-3" aria-hidden />+{routes.length - 1}
+            </span>
+          )}
+        </span>
+      </td>
       <td><span className="inline-flex items-center gap-1.5 text-mute"><TaskIcon className="size-3.5" aria-hidden />{t(TASK_LABELS[m.task] ?? m.task)}</span></td>
       <td>
         {lit.length ? (
@@ -409,12 +442,12 @@ export const ModelRow = memo(function ModelRow({ m, admin, busy, onToggle, onOpe
       <td className="cx-mono">{m.tier ? t(TIER_LABELS[m.tier] ?? m.tier) : "—"}</td>
       <td className="cx-r">{m.rating != null ? <span className="inline-flex items-center gap-1"><Star className="size-3 text-dim" aria-hidden />{m.rating.toFixed(1)}</span> : <span className="text-dim">—</span>}</td>
       <td className="cx-r" title={(m.failures || 0) > 0 ? t("{n} failed", { n: m.failures }) : undefined}>{(m.uses || 0).toLocaleString()}</td>
-      <td><span className="inline-flex flex-wrap items-center gap-1"><StatusBadge status={m.status} /><StateBadge m={m} /></span></td>
+      <td><span className="inline-flex flex-wrap items-center gap-1"><StatusBadge status={status} /><StateBadge m={m} /></span></td>
       {/* w-px, not .cx-fit: a 1% column inflates a max-content table to (content / 1%) wide */}
       <td className="w-px whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
         <span className="inline-flex items-center gap-2">
           {onCompare && <CompareToggle name={name} on={!!comparing} disabled={compareFull} onToggle={() => onCompare(m)} />}
-          <EnableToggle m={m} admin={admin} busy={busy} onToggle={(on) => onToggle(m, on)} />
+          {multi ? <RoutesOn routes={routes} /> : <EnableToggle m={m} admin={admin} busy={busy} onToggle={(on) => onToggle(m, on)} />}
         </span>
       </td>
     </tr>

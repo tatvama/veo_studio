@@ -88,7 +88,8 @@ export function SpendPill() {
 export function ProviderDots() {
   const t = useT();
   const { data } = useSettings();
-  const list = data?.providers ?? [];
+  // keys that run no generation themselves (the BytePlus asset library) are not counted as providers
+  const list = (data?.providers ?? []).filter((p) => p.engine !== false);
   if (!list.length) return null;
   const live = list.filter((p) => p.mode === "live").length;
   const tone = (m: string) => (m === "live" ? "bg-ok" : m === "mock" ? "bg-warn" : "bg-dim/60");

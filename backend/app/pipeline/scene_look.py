@@ -115,26 +115,27 @@ def keyframe_of(db: Session, shot: Shot | None) -> Path | None:
     return st.abs(k.path) if k and is_real(k) and st.exists(k.path) else None
 
 
-def end_frame(db: Session, src: Shot, tmp: Path | None) -> tuple[Path | None, str]:
-    """(frame, "video" | "keyframe" | ""): the last frame of the shot's current video (needs a tmp folder to extract
-    it into), else its keyframe."""
+def end_frame(db: Session, src: Shot, tmp: Path | None) -> tuple[Path | None, str, int | None]:
+    """(frame, "video" | "keyframe" | "", the video take it came from): the last frame of the shot's current video
+    (needs a tmp folder to extract it into), else its keyframe."""
     st = get_storage()
     if tmp is not None:
         v = current(db, src.id, "video")
         if v and is_real(v) and st.exists(v.path):
             try:
                 from . import ffmpeg as ff
-                return ff.extract_frame(st.abs(v.path), tmp / f"end_{src.id}.png", "last"), "video"
+                return ff.extract_frame(st.abs(v.path), tmp / f"end_{src.id}.png", "last"), "video", v.id
             except Exception as e:  # a broken clip: its keyframe still shows where things are
                 print(f"[scene_look] last frame of shot {src.id}: {e}")
     k = keyframe_of(db, src)
-    return (k, "keyframe") if k else (None, "")
+    return (k, "keyframe", None) if k else (None, "", None)
 
 
 @dataclass
 class Frames:
     prev: Path | None = None
     prev_from: str = ""  # video | keyframe
+    prev_take_id: int | None = None  # the clip whose last frame it is (core/scene_chain.follows reads this)
     anchor: Path | None = None
     anchor_shot_id: int | None = None
 
@@ -143,7 +144,7 @@ def continuity_frames(db: Session, shot: Shot, src: Shot | None, tmp: Path | Non
     """The frames a keyframe follows: the continuity source's end frame and the scene anchor's keyframe."""
     out = Frames()
     if src is not None:
-        out.prev, out.prev_from = end_frame(db, src, tmp)
+        out.prev, out.prev_from, out.prev_take_id = end_frame(db, src, tmp)
     a = anchor_for(db, shot)
     if a is not None:
         out.anchor, out.anchor_shot_id = keyframe_of(db, a), a.id

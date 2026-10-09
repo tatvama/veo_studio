@@ -3,6 +3,10 @@
 #   2. docker compose up -d --build
 #   3. Open http://<server-ip>:8100 and create the first admin.
 # For team access from anywhere without opening ports: docker compose --profile tunnel up -d (needs CLOUDFLARE_TUNNEL_TOKEN).
+# On Coolify, set the same variables in the app's Environment instead of .env. The AI keys are read by api AND worker:
+#   GEMINI_API_KEY, FAL_KEY, OPENROUTER_API_KEY, BYTEPLUS_API_KEY, BYTEPLUS_ACCESS_KEY, BYTEPLUS_SECRET_KEY
+#   (+ BYTEPLUS_REGION, BYTEPLUS_PROJECT). BytePlus and OpenRouter fetch input images by link, so they need
+#   STORAGE_BACKEND=s3 with the bucket settings. Readiness (database reachable): GET /api/health/ready.
 
 services:
   db:
