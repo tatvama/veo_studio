@@ -210,9 +210,10 @@ export const ShotCard = memo(function ShotCard({ shot, lang, aspect, index, sele
                       : t("{n} line(s) in {lang}; voice mode {mode}", { n: st.lines, lang, mode: shot.effective_voice_mode })} />
                   <Seg icon={<ShieldCheck />} state={qcBad ? "bad" : qcRan ? "done" : "todo"} label={qcBad ? t("QC failed") : qcRan ? t("QC passed") : t("Quality check")} />
                 </div>
-                {(stale || shot.video?.qc || shot.lipsync?.qc) && (
+                {(stale || shot.video?.qc || shot.lipsync?.qc || (!shot.video && shot.keyframe?.qc?.checked_at)) && (
                   <div className="mt-1.5 flex flex-wrap items-center gap-1 empty:hidden">
-                    <QcMini take={shot.video} lipTake={shot.lipsync} threshold={threshold} />
+                    {/* before there is a clip, the keyframe's own check */}
+                    <QcMini take={shot.video ?? shot.keyframe} lipTake={shot.lipsync} threshold={threshold} />
                     {stale && <StaleBadge reason={staleReason(shot)} className="ml-auto" />}
                   </div>
                 )}

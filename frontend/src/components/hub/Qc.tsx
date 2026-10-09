@@ -35,6 +35,11 @@ export function qcSummary(take: Take | null | undefined): QcSummary {
   if (qc.hand_issues) issues.push("Hand problems");
   if (qc.matches_action === false) issues.push("Action doesn't match the shot");
   if (qc.outfit_match === false) issues.push("Outfit doesn't match");
+  // keyframe QC (v3.1): set and light against the scene's anchor keyframe
+  const sceneThr = Number(qc.scene_threshold ?? 0.6);
+  const anchorChecked = qc.kind === "keyframe" && !!qc.compared_with_anchor;
+  if (anchorChecked && qc.set_ok === false) issues.push("Set doesn't match the scene");
+  if (anchorChecked && qc.lighting_ok === false) issues.push("Light doesn't match the scene");
   if (lipRep?.artifacts) issues.push("Mouth artifacts");
   if (lipRep && lipRep.face_visible === false) issues.push("Face not visible for lip-sync");
   const ident = qc.identity_match != null ? Number(qc.identity_match) : null;
@@ -48,7 +53,12 @@ export function qcSummary(take: Take | null | undefined): QcSummary {
   if (face != null) checks.push({ key: "face", label: "Face match", ok: face >= faceThr, score: face, thr: faceThr });
   if (ident != null) checks.push({ key: "ident", label: "Identity", ok: ident >= identThr, score: ident, thr: identThr });
   if (lip != null) checks.push({ key: "lip", label: "Lip-sync", ok: lip >= lipThr, score: lip, thr: lipThr });
-  if (qc.outfit_match !== undefined) checks.push({ key: "outfit", label: "Outfit", ok: qc.outfit_match !== false });
+  if (qc.outfit_match !== undefined) {
+    const wardrobe = qc.kind === "keyframe" && qc.wardrobe_match != null ? { score: Number(qc.wardrobe_match), thr: sceneThr } : {};
+    checks.push({ key: "outfit", label: "Outfit", ok: qc.outfit_match !== false, ...wardrobe });
+  }
+  if (anchorChecked && qc.set_match != null) checks.push({ key: "set", label: "Same set as the scene", ok: qc.set_ok !== false, score: Number(qc.set_match), thr: sceneThr });
+  if (anchorChecked && qc.lighting_match != null) checks.push({ key: "light", label: "Same light as the scene", ok: qc.lighting_ok !== false, score: Number(qc.lighting_match), thr: sceneThr });
   if (qc.matches_action !== undefined) checks.push({ key: "action", label: "Matches the action", ok: qc.matches_action !== false });
   if (qc.extra_people !== undefined) checks.push({ key: "people", label: "No extra people", ok: !qc.extra_people });
   if (qc.hand_issues !== undefined) checks.push({ key: "hands", label: "Hands", ok: !qc.hand_issues });
@@ -231,6 +241,8 @@ export function QcDetails({ take }: { take: Take }) {
           {q.face != null && <ScoreBar label={t("Face match")} value={q.face} thr={q.faceThr} />}
           {q.ident != null && <ScoreBar label={t("Identity (vision check)")} value={q.ident} thr={q.identThr} />}
           {q.lip != null && <ScoreBar label={t("Lip-sync")} value={q.lip} thr={q.lipThr} />}
+          {q.checks.filter((c) => (c.key === "set" || c.key === "light") && c.score != null && c.thr != null)
+            .map((c) => <ScoreBar key={c.key} label={t(c.label)} value={c.score!} thr={c.thr!} />)}
         </div>
       )}
       {q.face == null && q.faceSeen === 0 && <p className="text-dim">{t("No face detected in sampled frames.")}</p>}

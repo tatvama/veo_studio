@@ -46,12 +46,20 @@ class ScenePatch(BaseModel):
     coverage: list[str] | None = None
     blocking: str | None = None
     approved: bool | None = None
+    anchor_shot_id: int | None = None  # the shot whose keyframe sets the scene's look; null = the first shot
 
 
 @router.patch("/scenes/{scid}")
 def patch_scene(scid: int, body: ScenePatch, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
     sc = get_or_404(db, Scene, scid)
     data = body.model_dump(exclude_unset=True)
+    if data.get("anchor_shot_id"):
+        from ..models import Shot
+        a = db.get(Shot, data["anchor_shot_id"])
+        if not a or a.scene_id != sc.id:
+            raise HTTPException(400, "The scene anchor must be a shot of this scene")
+    elif "anchor_shot_id" in data:
+        data["anchor_shot_id"] = None
     old_wardrobe, old_props = dict(sc.wardrobe or {}), list(sc.prop_ids or [])
     for k, v in data.items():
         setattr(sc, k, v)

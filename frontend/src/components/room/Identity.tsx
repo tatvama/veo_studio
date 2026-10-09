@@ -175,6 +175,12 @@ export function IdentityPanel({ character: c, index, n }: { character: Character
           <Alert tone={status === "failed" ? "bad" : "info"} title={status === "failed" ? t("Training failed") : t("Training was stopped")}>{id.error}</Alert>
         )}
 
+        {c.training?.train_suggested && !inFlight && (
+          <Alert tone="info" title={t("Worth training an identity")}>
+            {t("{name} is in {n} shots. A trained face model keeps the face the same in every one of them.", { name: c.name, n: c.training.shots ?? 0 })}
+          </Alert>
+        )}
+
         {/* the training set: only images the user approved */}
         <div className={cn("rounded-lg border p-3.5", enough ? "border-ok/30 bg-ok/5" : "border-warn/40 bg-warn/5")}>
           <div className="mb-2.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">

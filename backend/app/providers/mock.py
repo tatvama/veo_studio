@@ -253,6 +253,10 @@ def llm(task: str, ctx: dict[str, Any]) -> dict[str, Any]:
         return {"identity_match": round(0.75 + (seed % 22) / 100, 2), "outfit_match": True, "extra_people": False,
                 "text_artifacts": False, "hand_issues": seed % 7 == 0, "matches_action": True,
                 "notes": "MOCK QC — real QC runs with a Gemini key."}
+    if task == "keyframe_qc":  # always passes: a placeholder keyframe must never trigger a paid retake
+        return {"identity_match": 0.9, "wardrobe_match": 0.9, "set_match": 0.9, "lighting_match": 0.9,
+                "extra_people": False, "hand_issues": False, "text_artifacts": False,
+                "notes": "MOCK keyframe QC — real QC runs with a Gemini key."}
     if task == "summary":
         return {"summary": f"MOCK summary of episode: {concept[:120]}"}
     if task == "cutdown":

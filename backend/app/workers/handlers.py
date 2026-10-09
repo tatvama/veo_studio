@@ -18,10 +18,10 @@ from ..db import SessionLocal, utcnow
 from ..events import emit
 from ..models import (AIModel, AudioAsset, Character, CharacterAsset, Episode, Export, Location, LocationAsset, Project, Shot,
                       Style, Take, User, VoiceProfile)
-from ..pipeline import assembler, faces, ffmpeg as ff
-from ..pipeline.prompting import (character_refs, compile_keyframe_prompt, compile_video_prompt, effective_quality,
-                                  effective_voice_mode, keyframe_refs, look_of, native_languages, negative_prompt, outfit_for,
-                                  shot_lines, video_refs)
+from ..pipeline import assembler, faces, ffmpeg as ff, scene_look
+from ..pipeline.prompting import (character_refs, compile_enhance_prompt, compile_keyframe_prompt, compile_video_prompt,
+                                  effective_quality, effective_voice_mode, enhance_refs, keyframe_refs, look_of,
+                                  native_languages, negative_prompt, outfit_for, shot_lines, video_refs)
 from ..pipeline.selection import current, select
 from ..pipeline.voice import build_dialogue, build_narration, choose_duration
 from ..providers.base import ProviderBlocked, ProviderError, ProviderNotConfigured, RetryableProviderError
@@ -171,14 +171,16 @@ def run_chain(ctx: JobContext, chain: str, modes_ok: list[str], build: Callable[
     raise last or ProviderError("all engines failed")
 
 
-def gen_image(ctx: JobContext, prompt: str, refs: list[Path], aspect: str, title: str = "", explicit: str | None = None):
-    """Image through the 'image' chain. Returns (MediaResult, engine_id)."""
+def gen_image(ctx: JobContext, prompt: str, refs: list[Path], aspect: str, title: str = "", explicit: str | None = None,
+              seed: int | None = None):
+    """Image through the 'image' chain. Returns (MediaResult, engine_id). `seed` reaches engines that take one."""
     refs = [r for r in refs if r and r.exists()]
     # with references only engines that can see them qualify: a text-only engine would ignore the character's look
     # (if none is free, e.g. Google's quota is used up, the job waits for it instead of making an unrelated image)
     modes = ["i2i"] if refs else ["t2i", "i2i"]
     m, mode, res, attempts = run_chain(ctx, "image", modes, lambda m, mode: GenRequest(
-        mode=mode, prompt=prompt, refs=refs if mode == "i2i" else [], aspect=aspect), explicit=explicit, expected_s=30)
+        mode=mode, prompt=prompt, refs=refs if mode == "i2i" else [], aspect=aspect, seed=seed), explicit=explicit,
+        expected_s=30)
     return res, m.id
 
 
@@ -188,12 +190,9 @@ def _identity(ch: Character, db=None, episode_no: int | None = None) -> dict | N
 
 
 def _continuity_source(db, shot: Shot) -> Shot | None:
-    """The shot this one continues from: an explicit Film Map link first, else the previous shot when asked."""
-    if shot.continuity_from_shot_id:
-        src = db.get(Shot, shot.continuity_from_shot_id)
-        if src and src.episode_id == shot.episode_id:
-            return src
-    return _prev_shot(db, shot) if shot.continuity_from_prev else None
+    """The shot this one continues from: an explicit Film Map link first, else the previous shot when asked, else (by
+    default, setting auto_scene_continuity) the previous shot when it is in the same scene and location."""
+    return scene_look.continuity_source(db, shot)
 
 
 def _loras_for(db, shot: Shot, episode_no: int | None) -> list[dict]:
@@ -211,51 +210,69 @@ def _loras_for(db, shot: Shot, episode_no: int | None) -> list[dict]:
 def keyframe(ctx: JobContext) -> dict:
     st = get_storage()
     tmp = st.tmp_dir()
+    own = ctx.payload if ctx.type == "keyframe" else {}  # (called inside a video job, the payload is the video's)
+    retake = int(own.get("retake_count") or 0)
     with SessionLocal() as db:
         shot = db.get(Shot, ctx.shot_id)
         project = _project_of(db, shot)
-        cont = None
-        src = _continuity_source(db, shot)
-        if src:
-            pv = current(db, src.id, "video")
-            if pv and st.exists(pv.path):
-                cont = ff.extract_frame(st.abs(pv.path), tmp / "prev_last.png", "last")
-            else:
-                pk = current(db, src.id, "keyframe")
-                cont = st.abs(pk.path) if pk and st.exists(pk.path) else None
-        refs = keyframe_refs(db, shot, cont)
-        prompt = compile_keyframe_prompt(db, shot, project, [l for l, _ in refs])
+        enhance_id = own.get("enhance_take_id")
+        frames = scene_look.Frames()
+        if enhance_id:  # Enhance: re-render this keyframe with the Pro model, same picture
+            src_take = db.get(Take, int(enhance_id))
+            if not src_take or src_take.shot_id != shot.id or src_take.kind != "keyframe" or not st.exists(src_take.path):
+                raise ProviderError("The keyframe to enhance is gone")
+            refs = enhance_refs(db, shot, st.abs(src_take.path))
+            prompt = compile_enhance_prompt(db, shot, project, [l for l, _ in refs])
+        else:
+            # the scene's anchor keyframe (set, light, palette, wardrobe) and the shot before (positions, props)
+            frames = scene_look.continuity_frames(db, shot, _continuity_source(db, shot), tmp)
+            refs = keyframe_refs(db, shot, frames.prev, frames.anchor, frames.prev_from)
+            prompt = compile_keyframe_prompt(db, shot, project, [l for l, _ in refs], fix=own.get("fix"))
         aspect, code = project.aspect, shot.code
         ep_row = db.get(Episode, shot.episode_id)
         ep_no = ep_row.number if ep_row else None
         chars = [db.get(Character, int(c)) for c in (shot.characters or [])]
         trained = [c for c in chars if c and _identity(c, db, ep_no)]
-        # "hero" keyframes use the Pro image model they were priced at
-        explicit = ctx.payload.get("engine") or ("google:image_hero" if ctx.payload.get("hero") else None)
-        ident = _identity(trained[0], db, ep_no) if (len(chars) == 1 and trained and not ctx.payload.get("engine")) else None
+        # "hero" keyframes (and Enhance) use the Pro image model they were priced at
+        explicit = ctx.payload.get("engine") or ("google:image_hero" if (ctx.payload.get("hero") or enhance_id) else None)
+        ident = _identity(trained[0], db, ep_no) if (len(chars) == 1 and trained and not ctx.payload.get("engine")
+                                                     and not enhance_id) else None
+        # the trained model sees no images: its prompt must not talk about any
+        lora_prompt = compile_keyframe_prompt(db, shot, project, [], fix=own.get("fix")) if ident else ""
         trainer_cfg = settings_store.get_setting(db, "identity_trainer") or {}
+        seed = scene_look.scene_seed(shot, project.id, retake) if not enhance_id else None
         db.commit()
-    ctx.progress(0.2, "Generating keyframe")
+    ctx.progress(0.2, "Enhancing keyframe" if enhance_id else "Generating keyframe")
     if ident:  # locked face: the character's own trained model
-        lp = f"{ident['trigger']}, {prompt}"
+        lp = f"{ident['trigger']}, {lora_prompt}"
         res = ctx.services.lora_image(ident.get("inference") or trainer_cfg.get("inference", "fal-ai/qwen-image-2512/lora"), lp,
                                       [{"path": ident["lora_url"], "scale": float(ident.get("scale", 1.0))}], aspect,
                                       title=f"{code} keyframe")
         engine = f"lora:{ident.get('trigger')}"
     else:
-        res, engine = gen_image(ctx, prompt, [p for _, p in refs], aspect, title=f"{code} keyframe", explicit=explicit)
+        res, engine = gen_image(ctx, prompt, [p for _, p in refs], aspect, title=f"{code} keyframe", explicit=explicit,
+                                seed=seed)
     with SessionLocal() as db:
         shot = db.get(Shot, ctx.shot_id)
+        params = {"refs": [l for l, _ in refs] if not ident else [], "continuity": bool(frames.prev),
+                  "anchor": bool(frames.anchor), "anchor_shot_id": frames.anchor_shot_id, "engine": engine,
+                  "engine_label": model_hub.label(db, engine) if not engine.startswith("lora:") else "Trained identity (LoRA)",
+                  "seed": seed, "retake_count": retake}
+        if enhance_id:
+            params["enhanced_from"] = int(enhance_id)
+        if own.get("fix"):
+            params["fix"] = list(own["fix"])
         t = save_take(db, ctx, shot, "keyframe", res.data, res.ext, provider=res.usage.provider, model=res.usage.model,
-                      params={"refs": [l for l, _ in refs], "continuity": bool(cont), "engine": engine,
-                              "engine_label": model_hub.label(db, engine) if not engine.startswith("lora:") else "Trained identity (LoRA)"},
-                      prompt=prompt, cost=res.usage.usd)
+                      params=params, prompt=lp if ident else prompt, cost=res.usage.usd,
+                      parent=int(enhance_id) if enhance_id else None)
         if shot.status in ("draft", "keyframe_ready"):
             shot.status = "keyframe_ready"
         ctx.cost(res.usage, db)
         db.commit()
         emit(db, ctx.project_id, "take.created", {"shot_id": shot.id, "take_id": t.id, "kind": "keyframe"})
     shutil.rmtree(tmp, ignore_errors=True)
+    from .handlers_keyframe import queue_qc
+    queue_qc(ctx, t.id, ctx.shot_id, code)  # vision check, one automatic retake if it fails
     return {"take_id": t.id, "engine": engine}
 
 
@@ -1146,3 +1163,6 @@ def dub(ctx: JobContext) -> dict:
         ex = ctx.enqueue_child("export", {"language": lang, "preset": ctx.payload["then_export"], "options": {"captions": True}})
         ctx.wait_children([ex], "Export")
     return {"voices": len(children), "lipsyncs": len(lip_jobs), "failed": failed}
+
+
+from . import handlers_keyframe  # noqa: E402,F401  (registers keyframe QC; imported here so the worker always has it)

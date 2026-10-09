@@ -11,8 +11,9 @@ from ..core import collab, dependencies, generation, jobs, studio
 from ..db import get_db
 from ..events import emit
 from ..models import Episode, Project, Shot, Take, User
+from ..pipeline import approved_stills, scene_look
 from ..pipeline.prompting import compile_keyframe_prompt, compile_video_prompt, dialogue_warnings, keyframe_refs, video_refs
-from ..pipeline.selection import select
+from ..pipeline.selection import current, select
 from ..security import current_user, require
 from ..storage import get_storage
 from .common import get_or_404, shot_out, take_out
@@ -24,19 +25,30 @@ def _project(db: Session, shot: Shot) -> Project:
     return db.get(Project, db.get(Episode, shot.episode_id).project_id)
 
 
+def _scene_anchor(db: Session, s: Shot) -> dict | None:
+    """Which shot sets this shot's scene look, and whether it was pinned."""
+    sc = scene_look.scene_of(db, s)
+    a = scene_look.anchor_shot(db, sc)
+    if not a:
+        return None
+    return {"scene_id": sc.id, "shot_id": a.id, "code": a.code, "is_anchor": a.id == s.id,
+            "pinned": bool(sc.anchor_shot_id) and sc.anchor_shot_id == a.id, "auto": scene_look.auto_on(db)}
+
+
 @router.get("/shots/{sid}")
 def get_shot(sid: int, lang: str | None = None, user: User = Depends(current_user), db: Session = Depends(get_db)):
     s = get_or_404(db, Shot, sid)
     p = _project(db, s)
     takes = db.query(Take).filter(Take.shot_id == sid, Take.archived.is_(False)).order_by(Take.id.desc()).all()
-    return shot_out(db, s, p, lang) | {"takes": [take_out(t) for t in takes]}
+    return shot_out(db, s, p, lang) | {"takes": [take_out(t) for t in takes], "scene_anchor": _scene_anchor(db, s)}
 
 
 @router.get("/shots/{sid}/prompt")
 def shot_prompt(sid: int, lang: str | None = None, user: User = Depends(current_user), db: Session = Depends(get_db)):
     s = get_or_404(db, Shot, sid)
     p = _project(db, s)
-    krefs = keyframe_refs(db, s, None)
+    fr = scene_look.continuity_frames(db, s, scene_look.continuity_source(db, s), None)  # (no clip frame extracted for a preview)
+    krefs = keyframe_refs(db, s, fr.prev, fr.anchor, fr.prev_from)
     return {"video_prompt": compile_video_prompt(db, s, p, lang), "keyframe_prompt": compile_keyframe_prompt(db, s, p, [l for l, _ in krefs]),
             "video_refs": [l for l, _ in video_refs(db, s)], "keyframe_refs": [l for l, _ in krefs],
             "warnings": dialogue_warnings(s, lang or p.primary_language)}
@@ -271,12 +283,27 @@ class ApproveIn(BaseModel):
     approved: bool = True
 
 
+def _learn(db: Session, take: Take | None, project_id: int, user: User) -> None:
+    """A keyframe you picked or approved: its faces become 'approved still' references (pipeline/approved_stills.py)."""
+    try:
+        made = approved_stills.learn_from_keyframe(db, take)
+    except Exception as e:  # learning never gets in the way of picking a take
+        print(f"[approved_stills] take {take.id if take else None}: {e}")
+        db.rollback()
+        return
+    for cid in sorted({a.character_id for a in made}):
+        emit(db, project_id, "bible.updated", {"character_id": cid, "what": "approved_still"}, user_id=user.id, commit=False)
+
+
 @router.post("/shots/{sid}/approve")
 def approve_shot(sid: int, body: ApproveIn, user: User = Depends(require("reviewer")), db: Session = Depends(get_db)):
     s = get_or_404(db, Shot, sid)
     s.status = "approved" if body.approved else "video_ready"
-    db.commit()
     p = _project(db, s)
+    db.commit()
+    if body.approved:
+        _learn(db, current(db, s.id, "keyframe"), p.id, user)
+        db.commit()
     emit(db, p.id, "shot.updated", {"shot_id": s.id, "status": s.status, "by": user.name or user.email}, user_id=user.id)
     return shot_out(db, s, p)
 
@@ -288,6 +315,9 @@ def select_take(tid: int, user: User = Depends(require("reviewer")), db: Session
     db.commit()
     s = db.get(Shot, t.shot_id)
     p = _project(db, s)
+    if t.kind == "keyframe":
+        _learn(db, t, p.id, user)
+        db.commit()
     emit(db, p.id, "shot.updated", {"shot_id": s.id, "selected_take": t.id}, user_id=user.id)
     return take_out(t)
 

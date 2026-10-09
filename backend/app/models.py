@@ -334,6 +334,8 @@ class Scene(Base, Serializable):
     coverage: Mapped[Any] = mapped_column(JSON, default=list)  # planned shots [{framing, purpose}]
     blocking: Mapped[str] = mapped_column(Text, default="")
     approved: Mapped[bool] = mapped_column(Boolean, default=False)
+    # the shot whose keyframe sets the scene's look (set, light, palette, wardrobe); None = the first shot in order
+    anchor_shot_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 class Shot(Base, Serializable):

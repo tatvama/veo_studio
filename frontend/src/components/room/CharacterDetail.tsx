@@ -111,7 +111,9 @@ export function CharacterDetail({ cid, chars, onBack, onOpen, backLabel }: {
   const outfitAssets = refsAll.filter((a) => a.kind === "outfit");
   const outfitNames = [...new Set(outfitAssets.map((a) => a.outfit).filter(Boolean))];
   const lighting = refsAll.filter((a) => a.kind === "lighting").sort((a, b) => LIGHT_ORDER.indexOf(a.lighting ?? "") - LIGHT_ORDER.indexOf(b.lighting ?? "") || a.id - b.id);
-  const others = refsAll.filter((a) => !VIEW_ORDER.includes(a.kind) && !["expression", "outfit", "lighting"].includes(a.kind));
+  // faces from keyframes the user picked or approved (newest first): used right after the approved views
+  const stills = refsAll.filter((a) => a.kind === "approved_still").sort((a, b) => b.id - a.id);
+  const others = refsAll.filter((a) => !VIEW_ORDER.includes(a.kind) && !["expression", "outfit", "lighting", "approved_still"].includes(a.kind));
   // skeleton tiles per group while a job runs (progress ≈ images already made / planned)
   const pendingFor = (type: string, planned: (j: (typeof imageJobs)[number]) => number) =>
     imageJobs.filter((j) => j.type === type).reduce((n, j) => n + Math.max(0, planned(j) - Math.round((j.progress || 0) * planned(j))), 0);
@@ -132,6 +134,8 @@ export function CharacterDetail({ cid, chars, onBack, onOpen, backLabel }: {
     ...newOutfitJobs.map((j) => ({ key: `outfit-job-${j.id}`, title: t("Outfit: {name}", { name: String(j.payload?.outfit ?? "") }), pending: (j.payload?.views as string[] | undefined)?.length ?? 3, items: [] })),
     { key: "lighting", title: t("Lighting"), hint: t("The same face in day, dusk and night-interior light"), pending: pendLight,
       items: lighting.map((a) => toItem(a, t(LIGHT_LABEL[a.lighting ?? ""] ?? a.label))) },
+    { key: "stills", title: t("Approved stills"), hint: t("Faces from keyframes you picked. New keyframes use them right after the approved views."), pending: 0,
+      items: stills.map((a) => toItem(a, a.label || t("approved still"), a.outfit || undefined)) },
     { key: "other", title: t("Other"), pending: 0, items: others.map((a) => toItem(a, a.label || a.kind.replace(/_/g, " "), a.outfit || undefined)) },
   ].filter((g) => g.items.length || g.pending) : [{
     key: view, title: view === "training" ? t("Training set") : t("Identity tests"), pending: 0, minTile: 6,

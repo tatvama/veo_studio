@@ -39,5 +39,9 @@ def training_set(db: Session, ch: Character) -> dict:
 
 
 def summary(db: Session, ch: Character) -> dict:
+    from ..pipeline.approved_stills import train_suggested
     s = training_set(db, ch)
-    return {k: v for k, v in s.items() if k != "assets"}
+    out = {k: v for k, v in s.items() if k != "assets"}
+    # in many shots with no face model yet: training one locks the face better than reference images alone
+    out["train_suggested"], out["shots"] = train_suggested(db, ch)
+    return out

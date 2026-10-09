@@ -102,7 +102,9 @@ export interface Character {
     updated_at?: string; assets?: { asset_id: string; source_id: number; path: string; kind: string; status: "Active" | "Processing" | "Failed" | string; error?: string }[] } };
   /** What a face model would be trained on now: the user's photos + approved variations (or the sheet if no photos). */
   training?: { basis: "your_photos" | "sheet"; own: number; variations_approved: number; variations_waiting: number; count: number; min: number;
-    good: number; auto_fill: boolean };
+    good: number; auto_fill: boolean;
+    /** In many shots without a trained face model: suggest training one. */
+    train_suggested?: boolean; shots?: number };
 }
 export interface LocationAsset { id: number; kind: string; label: string; time_of_day: string; url: string; approved: boolean }
 export interface Location { id: number; name: string; description_text: string; locked: boolean; thumb_url: string; assets?: LocationAsset[] }
