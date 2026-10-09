@@ -3,17 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#0a0b0f" />
-    <meta name="description" content="VEO Studio — a team AI video studio: concept → hook → script → scenes → shots → video." />
-    <meta name="application-name" content="VEO Studio" />
+    <meta name="theme-color" content="#05070b" />
+    <meta name="description" content="Tatvam AI Studio — a production cockpit for AI video: concept → hook → script → scenes → shots → video." />
+    <meta name="application-name" content="Tatvam AI Studio" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-title" content="VEO Studio" />
+    <meta name="apple-mobile-web-app-title" content="Tatvam AI Studio" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <title>VEO Studio</title>
+    <title>Tatvam AI Studio</title>
     <script>
       // Apply theme / motion / UI language before first paint (keys mirror src/components/shell/theme.ts and src/lib/i18n.ts).
       (function () {
@@ -25,7 +25,7 @@
           d.setAttribute("data-theme", r);
           d.style.colorScheme = r;
           var m = document.querySelector('meta[name="theme-color"]');
-          if (m) m.setAttribute("content", r === "light" ? "#f5f3ee" : "#0a0b0f");
+          if (m) m.setAttribute("content", r === "light" ? "#e9edf4" : "#05070b");
           d.setAttribute("data-motion", localStorage.getItem("veo-motion") === "reduced" ? "reduced" : "full");
           var l = localStorage.getItem("veo-ui-lang");
           if (l) d.setAttribute("lang", l);
@@ -36,7 +36,7 @@
     </script>
   </head>
   <body>
-    <noscript>VEO Studio needs JavaScript to run.</noscript>
+    <noscript>Tatvam AI Studio needs JavaScript to run.</noscript>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
