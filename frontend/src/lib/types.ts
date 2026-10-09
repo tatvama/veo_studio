@@ -250,3 +250,17 @@ export interface Prefs { ui_language?: string; theme?: "dark" | "light" | "syste
 export interface HookInsight { hook: string; avg_view_pct: number | null; views: number; export_id: number; retention: [number, number][] }
 export interface Stroke { color: string; width?: number; points: [number, number][] }
 export interface ReviewComment extends Comment { timecode: number | null; drawing: Stroke[]; guest_name: string; author?: string }
+
+// ── MCP access (Settings → MCP access, /oauth/consent) ───────────────────────
+export type McpScope = "read" | "write" | "spend";
+export interface McpInfo { enabled: boolean; url: string; oauth: boolean; scopes: McpScope[]; tools: string[] }
+export interface McpToken {
+  id: number; name: string; kind: "personal" | "oauth_access"; prefix: string; scopes: McpScope[]; project_ids: number[]; client_id: string;
+  expires_at: string | null; last_used_at: string | null; created_at: string;
+  /** The raw secret: only in the response that created the token. */
+  token?: string;
+}
+export interface OAuthRequestView {
+  id: string; client: string; redirect_host: string; scopes: McpScope[]; status: "pending" | "approved" | "denied" | "used"; expired: boolean;
+  allowed_scopes: McpScope[];
+}
