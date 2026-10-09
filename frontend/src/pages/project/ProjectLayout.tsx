@@ -163,6 +163,12 @@ export default function ProjectLayout() {
   // Below ~1100px there isn't room for a docked Director: float it over the page instead of squeezing the content.
   const floatAgent = vw < 1100;
   const showAgent = ui.agentOpen && !(drawerOpen && narrow) && (!floatAgent || floatOpen);
+  // The buttons show what is on screen. If the panel is "open" in settings but hidden (floating below 1100px, or the shot drawer
+  // has the room), a click brings it up instead of closing something nobody can see.
+  const toggleDirector = () => {
+    if (ui.agentOpen && !showAgent) { openDirector(); return; }
+    ui.toggleAgent();
+  };
   const ownMaterial = project.workflow === "shots" || project.workflow === "script";
   const simple = ownMaterial && !fullTabs;
   const shown = simple ? tabs.filter((tb) => SIMPLE_TABS.includes(tb.to)).map((tb) => (tb.to === "bible" ? { ...tb, label: t("Characters") } : tb)) : tabs;
@@ -172,6 +178,7 @@ export default function ProjectLayout() {
     step, showStep: !!step && hiddenTip !== stepKey && step.tab !== tab && (!simple || SIMPLE_TABS.includes(step.tab)), onHideStep: () => setHiddenTip(stepKey),
     title, onTitle: setTitle, onSaveTitle: saveTitle, onAddEpisode: addEpisode,
     autopilot: { running: apRunning, paused: apPaused, label: tr(settings?.catalog.autopilot?.labels[ap.stage ?? ""] ?? ap.stage ?? "") },
+    directorOpen: showAgent, onToggleDirector: toggleDirector,
   };
 
   return (

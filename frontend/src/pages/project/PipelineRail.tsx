@@ -73,6 +73,8 @@ export interface RailProps {
   step: NextStep | null; showStep: boolean; onHideStep: () => void;
   title: string; onTitle: (v: string) => void; onSaveTitle: () => void; onAddEpisode: () => void;
   autopilot: { running: boolean; paused: boolean; label: string };
+  /** Whether the Director panel is on screen right now, and how the buttons open or close it. */
+  directorOpen: boolean; onToggleDirector: () => void;
 }
 
 /** Groups the visible tabs under their phase, in pipeline order. */
@@ -108,10 +110,10 @@ export function PipelineRail(p: RailProps) {
 
   const director = (
     <Tooltip content={`${t("Director")} (${MOD}+J)`} side="right" disabled={!collapsed}>
-      <button data-tour="director" onClick={ui.toggleAgent} aria-pressed={ui.agentOpen}
+      <button data-tour="director" onClick={p.onToggleDirector} aria-pressed={p.directorOpen}
         className={clsx("group flex items-center gap-2 rounded-lg border outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ai/50",
           collapsed ? "mx-auto size-9 justify-center" : "h-9 w-full px-2.5",
-          ui.agentOpen ? "border-ai/40 bg-ai/12 text-ai" : "border-line bg-raised/60 text-mute hover:border-ai/40 hover:text-ai")}>
+          p.directorOpen ? "border-ai/40 bg-ai/12 text-ai" : "border-line bg-raised/60 text-mute hover:border-ai/40 hover:text-ai")}>
         <Bot className="size-4 shrink-0" />
         {!collapsed && <><span className="flex-1 text-left text-sm font-medium">{t("Director")}</span><span className="mono text-2xs text-dim">{MOD}J</span></>}
       </button>
@@ -247,7 +249,7 @@ export function PipelineStrip(p: RailProps) {
               className={clsx("mono h-6 rounded px-1.5 text-2xs font-medium", ctx.lang === l ? "bg-accent text-[var(--on-accent)]" : "text-mute")}>{LANG_SHORT[l]}</button>
           ))}
         </div>
-        <IconButton data-tour="director" title={t("Director")} active={ui.agentOpen} onClick={ui.toggleAgent}><Bot className="size-4" /></IconButton>
+        <IconButton data-tour="director" title={t("Director")} active={p.directorOpen} onClick={p.onToggleDirector}><Bot className="size-4" /></IconButton>
       </div>
       <ScrollStrip className="px-2 pb-1 pt-1.5" aria-label={t("Project sections")} role="navigation">
         <div className="flex items-center gap-1">
