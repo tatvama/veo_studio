@@ -13,16 +13,24 @@ The working plan is [TATVAM_PLAN.md](TATVAM_PLAN.md): the full design, the three
 You need Python 3.12 and Node 20 or newer. Both are already installed here.
 
 ```bash
-# first time only: creates backend/.venv, installs Python and npm packages
-npm run setup
+# backend (first time only)
+cd backend
+py -3.12 -m venv .venv
+.venv\Scripts\python -m pip install -r requirements.txt
 ```
 
 ```bash
-# starts the API + background worker on http://localhost:8100 and the web app on http://localhost:5173
-npm run dev
+# start the API + background worker on http://localhost:8100
+cd backend
+.venv\Scripts\python -m uvicorn app.main:app --port 8100 --reload
 ```
 
-Run just one side with `npm run dev:api` or `npm run dev:web`. Ctrl+C stops both.
+```bash
+# start the web app on http://localhost:5173 (second terminal)
+cd frontend
+npm install
+npm run dev
+```
 
 Open **http://localhost:5173**. The first visit asks you to create the **admin account**, then a short tour shows you around.
 
