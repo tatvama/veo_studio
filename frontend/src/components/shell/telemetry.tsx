@@ -1,13 +1,15 @@
 import { clsx } from "clsx";
-import { Bell, Cpu, Wallet } from "lucide-react";
+import { Bell, Cpu, IndianRupee, TriangleAlert, Wallet } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { useCurrency } from "../../lib/currency";
 import { ago, usd, usdOnly } from "../../lib/format";
 import { useT } from "../../lib/i18n";
 import { useJobs, useNotifications, useSettings } from "../../lib/queries";
 import { useUI } from "../../lib/store";
 import { Money } from "../kit/Money";
 import { Popover, Progress, ProgressRing, Tooltip } from "../ui";
+import { RateDetails } from "./money";
 
 const RUNNING = new Set(["running"]);
 const WAITING = new Set(["queued", "awaiting_approval", "proposed"]);
@@ -84,26 +86,51 @@ export function SpendPill() {
   );
 }
 
-/** One dot per AI provider: green = live key, amber = placeholder mode, grey = not set up. */
-export function ProviderDots() {
+const PROVIDER_TONE: Record<string, string> = { live: "bg-ok", mock: "bg-warn" };
+
+/**
+ * One chip for what runs in the background: a dot per AI service (green = live key, amber = placeholder mode, grey = not set
+ * up) and the dollar-rupee rate. It opens both in full: the services with a link to their keys, then the currency switch.
+ */
+export function SystemChip() {
   const t = useT();
   const { data } = useSettings();
+  const inr = useCurrency((s) => s.inr);
+  const stale = useCurrency((s) => s.stale);
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLButtonElement>(null);
   // keys that run no generation themselves (the BytePlus asset library) are not counted as providers
   const list = (data?.providers ?? []).filter((p) => p.engine !== false);
-  if (!list.length) return null;
   const live = list.filter((p) => p.mode === "live").length;
-  const tone = (m: string) => (m === "live" ? "bg-ok" : m === "mock" ? "bg-warn" : "bg-dim/60");
+  const dot = (mode: string) => clsx("size-1.5 shrink-0 rounded-full", PROVIDER_TONE[mode] ?? "bg-dim/60");
+  const label = t("AI services and currency");
   return (
-    <Tooltip
-      side="bottom"
-      content={<span className="block space-y-0.5">{list.map((p) => <span key={p.provider} className="flex items-center gap-2"><span className={clsx("size-1.5 rounded-full", tone(p.mode))} />{p.label.split(" (")[0]}<span className="text-dim">{p.mode === "live" ? t("live") : p.mode === "mock" ? t("placeholder") : t("no key")}</span></span>)}</span>}
-    >
-      <Link to="/settings" aria-label={t("AI services")} className={chip}>
-        <Cpu className="size-3.5 text-mute" />
-        <span className="flex items-center gap-1" aria-hidden>{list.map((p) => <span key={p.provider} className={clsx("size-1.5 rounded-full", tone(p.mode))} />)}</span>
-        <span className="mono hidden text-mute 2xl:inline">{live}/{list.length} {t("live")}</span>
-      </Link>
-    </Tooltip>
+    <>
+      <Tooltip content={inr ? `${label} · ${t("1 US dollar = {r} rupees", { r: inr.toFixed(2) })}` : label} side="bottom" disabled={open}>
+        <button ref={ref} aria-label={label} aria-expanded={open} onClick={() => setOpen((v) => !v)} className={clsx(chip, open && "border-accent/50 bg-hover")}>
+          {list.length > 0 ? <span className="flex items-center gap-1" aria-hidden>{list.map((p) => <span key={p.provider} className={dot(p.mode)} />)}</span>
+            : <Cpu className="size-3.5 text-mute" />}
+          <span aria-hidden className="hidden h-3.5 w-px bg-line lg:block" />
+          {stale ? <TriangleAlert className="size-3.5 text-warn" /> : !inr && <IndianRupee className="size-3.5 text-mute lg:hidden" />}
+          <span className="mono hidden text-ink lg:inline">{inr ? `₹${inr.toFixed(2)}` : t("USD only")}</span>
+        </button>
+      </Tooltip>
+      <Popover open={open} onClose={() => setOpen(false)} anchor={ref} placement="bottom-end" width={320} className="p-3">
+        <p className="eyebrow flex items-center justify-between gap-2 pb-2">{t("AI services")}{list.length > 0 && <span className="mono normal-case tracking-normal">{live}/{list.length} {t("live")}</span>}</p>
+        <ul className="space-y-1">
+          {list.map((p) => (
+            <li key={p.provider} className="flex items-center gap-2 text-sm">
+              <span className={dot(p.mode)} />
+              <span className="min-w-0 flex-1 truncate">{p.label.split(" (")[0]}</span>
+              <span className="mono text-2xs text-dim">{p.mode === "live" ? t("live") : p.mode === "mock" ? t("placeholder") : t("no key")}</span>
+            </li>
+          ))}
+        </ul>
+        <Link to="/settings" onClick={() => setOpen(false)} className="mt-2 inline-flex text-xs font-medium text-accent-ink hover:underline">{t("Manage keys in Settings")}</Link>
+        <div className="my-3 h-px bg-line" />
+        <RateDetails />
+      </Popover>
+    </>
   );
 }
 

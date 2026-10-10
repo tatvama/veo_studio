@@ -16,7 +16,8 @@ import { useAuthStatus, useEpisode, useProject, useSettings } from "../../lib/qu
 import { useUI } from "../../lib/store";
 import { ROLE_RANK, type AutopilotState, type Episode } from "../../lib/types";
 import { ProjectContext, type ProjectCtx } from "./context";
-import { buildSteps, continueTarget, isOwnMaterial, useLastTabs } from "./flow";
+import { FocusBar } from "./FocusBar";
+import { buildSteps, continueTarget, isOwnMaterial, useFullFlow, useLastTabs } from "./flow";
 import { nextStep } from "./nextStep";
 import { PipelineRail, PipelineStrip, type RailProps } from "./PipelineRail";
 import { usePipeline } from "./pipeline";
@@ -50,10 +51,14 @@ const StudioPage = lazy(() => import("./studio/Studio"));
 const StoryPage = lazy(() => import("./Story"));
 const TimelinePage = lazy(() => import("./Timeline"));
 
+/** Below this width the Director floats over the page when asked for, instead of taking a column from it. */
+const DOCK_MIN = 1600;
+
 /**
  * A project's workspace: the rail on the left (the Overview and the five numbered steps), the open step in the middle under
- * its step bar (the step's pages and "Continue to …"), the Director docked on the right. The Overview is where a project
- * opens; projects made from your own material open on their shots.
+ * its step bar (the step's pages and "Continue to …"), the Director docked on the right on wide screens. The Overview is
+ * where a project opens. Projects made from your own material (shot by shot, or an imported script) open on their shots in
+ * a focused workspace instead: one header with Shots · Cast · Edit · Export, and the Director only floats in when asked for.
  */
 export default function ProjectLayout() {
   const t = useT();
@@ -73,9 +78,11 @@ export default function ProjectLayout() {
   const { data: settings } = useSettings();
   const [hiddenTip, setHiddenTip] = useState("");
   const lastTabs = useLastTabs(pid, tab);
+  const [fullFlow, setFullFlow] = useFullFlow(pid);
 
-  // Below ~1100px the Director floats over the page, so it only opens when asked (toggle or Ctrl/⌘+J), never by default.
+  // Where the Director floats over the page, it only opens when asked (its button or Ctrl/⌘+J), never by default.
   const [floatOpen, setFloatOpen] = useState(false);
+  const agentShown = useRef(false);
   const agentSeen = useRef(true);
   useEffect(() => { if (agentSeen.current) { agentSeen.current = false; return; } setFloatOpen(ui.agentOpen); }, [ui.agentOpen]);
   useEffect(() => {
@@ -103,12 +110,14 @@ export default function ProjectLayout() {
   const tabLabel = tabs.find((x) => x.to === tab)?.label;
   useDocumentTitle(tabLabel, project?.title);
 
-  // Ctrl/⌘+J opens the Director (Ctrl/⌘+K is the global command palette).
+  // Ctrl/⌘+J opens the Director and puts you in its box; pressed again from inside it, it closes the panel.
+  // (Ctrl/⌘+K is the global command palette.)
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === "j") {
         e.preventDefault();
-        openDirector();
+        if (agentShown.current && document.activeElement?.closest("[data-director]")) useUI.getState().setAgentOpen(false);
+        else openDirector();
       }
     };
     window.addEventListener("keydown", h);
@@ -166,16 +175,19 @@ export default function ProjectLayout() {
   const apPaused = ap.status === "paused";
   const step = nextStep(project, episode, ap, settings?.catalog.autopilot);
   const stepKey = step ? `${pid}:${eid}:${step.text}` : "";
-  // Below ~1100px there isn't room for a docked Director: float it over the page instead of squeezing the content.
-  const floatAgent = vw < 1100;
+  const own = isOwnMaterial(project);
+  const focused = own && !fullFlow;
+  // A docked Director takes a column from the page, so it only docks on wide screens; elsewhere, and in the focused
+  // workspace, it floats over the page instead of squeezing the content.
+  const floatAgent = focused || vw < DOCK_MIN;
   const showAgent = ui.agentOpen && !(drawerOpen && narrow) && (!floatAgent || floatOpen);
-  // The buttons show what is on screen. If the panel is "open" in settings but hidden (floating below 1100px, or the shot drawer
-  // has the room), a click brings it up instead of closing something nobody can see.
+  agentShown.current = showAgent;
+  // The buttons show what is on screen. If the panel is "open" in settings but hidden (floating and not asked for yet, or the
+  // shot drawer has the room), a click brings it up instead of closing something nobody can see.
   const toggleDirector = () => {
     if (ui.agentOpen && !showAgent) { openDirector(); return; }
     ui.toggleAgent();
   };
-  const own = isOwnMaterial(project);
   const area = areaOf(tab);
   const steps = buildSteps(t, project, episode, pipeline.stages, { current: tab, last: lastTabs });
   const current = steps.find((s) => s.id === area);
@@ -191,15 +203,16 @@ export default function ProjectLayout() {
     title, onTitle: setTitle, onSaveTitle: saveTitle, onAddEpisode: addEpisode,
     autopilot: { running: apRunning, paused: apPaused, label: tr(settings?.catalog.autopilot?.labels[ap.stage ?? ""] ?? ap.stage ?? "") },
     directorOpen: showAgent, onToggleDirector: toggleDirector,
+    focus: own ? { on: focused, set: (on) => setFullFlow(!on) } : undefined,
   };
 
   return (
     <ProjectContext.Provider value={ctx}>
       <div className="relative flex h-full">
-        <PipelineRail {...rail} />
+        {!focused && <PipelineRail {...rail} />}
         <div className="flex min-w-0 flex-1 flex-col">
-          <PipelineStrip {...rail} />
-          {current && eid > 0 && <StepBar pid={pid} step={current} tab={tab} cont={cont} total={steps.length} />}
+          {focused ? <FocusBar {...rail} tab={tab} /> : <PipelineStrip {...rail} />}
+          {!focused && current && eid > 0 && <StepBar pid={pid} step={current} tab={tab} cont={cont} total={steps.length} />}
           <div className="relative min-h-0 flex-1 overflow-hidden">
             {eid ? (
               <AnimatePresence mode="wait" initial={false}>
@@ -239,7 +252,15 @@ export default function ProjectLayout() {
             ) : <div className="p-8"><Spinner /></div>}
             <AnimatePresence initial={false}>
               {showAgent && floatAgent && (
-                <div key="agent-float" className="absolute inset-y-0 right-0 z-40 flex min-h-0 max-w-full shadow-modal"><AgentPanel key="agent" /></div>
+                // Esc inside the floating panel closes it (menus it opens render elsewhere and handle their own Esc)
+                <div key="agent-float" className="absolute inset-y-0 right-0 z-40 flex min-h-0 max-w-full shadow-modal"
+                  onKeyDown={(e) => {
+                    if (e.key !== "Escape" || e.defaultPrevented || !e.currentTarget.contains(e.target as Node)) return;
+                    e.stopPropagation();
+                    ui.setAgentOpen(false);
+                  }}>
+                  <AgentPanel key="agent" />
+                </div>
               )}
             </AnimatePresence>
           </div>

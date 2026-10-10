@@ -19,7 +19,7 @@ function useGroups(): Group[] {
       id: "global", title: t("Everywhere"), icon: Command,
       items: [
         { keys: [[MOD, "K"]], label: t("Command palette — jump to any page, project or setting") },
-        { keys: [[MOD, "J"]], label: t("Open the Director (inside a project)") },
+        { keys: [[MOD, "J"]], label: t("Open the Director (inside a project); again from its box to close it") },
         { keys: [["["]], label: t("Collapse or expand the pipeline rail") },
         { keys: [["?"]], label: t("Show keyboard shortcuts") },
         { keys: [["Esc"]], label: t("Close dialogs, drawers and menus") },

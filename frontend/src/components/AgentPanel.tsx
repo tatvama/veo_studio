@@ -165,6 +165,7 @@ export default function AgentPanel() {
   return (
     <motion.aside
       ref={aside}
+      data-director
       aria-label={t("Director")}
       initial={{ x: 32, opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}

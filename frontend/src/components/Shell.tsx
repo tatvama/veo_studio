@@ -58,8 +58,8 @@ function RouteTitle({ nav }: { nav: NavEntry[] }) {
 }
 
 /**
- * The cockpit: a top command bar, a slim rail, the work area, a status strip, and (on phones) a bottom tab bar.
- * Nothing here scrolls: panels inside the work area do.
+ * The cockpit: a top command bar, a slim rail (outside projects), the work area, a status strip, and (on phones) a bottom
+ * tab bar. Nothing here scrolls: panels inside the work area do.
  */
 export function Shell({ user, children }: { user: UserBrief; children: ReactNode }) {
   const t = useT();
@@ -100,7 +100,8 @@ export function Shell({ user, children }: { user: UserBrief; children: ReactNode
       {!pm && <RouteTitle nav={entries} />}
       <TopBar user={user} />
       <div className="flex min-h-0 flex-1">
-        <Rail role={user.role} />
+        {/* inside a project its own rail (or header) leads back out, so the global rail steps aside for the work */}
+        {!pm && <Rail role={user.role} />}
         <main id="main" key={moneyShape} tabIndex={-1} className="min-h-0 min-w-0 flex-1 outline-none">{children}</main>
       </div>
       <StatusBar />
