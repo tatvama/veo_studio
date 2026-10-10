@@ -22,3 +22,9 @@ scripts/i18n/work/
 
 # local claude settings
 .claude/settings.local.json
+
+# build info written by `tsc -b` (changes on every build)
+*.tsbuildinfo
+
+# git worktrees (Claude Code and scripts/dev/new-worktree.* put them here)
+.claude/worktrees/

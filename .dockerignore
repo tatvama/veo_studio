@@ -11,3 +11,8 @@ backend/.pytest_cache
 frontend/node_modules
 frontend/dist
 **/*.pyc
+.git
+.github
+.claude
+**/node_modules
+*.tsbuildinfo

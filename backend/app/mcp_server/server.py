@@ -14,6 +14,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from starlette.routing import Route
 
+from .. import __version__
 from ..config import get_settings
 from . import tools_production, tools_story
 
@@ -87,7 +88,7 @@ def build(with_auth: bool = True) -> MCPServer:
         from .auth import build_auth
         auth, provider, verifier = build_auth()
         kw = {"auth": auth, "auth_server_provider": provider, "token_verifier": verifier}
-    server = MCPServer(name="tatvam", title="Tatvam AI Studio", instructions=INSTRUCTIONS, version="1.0.0",
+    server = MCPServer(name="tatvam", title="Tatvam AI Studio", instructions=INSTRUCTIONS, version=__version__,
                        website_url=get_settings().public_base_url, **kw)
     for module in (tools_story, tools_production):
         for fn, title, hints in module.TOOLS:

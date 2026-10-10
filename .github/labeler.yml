@@ -1,0 +1,24 @@
+backend:
+  - changed-files:
+      - any-glob-to-any-file: ["backend/**"]
+frontend:
+  - changed-files:
+      - any-glob-to-any-file: ["frontend/**"]
+mcp:
+  - changed-files:
+      - any-glob-to-any-file: ["backend/app/mcp_server/**", "docs/MCP.md"]
+providers:
+  - changed-files:
+      - any-glob-to-any-file: ["backend/app/providers/**"]
+docs:
+  - changed-files:
+      - any-glob-to-any-file: ["**/*.md", "docs/**"]
+ci:
+  - changed-files:
+      - any-glob-to-any-file: [".github/**", "scripts/dev/**", "release-please-config.json", ".release-please-manifest.json"]
+docker:
+  - changed-files:
+      - any-glob-to-any-file: ["Dockerfile", "docker-compose.yml", ".dockerignore"]
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file: ["backend/requirements*.txt", "frontend/package.json", "frontend/package-lock.json"]

@@ -1,0 +1,4 @@
+# Development and CI tools on top of the app's own requirements.
+#   pip install -r requirements-dev.txt
+-r requirements.txt
+ruff==0.16.10
