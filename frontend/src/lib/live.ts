@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { receiveAgentProgress } from "./agentProgress";
 import { receivePresence, setLiveSender } from "./collab";
 
 /** Streams server events over WebSocket and refreshes the affected queries, so every teammate sees changes live. */
@@ -33,11 +34,15 @@ export function useLiveEvents(projectId: number | null) {
         setLiveSender((msg) => { if (sock && sock.readyState === WebSocket.OPEN) sock.send(JSON.stringify(msg)); });
       };
       ws.onmessage = (ev) => {
-        let e: { type: string; payload: Record<string, any> };
+        let e: { type: string; payload: Record<string, any>; user_id?: number | null };
         try { e = JSON.parse(ev.data); } catch { return; }
         const t = e.type;
         if (t === "presence") {  // who is here and what they are editing (not an event log entry)
           if (projectId) receivePresence(projectId, e.payload as any);
+          return;
+        }
+        if (t === "agent.progress") {  // the Director's live steps while a chat turn runs (nothing to refetch)
+          if (projectId) receiveAgentProgress(projectId, e.user_id, e.payload);
           return;
         }
         // a finished or blocked video changes the shot's recovery options too

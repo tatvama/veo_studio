@@ -1,4 +1,6 @@
-"""The Director on Claude (Anthropic Messages API): a manual tool loop with prompt caching and server-side refusal fallback.
+"""The Director on Claude (Anthropic Messages API): a manual tool loop with prompt caching, server-side refusal fallback,
+a task budget that lets Claude pace a long multi-step turn, the web search server tool, and pictures in tool results
+(look_at_shot), so it can see the keyframes and videos it judges.
 
 Memory: the exact API messages of each turn are saved on that turn's assistant AgentMessage (data["claude"]) and
 replayed append-only. Claude's thinking blocks are only valid while the system prompt, the tools and every earlier
@@ -7,6 +9,7 @@ since the last reply) go at the start of the new user turn instead. A thread sta
 or tools change, after 6 idle hours, past ~60k input tokens, or when the API rejects the stored history."""
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import uuid
@@ -22,20 +25,25 @@ from ..db import utcnow
 from ..models import AgentMessage
 from ..providers.base import Usage
 from . import prompts
-from .director import MAX_STEPS, _call
-from .tools import TOOL_DECLS, TOOL_FUNCS, AgentCtx
+from .director import _step, progress
+from .tools import TOOL_DECLS, TOOL_FUNCS, AgentCtx, memory_text, step_label
 
 DEFAULT_MODEL = "claude-sonnet-5-5"
 MAX_TOKENS = 16000
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
-BETAS = ["server-side-fallback-2026-07-01"]  # with fallbacks="default": a cyber / frontier-LLM decline is retried server-side
+# server-side fallback (with fallbacks="default": a cyber / frontier-LLM decline is retried server-side) + task budgets
+BETAS = ["server-side-fallback-2026-07-01", "task-budgets-2026-03-13"]
+CLAUDE_MAX_STEPS = 30  # model calls per chat turn (Gemini keeps director.MAX_STEPS)
+TASK_BUDGET = 120_000  # tokens Claude may spend across one turn's steps: it sees a countdown and paces itself (min 20k)
 THREAD_IDLE = timedelta(hours=6)
 THREAD_MAX_INPUT = 60_000  # prompt tokens of the last call; past this the next turn starts a new thread
 RESULT_CHARS = 12000
 
-# Same tools, same order, every call (they render first: any change breaks the cache and the stored thread)
+# Same tools, same order, every call (they render first: any change breaks the cache and the stored thread). Web search
+# runs on Anthropic's side; its results come back inside the assistant turn (server_tool_use / web_search_tool_result).
+WEB_SEARCH = {"type": "web_search_20260209", "name": "web_search", "max_uses": 5}
 TOOLS: list[dict] = [{"name": d["name"], "description": d["description"], "input_schema": d["parameters"]}
-                     for d in sorted(TOOL_DECLS, key=lambda d: d["name"])]
+                     for d in sorted(TOOL_DECLS, key=lambda d: d["name"])] + [WEB_SEARCH]
 
 
 def _client(key: str) -> anthropic.Anthropic:
@@ -156,6 +164,9 @@ def _turn(c: AgentCtx, message: str, selection: dict, since: list[str]) -> dict:
     ctx = (f"[Context from the studio, not typed by the user] Project '{p.title}' ({p.type}, {p.aspect}, primary language "
            f"{p.primary_language}, languages {', '.join(p.languages or [])}, quality {p.quality_mode}, mode {p.agent_mode}). "
            f"Current episode: {ep.number} '{ep.title}'.")
+    memory = memory_text(p)
+    if memory:
+        ctx += "\n" + memory
     if selection:
         ctx += f"\nSelected in the UI: {json.dumps(selection, sort_keys=True, ensure_ascii=False, default=str)}"
     if since:
@@ -166,12 +177,34 @@ def _turn(c: AgentCtx, message: str, selection: dict, since: list[str]) -> dict:
 def _result(c: AgentCtx, block: dict) -> dict:
     raw = str(block.get("name") or "")
     name = raw if raw in TOOL_FUNCS else next((n for n in TOOL_FUNCS if n.lower() == raw.lower()), raw)  # bash → Bash slips
-    out = _call(c, name, block.get("input") or {})
-    r: dict[str, Any] = {"type": "tool_result", "tool_use_id": block["id"],
-                         "content": json.dumps(out, ensure_ascii=False, default=str)[:RESULT_CHARS]}
+    out = _step(c, name, block.get("input") or {})
+    images = out.pop("_images", None) if isinstance(out, dict) else None
+    body = json.dumps(out, ensure_ascii=False, default=str)[:RESULT_CHARS]
+    r: dict[str, Any] = {"type": "tool_result", "tool_use_id": block["id"], "content": body}
+    if images:  # look_at_shot: the JSON first, then each picture after its label
+        r["content"] = [{"type": "text", "text": body}]
+        for label, data in images:
+            r["content"] += [{"type": "text", "text": label},
+                             {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                                          "data": base64.b64encode(data).decode()}}]
     if isinstance(out, dict) and "error" in out:
         r["is_error"] = True
     return r
+
+
+def _searches(c: AgentCtx, content: list[dict], seen: dict[str, int]) -> None:
+    """Web searches have already run on Anthropic's side when a response comes back: list each one as a step then (a
+    search cut short by pause_turn gets its result in the next response)."""
+    for b in content:
+        if b.get("type") == "server_tool_use" and b.get("name") == "web_search" and b.get("id") not in seen:
+            c.steps.append({"tool": "web_search", "label": step_label("web_search", b.get("input")), "ok": None})
+            seen[b["id"]] = len(c.steps) - 1
+            progress(c, seen[b["id"]], **c.steps[-1])
+    for b in content:
+        i = seen.get(b.get("tool_use_id")) if b.get("type") == "web_search_tool_result" else None
+        if i is not None and c.steps[i]["ok"] is None:
+            c.steps[i]["ok"] = isinstance(b.get("content"), list)  # an error comes back as one object, not a list
+            progress(c, i, **c.steps[i])
 
 
 def _failure(e: Exception) -> str:
@@ -187,7 +220,8 @@ def _failure(e: Exception) -> str:
 def run(c: AgentCtx, message: str, selection: dict, user_msg_id: int) -> tuple[str, dict]:
     """One chat turn on Claude. Returns (reply, extra data for the assistant message: the thread segment to store)."""
     db = c.db
-    model = settings_store.models(db).get("director_claude") or DEFAULT_MODEL
+    model = ((settings_store.get_setting(db, "director_claude_model") or "").strip()
+             or settings_store.models(db).get("director_claude") or DEFAULT_MODEL)
     prices = settings_store.prices(db)
     effort = settings_store.get_setting(db, "director_claude_effort")
     effort = effort if effort in EFFORTS else "medium"
@@ -199,11 +233,14 @@ def run(c: AgentCtx, message: str, selection: dict, user_msg_id: int) -> tuple[s
     def ask(msgs: list[dict]):
         return client.beta.messages.create(
             model=model, max_tokens=MAX_TOKENS, system=prompts.DIRECTOR_AGENT, tools=TOOLS, messages=msgs,
-            output_config={"effort": effort}, cache_control={"type": "ephemeral"}, betas=BETAS, fallbacks="default")
+            output_config={"effort": effort, "task_budget": {"type": "tokens", "total": TASK_BUDGET}},
+            cache_control={"type": "ephemeral"}, betas=BETAS, fallbacks="default")
 
-    text, keep, failed, prompt_tokens = "", True, False, 0
+    text, keep, failed, prompt_tokens, limited = "", True, False, 0, False
     extra: dict[str, Any] = {}
-    for step in range(MAX_STEPS):
+    searches: dict[str, int] = {}
+    last = CLAUDE_MAX_STEPS - 1
+    for step in range(CLAUDE_MAX_STEPS):
         try:
             try:
                 resp = ask(history + new)
@@ -231,13 +268,21 @@ def run(c: AgentCtx, message: str, selection: dict, user_msg_id: int) -> tuple[s
         content = [_dump(b) for b in resp.content]
         if content:  # an empty assistant turn can't be sent back
             new.append({"role": "assistant", "content": content})
+        _searches(c, content, searches)
         if resp.stop_reason == "pause_turn":
+            limited = step == last
             continue
         calls = [b for b in content if b.get("type") == "tool_use"]
-        if resp.stop_reason == "tool_use" and calls:
+        if resp.stop_reason == "tool_use" and calls and step < last:
             new.append({"role": "user", "content": [_result(c, b) for b in calls]})  # every result in one message
             continue
         text = _text(content)
+        if resp.stop_reason == "tool_use" and calls:  # out of steps: answer the calls unrun, so the stored thread stays valid
+            limited = True
+            new.append({"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": b["id"], "is_error": True,
+                 "content": "Not run: the turn hit its step limit first. Call it again if it is still needed."} for b in calls]})
+            break
         if calls:  # a tool call cut off (length limit): answer it so the stored thread stays valid
             new.append({"role": "user", "content": [
                 {"type": "tool_result", "tool_use_id": b["id"], "is_error": True,
@@ -247,6 +292,10 @@ def run(c: AgentCtx, message: str, selection: dict, user_msg_id: int) -> tuple[s
         break
     if failed and c.actions:
         text += " Done before that: " + "; ".join(c.actions) + "."
+    if limited:
+        done = (" Done so far: " + "; ".join(c.actions) + ".") if c.actions else ""
+        text = (text + "\n\n" if text else "") + (f"I stopped after {CLAUDE_MAX_STEPS} steps so this turn doesn't run on.{done} "
+                                                  "Say \"continue\" and I'll pick up from here.")
     if keep:
         extra["claude"] = {"thread": tid, "turn": turn, "messages": new, "fingerprint": fp, "model": model,
                            "input_tokens": prompt_tokens}

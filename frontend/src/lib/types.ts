@@ -194,8 +194,15 @@ export interface AgentMessage {
     actions?: string[];
     /** Actions that would replace existing work, waiting for the user's OK. */
     confirmations?: { id: string; tool: string; what: string; detail: string; status: "pending" | "done" | "declined" | "failed"; result?: string }[];
+    /** The tool calls the Director made this turn (ok: null = it never finished). */
+    steps?: AgentStep[];
+    /** The Director's working checklist for a multi-step request. */
+    plan?: AgentPlanStep[];
   };
 }
+
+export interface AgentStep { tool: string; label: string; ok: boolean | null }
+export interface AgentPlanStep { text: string; status: "todo" | "doing" | "done" }
 
 export interface Comment { id: number; target_type: string; target_id: number; body: string; resolved: boolean; created_at: string; user: UserBrief | null;
   timecode?: number | null; drawing?: Stroke[]; guest_name?: string }

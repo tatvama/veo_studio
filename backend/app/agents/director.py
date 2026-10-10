@@ -15,9 +15,9 @@ from ..models import AgentMessage, Episode, Project, User
 from ..providers.base import ProviderError, Usage
 from ..providers.services import Services, provider_mode
 from . import prompts
-from .tools import TOOL_DECLS, TOOL_FUNCS, AgentCtx, run_tool
+from .tools import TOOL_DECLS, TOOL_FUNCS, AgentCtx, for_json, memory_text, run_tool, step_label
 
-MAX_STEPS = 8
+MAX_STEPS = 8  # model calls per chat turn on Gemini (Claude has its own limit: director_claude.CLAUDE_MAX_STEPS)
 
 
 def _save(db: Session, project: Project, user: User | None, role: str, content: str, data: dict | None = None) -> AgentMessage:
@@ -28,12 +28,17 @@ def _save(db: Session, project: Project, user: User | None, role: str, content: 
     return m
 
 
-def _call(c: AgentCtx, name: str, args: Any) -> dict:
+def _args(args: Any) -> Any:
     if isinstance(args, str):
         try:
-            args = json.loads(args or "{}")
+            return json.loads(args or "{}")
         except json.JSONDecodeError:
-            args = {}
+            return {}
+    return args
+
+
+def _call(c: AgentCtx, name: str, args: Any) -> dict:
+    args = _args(args)
     if name not in TOOL_FUNCS:
         return {"error": f"unknown tool {name}"}
     try:
@@ -44,6 +49,30 @@ def _call(c: AgentCtx, name: str, args: Any) -> dict:
         c.db.rollback()
         detail = getattr(e, "detail", None) or str(e)
         return {"error": str(detail)[:500]}
+
+
+def progress(c: AgentCtx, step: int | None = None, **payload: Any) -> None:
+    """Live progress for the chat panel while the turn runs (agent.progress over the websocket). Tagged with the turn,
+    so the panel only shows the steps of the message it is waiting for."""
+    emit(c.db, c.project.id, "agent.progress", {"turn": c.turn, "step": step, **payload}, user_id=c.user.id)
+
+
+def _step(c: AgentCtx, name: str, args: Any) -> dict:
+    """One tool call from the model: a progress line before it runs, the call, then its outcome (kept on the reply as
+    data["steps"]). The plan is not a step: the panel shows it as its own checklist."""
+    args = _args(args)
+    if name == "update_plan":
+        out = _call(c, name, args)
+        progress(c, plan=c.plan)
+        return out
+    step = {"tool": name, "label": step_label(name, args), "ok": None}
+    c.steps.append(step)
+    i = len(c.steps) - 1
+    progress(c, i, tool=name, label=step["label"])
+    out = _call(c, name, args)
+    step["ok"] = not (isinstance(out, dict) and "error" in out)
+    progress(c, i, tool=name, label=step["label"], ok=step["ok"])
+    return out
 
 
 def engine(db: Session) -> str:
@@ -71,7 +100,7 @@ def run(db: Session, user: User, project: Project, episode: Episode | None, mess
         selection: dict | None = None) -> list[dict]:
     selection = selection or {}
     um = _save(db, project, user, "user", message, {"selection": selection})
-    c = AgentCtx(db=db, user=user, project=project, episode=episode)
+    c = AgentCtx(db=db, user=user, project=project, episode=episode, turn=um.id)
     eng = engine(db)
     extra: dict = {}
     if eng == "claude":
@@ -83,7 +112,9 @@ def run(db: Session, user: User, project: Project, episode: Episode | None, mess
         text = _mock_agent(c, message)
     msg = _save(db, project, None, "assistant", text, {"proposals": c.proposals, "actions": c.actions,
                                                          "confirmations": c.confirmations,
-                                                         "interaction_id": getattr(c, "_iid", ""), "engine": eng, **extra})
+                                                         "interaction_id": getattr(c, "_iid", ""), "engine": eng,
+                                                         **({"steps": c.steps} if c.steps else {}),
+                                                         **({"plan": c.plan} if c.plan else {}), **extra})
     return [public(msg.to_dict())]
 
 
@@ -103,6 +134,13 @@ def _summary(tool: str, out: dict) -> str:
         return f"Added {', '.join(added)} from the script." if added else "The cast already covers the script; nothing added."
     if tool == "make_cutdowns":
         return f"Created {len(out.get('cutdown_episode_ids', []))} cut-down episodes."
+    if tool == "plan_scene_cards":
+        return f"Scene cards re-planned: {len(out.get('scenes', []))} scenes."
+    if tool == "localize_script":
+        lang = catalog.LANGUAGES.get(out.get("language") or "", {}).get("name", "")
+        return f"{out.get('lines_translated', 0)} lines translated again into {lang}."
+    if tool == "marketing_copy":
+        return f"New marketing copy written: {len(out.get('copies', []))} platform/language sets."
     return "Done."
 
 
@@ -166,6 +204,9 @@ def _live_agent(c: AgentCtx, message: str, selection: dict) -> str:
     system = (prompts.DIRECTOR_AGENT + f"\n\nCurrent project: '{c.project.title}' ({c.project.type}, {c.project.aspect}, "
               f"primary language {c.project.primary_language}, languages {c.project.languages}, quality "
               f"{c.project.quality_mode}, mode {c.project.agent_mode}). Current episode: {ep.number} '{ep.title}'.")
+    memory = memory_text(c.project)
+    if memory:
+        system += "\n\n" + memory
     last = (c.db.query(AgentMessage).filter(AgentMessage.project_id == c.project.id, AgentMessage.role == "assistant")
             .order_by(AgentMessage.id.desc()).first())
     prev_iid = (last.data or {}).get("interaction_id") if last else None
@@ -192,7 +233,7 @@ def _live_agent(c: AgentCtx, message: str, selection: dict) -> str:
             break
         results = []
         for call in calls:
-            out = _call(c, call.get("name", ""), call.get("arguments") or call.get("args") or {})
+            out = for_json(_step(c, call.get("name", ""), call.get("arguments") or call.get("args") or {}))
             results.append({"type": "function_result", "name": call.get("name"), "call_id": call.get("id"),
                             "result": [{"type": "text", "text": json.dumps(out, ensure_ascii=False, default=str)[:12000]}]})
         input_ = results
@@ -216,7 +257,7 @@ def _mock_agent(c: AgentCtx, msg: str) -> str:
     out: list[str] = []
 
     def do(name: str, **kw) -> dict:
-        r = _call(c, name, kw)
+        r = _step(c, name, kw)  # steps and live progress too, so the chat panel shows them without a key
         if "error" in r:
             out.append(f"⚠ {name}: {r['error']}")
         return r

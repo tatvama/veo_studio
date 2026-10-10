@@ -3,6 +3,7 @@ import { ArrowDown, Check, Copy, Zap } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import type { AgentLive } from "../../lib/agentProgress";
 import { ago } from "../../lib/format";
 import { getUiLanguage, tr, useT } from "../../lib/i18n";
 import type { AgentMessage, UserBrief } from "../../lib/types";
@@ -12,6 +13,7 @@ import { ConfirmCard } from "./ConfirmCard";
 import { Proposal, type Decision } from "./Proposal";
 import { RichText, splitNote } from "./RichText";
 import { DirectorMark, ThinkingDots, type Suggestion } from "./shared";
+import { PlanChecklist, StepList, StepsDisclosure } from "./Steps";
 
 const EASE = [0.22, 1, 0.36, 1] as const;
 const CLUSTER_MS = 5 * 60_000;
@@ -125,6 +127,8 @@ const Row = memo(function Row({ item, me, boot, canEdit, decisions, busy, onDeci
   const confirmations = m.data?.confirmations ?? [];
   // what the Director already did on its own (Autopilot); things it only proposed are shown as cards instead
   const done = (m.data?.actions ?? []).filter((a) => !/:\s*proposed\b/i.test(a));
+  const plan = m.data?.plan ?? [];
+  const steps = m.data?.steps ?? [];
   const isMe = !!me && m.user?.id === me.id;
   const sender = !mine ? t("Director") : m.user ? (isMe ? t("You") : m.user.name || m.user.email) : t("Teammate");
   const { note, body } = mine ? { note: null, body: m.content } : splitNote(m.content);
@@ -165,6 +169,7 @@ const Row = memo(function Row({ item, me, boot, canEdit, decisions, busy, onDeci
               <time dateTime={m.created_at} title={`${fullTime(m.created_at)} · ${ago(m.created_at)}`} className="ml-1 normal-case tracking-normal text-dim">{clock(m.created_at)}</time>
             </p>
           )}
+          {plan.length > 0 && <PlanChecklist plan={plan} className="mt-2" />}
           {proposals.length > 0 && (
             <div className="mt-2 space-y-2">
               {proposals.map((p) => (
@@ -201,15 +206,25 @@ const Row = memo(function Row({ item, me, boot, canEdit, decisions, busy, onDeci
               </ul>
             </div>
           )}
+          {steps.length > 0 && <StepsDisclosure steps={steps} />}
         </div>
       )}
     </motion.div>
   );
 });
 
-/** Shown while the Director is working: a "transmitting" block with violet eq bars, a label, and after a few seconds the elapsed time. */
-function Thinking() {
+/** Live steps under the working indicator: the plan when there is one, then the latest tool calls. */
+const LIVE_STEPS = 6;
+
+/**
+ * Shown while the Director is working: a "transmitting" block with violet eq bars, a label, and after a few seconds the
+ * elapsed time; below it, the plan and the steps as they happen.
+ */
+function Thinking({ live }: { live?: AgentLive | null }) {
   const t = useT();
+  const steps = live?.steps ?? [];
+  const plan = live?.plan ?? [];
+  const hidden = Math.max(0, steps.length - LIVE_STEPS);
   const [secs, setSecs] = useState(0);
   useEffect(() => {
     const started = Date.now();
@@ -236,6 +251,20 @@ function Thinking() {
           <span>{secs >= 12 ? t("Still on it — bigger steps take a little longer") : t("Director is working…")}</span>
           {secs >= 5 && <span className="mono ml-auto text-xs tabular-nums text-dim">{secs}s</span>}
         </div>
+        {(plan.length > 0 || steps.length > 0) && (
+          <div className="space-y-2 border-t border-line/60 px-3 py-2.5">
+            {plan.length > 0 && <PlanChecklist plan={plan} live />}
+            {steps.length > 0 && (
+              <div>
+                <p className="mono mb-1.5 text-2xs font-medium uppercase tracking-[0.14em] text-dim">
+                  {steps.length === 1 ? t("1 step") : t("{n} steps", { n: steps.length })}
+                </p>
+                {hidden > 0 && <p className="mono mb-1 pl-[18px] text-2xs text-dim">{t("+{n} earlier", { n: hidden })}</p>}
+                <StepList steps={steps.slice(-LIVE_STEPS)} live />
+              </div>
+            )}
+          </div>
+        )}
         <div aria-hidden className="sweep h-0.5 bg-ai/25" />
       </div>
     </motion.div>
@@ -311,10 +340,12 @@ export interface ConversationProps {
   /** Confirmation cards (actions that would replace work): which one is being answered, and the answer handler. */
   confirmBusy: Record<string, "yes" | "no">;
   onConfirm: (messageId: number, id: string, approve: boolean) => void;
+  /** The Director's plan and steps so far, while `sending`. */
+  live?: AgentLive | null;
 }
 
 export function Conversation({ messages, loading, failed, onRetry, pending, sending, me, canEdit, suggestions, onPick, decisions, busy, onDecide,
-  confirmBusy, onConfirm }: ConversationProps) {
+  confirmBusy, onConfirm, live }: ConversationProps) {
   const t = useT();
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
@@ -432,7 +463,7 @@ export function Conversation({ messages, loading, failed, onRetry, pending, send
                 </div>
               </motion.div>
             )}
-            {sending && <Thinking key="thinking" />}
+            {sending && <Thinking key="thinking" live={live} />}
           </AnimatePresence>
         </div>
       </div>
