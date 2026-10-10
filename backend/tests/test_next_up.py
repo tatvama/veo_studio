@@ -203,6 +203,17 @@ def test_byteplus_balance_names_the_billing_policy():
         lib.balance()
 
 
+def test_byteplus_asset_library_names_the_missing_plan():
+    """Seen live: CreateAssetGroup answers SubscriptionRequired until Advanced Creation Rights is on. Not a key problem."""
+    no_plan = {"ResponseMetadata": {"Error": {"Code": "SubscriptionRequired", "Message": "This API requires an active "
+                                              "subscription. Please subscribe to an advanced or premium plan."}}}
+    lib = byteplus.AssetLibrary("AKAP:secret", http=httpx.Client(transport=httpx.MockTransport(
+        lambda r: httpx.Response(403, json=no_plan))))
+    with pytest.raises(byteplus.ProviderError, match="Advanced Creation Rights") as e:
+        lib.ensure_group("Asha")
+    assert "access key" not in str(e.value)
+
+
 def test_openrouter_balance_and_providers_live_count(client):
     def handle(req: httpx.Request) -> httpx.Response:
         if req.url.path.endswith("/key"):
