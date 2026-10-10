@@ -1,4 +1,5 @@
-"""Structured-output schemas for every writing task. Gemini is forced to return exactly these shapes."""
+"""Structured-output schemas for every writing task. The writing model (Claude, Gemini or OpenRouter) is forced to return
+exactly these shapes."""
 from __future__ import annotations
 
 from pydantic import BaseModel, Field

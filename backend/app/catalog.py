@@ -30,8 +30,9 @@ MODELS: dict[str, str] = {
     "lipsync": "lipsync-2",
     "lipsync_pro": "lipsync-2-pro",
     "lipsync_angles": "sync-3",
-    # Anthropic: the Director chat agent (Settings → Generation → Director)
+    # Anthropic: the Director chat agent (Settings → Generation → Director) and writing on Claude (→ Writing)
     "director_claude": "claude-sonnet-5-5",
+    "writer_claude": "claude-opus-5-5",
 }
 
 PRICES: dict[str, dict] = {
@@ -62,6 +63,9 @@ PRICES: dict[str, dict] = {
         "gemini-3.1-pro-preview": {"in": 2.00, "out": 12.00},
         # cache_write = 5-minute prompt-cache writes, cache_read = prompt-cache hits
         "claude-sonnet-5-5": {"in": 2.00, "out": 10.00, "cache_write": 2.50, "cache_read": 0.20},
+        "claude-opus-5-5": {"in": 4.00, "out": 20.00, "cache_write": 5.00, "cache_read": 0.20},
+        "claude-haiku-5-5": {"in": 0.10, "out": 0.50, "cache_write": 0.125, "cache_read": 0.01},
+        "claude-fable-5-1": {"in": 10.00, "out": 50.00, "cache_write": 12.50, "cache_read": 0.25},
     },
     "voice_design_each": {"gemini": 0.01, "elevenlabs": 0.05, "sarvam": 0.0},
 }

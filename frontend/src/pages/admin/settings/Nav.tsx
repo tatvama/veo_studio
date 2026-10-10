@@ -51,6 +51,7 @@ export const SETTING_SECTION: Record<string, string> = {
   team_monthly_cap_usd: "budget", alert_thresholds: "budget", creator_default_monthly_limit_usd: "budget",
   default_quality_mode: "generation", lipsync_model: "generation", google_first: "generation", cheapest_route: "generation",
   text_provider: "generation", openrouter_text_model: "generation", director_engine: "generation",
+  writer_claude_model: "generation", writer_claude_effort: "generation", listen_checks_gemini: "generation",
   quota_fallback_routes: "generation", safety_fallback: "generation", fallback_extra_limit_usd: "generation",
   byteplus_auto_register: "generation",
   auto_retake: "quality", max_auto_retakes: "quality", qc_threshold: "quality", face_match_threshold: "quality", lipsync_qc: "quality", lipsync_qc_threshold: "quality",
