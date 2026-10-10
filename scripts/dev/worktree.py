@@ -192,7 +192,15 @@ def cmd_clean(a: argparse.Namespace) -> None:
             print("Nothing removed.")
             return
     for w, _ in remove_wt:
-        git("worktree", "remove", str(w["path"]), cwd=root)
+        r = subprocess.run(["git", "worktree", "remove", str(w["path"])], cwd=root, capture_output=True, text=True, encoding="utf-8")
+        if r.returncode != 0:
+            # Windows: an editor, terminal or app session still has the folder open. Git has usually unregistered
+            # the worktree and deleted the files already; only the (empty) folder is left.
+            git("worktree", "prune", cwd=root, check=False)
+            if any(x["path"] == w["path"] for x in worktrees()):
+                print(f"skipped {w['path']}: {r.stderr.strip()}")
+                continue
+            print(f"note: {w['path']} is still open in another program; delete the leftover folder when it is closed")
         git("branch", "-D", w["branch_name"], cwd=root, check=False)
     for b, _ in remove_br:
         git("branch", "-D", b, cwd=root)
