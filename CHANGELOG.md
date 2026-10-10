@@ -7,7 +7,7 @@ Versions follow [Semantic Versioning](https://semver.org/).
 
 ## [3.0.0](https://github.com/tatvama/veo_studio/releases/tag/v3.0.0) (2026-10-10)
 
-First tagged release. It gathers everything merged so far (pull requests #1–#12) and starts the automated
+First tagged release. It gathers everything merged so far (pull requests #1–#13) and starts the automated
 release pipeline.
 
 ### Features
@@ -26,6 +26,7 @@ release pipeline.
 
 ### Bug Fixes
 
+* **providers:** never skip BytePlus over a $0 cash balance (card billing and AI Savings Plans pay while prepaid cash reads $0) ([#13](https://github.com/tatvama/veo_studio/pull/13)) ([46a9539](https://github.com/tatvama/veo_studio/commit/46a9539))
 * **db:** survive a flaky remote Postgres link (connect timeout, keepalives, retried reads) ([#4](https://github.com/tatvama/veo_studio/pull/4)) ([aefa3cc](https://github.com/tatvama/veo_studio/commit/aefa3cc))
 * **storage:** Cloudflare R2 is the shared media store and local disk a read-through cache, so media made on another machine loads ([#1](https://github.com/tatvama/veo_studio/pull/1)) ([0f24e60](https://github.com/tatvama/veo_studio/commit/0f24e60))
 

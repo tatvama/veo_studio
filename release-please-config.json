@@ -3,7 +3,7 @@
   "release-type": "simple",
   "include-component-in-tag": false,
   "include-v-in-tag": true,
-  "bootstrap-sha": "6500dfc1b22da0040e8c4a6a38abc218593f149d",
+  "bootstrap-sha": "46a953910e9c1e09466d4d9fb9227e0873b0402f",
   "pull-request-title-pattern": "chore: release ${version}",
   "pull-request-header": ":clapper: Merging this pull request publishes the release: tag, GitHub Release, Docker image on GHCR and (when configured) the production deploy.",
   "changelog-sections": [
