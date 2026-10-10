@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from .. import catalog, settings_store
 from ..core import budget
+from ..db import utcnow
 from ..events import emit
 from ..models import AgentMessage, Episode, Project, User
 from ..providers.base import ProviderError, Usage
@@ -203,7 +204,8 @@ def _live_agent(c: AgentCtx, message: str, selection: dict) -> str:
     ep = c.ep()
     system = (prompts.DIRECTOR_AGENT + f"\n\nCurrent project: '{c.project.title}' ({c.project.type}, {c.project.aspect}, "
               f"primary language {c.project.primary_language}, languages {c.project.languages}, quality "
-              f"{c.project.quality_mode}, mode {c.project.agent_mode}). Current episode: {ep.number} '{ep.title}'.")
+              f"{c.project.quality_mode}, mode {c.project.agent_mode}). Current episode: {ep.number} '{ep.title}'. "
+              f"Today is {utcnow():%A %d %B %Y} (UTC).")
     memory = memory_text(c.project)
     if memory:
         system += "\n\n" + memory

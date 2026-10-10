@@ -163,7 +163,7 @@ def _turn(c: AgentCtx, message: str, selection: dict, since: list[str]) -> dict:
     p, ep = c.project, c.ep()
     ctx = (f"[Context from the studio, not typed by the user] Project '{p.title}' ({p.type}, {p.aspect}, primary language "
            f"{p.primary_language}, languages {', '.join(p.languages or [])}, quality {p.quality_mode}, mode {p.agent_mode}). "
-           f"Current episode: {ep.number} '{ep.title}'.")
+           f"Current episode: {ep.number} '{ep.title}'. Today is {utcnow():%A %d %B %Y} (UTC).")
     memory = memory_text(p)
     if memory:
         ctx += "\n" + memory
