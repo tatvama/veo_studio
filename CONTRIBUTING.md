@@ -97,7 +97,7 @@ build(deps): bump fastapi to 0.136
 python scripts/dev/check.py
 ```
 
-Runs exactly what CI runs: ruff (backend lint), pytest (177 tests, about 7 minutes, mock providers), and `tsc -b` +
+Runs exactly what CI runs: ruff (backend lint), pytest (about 180 tests, about 7 minutes, mock providers), and `tsc -b` +
 `vite build`. `--fast` runs only lint + typecheck (seconds), `--backend` / `--frontend` one side. CI additionally
 builds the Docker image and starts it (smoke test), which needs Docker and is left to CI.
 

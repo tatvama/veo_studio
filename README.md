@@ -487,7 +487,7 @@ version lives in `version.txt`, `backend/app/__init__.py` and `frontend/package.
 cd backend && .venv/Scripts/python -m pytest
 ```
 
-177 tests, all in mock mode (about 7 minutes): the full pipeline end to end (concept → hooks → script → bible → sheets →
+About 180 tests, all in mock mode (about 7 minutes): the full pipeline end to end (concept → hooks → script → bible → sheets →
 voices → shots → keyframes → videos + QC → lip-sync → music → animatic → export → dubbing → Director → approvals),
 Model Hub schema mapping on real fal.ai schemas, routing and fallbacks, Google-first and cheapest-route rules,
 providers, MCP (HTTP, tokens, OAuth, the whole pipeline with continuity checks, spend scope), scene chain and scene
@@ -524,7 +524,7 @@ docs/                USER_GUIDE.md, MCP.md, V3.md, DESIGN.md
 
 ## Status: what's verified
 
-**Verified with mock providers:** all 177 backend tests; every page checked in a browser; upgrading older databases in
+**Verified with mock providers:** the full backend suite (179 tests on 10 Oct 2026); every page checked in a browser; upgrading older databases in
 place; renders in English and Kannada with correct Indic captions; the MCP pipeline end to end. CI also builds the
 Docker image and starts it on every pull request.
 

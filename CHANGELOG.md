@@ -32,7 +32,7 @@ release pipeline.
 
 ### Build & Dependencies
 
-* development pipeline: GitHub Actions CI (lint, 177 tests, typecheck, Docker smoke test), CodeQL, Dependabot, release-please releases with Docker images on GHCR, worktree and local-check scripts
+* development pipeline: GitHub Actions CI (lint, 179 tests, typecheck, Docker smoke test), CodeQL, Dependabot, release-please releases with Docker images on GHCR, worktree and local-check scripts
 
 ## Before 3.0.0
 
