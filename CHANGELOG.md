@@ -5,6 +5,24 @@ All notable changes to Tatvam AI Studio. From 3.0.0 on, this file is written by
 ([Conventional Commits](https://www.conventionalcommits.org/)); see [CONTRIBUTING.md](CONTRIBUTING.md#releases).
 Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.1.0](https://github.com/tatvama/veo_studio/compare/v3.0.0...v3.1.0) (2026-10-10)
+
+
+### Features
+
+* **ui:** spacious project layout and a focused shot-by-shot workspace ([#27](https://github.com/tatvama/veo_studio/issues/27)) ([028da12](https://github.com/tatvama/veo_studio/commit/028da12f9dc8d582607800e277f54e9558619be5))
+* **writing:** Claude writes and reviews everything by default ([#25](https://github.com/tatvama/veo_studio/issues/25)) ([3867f0f](https://github.com/tatvama/veo_studio/commit/3867f0f4064dc1259bb22193c803792a185f58f5))
+
+
+### Bug Fixes
+
+* **providers:** name the missing BytePlus asset-library plan ([#24](https://github.com/tatvama/veo_studio/issues/24)) ([f4e6e9b](https://github.com/tatvama/veo_studio/commit/f4e6e9b47dea96845fa6aed042856490028332e0))
+
+
+### Build & Dependencies
+
+* **deps:** bump the npm-minor-patch group across 1 directory with 3 updates ([#17](https://github.com/tatvama/veo_studio/issues/17)) ([f8014ce](https://github.com/tatvama/veo_studio/commit/f8014cef1bded960a931f501542a10002745ee17))
+
 ## [3.0.0](https://github.com/tatvama/veo_studio/releases/tag/v3.0.0) (2026-10-10)
 
 First tagged release. It gathers everything merged so far (pull requests #1–#13) and starts the automated
