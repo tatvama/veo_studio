@@ -1,5 +1,8 @@
-# Weekly dependency updates. Minor and patch updates arrive grouped in one PR per ecosystem;
+# Weekly dependency updates. npm and GitHub Actions: minor and patch updates arrive grouped in one PR;
 # major updates get their own PR so they can be tested on their own.
+# Python: backend/requirements.txt uses minimum versions (">=") and every Docker build installs the newest
+# matching release, so raising the minimums would be noise. Dependabot only opens a PR when a new release is
+# outside the allowed range (e.g. anthropic 2.x vs "<2") or for a security fix (security updates always run).
 version: 2
 updates:
   - package-ecosystem: pip
@@ -8,14 +11,12 @@ updates:
       interval: weekly
       day: monday
       timezone: Asia/Kolkata
+    versioning-strategy: increase-if-necessary
     open-pull-requests-limit: 5
     commit-message:
       prefix: build
       include: scope
     labels: [dependencies, backend]
-    groups:
-      python-minor-patch:
-        update-types: [minor, patch]
 
   - package-ecosystem: npm
     directory: /frontend
