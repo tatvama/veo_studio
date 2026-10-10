@@ -166,6 +166,7 @@ def test_trend_scout_researches_then_answers(claude):
     assert obj.trends == ["POV mini-dramas"] and usage.units == 3000  # both calls billed
     research, final = fake.calls
     assert research["tools"] == [CT.WEB_SEARCH] and "format" not in research["output_config"]  # citations + schema don't mix
+    assert research["messages"][0]["content"].startswith("Today is ")  # so searches look for what is current
     assert "tools" not in final and final["output_config"]["format"]["type"] == "json_schema"
     assert "Mini-dramas with a cold open" in final["messages"][0]["content"][-1]["text"]
 

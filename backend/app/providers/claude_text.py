@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import io
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TypeVar
 
@@ -141,7 +142,8 @@ class ClaudeText:
     def research(self, system: str, prompt: str, effort: str) -> tuple[str, int, float]:
         """Findings from Anthropic's web search, as plain text (search answers carry citations, which can't be combined
         with structured output, so the schema comes in a second call)."""
-        messages: list[dict] = [{"role": "user", "content": prompt}]
+        today = f"Today is {datetime.now(timezone.utc):%d %B %Y}: look for what is current now.\n\n"
+        messages: list[dict] = [{"role": "user", "content": today + prompt}]
         tokens, usd, parts = 0, 0.0, []
         for _ in range(4):  # a long search turn pauses; sending it back lets it carry on
             msg, t, u = self._ask(system, messages, {"effort": effort}, tools=[WEB_SEARCH])
