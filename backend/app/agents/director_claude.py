@@ -21,6 +21,7 @@ from ..core import budget
 from ..db import utcnow
 from ..models import AgentMessage
 from ..providers.base import Usage
+from ..providers.claude_text import cost
 from . import prompts
 from .director import MAX_STEPS, _call
 from .tools import TOOL_DECLS, TOOL_FUNCS, AgentCtx
@@ -46,23 +47,6 @@ def fingerprint(model: str) -> str:
     """Changes when anything ahead of the messages changes (model, system prompt, tools): a stored thread can't continue."""
     raw = json.dumps({"model": model, "system": prompts.DIRECTOR_AGENT, "tools": TOOLS}, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
-
-
-def cost(prices: dict, model: str, usage: Any) -> tuple[int, float]:
-    """(tokens, USD) of one response: input, 5-minute cache writes, cache reads and output each at their own rate.
-    When the server-side fallback ran, every attempt is listed in usage.iterations (top-level usage is only the last)."""
-    its = [i for i in (getattr(usage, "iterations", None) or []) if getattr(i, "type", "") in ("message", "fallback_message")]
-    parts = its if any(i.type == "fallback_message" for i in its) else [usage]
-    table = prices.get("text_per_million") or {}
-    tokens, usd = 0, 0.0
-    for u in parts:
-        p = table.get(getattr(u, "model", None) or model) or table.get(model) or {"in": 2.0, "out": 10.0}
-        tin, cw, cr, tout = (int(getattr(u, k, 0) or 0) for k in
-                             ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens", "output_tokens"))
-        tokens += tin + cw + cr + tout
-        usd += (tin * p["in"] + cw * p.get("cache_write", p["in"] * 1.25) + cr * p.get("cache_read", p["in"] * 0.1)
-                + tout * p["out"]) / 1e6
-    return tokens, usd
 
 
 def _prompt_tokens(usage: Any) -> int:

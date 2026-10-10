@@ -38,7 +38,7 @@ const EDITABLE = [
   "lipsync_qc", "lipsync_qc_threshold", "critic_rounds", "critic_min_score", "caption_style", "auto_reframe", "sfx_auto",
   "ui_default_language", "google_first", "native_dialogue_languages", "dialogue_words_qc", "dialogue_words_threshold", "outfit_qc",
   "cheapest_route", "text_provider", "openrouter_text_model", "director_engine", "quota_fallback_routes", "safety_fallback",
-  "fallback_extra_limit_usd", "byteplus_auto_register",
+  "fallback_extra_limit_usd", "byteplus_auto_register", "writer_claude_model", "writer_claude_effort", "listen_checks_gemini",
   "auto_scene_continuity", "keyframe_qc", "keyframe_auto_retake", "keyframe_qc_threshold",
 ] as const;
 
@@ -59,6 +59,22 @@ const LIPSYNC_MODELS = [
   { value: "lipsync-2", label: "lipsync-2 — standard" },
   { value: "lipsync-2-pro", label: "lipsync-2-pro — sharper mouth detail" },
   { value: "sync-3", label: "sync-3 — handles head turns and angles" },
+];
+
+// Claude models for writing (Settings → Writing). Opus writes best; Sonnet costs half; Haiku is for tight budgets.
+const CLAUDE_WRITERS = [
+  { value: "claude-opus-5-5", label: "Claude Opus 5.5 — best writing" },
+  { value: "claude-sonnet-5-5", label: "Claude Sonnet 5.5 — half the price" },
+  { value: "claude-haiku-5-5", label: "Claude Haiku 5.5 — cheapest" },
+  { value: "claude-fable-5-1", label: "Claude Fable 5.1 — most capable, priciest" },
+];
+
+const EFFORTS = [
+  { value: "low", label: "Low — quick, cheapest" },
+  { value: "medium", label: "Medium — recommended" },
+  { value: "high", label: "High — more careful" },
+  { value: "xhigh", label: "Extra high" },
+  { value: "max", label: "Max — slowest, priciest" },
 ];
 
 const TTS_PROVIDERS = [
@@ -307,6 +323,8 @@ export default function SettingsPage() {
   const quality = String(draft.default_quality_mode || "saver");
   const ttsPrices = (data.prices?.tts_per_1k_chars ?? {}) as Record<string, number>;
   const lipsyncPrices = (data.prices?.lipsync_per_second ?? {}) as Record<string, number>;
+  const textPrices = (data.prices?.text_per_million ?? {}) as Record<string, { in?: number; out?: number }>;
+  const writer = String(draft.text_provider ?? "anthropic");
   const providerMode = Object.fromEntries(data.providers.map((p) => [p.provider, p.mode]));
   const baseModelOverrides = (base.models ?? {}) as Record<string, string>;
   const modelOverrides = (draft.models ?? {}) as Record<string, string>;
@@ -454,20 +472,59 @@ export default function SettingsPage() {
                     ? t("When a model runs on several providers (e.g. Seedance on BytePlus, OpenRouter and fal), the cheapest live one is tried first and the others take over if it fails.")
                     : t("Off: the engine named in the chain is tried first; its other providers are only a fallback.")}
                   checked={draft.cheapest_route !== false} disabled={ro} changed={ch("cheapest_route")} onChange={(v) => set("cheapest_route", v)} />
-                <Row label={t("Writing (scripts, prompts, reviews)")} hint={t("OpenRouter is also used automatically when there is no Gemini key. Clips sent for review stay on Gemini, which watches video.")} changed={ch("text_provider") || ch("openrouter_text_model")}>
+                <Row label={t("Writing (scripts, prompts, reviews)")}
+                  hint={writer === "anthropic"
+                    ? t("Claude writes every brief, hook, script, shot list and review, and researches trends on the web. Without an Anthropic key, Gemini writes instead.")
+                    : writer === "openrouter"
+                      ? t("OpenRouter writes. Clips sent for listening checks stay on Gemini, which hears audio.")
+                      : t("Gemini writes. OpenRouter is used automatically when there is no Gemini key.")}
+                  changed={ch("text_provider") || ch("openrouter_text_model") || ch("writer_claude_model")}>
                   <div className="flex w-full max-w-md flex-wrap gap-2">
                     <div className="min-w-36 flex-1">
-                      <Select value={draft.text_provider ?? "gemini"} disabled={ro} aria-label={t("Writing (scripts, prompts, reviews)")} onChange={(e) => set("text_provider", e.target.value)}>
+                      <Select value={writer} disabled={ro} aria-label={t("Writing (scripts, prompts, reviews)")} onChange={(e) => set("text_provider", e.target.value)}>
+                        <option value="anthropic">{t("Claude (your Anthropic key)")}</option>
                         <option value="gemini">{t("Gemini (your Gemini key)")}</option>
                         <option value="openrouter">{t("OpenRouter")}</option>
                       </Select>
                     </div>
-                    {draft.text_provider === "openrouter" && (
+                    {writer === "anthropic" && (
+                      <div className="min-w-44 flex-1">
+                        <Select value={draft.writer_claude_model || "claude-opus-5-5"} disabled={ro} aria-label={t("Claude model for writing")}
+                          onChange={(e) => set("writer_claude_model", e.target.value)}>
+                          {CLAUDE_WRITERS.map((m) => {
+                            const p = textPrices[m.value];
+                            return (
+                              <option key={m.value} value={m.value}>
+                                {t(m.label)}{p?.in != null && p?.out != null ? ` ($${p.in} / $${p.out} per 1M tokens)` : ""}
+                              </option>
+                            );
+                          })}
+                        </Select>
+                      </div>
+                    )}
+                    {writer === "openrouter" && (
                       <Input className="min-w-44 flex-1 font-mono" value={draft.openrouter_text_model ?? ""} disabled={ro} aria-label={t("OpenRouter model")}
                         placeholder={t("Same Gemini model")} onChange={(e) => set("openrouter_text_model", e.target.value.trim())} />
                     )}
                   </div>
                 </Row>
+                {writer === "anthropic" && (
+                  <>
+                    <Row label={t("How hard Claude thinks")} hint={t("Higher writes more carefully and costs more. Clip and keyframe reviews always run at Low; the script critic one step higher.")}
+                      changed={ch("writer_claude_effort")}>
+                      <div className="w-full max-w-md">
+                        <Select value={draft.writer_claude_effort || "medium"} disabled={ro} aria-label={t("How hard Claude thinks")} onChange={(e) => set("writer_claude_effort", e.target.value)}>
+                          {EFFORTS.map((x) => <option key={x.value} value={x.value}>{t(x.label)}</option>)}
+                        </Select>
+                      </div>
+                    </Row>
+                    <SwitchRow label={t("Listening checks on Gemini")}
+                      hint={draft.listen_checks_gemini !== false
+                        ? t("Claude can't hear audio, so the lip-sync and spoken-word checks of finished clips use Gemini (your Gemini key). Everything else is Claude.")
+                        : t("Off: Anthropic only. Lip-sync and spoken-word checks are skipped; Claude still reviews what the frames show.")}
+                      checked={draft.listen_checks_gemini !== false} disabled={ro} changed={ch("listen_checks_gemini")} onChange={(v) => set("listen_checks_gemini", v)} />
+                  </>
+                )}
                 <Row label={t("Director chat agent")} hint={t("Claude needs an Anthropic key (AI services below); without one the Director uses Gemini. If you pick Gemini, Claude is never used.")} changed={ch("director_engine")}>
                   <div className="w-full max-w-md">
                     <Select value={draft.director_engine ?? "claude"} disabled={ro} aria-label={t("Director chat agent")} onChange={(e) => set("director_engine", e.target.value)}>

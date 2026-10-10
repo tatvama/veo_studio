@@ -28,9 +28,15 @@ DEFAULTS: dict[str, Any] = {
     # Same model, several routes (e.g. Seedance on BytePlus, OpenRouter and fal): try the cheapest live route first and
     # fail over to the others. Off = the engine named in the chain first, its other routes only as a fallback.
     "cheapest_route": True,
-    # Writing (scripts, prompts, QC notes): "gemini" (Gemini key) or "openrouter". OpenRouter is also used on its own
-    # when there is no Gemini key. Empty model = the same Gemini model through OpenRouter.
-    "text_provider": "gemini",
+    # Writing (scripts, prompts, reviews): "anthropic" (Claude, Anthropic key), "gemini" (Gemini key) or "openrouter".
+    # Claude falls back to Gemini when there is no Anthropic key; a team that picks Gemini or OpenRouter never gets
+    # Claude. OpenRouter is also used on its own when there is no Gemini key. Empty model = the default model.
+    "text_provider": "anthropic",
+    "writer_claude_model": "",  # empty = claude-opus-5-5
+    "writer_claude_effort": "medium",  # low | medium | high | xhigh | max (reviews always low, the critic one higher)
+    # Claude can't hear: listening checks (lip-sync, spoken words) stay on Gemini while its key is live. Off = with
+    # Claude writing, those two checks are skipped and only what the frames show is reviewed.
+    "listen_checks_gemini": True,
     "openrouter_text_model": "",
     "openrouter_text_model_pro": "",
     # Director chat agent: "claude" (Anthropic key, Claude Sonnet 5.5) or "gemini". Claude falls back to Gemini when
