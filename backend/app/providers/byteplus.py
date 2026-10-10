@@ -217,6 +217,10 @@ class AssetLibrary:
         err = ((d.get("ResponseMetadata") or {}).get("Error") or {}) if isinstance(d, dict) else {}
         if r.status_code >= 400 or err.get("Code") or err.get("Message"):
             code, msg = str(err.get("Code") or ""), str(err.get("Message") or r.text[:300])
+            if "subscription" in code.lower():  # the key is fine: the account has no asset-library plan yet
+                raise ProviderError("The BytePlus asset library needs Advanced Creation Rights. Turn on the free version "
+                                    "(50 images, 50 groups) in the ModelArk console → Model activation → Advanced "
+                                    f"Creation Rights, then try again. ({code})", status=r.status_code, provider=P)
             if r.status_code in (401, 403) or code.startswith(("InvalidAccessKey", "InvalidSecret", "SignatureDoesNotMatch")):
                 raise ProviderError(f"BytePlus refused the access key / secret ({code}). Check them, and that the IAM "
                                     f"user has ArkFullAccess on the project. {msg}"[:400], status=r.status_code, provider=P)
