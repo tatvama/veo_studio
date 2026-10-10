@@ -163,8 +163,9 @@ Coolify also auto-deploys on every push to `main`, turn that off so only release
 ## Hotfixes
 
 Same flow, just quick: `worktree.py new fix/<topic>`, a `fix:` PR, merge, then merge the release PR straight away.
-To roll back, redeploy the previous image tag in Coolify (or `image: ghcr.io/tatvama/veo_studio:<previous>` in
-Compose), then fix forward with a `revert:` or `fix:` PR.
+To roll back: **Actions → Release → Run workflow** with `publish_tag` = the previous good tag (e.g. `v3.0.0`). That
+rebuilds and publishes that release's image (moving the `X`, `X.Y` and `latest` tags to it) and deploys it. Or pin
+`image: ghcr.io/tatvama/veo_studio:<previous>` in Compose / Coolify. Then fix forward with a `revert:` or `fix:` PR.
 
 ## Cleaning up
 

@@ -13,12 +13,21 @@
 #   COOLIFY_TOKEN         Coolify → Keys & Tokens → API token (deploy permission)
 # Optional variable:
 #   PRODUCTION_URL        e.g. https://studio.example.com — after deploying, waits until /api/health/live reports the new version
+#
+# Manual run (Actions → Release → Run workflow) with "publish_tag" = an existing tag such as v3.0.0: builds and
+# publishes that tag's image and deploys it, without release-please. Also the way to roll back to an older release
+# (it moves the X, X.Y and latest image tags to that release).
 name: Release
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      publish_tag:
+        description: "Existing tag to build, publish and deploy (e.g. v3.0.0). Empty = normal release-please run."
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -30,6 +39,7 @@ concurrency:
 jobs:
   release-please:
     name: Release PR / tag
+    if: ${{ !inputs.publish_tag }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -50,16 +60,26 @@ jobs:
   publish-image:
     name: Publish Docker image
     needs: release-please
-    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    if: ${{ !failure() && !cancelled() && (needs.release-please.outputs.release_created == 'true' || inputs.publish_tag) }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
       contents: read
       packages: write
+    outputs:
+      version: ${{ steps.v.outputs.version }}
     steps:
+      - id: v
+        name: Resolve tag and version
+        env:
+          TAG: ${{ inputs.publish_tag || needs.release-please.outputs.tag_name }}
+        run: |
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.release-please.outputs.tag_name }}
+          ref: ${{ steps.v.outputs.tag }}
 
       - uses: docker/setup-buildx-action@v4
 
@@ -74,9 +94,9 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=semver,pattern={{version}},value=${{ needs.release-please.outputs.version }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ needs.release-please.outputs.version }}
-            type=semver,pattern={{major}},value=${{ needs.release-please.outputs.version }}
+            type=semver,pattern={{version}},value=${{ steps.v.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.v.outputs.version }}
+            type=semver,pattern={{major}},value=${{ steps.v.outputs.version }}
             type=raw,value=latest
             type=sha,format=short
           labels: |
@@ -94,7 +114,8 @@ jobs:
 
   deploy:
     name: Deploy to production
-    needs: [release-please, publish-image]
+    needs: publish-image
+    if: ${{ !failure() && !cancelled() && needs.publish-image.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment:
@@ -104,7 +125,7 @@ jobs:
       COOLIFY_WEBHOOK_URL: ${{ secrets.COOLIFY_WEBHOOK_URL }}
       COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
       PRODUCTION_URL: ${{ vars.PRODUCTION_URL }}
-      VERSION: ${{ needs.release-please.outputs.version }}
+      VERSION: ${{ needs.publish-image.outputs.version }}
     steps:
       - name: Skip (no deploy webhook configured)
         if: ${{ env.COOLIFY_WEBHOOK_URL == '' }}
