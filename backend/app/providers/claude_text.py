@@ -123,10 +123,12 @@ class ClaudeText:
 
     def _ask(self, system: str, messages: list[dict], output_config: dict, **kw) -> tuple[Any, int, float]:
         """One streamed request (fallback on, adaptive thinking). Returns (final message, tokens, USD)."""
+        if not self.model.startswith("claude-haiku"):  # Haiku has no server-side fallback: a decline stays declined
+            kw.update(betas=BETAS, fallbacks="default")
         try:
             with self.client.beta.messages.stream(
                     model=self.model, max_tokens=MAX_TOKENS, system=system, messages=messages, output_config=output_config,
-                    betas=BETAS, fallbacks="default", **kw) as stream:
+                    **kw) as stream:
                 msg = stream.get_final_message()
         except anthropic.APIError as e:
             raise _error(e) from e

@@ -153,6 +153,10 @@ def test_model_and_effort_settings(claude):
     assert usage.model == "claude-sonnet-5-5" and fake.calls[0]["model"] == "claude-sonnet-5-5"
     assert [c["output_config"]["effort"] for c in fake.calls] == ["xhigh", "low"]  # critic one higher, reviews low
     assert CT.effort_for("script", "nonsense", False) == "medium" and CT.effort_for("critic", "max", True) == "max"
+    set_settings(writer_claude_model="claude-haiku-5-5")
+    fake = claude(answer(HOOKS))
+    svc.llm_json("hooks", prompts.HOOKS, "x", S.HooksOut)
+    assert "fallbacks" not in fake.calls[0] and "betas" not in fake.calls[0]  # Haiku has no server-side fallback
 
 
 def test_trend_scout_researches_then_answers(claude):
