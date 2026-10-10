@@ -37,6 +37,8 @@ DEFAULTS: dict[str, Any] = {
     # there is no Anthropic key; a team that picks Gemini never gets Claude. Effort: low | medium | high | xhigh | max.
     "director_engine": "claude",
     "director_claude_effort": "medium",
+    # Claude model for the Director: "" = the catalog's director_claude model (Claude Sonnet 5.5), or "claude-opus-5-5"
+    "director_claude_model": "",
     # BytePlus asset library: CreateAsset calls per minute (3 on the free Entry tier, 120 Advanced, 300 Premium)
     "byteplus_asset_qpm": 3,
     # Register AI characters with BytePlus by themselves when their sheet is approved or the character is locked

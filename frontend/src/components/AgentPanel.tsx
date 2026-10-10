@@ -4,6 +4,7 @@ import { Rocket, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useMemo, useRef, useState, type CSSProperties } from "react";
 import { toast } from "sonner";
+import { clearAgentProgress, useMyAgentLive } from "../lib/agentProgress";
 import { api } from "../lib/api";
 import { usd } from "../lib/format";
 import { tr, useT } from "../lib/i18n";
@@ -47,6 +48,8 @@ export default function AgentPanel() {
   const [confirmBusy, setConfirmBusy] = useState<Record<string, "yes" | "no">>({});
   const [confirmAuto, setConfirmAuto] = useState(false);
   const [modeBusy, setModeBusy] = useState(false);
+  // the Director's plan and steps for the message being answered (agent.progress over the live socket)
+  const live = useMyAgentLive(project.id, auth?.user?.id, sending && pending ? pending.baseId : null);
 
   const aside = useRef<HTMLElement>(null);
   const { width, dragging, handleProps } = useResizableWidth(aside);
@@ -75,6 +78,7 @@ export default function AgentPanel() {
     if (!m || sending) return;
     const baseId = messages?.[messages.length - 1]?.id ?? 0;
     edit("");
+    clearAgentProgress(project.id, auth?.user?.id);
     setPending({ text: m, baseId });
     setSending(true);
     try {
@@ -289,6 +293,7 @@ export default function AgentPanel() {
         onDecide={(b, k) => void decide(b, k)}
         confirmBusy={confirmBusy}
         onConfirm={(mid, id, yes) => void answer(mid, id, yes)}
+        live={live}
       />
 
       <Composer

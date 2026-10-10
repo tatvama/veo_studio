@@ -40,6 +40,7 @@ const EDITABLE = [
   "cheapest_route", "text_provider", "openrouter_text_model", "director_engine", "quota_fallback_routes", "safety_fallback",
   "fallback_extra_limit_usd", "byteplus_auto_register",
   "auto_scene_continuity", "keyframe_qc", "keyframe_auto_retake", "keyframe_qc_threshold",
+  "director_claude_model", "director_claude_effort",
 ] as const;
 
 type Draft = Record<string, any>;
@@ -78,6 +79,22 @@ const DIALOGUE_METHODS = [
 const DUB_METHODS = [
   { value: "redub", label: "Re-dub", desc: "Keep the original video and lip-sync it to the new language. Cheapest." },
   { value: "regenerate", label: "Regenerate per language", desc: "Make a fresh video for each language. On Veo's native languages Veo speaks the translated line itself; elsewhere the video is driven by that language's recorded audio. Best lips, costs more." },
+];
+
+/** The Director chat agent: a Claude model (director_engine "claude" + director_claude_model) or Gemini. */
+const DIRECTOR_AGENTS = [
+  { value: "claude-sonnet-5-5", label: "Claude Sonnet 5.5" },
+  { value: "claude-opus-5-5", label: "Claude Opus 5.5" },
+  { value: "gemini", label: "Gemini" },
+];
+
+/** How hard Claude thinks per step (director_claude_effort): more effort, better plans, more tokens. */
+const DIRECTOR_EFFORTS = [
+  { value: "low", label: "Low effort — quickest, cheapest" },
+  { value: "medium", label: "Medium effort — balanced (default)" },
+  { value: "high", label: "High effort — more thorough" },
+  { value: "xhigh", label: "Extra-high effort — long multi-step jobs" },
+  { value: "max", label: "Max effort — most thorough, most tokens" },
 ];
 
 const MODEL_LABELS: Record<string, string> = {
@@ -323,6 +340,8 @@ export default function SettingsPage() {
     const n = Number(draft[k]);
     return Number.isFinite(n) ? n : fallback;
   };
+  const directorAgent = draft.director_engine === "gemini" ? "gemini"
+    : draft.director_claude_model === "claude-opus-5-5" ? "claude-opus-5-5" : "claude-sonnet-5-5";
   const capPct = team.cap_usd ? (team.spent_usd / team.cap_usd) * 100 : 0;
   const bad = (k: string) => numBad(k, draft[k]);
   /** A value that differs from what is saved (or is being edited into something the server would reject). */
@@ -468,12 +487,27 @@ export default function SettingsPage() {
                     )}
                   </div>
                 </Row>
-                <Row label={t("Director chat agent")} hint={t("Claude needs an Anthropic key (AI services below); without one the Director uses Gemini. If you pick Gemini, Claude is never used.")} changed={ch("director_engine")}>
-                  <div className="w-full max-w-md">
-                    <Select value={draft.director_engine ?? "claude"} disabled={ro} aria-label={t("Director chat agent")} onChange={(e) => set("director_engine", e.target.value)}>
-                      <option value="claude">{t("Claude Sonnet 5.5")}</option>
-                      <option value="gemini">{t("Gemini")}</option>
-                    </Select>
+                <Row label={t("Director chat agent")} hint={t("Claude needs an Anthropic key (AI services below); without one the Director uses Gemini. If you pick Gemini, Claude is never used. Opus 5.5 plans better and costs about twice as much as Sonnet 5.5.")}
+                  changed={ch("director_engine") || ch("director_claude_model") || ch("director_claude_effort")}>
+                  <div className="flex w-full max-w-md flex-wrap gap-2">
+                    <div className="min-w-36 flex-1">
+                      <Select value={directorAgent} disabled={ro} aria-label={t("Director chat agent")}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          set("director_engine", v === "gemini" ? "gemini" : "claude");
+                          if (v !== "gemini") set("director_claude_model", v === "claude-opus-5-5" ? v : ""); // "" = the default, Sonnet 5.5
+                        }}>
+                        {DIRECTOR_AGENTS.map((a) => <option key={a.value} value={a.value}>{t(a.label)}</option>)}
+                      </Select>
+                    </div>
+                    {directorAgent !== "gemini" && (
+                      <div className="min-w-44 flex-1">
+                        <Select value={draft.director_claude_effort || "medium"} disabled={ro} aria-label={t("Director effort")}
+                          onChange={(e) => set("director_claude_effort", e.target.value)}>
+                          {DIRECTOR_EFFORTS.map((x) => <option key={x.value} value={x.value}>{t(x.label)}</option>)}
+                        </Select>
+                      </div>
+                    )}
                   </div>
                 </Row>
                 <Row stack label={t("Default video quality")} hint={t(QUALITY_INFO[quality]?.desc ?? "")} changed={ch("default_quality_mode")}>
