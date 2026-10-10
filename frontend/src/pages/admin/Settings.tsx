@@ -63,10 +63,10 @@ const LIPSYNC_MODELS = [
 
 // Claude models for writing (Settings → Writing). Opus writes best; Sonnet costs half; Haiku is for tight budgets.
 const CLAUDE_WRITERS = [
-  { value: "claude-opus-5-5", label: "Claude Opus 5.5 — best writing" },
-  { value: "claude-sonnet-5-5", label: "Claude Sonnet 5.5 — half the price" },
-  { value: "claude-haiku-5-5", label: "Claude Haiku 5.5 — cheapest" },
-  { value: "claude-fable-5-1", label: "Claude Fable 5.1 — most capable, priciest" },
+  { value: "claude-opus-5-5", label: "Opus 5.5 — best writing" },
+  { value: "claude-sonnet-5-5", label: "Sonnet 5.5 — half the price" },
+  { value: "claude-haiku-5-5", label: "Haiku 5.5 — cheapest" },
+  { value: "claude-fable-5-1", label: "Fable 5.1 — most capable, priciest" },
 ];
 
 const EFFORTS = [
@@ -495,7 +495,7 @@ export default function SettingsPage() {
                             const p = textPrices[m.value];
                             return (
                               <option key={m.value} value={m.value}>
-                                {t(m.label)}{p?.in != null && p?.out != null ? ` ($${p.in} / $${p.out} per 1M tokens)` : ""}
+                                {t(m.label)}{p?.in != null && p?.out != null ? ` · $${p.in} / $${p.out} per 1M` : ""}
                               </option>
                             );
                           })}
