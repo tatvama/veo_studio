@@ -44,7 +44,7 @@ export default function WorldPage() {
     <RoomPage width="wide">
       <RoomHeader icon={<Globe />} title={t("Props & wardrobe")} description={t("Props, wardrobe through the episode, and the state of every scene.")} />
 
-      <StatStrip index={1} className="mb-4" cells={[
+      <StatStrip index={1} className="mb-6" cells={[
         { key: "props", label: t("Props in project"), value: inProject ?? "—", sub: props ? t("{n} more in the library", { n: props.length - (inProject ?? 0) }) : undefined },
         { key: "cast", label: t("Characters in wardrobe"), value: wardrobe ? wardrobe.characters.length : "—", sub: cast?.length ? t("{n} in the cast", { n: cast.length }) : undefined },
         {
@@ -58,7 +58,7 @@ export default function WorldPage() {
         },
       ]} />
 
-      <ViewSwitch className="mb-4" label={t("World views")} value={tab} onChange={go} items={[
+      <ViewSwitch className="mb-6" label={t("World views")} value={tab} onChange={go} items={[
         { value: "props", label: t("Props"), icon: <Package />, count: inProject || undefined },
         { value: "wardrobe", label: t("Wardrobe"), icon: <Shirt />, count: breaks || undefined, warn: !!breaks },
         { value: "bible", label: t("Continuity Bible"), icon: <BookMarked />, count: bible?.scenes.length || undefined },

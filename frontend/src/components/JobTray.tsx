@@ -24,6 +24,8 @@ const TYPE_LABEL: Record<string, string> = {
 };
 
 const ACTIVE = new Set(["running", "queued", "awaiting_approval", "proposed"]);
+/** How long a failed job keeps the (otherwise idle) bar on screen. */
+const FRESH_FAIL_MS = 10 * 60_000;
 
 type Tone = "neutral" | "accent" | "ai" | "ok" | "warn" | "bad" | "info";
 const STATUS_TONE: Record<string, Tone> = {
@@ -173,6 +175,18 @@ export default function JobTray({ projectId }: { projectId: number }) {
   const head = running[0];
   const overall = busy ? (running.reduce((a, j) => a + j.progress, 0) / busy) : 0;
   const eta = head ? etaSeconds(head, now) : null;
+  // the bar takes a row of the page, so it only shows while there is something to follow: work in flight, work waiting for
+  // approval, a failure from the last few minutes, or the panel opened from elsewhere (the status bar, the Overview)
+  const lastFail = useMemo(() => Math.max(0, ...failed.map((j) => new Date(j.finished_at || j.created_at).getTime() || 0)), [failed]);
+  const [, wake] = useState(0);
+  useEffect(() => {
+    const left = lastFail + FRESH_FAIL_MS - Date.now();
+    if (left <= 0) return;
+    const id = window.setTimeout(() => wake((n) => n + 1), left + 50); // re-render once the failure is no longer fresh
+    return () => window.clearTimeout(id);
+  }, [lastFail]);
+  const freshFail = lastFail + FRESH_FAIL_MS > Date.now();
+  if (!open && !busy && !waiting.length && !freshFail) return null;
 
   const chips: { id: Filter; label: string; n: number; tone?: string }[] = [
     { id: "all", label: t("All"), n: rows.length },

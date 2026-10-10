@@ -9,8 +9,7 @@ import { Kbd } from "../ui";
 import { Brand } from "./Brand";
 import { MOD } from "./keys";
 import { getNav, getProjectSteps, getProjectTabs } from "./nav";
-import { RateChip } from "./money";
-import { JobsPill, NotificationsButton, ProviderDots, SpendPill } from "./telemetry";
+import { JobsPill, NotificationsButton, SpendPill, SystemChip } from "./telemetry";
 import { ThemeButton } from "./ThemeButton";
 import { UserMenu } from "./UserMenu";
 
@@ -69,10 +68,9 @@ export function TopBar({ user }: { user: UserBrief }) {
       </div>
 
       <div className="flex shrink-0 items-center gap-2">
-        <span className="hidden xl:block"><ProviderDots /></span>
         <JobsPill />
         <span className="hidden md:block"><SpendPill /></span>
-        <span className="hidden sm:block"><RateChip /></span>
+        <span className="hidden sm:block"><SystemChip /></span>
         <span className="hidden sm:block"><ThemeButton /></span>
         <NotificationsButton />
         <UserMenu user={user} expanded={false} placement="bottom-end" dense />
