@@ -108,7 +108,7 @@ export default function BiblePage() {
               <Button variant="primary" icon={<Sparkles className="size-4" />} loading={busy === "propose"} onClick={propose}>{t("Build from script")}</Button>
             )} />
 
-          <StatStrip index={1} className="mb-4" cells={[
+          <StatStrip index={1} className="mb-6" cells={[
             {
               key: "cast", label: t("Characters"), value: waiting ? "—" : cast.length, wide: true,
               sub: cast.length ? t("{n} locked", { n: lockedChars }) : t("none yet"),
@@ -129,7 +129,7 @@ export default function BiblePage() {
             },
           ]} />
 
-          <ViewSwitch<Tab> className="mb-4" label={t("Bible view")} value={tab} onChange={(v) => go({ tab: v, char: null, loc: null })}
+          <ViewSwitch<Tab> className="mb-6" label={t("Bible view")} value={tab} onChange={(v) => go({ tab: v, char: null, loc: null })}
             items={[
               { value: "cast", label: t("Cast"), icon: <UserRound />, count: chars?.length || undefined },
               { value: "locations", label: t("Locations"), icon: <MapPin />, count: locs?.length || undefined },

@@ -202,7 +202,7 @@ export default function BriefPage() {
           <Button size="sm" variant="outline" icon={<Rocket className="size-3.5" />} onClick={() => scrollToSection("autopilot")}>{t("Autopilot")}</Button>
         )} />
 
-      <StatStrip index={1} className="mb-4" cells={[
+      <StatStrip index={1} className="mb-6" cells={[
         {
           key: "complete", label: t("Brief completeness"), value: pct, unit: "%", tone: complete ? "ok" : "accent", wide: true,
           sub: complete ? <span className="text-ok">{t("Ready for the writers")}</span> : (
@@ -225,7 +225,7 @@ export default function BriefPage() {
 
       <Workspace rail={<Outline title={t("Brief outline")} summary={`${done}/${checks.length}`} items={outline} />}>
         {/* ── the brief itself ───────────────────────────────────────────────── */}
-        <div className="relative space-y-4" aria-busy={writing || undefined}>
+        <div className="relative space-y-6" aria-busy={writing || undefined}>
           <WorkPanel id="sec-concept" index={2} n={1} kicker={t("Input")} icon={<Wand2 />} title={t("Concept")}
             description={t("One or two sentences. Everything else is written from this.")}>
             <div className="space-y-3">
@@ -241,7 +241,7 @@ export default function BriefPage() {
             </div>
           </WorkPanel>
 
-          <div className="grid gap-4 @3xl:grid-cols-2">
+          <div className="grid gap-6 @3xl:grid-cols-2">
             <WorkPanel id="sec-audience" index={3} n={2} kicker={t("Audience")} icon={<Users />} title={t("Audience & platform")}
               description={t("Who it is for and where it will play. Drives pacing, hooks and framing.")}>
               <div className="space-y-4">
@@ -282,7 +282,7 @@ export default function BriefPage() {
 
           <WorkPanel id="sec-tone" index={5} n={4} kicker={t("Voice")} icon={<Speech />} title={t("Tone & key message")}
             description={t("How it should feel, and the one thing the viewer must take away.")}>
-            <div className="grid gap-4 @2xl:grid-cols-2">
+            <div className="grid gap-x-6 gap-y-4 @2xl:grid-cols-2">
               <RField label={t("Tone")} htmlFor="brief-tone">
                 <Input id="brief-tone" value={brief.tone || ""} onChange={(e) => setB("tone", e.target.value)} disabled={!canEdit} placeholder={t("emotional, suspenseful")} />
               </RField>

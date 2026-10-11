@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 interface UIState {
+  /** The Director panel. Starts closed: it opens when asked for (its button, Ctrl/⌘+J) and the choice is remembered. */
   agentOpen: boolean;
   /** Sidebar: true = labels, false = icons only, null = automatic (labels on wide screens). */
   railExpanded: boolean | null;
@@ -28,10 +29,12 @@ interface UIState {
   startTour: () => void;
 }
 
+type Persisted = Pick<UIState, "agentOpen" | "railExpanded" | "language" | "episode">;
+
 export const useUI = create<UIState>()(
   persist(
     (set) => ({
-      agentOpen: true,
+      agentOpen: false,
       railExpanded: null,
       setRailExpanded: (v) => set({ railExpanded: v }),
       trayOpen: false,
@@ -51,6 +54,12 @@ export const useUI = create<UIState>()(
       tourRun: 0,
       startTour: () => set((s) => ({ tourRun: s.tourRun + 1, paletteOpen: false, shortcutsOpen: false })),
     }),
-    { name: "veo-ui", partialize: (s) => ({ agentOpen: s.agentOpen, railExpanded: s.railExpanded, language: s.language, episode: s.episode }) },
+    {
+      name: "veo-ui",
+      version: 1,
+      // v1: the Director used to open with every project and squeeze the page; close it once for everyone
+      migrate: (s, v) => ({ ...(s as Persisted), ...(v < 1 ? { agentOpen: false } : {}) }),
+      partialize: (s): Persisted => ({ agentOpen: s.agentOpen, railExpanded: s.railExpanded, language: s.language, episode: s.episode }),
+    },
   ),
 );

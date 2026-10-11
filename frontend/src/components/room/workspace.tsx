@@ -133,11 +133,11 @@ export function Outline({ items, title, summary, offset, className }: {
 
 const LAYOUT = {
   /** a slim outline rail (11rem); hidden below the breakpoint */
-  outline: { grid: "@4xl:grid @4xl:grid-cols-[minmax(0,1fr)_11rem] @4xl:items-start @4xl:gap-5", rail: "hidden @4xl:block @4xl:sticky @4xl:top-4" },
+  outline: { grid: "@4xl:grid @4xl:grid-cols-[minmax(0,1fr)_11rem] @4xl:items-start @4xl:gap-8", rail: "hidden @4xl:block @4xl:sticky @4xl:top-4" },
   /** a panel rail (21rem) that stacks under the content below the breakpoint */
-  panel: { grid: "@5xl:grid @5xl:grid-cols-[minmax(0,1fr)_21rem] @5xl:items-start @5xl:gap-5", rail: "@5xl:sticky @5xl:top-4 @5xl:max-h-[calc(100dvh-7.5rem)] @5xl:overflow-y-auto @5xl:pb-2 @5xl:pr-1" },
+  panel: { grid: "@5xl:grid @5xl:grid-cols-[minmax(0,1fr)_21rem] @5xl:items-start @5xl:gap-6", rail: "@5xl:sticky @5xl:top-4 @5xl:max-h-[calc(100dvh-7.5rem)] @5xl:overflow-y-auto @5xl:pb-2 @5xl:pr-1" },
   /** a wide panel rail (25rem) for the script's writers' room */
-  wide: { grid: "@5xl:grid @5xl:grid-cols-[minmax(0,1fr)_25rem] @5xl:items-start @5xl:gap-5", rail: "@5xl:sticky @5xl:top-4 @5xl:max-h-[calc(100dvh-7.5rem)] @5xl:overflow-y-auto @5xl:pb-2 @5xl:pr-1" },
+  wide: { grid: "@5xl:grid @5xl:grid-cols-[minmax(0,1fr)_25rem] @5xl:items-start @5xl:gap-6", rail: "@5xl:sticky @5xl:top-4 @5xl:max-h-[calc(100dvh-7.5rem)] @5xl:overflow-y-auto @5xl:pb-2 @5xl:pr-1" },
 } as const;
 
 /**
@@ -150,9 +150,9 @@ export function Workspace({ children, rail, railKind = "outline", className, rai
   const L = LAYOUT[railKind];
   return (
     <div className={cn("@container", className)}>
-      <div className={cn("flex flex-col gap-4", rail && L.grid)}>
-        <div className="@container min-w-0 space-y-4">{children}</div>
-        {rail && <aside className={cn("@container min-w-0 space-y-4", L.rail, railClassName)}>{rail}</aside>}
+      <div className={cn("flex flex-col gap-6", rail && L.grid)}>
+        <div className="@container min-w-0 space-y-6">{children}</div>
+        {rail && <aside className={cn("@container min-w-0 space-y-5", L.rail, railClassName)}>{rail}</aside>}
       </div>
     </div>
   );
@@ -177,7 +177,7 @@ export function WorkPanel({ n, kicker, title, description, icon, actions, badge,
       <span aria-hidden className={cn("edge-light pointer-events-none absolute inset-x-4 top-0 h-px transition-opacity duration-300",
         tone ? "opacity-70" : "opacity-0 group-hover/panel:opacity-100")} />
       {head && (
-        <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2.5 px-4 pt-3.5 @md:px-5">
+        <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2.5 px-4 pt-4 @md:px-6 @md:pt-5">
           <div className="min-w-0 flex-1 basis-56">
             {label && (
               <p className={cn("eyebrow flex items-center gap-1.5", tone ? TEXT[tone] : "")}>
@@ -198,7 +198,7 @@ export function WorkPanel({ n, kicker, title, description, icon, actions, badge,
         </header>
       )}
       {children !== undefined && (
-        <div className={cn(flush ? "" : "px-4 pb-4 @md:px-5 @md:pb-5", head && !flush && "pt-4", !head && !flush && "pt-4 @md:pt-5", bodyClassName)}>{children}</div>
+        <div className={cn(flush ? "" : "px-4 pb-4 @md:px-6 @md:pb-6", head && !flush && "pt-4 @md:pt-5", !head && !flush && "pt-4 @md:pt-6", bodyClassName)}>{children}</div>
       )}
     </section>
   );

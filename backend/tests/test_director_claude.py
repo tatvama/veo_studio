@@ -99,16 +99,18 @@ def test_tool_loop_request_shape_and_cost(client: TestClient, claude):
     assert "claude" not in out["data"]  # the raw API conversation stays on the server
 
     first, second = fake.calls
-    # tools: TOOL_DECLS in the Anthropic shape, sorted by name, the same every call
-    assert [t["name"] for t in first["tools"]] == sorted(d["name"] for d in TOOL_DECLS)
+    # tools: TOOL_DECLS in the Anthropic shape, sorted by name, then the web search server tool; the same every call
+    assert [t["name"] for t in first["tools"]] == sorted(d["name"] for d in TOOL_DECLS) + ["web_search"]
+    assert first["tools"][-1] == {"type": "web_search_20260209", "name": "web_search", "max_uses": 5}
     decl = next(d for d in TOOL_DECLS if d["name"] == "update_shot")
     assert next(t for t in first["tools"] if t["name"] == "update_shot") == {
         "name": "update_shot", "description": decl["description"], "input_schema": decl["parameters"]}
     assert second["tools"] == first["tools"] and second["system"] == first["system"] == prompts.DIRECTOR_AGENT
-    # request: model, effort, automatic caching, server-side fallback; no thinking / tool_choice / temperature
+    # request: model, effort + task budget, automatic caching, server-side fallback; no thinking / tool_choice / temperature
     assert first["model"] == "claude-sonnet-5-5" and first["max_tokens"] == 16000
-    assert first["output_config"] == {"effort": "medium"} and first["cache_control"] == {"type": "ephemeral"}
-    assert first["betas"] == ["server-side-fallback-2026-07-01"] and first["fallbacks"] == "default"
+    assert first["output_config"] == {"effort": "medium", "task_budget": {"type": "tokens", "total": 120000}}
+    assert first["cache_control"] == {"type": "ephemeral"} and first["fallbacks"] == "default"
+    assert first["betas"] == ["server-side-fallback-2026-07-01", "task-budgets-2026-03-13"]
     assert not {"thinking", "tool_choice", "temperature"} & set(first)
     # the user turn: the studio's context first, then the message
     [user] = first["messages"]
@@ -173,7 +175,7 @@ def test_fresh_thread_after_bad_request_and_fingerprint_change(client: TestClien
     fake = claude(msg([text("Three.")]))
     chat(client, pid, eid, "three")
     [call] = fake.calls
-    assert len(call["messages"]) == 1 and len(call["tools"]) == len(TOOL_DECLS) - 1
+    assert len(call["messages"]) == 1 and len(call["tools"]) == len(TOOL_DECLS)  # the last one (web search) left out
     assert segments(pid)[-1]["thread"] not in (s1["thread"], s2["thread"])
 
     # a rejected request on a thread with no history is reported, not retried, and stores nothing

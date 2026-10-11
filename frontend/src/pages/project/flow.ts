@@ -77,6 +77,23 @@ export function continueTarget(t: T, tab: string, steps: StepView[], ns: NextSte
   return null;
 }
 
+const fullKey = (pid: number) => `veo:fullFlow:${pid}`;
+
+/**
+ * Own-material projects open in the focused shot workspace (one header, no step rail, the Director only when asked for).
+ * This remembers a project someone switched to the full five steps, and the switch back.
+ */
+export function useFullFlow(pid: number): [boolean, (v: boolean) => void] {
+  const read = () => { try { return localStorage.getItem(fullKey(pid)) === "1"; } catch { return false; } };
+  const [full, setFull] = useState(read);
+  useEffect(() => setFull(read()), [pid]); // eslint-disable-line react-hooks/exhaustive-deps
+  const set = (v: boolean) => {
+    setFull(v);
+    try { if (v) localStorage.setItem(fullKey(pid), "1"); else localStorage.removeItem(fullKey(pid)); } catch { /* storage blocked */ }
+  };
+  return [full, set];
+}
+
 const lastKey = (pid: number) => `veo:stepTabs:${pid}`;
 
 /** Remembers the sub-page last used in each step of a project, so a step's link returns to it. */
