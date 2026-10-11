@@ -227,8 +227,8 @@ All optional: a service without a key runs in Mock mode (with `MOCK_PROVIDERS=au
 
 | Variable | Service | Used for |
 |---|---|---|
-| `GEMINI_API_KEY` | Google Gemini API | Writing, images (Nano Banana), Veo 3.1 video, TTS and voice design, Omni edits, Lyria music, vision QC, embeddings for search. **Veo needs billing enabled.** |
-| `ANTHROPIC_API_KEY` | Anthropic Claude | The Director chat agent on Claude Sonnet 5.5 (default engine; Gemini is used when this is missing or picked in Settings). |
+| `GEMINI_API_KEY` | Google Gemini API | Images (Nano Banana), Veo 3.1 video, TTS and voice design, Omni edits, Lyria music, listening checks (lip-sync, spoken words), embeddings for search; writing and vision QC when there is no Anthropic key or Gemini is picked in Settings. **Veo needs billing enabled.** |
+| `ANTHROPIC_API_KEY` | Anthropic Claude | All writing and reviews on Claude Opus 5.5 (briefs, hooks, scripts, bible, shot lists, critic, localisation, keyframe and clip QC, trend research with web search) and the Director chat agent on Claude Sonnet 5.5. Both are the defaults; Gemini is used when this is missing or picked in Settings. |
 | `FAL_KEY` | fal.ai | The Model Hub catalog (~800 models: Kling, Seedance, Wan, MiniMax, LTX, sync, HeyGen …) and identity (LoRA) training. |
 | `OPENROUTER_API_KEY` | OpenRouter | One key for many video models (Seedance, Kling, Wan, Veo, Hailuo …), images, and an optional text route. |
 | `BYTEPLUS_API_KEY` | BytePlus ModelArk | Seedance video and Seedream images, direct from ByteDance. |
@@ -296,7 +296,7 @@ Team, personal and project budgets are set in the app (**Settings → Budget**).
 | Service | What the studio uses it for | Config | Needed? |
 |---|---|---|---|
 | [Google Gemini API](https://ai.google.dev/) | Veo 3.1 (Lite / Fast / standard) video with native dialogue, Gemini 3.x text and vision QC, Nano Banana 2.1 and Gemini 3 Pro Image, Gemini TTS, Lyria music, Omni edits, embeddings | `GEMINI_API_KEY` | Recommended (default engine) |
-| [Anthropic Claude API](https://docs.anthropic.com/) | Director chat agent (Claude Sonnet 5.5) | `ANTHROPIC_API_KEY` | Optional |
+| [Anthropic Claude API](https://docs.anthropic.com/) | Writing and reviews (Claude Opus 5.5, structured output, web search), Director chat agent (Claude Sonnet 5.5) | `ANTHROPIC_API_KEY` | Recommended (default writer) |
 | [fal.ai](https://fal.ai/) | Model Hub catalog of ~800 models (Kling, Seedance, Wan, MiniMax, LTX, Luma, HeyGen, sync …), identity (LoRA) training | `FAL_KEY` | Optional |
 | [OpenRouter](https://openrouter.ai/) | Video and image models through one key, optional text route | `OPENROUTER_API_KEY` | Optional |
 | [BytePlus ModelArk](https://www.byteplus.com/en/product/modelark) | Seedance 2.x video, Seedream images, character asset library | `BYTEPLUS_*` | Optional |
@@ -323,7 +323,7 @@ Team, personal and project budgets are set in the app (**Settings → Budget**).
 | SQLAlchemy 2, psycopg 3, pg8000 | ORM and Postgres drivers (SQLite built in) |
 | Pydantic 2, pydantic-settings | Data validation and `.env` settings |
 | httpx | HTTP client for the provider REST APIs |
-| anthropic | Official Claude SDK (Director agent) |
+| anthropic | Official Claude SDK (writing, reviews, Director agent) |
 | fal-client | fal.ai SDK (Model Hub, training) |
 | mcp 2.x | Model Context Protocol server SDK |
 | boto3 | S3 / Cloudflare R2 storage |
@@ -512,7 +512,8 @@ backend/app/
                      scene_chain + scene_order (continuity ordering), autopilot, recovery, youtube, audit, rates …
   agents/            director.py (agent loop: Claude or Gemini, keyword mock), director_claude.py, tools.py, prompts.py
   mcp_server/        MCP server, tools, OAuth provider, tokens
-  providers/         gemini, fal, openrouter, byteplus, elevenlabs, syncso, sarvam, mock, schema_map, services (run_model)
+  providers/         gemini, claude_text (writing on Claude), fal, openrouter, byteplus, elevenlabs, syncso, sarvam, mock,
+                     schema_map, services (llm_json, run_model)
   pipeline/          prompting, voice, captions (karaoke ASS), assembler, ffmpeg, faces, scene_look, approved_stills
   workers/           worker.py (DB job queue), handlers*.py, run.py (separate worker process)
 backend/tests/       pytest suite (mock providers)

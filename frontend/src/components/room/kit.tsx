@@ -24,7 +24,7 @@ export function RoomPage({ children, width = "wide", footer, className, scrollRe
 }) {
   return (
     <div ref={scrollRef} className="@container hud-bg h-full scroll-pb-20 overflow-y-auto overscroll-contain" data-page-scroller>
-      <div className={clsx("mx-auto w-full px-4 pb-12 pt-5 @2xl:px-6 @2xl:pt-6", WIDTH[width], className)}>{children}</div>
+      <div className={clsx("mx-auto w-full px-4 pb-16 pt-6 @2xl:px-8 @2xl:pt-8 @6xl:px-10", WIDTH[width], className)}>{children}</div>
       {footer}
     </div>
   );
@@ -36,7 +36,7 @@ export function RoomHeader({ icon, title, description, actions, status }: {
 }) {
   const r = rise(0);
   return (
-    <header {...r} className={clsx("mb-5 flex flex-wrap items-center gap-x-4 gap-y-3", r.className)}>
+    <header {...r} className={clsx("mb-7 flex flex-wrap items-center gap-x-4 gap-y-3", r.className)}>
       <div className="flex min-w-0 flex-1 basis-72 items-center gap-3">
         <span className="hud grid size-10 shrink-0 place-items-center rounded-lg border border-accent/25 bg-accent/10 text-accent-ink [&>svg]:size-5">{icon}</span>
         <div className="min-w-0">
@@ -61,7 +61,7 @@ export function SectionCard({ title, description, icon, actions, children, class
       className={clsx("hud group/section relative scroll-mt-4 rounded-xl border border-line bg-panel", r?.className, className)}>
       <span aria-hidden className="edge-light pointer-events-none absolute inset-x-4 top-0 h-px opacity-0 transition-opacity duration-300 group-hover/section:opacity-100" />
       {head && (
-        <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 px-4 pt-4 @md:px-5">
+        <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 px-4 pt-4 @md:px-6 @md:pt-5">
           <div className="min-w-0 flex-1 basis-56">
             {title && (
               <h2 className="flex items-center gap-2 text-sm font-semibold tracking-tight">
@@ -75,7 +75,7 @@ export function SectionCard({ title, description, icon, actions, children, class
         </header>
       )}
       {children !== undefined && (
-        <div className={clsx(flush ? "" : "px-4 pb-4 @md:px-5 @md:pb-5", head && !flush && "pt-4", !head && !flush && "pt-4 @md:pt-5", bodyClassName)}>{children}</div>
+        <div className={clsx(flush ? "" : "px-4 pb-4 @md:px-6 @md:pb-6", head && !flush && "pt-4 @md:pt-5", !head && !flush && "pt-4 @md:pt-6", bodyClassName)}>{children}</div>
       )}
     </section>
   );

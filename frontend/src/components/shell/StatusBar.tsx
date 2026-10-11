@@ -1,6 +1,6 @@
 import { clsx } from "clsx";
 import { useSyncExternalStore } from "react";
-import { Link } from "react-router-dom";
+import { Link, useMatch } from "react-router-dom";
 import { useT } from "../../lib/i18n";
 import { useSettings } from "../../lib/queries";
 import { useUI } from "../../lib/store";
@@ -23,6 +23,8 @@ export function StatusBar() {
   const { data } = useSettings();
   const { first, running, waiting } = useTicker();
   const setShortcutsOpen = useUI((s) => s.setShortcutsOpen);
+  const setTrayOpen = useUI((s) => s.setTrayOpen);
+  const inProject = !!useMatch("/p/:pid/*"); // a project has a job tray to open (it hides itself while idle)
   const modes = (data?.providers ?? []).filter((p) => p.engine !== false); // the asset library key runs no engine
   const live = modes.some((p) => p.mode === "live");
   const allMock = modes.length > 0 && !live;
@@ -36,14 +38,17 @@ export function StatusBar() {
         <span aria-hidden>◆</span>{live ? t("Live engines") : allMock ? t("Placeholder mode") : t("Engines")}
       </Link>
       <span className="flex min-w-0 flex-1 items-center gap-2 truncate">
-        {first ? (
-          <>
-            <span className="eq shrink-0" aria-hidden><i /><i /><i /><i /></span>
-            <span className="truncate text-mute">{first.label || first.type}</span>
-            <span className="text-accent-ink">{Math.round((first.progress || 0) * 100)}%</span>
-            {running + waiting > 1 && <span>+{running + waiting - 1}</span>}
-          </>
-        ) : <span>{t("All systems idle")}</span>}
+        <button type="button" disabled={!inProject} onClick={() => setTrayOpen(true)} title={inProject ? t("Open the job tray") : undefined}
+          className="flex min-w-0 items-center gap-2 truncate transition-colors enabled:hover:text-ink disabled:cursor-default">
+          {first ? (
+            <>
+              <span className="eq shrink-0" aria-hidden><i /><i /><i /><i /></span>
+              <span className="truncate text-mute">{first.label || first.type}</span>
+              <span className="text-accent-ink">{Math.round((first.progress || 0) * 100)}%</span>
+              {running + waiting > 1 && <span>+{running + waiting - 1}</span>}
+            </>
+          ) : <span>{t("All systems idle")}</span>}
+        </button>
       </span>
       <button onClick={() => setShortcutsOpen(true)} className="hidden items-center gap-1.5 transition-colors hover:text-ink lg:flex">
         <Kbd>?</Kbd>{t("shortcuts")}

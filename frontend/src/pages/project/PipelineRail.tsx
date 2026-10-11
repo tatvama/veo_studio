@@ -1,6 +1,7 @@
 import { clsx } from "clsx";
 import {
-  ArrowRight, Bot, Check, ChevronLeft, ChevronsLeft, ChevronsRight, CirclePause, Compass, Ellipsis, Gauge, History, Lightbulb, Plus, Rocket, X,
+  ArrowRight, Bot, Check, ChevronLeft, ChevronsLeft, ChevronsRight, CirclePause, Clapperboard, Compass, Ellipsis, FileText, Gauge, History, Lightbulb,
+  ListOrdered, Plus, Rocket, X,
 } from "lucide-react";
 import { motion } from "motion/react";
 import { useEffect, useState } from "react";
@@ -92,14 +93,26 @@ function StepItem({ s, pid, active, collapsed }: { s: StepView; pid: number; act
   );
 }
 
-/** The project's "⋯" menu: the pages that are not steps. */
-function ProjectMenu({ pid, area, placement, side }: { pid: number; area?: ProjectArea; placement: Placement; side: "right" | "bottom" }) {
+/**
+ * The project's "⋯" menu: the pages that are not steps. In the focused shot workspace it also leads to the Overview and the
+ * brief (format, languages, quality, budget); for own-material projects it switches between that workspace and the five steps.
+ */
+export function ProjectMenu({ pid, area, placement, side, focus }: {
+  pid: number; area?: ProjectArea; placement: Placement; side: "right" | "bottom"; focus?: FocusSwitch;
+}) {
   const t = useT();
   const nav = useNavigate();
   const startTour = useUI((s) => s.startTour);
   return (
-    <Menu placement={placement} width={208} items={[
+    <Menu placement={placement} width={224} items={[
+      ...(focus?.on ? [
+        { label: t("Overview"), icon: <Gauge className="size-4" />, active: area === "home", onClick: () => nav(`/p/${pid}/dashboard`) },
+        { label: t("Brief & format"), icon: <FileText className="size-4" />, active: area === "story", onClick: () => nav(`/p/${pid}/brief`) },
+      ] : []),
       { label: t("Activity log"), icon: <History className="size-4" />, active: area === "log", onClick: () => nav(`/p/${pid}/activity`) },
+      ...(focus ? [focus.on
+        ? { label: t("Show all five steps"), icon: <ListOrdered className="size-4" />, onClick: () => focus.set(false) }
+        : { label: t("Shot-by-shot view"), icon: <Clapperboard className="size-4" />, onClick: () => focus.set(true) }] : []),
       { label: t("Take the tour"), icon: <Compass className="size-4" />, onClick: () => startTour() },
     ]} trigger={(tp) => (
       <Tooltip content={t("Project menu")} side={side}>
@@ -112,6 +125,9 @@ function ProjectMenu({ pid, area, placement, side }: { pid: number; area?: Proje
   );
 }
 
+/** Own-material projects: whether the focused shot workspace is on, and the switch between it and the five steps. */
+export interface FocusSwitch { on: boolean; set: (on: boolean) => void }
+
 export interface RailProps {
   project: Project; episode?: Episode; pid: number; episodes: Episode[];
   /** The five steps with this project's pages, progress and links; `area` is where the open page belongs. */
@@ -121,6 +137,7 @@ export interface RailProps {
   autopilot: { running: boolean; paused: boolean; label: string };
   /** Whether the Director panel is on screen right now, and how the buttons open or close it. */
   directorOpen: boolean; onToggleDirector: () => void;
+  focus?: FocusSwitch;
 }
 
 /**
@@ -164,7 +181,7 @@ export function PipelineRail(p: RailProps) {
         <div className={clsx("flex items-center gap-1", collapsed && "flex-col")}>
           <Tooltip content={t("All projects")} side="right"><Link to="/" aria-label={t("All projects")} className="grid size-7 place-items-center rounded-md text-mute transition-colors hover:bg-hover hover:text-ink"><ChevronLeft className="size-4" /></Link></Tooltip>
           {!collapsed && <span className="eyebrow flex-1">{t("Project")}</span>}
-          <ProjectMenu pid={pid} area={p.area} placement={collapsed ? "right-start" : "bottom-end"} side="right" />
+          <ProjectMenu pid={pid} area={p.area} placement={collapsed ? "right-start" : "bottom-end"} side="right" focus={p.focus} />
           <Tooltip content={collapsed ? t("Expand pipeline") : t("Collapse pipeline")} side="right">
             <button onClick={() => setCollapsed((v) => !v)} aria-label={collapsed ? t("Expand pipeline") : t("Collapse pipeline")}
               className="grid size-7 place-items-center rounded-md text-dim transition-colors hover:bg-hover hover:text-ink">
@@ -272,7 +289,7 @@ export function PipelineStrip(p: RailProps) {
               className={clsx("mono h-6 rounded px-1.5 text-2xs font-medium", ctx.lang === l ? "bg-accent text-[var(--on-accent)]" : "text-mute")}>{LANG_SHORT[l]}</button>
           ))}
         </div>
-        <ProjectMenu pid={p.pid} area={p.area} placement="bottom-end" side="bottom" />
+        <ProjectMenu pid={p.pid} area={p.area} placement="bottom-end" side="bottom" focus={p.focus} />
         <IconButton data-tour="director" title={t("Director")} active={p.directorOpen} onClick={p.onToggleDirector}><Bot className="size-4" /></IconButton>
       </div>
       <ScrollStrip className="px-2 pb-1.5 pt-1.5" aria-label={t("Project steps")} role="navigation">

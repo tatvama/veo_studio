@@ -30,8 +30,9 @@ MODELS: dict[str, str] = {
     "lipsync": "lipsync-2",
     "lipsync_pro": "lipsync-2-pro",
     "lipsync_angles": "sync-3",
-    # Anthropic: the Director chat agent (Settings → Generation → Director)
+    # Anthropic: the Director chat agent (Settings → Generation → Director) and writing on Claude (→ Writing)
     "director_claude": "claude-sonnet-5-5",
+    "writer_claude": "claude-opus-5-5",
 }
 
 PRICES: dict[str, dict] = {

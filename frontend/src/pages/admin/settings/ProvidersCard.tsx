@@ -65,9 +65,12 @@ function costFacts(provider: string, prices: Record<string, any> | undefined, t:
       add("Voice / 1k letters", price(tts.sarvam));
       break;
     case "anthropic": {
-      const claude = Object.entries((prices.text_per_million ?? {}) as Record<string, { in?: number; out?: number }>).find(([m]) => m.startsWith("claude"))?.[1];
-      add("Chat / 1M tokens in", price(claude?.in));
-      add("Chat / 1M tokens out", price(claude?.out));
+      // writing defaults to Opus, the Director chat to Sonnet
+      const text = (prices.text_per_million ?? {}) as Record<string, { in?: number; out?: number }>;
+      const opus = text["claude-opus-5-5"], sonnet = text["claude-sonnet-5-5"];
+      const both = (r?: { in?: number; out?: number }) => (r && price(r.in) && price(r.out) ? `${price(r.in)} · ${price(r.out)}` : null);
+      add("Opus 5.5 / 1M tokens in · out", both(opus));
+      add("Sonnet 5.5 / 1M tokens in · out", both(sonnet));
       break;
     }
     case "sync": {

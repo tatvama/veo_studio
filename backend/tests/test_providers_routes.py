@@ -334,17 +334,19 @@ def test_openrouter_catalog_sync(client, monkeypatch):
 
 def test_text_route(client, monkeypatch):
     svc = services_mod.Services()
-    modes = {"openrouter": "live", "gemini": "missing"}
+    modes = {"openrouter": "live", "gemini": "missing"}  # no Anthropic key (Claude writing: test_claude_writing.py)
     monkeypatch.setattr(services_mod, "provider_mode", lambda p: modes.get(p, "mock"))
     assert svc.text_route() == "openrouter"  # no Gemini key: OpenRouter writes
     modes["gemini"] = "live"
-    assert svc.text_route() == "gemini"  # the team's default
+    assert svc.text_route() == "gemini"  # Claude is the default, but without its key Gemini writes
     with SessionLocal() as db:
         settings_store.set_setting(db, "text_provider", "openrouter")
         db.commit()
     try:
         assert svc.text_route() == "openrouter" and svc.text_route(videos=True) == "gemini"  # Gemini watches clips
+        modes["anthropic"] = "live"
+        assert svc.text_route() == "openrouter"  # a team that picked OpenRouter never gets Claude
     finally:
         with SessionLocal() as db:
-            settings_store.set_setting(db, "text_provider", "gemini")
+            settings_store.set_setting(db, "text_provider", settings_store.DEFAULTS["text_provider"])
             db.commit()

@@ -622,9 +622,15 @@ def qc(ctx: JobContext) -> dict:
                                        mock_ctx={"take_id": take_id})
     usages.append(usage)
     report.update(obj.model_dump())
-    # 3) lip-sync check (Gemini watches the clip with its audio)
+    # 3) lip-sync check (Gemini watches the clip with its audio). Claude can't hear: with Claude reviewing clips (listening
+    # checks on Gemini turned off), this check and the spoken-words check are skipped and the report says so
+    listen = ctx.services.can_listen()
+    if not listen and (is_lip or (native_take and lines)):
+        report["not_heard"] = True
+        report["notes"] = (f"{report.get('notes') or ''} Lip-sync and spoken words not checked: Claude reviews clips and "
+                           "can't hear audio.").strip()
     lip = None
-    if is_lip and settings.get("lipsync_qc", True) and video_path.stat().st_size < 18_000_000:
+    if listen and is_lip and settings.get("lipsync_qc", True) and video_path.stat().st_size < 18_000_000:
         lp = (f"Language: {catalog.LANGUAGES.get(language, {}).get('name', language)}. Spoken line(s): {lines}\n"
               "Watch the mouth and listen. Score how well lip shapes and timing match the speech.")
         lip, u2 = ctx.services.llm_json("lipsync_qc", "You are a strict lip-sync reviewer for dubbed video.", lp,
@@ -633,7 +639,8 @@ def qc(ctx: JobContext) -> dict:
         report["lipsync"] = lip.model_dump()
     # 4) spoken words: did the clip say the scripted line, in the right language? (native Veo speech or a dub)
     words = None
-    if (is_lip or native_take) and lines and settings.get("dialogue_words_qc", True) and video_path.stat().st_size < 18_000_000:
+    words_on = settings.get("dialogue_words_qc", True) and video_path.stat().st_size < 18_000_000
+    if listen and (is_lip or native_take) and lines and words_on:
         wp = (f"Expected language: {lang_name}. Expected line(s): {lines}\nListen to the clip. Transcribe exactly what is "
               "spoken, name the language actually spoken, score word accuracy, pronunciation and lip-sync, and say whether "
               "any text is burned into the picture.")

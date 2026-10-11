@@ -34,7 +34,7 @@ PROVIDER_LABELS = {
     "openrouter": "OpenRouter (Seedance, Kling, Wan, Veo, Hailuo, Grok video … and text; one key, pay per use)",
     "byteplus": "BytePlus ModelArk (Seedance 2.0 / 2.5 video, Seedream images; ByteDance direct)",
     "byteplus_iam": "BytePlus asset library (access key + secret: registers your AI characters for Seedance)",
-    "anthropic": "Anthropic Claude (Claude Sonnet 5.5 runs the Director chat agent)",
+    "anthropic": "Anthropic Claude (writing, reviews and the Director chat agent)",
 }
 
 
@@ -101,23 +101,36 @@ class Services:
 
     # ── LLM (structured JSON) ────────────────────────────────────────────────
     def text_route(self, videos: bool = False) -> str:
-        """"openrouter" when the team chose it for writing (or there is no Gemini key), else "gemini".
-        Prompts that include video clips stay on Gemini when it is live: it watches video natively."""
-        if provider_mode("openrouter") != "live":
-            return "gemini"
-        gemini = provider_mode("gemini")
-        if videos and gemini == "live":
-            return "gemini"
+        """Who writes: "anthropic" (Claude) when the team picked it (the default) and the Anthropic key is live; else
+        "openrouter" when the team chose it (or there is no Gemini key); else "gemini". A team that picked Gemini or
+        OpenRouter never gets Claude. Prompts with video clips are listening checks (lip-sync, spoken words): they stay
+        on Gemini while it is live, since it hears the audio and Claude only sees frames, unless the team turned
+        "listening checks on Gemini" off."""
         from ..db import SessionLocal
         with SessionLocal() as db:
             pref = settings_store.get_setting(db, "text_provider")
+            listen = settings_store.get_setting(db, "listen_checks_gemini")
+        gemini = provider_mode("gemini")
+        if pref == "anthropic" and provider_mode("anthropic") == "live":
+            return "gemini" if videos and listen is not False and gemini == "live" else "anthropic"
+        if provider_mode("openrouter") != "live":
+            return "gemini"
+        if videos and gemini == "live":
+            return "gemini"
         return "openrouter" if pref == "openrouter" or gemini != "live" else "gemini"
+
+    def can_listen(self) -> bool:
+        """False when clips would go to Claude, which can't hear: lip-sync and spoken-word checks are skipped then."""
+        return self.text_route(videos=True) != "anthropic"
 
     def llm_json(self, task: str, system: str, prompt: str, schema: type[T], *, pro: bool = False,
                  images: list[bytes] | None = None, videos: list[bytes] | None = None, mock_ctx: dict | None = None,
                  temperature: float | None = None, tools: list[dict] | None = None) -> tuple[T, Usage]:
         model = self.models["text_pro" if pro else "text"]
-        if self.text_route(bool(videos)) == "openrouter":
+        route = self.text_route(bool(videos))
+        if route == "anthropic":
+            return self._llm_claude(task, system, prompt, schema, pro, images, videos, bool(tools))
+        if route == "openrouter":
             return self._llm_openrouter(task, system, prompt, schema, model, pro, images, temperature, bool(tools))
         if _require("gemini") == "mock":
             data = mock.llm(task, mock_ctx or {})
@@ -150,6 +163,18 @@ class Services:
             except ValidationError as e:
                 last_err = e
         raise RetryableProviderError(f"model output did not match schema: {last_err}", provider="gemini")
+
+    def _llm_claude(self, task: str, system: str, prompt: str, schema: type[T], pro: bool, images: list[bytes] | None,
+                    videos: list[bytes] | None, search: bool) -> tuple[T, Usage]:
+        """Claude writes (structured output); a task that asked for Google Search researches with Anthropic's web search."""
+        from ..db import SessionLocal
+        from .claude_text import ClaudeText, effort_for
+        with SessionLocal() as db:
+            model = settings_store.get_setting(db, "writer_claude_model") or self.models["writer_claude"]
+            effort = effort_for(task, settings_store.get_setting(db, "writer_claude_effort"), pro)
+        writer = ClaudeText(settings_store.api_key("anthropic"), model, self.prices)
+        obj, tokens, usd = writer.json(system, prompt, schema, effort=effort, images=images, videos=videos, search=search)
+        return obj, Usage("anthropic", model, f"llm:{task}", tokens, "tokens", usd)
 
     def _llm_openrouter(self, task: str, system: str, prompt: str, schema: type[T], gemini_model: str, pro: bool,
                         images: list[bytes] | None, temperature: float | None, search: bool) -> tuple[T, Usage]:
