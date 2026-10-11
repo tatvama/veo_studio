@@ -1,0 +1,455 @@
+# Tatvam Desktop: the finishing room
+
+*Phase 9 of TATVAM_PLAN.md (section 16). Started 11 October 2026.*
+
+The desktop app is for the one or two editors who finish a cut: 4K output, hardware encoding, local footage,
+several windows across several screens, and cutting offline. It does **no AI work of its own**. Every AI button still
+calls the server, through the same cost check and approvals. The web stays the studio for everyone else, and phones
+stay the review layer.
+
+## 1. Shape
+
+| Part | What it is |
+| --- | --- |
+| Shell | **Electron 44** (Chromium 152, Node 24) around the same React frontend. We chose it over Tauri on 11 Oct 2026: no Rust or C++ toolchain is needed, the TypeScript render engine can pipe frames straight into FFmpeg, and the bigger installer doesn't matter on an editing PC |
+| `desktop/` | The Electron app: main process, preload bridge and a local gateway, all in TypeScript and bundled with esbuild |
+| Local gateway | An HTTP server on `127.0.0.1:<port>` (default 18100). It serves the UI, forwards `/api`, `/media` and the WebSocket to the studio server, serves media from the local project folder when that file is there, and queues cut edits while offline |
+| Server additions | Checkout locks, cut versions, the desktop manifest, the render plan, chunked render upload, the AI upscale step and review notes per episode (`backend/app/api/desktop.py`, `backend/app/core/desktop.py`) |
+| Frontend additions | The **Finishing room** page inside step 4 Edit, pop-out panel routes (`/desktop/panel/...`), a read-only cut while someone else has it checked out, and a cross-window playhead bus |
+
+Because the UI is served from the gateway's own origin, the frontend keeps relative `/api` and `/media` URLs and
+the server needs no CORS change. The session cookie lives on `127.0.0.1`. The gateway strips `Domain` and `Secure`
+from `Set-Cookie`, and passes the cookie on to the server.
+
+Google sign-in works too. The app opens `<server>/api/auth/google/start` in its own window, waits for the redirect
+back to the server, copies the `veo_session` cookie onto the gateway origin, and reloads.
+
+## 2. Server API (all under `/api`, cookie auth, writes need `X-Requested-With: veo-studio`)
+
+### 2.1 Checkout lock (one editor per cut)
+
+The table is `cut_locks`: `episode_id` (unique), `user_id`, `client` ("desktop" | "web"), `machine`, `acquired_at`
+and `heartbeat_at`. It lives in Postgres, so it survives restarts. A lock **does not expire on its own**: an editor
+can keep it through a long offline stretch. A producer or admin can force-release it.
+
+| Method & path | Body | Result |
+| --- | --- | --- |
+| `GET /episodes/{eid}/checkout` | – | `{lock: null \| {episode_id, user: {id,name,email,role}, client, machine, acquired_at, heartbeat_at, mine: bool}}` |
+| `POST /episodes/{eid}/checkout` | `{client?: "desktop", machine?: str, force?: bool}` | 200 `{lock}`. 423 `{detail}` when another user holds it. `force` needs producer and records an audit entry |
+| `POST /episodes/{eid}/checkout/heartbeat` | – | 200 `{lock}`. 409 if you no longer hold it |
+| `POST /episodes/{eid}/checkin` | `{note?: str}` | Saves a cut version (§2.2), releases the lock, returns `{version: <version object>}` |
+| `DELETE /episodes/{eid}/checkout` | – | Releases the lock without saving a version (the holder, or a producer; audited as `cut.checkout.release`). Returns `{lock: null}` |
+
+**Enforcement.** While user A holds the lock, these cut edits by anyone else return **423**
+`"Checked out by <name> on <client> — the cut is read-only until they check in"`:
+
+- shot reorder
+- `PATCH /shots/{sid}` when it touches `trim_in`, `trim_out`, `include` or `order`
+- `PUT /shots/{sid}/fx`
+- `POST /episodes/{eid}/fx/apply`
+- `PUT /shots/{sid}/overlays`
+- `PUT /episodes/{eid}/layers`
+- `PATCH /episodes/{eid}` when it touches `settings`
+- selecting music for that episode
+- `DELETE /shots/{sid}`, `POST /shots/{sid}/undo` (when the undo changes cut fields), `PUT /episodes/{eid}/board`
+  (when it moves or drops shots in the cut; new shots at the end are fine) and the Director's `update_shot` include
+  change
+
+A `PATCH` that sends a cut field with its current value passes: only real changes are refused. A forced checkout
+is audited as `cut.checkout.force`.
+
+Generation, take selection and approvals stay open, so phones and the web keep the pipeline moving. Each change
+emits `episode.updated {what: "checkout"}`. Presence reports the desktop editor as `editing: "cut:<eid>"`.
+
+### 2.2 Cut versions (check-in history with rollback)
+
+The table is `cut_versions`: `episode_id`, `number` (1..n per episode), `note`, `snapshot` JSON, `stats` JSON,
+`client`, `created_by`, `created_at` and `restored_from` (the version **number** it brought back, nullable).
+
+The snapshot holds:
+- `shots`: `[{id, order, include, trim_in, trim_out, fx, overlays, sfx_track, selected: {"video": take_id, "lipsync:kn": take_id, ...}}]`.
+  `selected` holds the *current* take of every kind (and language), picked by hand or not, so a restore brings back
+  exactly the clips that were in the cut
+- `settings`: the episode settings
+- `layers`: the layers document without `rev`
+- `music_id`: the selected music `AudioAsset` id, or null
+
+| Method & path | Result |
+| --- | --- |
+| `GET /episodes/{eid}/versions` | `[{id, number, note, client, created_by: user_brief, created_at, restored_from, stats: {shots, included, duration_s}}]`, newest first |
+| `POST /episodes/{eid}/versions` `{note}` | Saves a version now (the lock holder, or anyone when the cut isn't checked out) |
+| `GET /versions/{vid}` | The full row with its snapshot |
+| `POST /versions/{vid}/restore` | First saves the current cut as a version ("Before restoring vN"), then writes the snapshot back. Shots that no longer exist are skipped; shots added since are kept after the restored ones; layers keep the current `rev + 1` and their media library is merged; `music_id` null unselects all music. Then it saves "Restored vN" with `restored_from` and returns that version. 423 if someone else holds the lock |
+
+### 2.3 Desktop manifest (what the local folder should contain)
+
+`GET /projects/{pid}/desktop/manifest?scope=approved|cut&episode_id=`
+
+- **approved** (the default) lists the current takes of shots whose status is approved, plus every take selected
+  by hand. It also lists the selected music, approved renders, and the approved Bible stills of characters,
+  locations and props.
+- **cut** lists every current take of every shot that is included in the cut. Editors use this to start before
+  approval.
+
+```json
+{
+  "project": {"id": 1, "title": "Kaali", "aspect": "9:16", "languages": ["kn","en"], "primary_language": "kn"},
+  "generated_at": "2026-10-11T10:00:00Z",
+  "episodes": [{"id": 3, "number": 2, "season": 1, "title": "…", "cut_version": 4,
+                "scenes": [{"id": 9, "order": 1, "title": "…"}],
+                "shots": [{"id": 41, "code": "E02-SH03", "order": 3, "cut_index": 3, "include": true,
+                           "scene_id": 9, "scene_order": 1, "status": "approved", "duration_s": 6}]}],
+  "items": [{
+    "key": "projects/1/shots/41/video/ab12cd34ef56.mp4",
+    "url": "/media/projects/1/shots/41/video/ab12cd34ef56.mp4",
+    "folder": "Takes",
+    "kind": "video",
+    "role": "take",
+    "episode_id": 3, "scene_id": 9, "shot_id": 41, "take_id": 77, "language": null,
+    "series": {"season": 1, "episode": 2, "scene": 1, "shot": 3, "cut": 3, "take": 2, "version": 2, "code": "E02-SH03"},
+    "approved": true, "selected": true,
+    "duration_s": 6.0, "updated_at": "2026-10-10T12:00:00Z",
+    "ext": "mp4", "label": "Video take 2"
+  }]
+}
+```
+
+The `folder` values are: `Takes` (video, keyframe, lipsync, voicelock, upscale), `Audio/Voice` (voice, narration),
+`Audio/Music`, `Audio/SFX`, `Captions` (export .srt), `Renders` (exports), `Bible/Characters`, `Bible/Locations`,
+`Bible/Props`, `Imports` (layer media that came from desktop imports) and `Media` (other layer media).
+
+As built, the manifest also has a top-level `scope`, episodes carry `kind`, and items may carry `asset_id`,
+`export_id`, `preset`, `character_id` / `location_id` / `prop_id` and `media_kind`. `role` is one of take, sfx,
+music, render, captions, bible, import, media. Missing series numbers are 0; `cut_index` and `scene_order` are null
+for shots outside the cut. Lip-sync, voice-lock and upscale takes made from an older video are left out.
+
+Within the series, `take` is the take's number among the shot's takes of the same kind and language, counted in
+creation order from 1. `version` is the same number for takes, and the render version for exports.
+
+### 2.4 Render plan (the desktop renders exactly what the server would)
+
+`GET /episodes/{eid}/render-plan?lang=kn&w=3840&h=2160&fps=24&effects=1&captions=1&music=1&upscaled=1`
+
+The plan reuses `assembler.plan()` and the same timing maths as `assembler.render()`. It returns ready-made filter
+strings for the requested size. LUT files are written as `@@LUT_<id>@@` (no colon, so FFmpeg escaping leaves it alone), and the desktop swaps in an escaped local
+path. Every media reference is a storage **key**, and the desktop turns keys into local files, downloading any that
+are missing.
+
+```json
+{
+  "episode_id": 3, "lang": "kn", "w": 3840, "h": 2160, "fps": 24, "cut_version": 4,
+  "fingerprint": "sha1 of the cut", "warnings": ["…"],
+  "segments": [{
+    "shot_id": 41, "code": "E02-SH03", "source": "projects/1/shots/41/video/ab.mp4", "source_kind": "video",
+    "upscaled": false, "duration": 5.5, "trim_in": 0.2, "speed": 1.0, "seg_len": 5.5,
+    "audio_override": null, "extra_audio": [{"key": "…", "offset": 0.0, "gain_db": 0}],
+    "keep_src_audio": true, "src_gain_db": 0, "has_audio": true,
+    "pre": "reverse,setpts=(PTS-STARTPTS)/1.5,", "stabilize": false, "center": [0.5, 0.42],
+    "kenburns": true, "vf_post": "hflip,eq=contrast=1.12,format=yuv420p", "af_fx": "afade=t=in:st=0:d=0.5",
+    "transition": ["fade", 0.5]
+  }],
+  "end_card": {"key": "projects/1/desktop/endcard_3_3840x2160.png", "seconds": 3, "transition": ["fade", 0.4]},
+  "layers": {
+    "pics": [{"key": "…", "kind": "video", "start": 1, "in": 0, "dur": 3, "chain": ["setpts=…"], "x": "main_w*0.5-overlay_w/2", "y": "…"}],
+    "sounds": [{"key": "…", "start": 1, "in": 0, "dur": 3, "gain_db": 0, "fade_in": 0, "fade_out": 0}]
+  },
+  "music": {"key": "…", "volume_db": -16, "duck": true},
+  "captions": {"srt": "1\n00:00:00,200 --> …", "ass": "[Script Info]…", "burn": true},
+  "luts": {"3": "projects/1/luts/3.cube"},
+  "loudnorm": "loudnorm=I=-14:TP=-1.5:LRA=11",
+  "keys": ["every storage key above, de-duplicated"]
+}
+```
+
+As built, the plan also carries `project_id`, `generated_at`, `duration_s`, `options {effects, captions, music,
+upscaled}` and `stabilize_filters {detect, transform}` with a `@@TRF@@` placeholder (the desktop runs the detect pass
+itself when `segment.stabilize` is true; `pre` never stabilises). Each segment has `start` (its time on the finished
+cut) and **`vf`, the complete video chain**, which the desktop uses as is (adding `flags=lanczos`, and `unsharp`
+for local upscale, at 2160p and up). The end card has `vf` too, captions carry `style` and `font`, `luts` lists only
+the LUTs in use, and `music` is null when there is none. Without `w`/`h` the size is the project aspect at a 1080
+short side; `fps` is clamped to 1..120. The server render and the plan share `timeline()`, `render_options()`,
+`music_track()`, `caption_files()` and the FFmpeg chain helpers, so they can't drift apart.
+
+`upscaled=1` makes the plan use a ready `upscale` take (§2.6) of the current video whenever one exists and isn't
+stale. `segment.upscaled` says whether that happened.
+
+### 2.5 Render upload (to the Render Center)
+
+The upload is chunked, so a 4K master survives a flaky connection.
+
+| Method & path | Body | Result |
+| --- | --- | --- |
+| `POST /episodes/{eid}/renders/uploads` | `{filename, size, language, preset, w, h, fps, codec, encoder, cut_version, duration_s, machine}` | `{upload_id, chunk_size}` (8 MB) |
+| `PUT /renders/uploads/{uid}?offset=N` | raw bytes (`application/octet-stream`) | `{received}`. 409 with `{received}` if the offset is wrong, so the client resumes from there |
+| `GET /renders/uploads/{uid}` | – | `{received, size}` |
+| `POST /renders/uploads/{uid}/complete` | `{srt?: str}` | Creates the `Export` row: `kind="final"`, `preset="desktop:<preset>"`, `status="ready"`, `version` = the next number for the episode, `options = {source:"desktop", w, h, fps, codec, encoder, cut_version, machine}`. Saves the file as `projects/{pid}/exports/e{NN}_{lang}_{preset}_v{version}_{id}.mp4`, adds a thumbnail and peaks, emits `export.updated`, and returns `export_out` |
+
+Init may also send the plan's `fingerprint`. Over the size cap returns 413, a chunk past the declared size 400, and
+a wrong offset or an early complete 409 `{detail, received}`. The status call returns `{upload_id, received, size}`.
+The file keeps a `.mov` / `.mkv` / `.webm` extension from `filename` (ProRes masters), else `.mp4`. Unfinished
+uploads older than a week are cleared.
+
+`Export.version` is a new nullable integer column. Server renders get one too, from the same per-episode counter.
+The team setting `desktop_upload_max_mb` (default 8000) caps the size.
+
+### 2.6 AI upscale step (a paid cloud call)
+
+- `POST /episodes/{eid}/upscale/estimate` `{shot_ids?: [...], target_h?: 2160}` returns
+  `{items: [{shot_id, code, take_id, from: [w,h], to: [w,h], seconds, usd}], total_usd, skipped: [...]}`.
+  Shots whose current video already meets the target, or that already have an upscale that isn't stale, are skipped.
+- `POST /episodes/{eid}/upscale` takes the same body. It submits `upscale` jobs through `jobs.submit`, so it gets
+  the same estimate, budget and approval path as every paid step. The result has the usual
+  `{batch_id, status, total_usd, ...}` shape.
+- Worker `upscale` sends the video through fal (team setting `upscale_fal_endpoint`, default
+  `fal-ai/topaz/upscale/video` with model Proteus, `upscale_factor` = target / source, `H264_output: true`). It
+  stores the result as `Take(kind="upscale", parent_take_id=<video take>, params={w, h, factor, endpoint})` and
+  records the cost (team setting `upscale_price_per_s`, default 0.08). With mock providers it uses an FFmpeg
+  Lanczos scale and costs nothing.
+- An upscale is **stale** once its parent is no longer the shot's current video.
+- As built, `target_h` (360..4320) is the clip's **short side** and the factor is capped at 4×. Estimate items also
+  carry `factor`; skipped entries are `{shot_id, code, reason}`. Submit returns the `jobs.submit` shape plus `items`
+  and `not_upscaled`. A fal result without sound gets the source audio added back.
+
+### 2.7 Review notes for the desktop timeline
+
+`GET /episodes/{eid}/review-notes` returns
+`[{id, export_id, export_version, cut_version, timecode, body, drawing, author, guest_name, resolved, created_at, maps_to_cut: bool}]`
+for comments on this episode's renders, newest render first, then by timecode. `maps_to_cut` is true when the
+render was made from the current cut (its recorded `fingerprint`, else its `cut_version`), which means its timecodes
+land on the timeline as they are. Server renders now record `options.cut_version` and `options.fingerprint` too.
+
+## 3. Local project folder
+
+- The **library root** is chosen by the user (a folder picker). The default is `Documents\Tatvam Projects`.
+- Any project can be **moved** to its own folder: Finishing room → Local folder → This project → "Change…" moves
+  the files (copy and delete across drives) and updates the mirror. "Open" shows it in Explorer.
+- The default project folder name is `<Project title> (#<id>)`. It contains:
+
+```
+Takes/ Audio/Voice/ Audio/Music/ Audio/SFX/ Captions/ Imports/ Proxies/ Renders/ Cache/
+Bible/Characters/ Bible/Locations/ Bible/Props/ Media/ Edits/
+project.tatvam.json          ← human-readable project file (ids, server, naming, last sync)
+.tatvam/mirror.sqlite        ← the SQLite mirror (node:sqlite)
+```
+
+- Premiere and DaVinci can read the folder: `Edits/` holds a CMX3600 EDL and an FCPXML of the current cut, both
+  pointing at the series-named local files.
+- `Cache` and `Proxies` can be thrown away. Files in `Renders` are cleaned only after they have uploaded, and files
+  in `Imports` only after they have been ingested.
+
+### 3.1 Series file naming (names follow the cut)
+
+Every file gets its name from a template. Tokens are `{name}` or `{name:03}`, where the number zero-pads to that
+many digits.
+
+| Token | Meaning |
+| --- | --- |
+| `{project}` | Project title, made safe for a file name |
+| `{season}` `{episode}` | Season and episode numbers |
+| `{scene}` | Scene order (1-based) |
+| `{shot}` | Shot order in the episode |
+| `{cut}` | Position among the included shots, so the folder sorts in playback order |
+| `{code}` | The shot code, e.g. E02-SH03 |
+| `{kind}` | video, keyframe, lipsync, voice, music, render … |
+| `{lang}` | Language code, empty when there is none |
+| `{take}` `{version}` | Take number, or render version |
+| `{preset}` | The render preset |
+| `{date}` | YYYYMMDD |
+| `{seq}` | The running number inside its folder |
+| `{id}` | The take, asset or export id |
+| `{label}` | A short label |
+
+Default templates:
+
+| Folder | Template |
+| --- | --- |
+| Takes | `{project}_S{season:02}E{episode:02}_{cut:03}_SC{scene:02}_SH{shot:03}_{kind}{_lang}_T{take:02}` |
+| Audio | `{project}_S{season:02}E{episode:02}_{cut:03}_SH{shot:03}_{kind}{_lang}_T{take:02}` |
+| Music | `{project}_S{season:02}E{episode:02}_music_{seq:02}` |
+| Renders | `{project}_S{season:02}E{episode:02}_{lang}_{preset}_v{version:03}` |
+| Captions | `{project}_S{season:02}E{episode:02}_{lang}_v{version:03}` |
+| Bible | `{project}_{kind}_{label}_{seq:02}` |
+| Imports | `IMP_{seq:04}_{label}` |
+
+`{_lang}` is shorthand for "an underscore plus the value, or nothing when it is empty", and it works for any
+token.
+
+Names are made safe for Windows: no `<>:"/\|?*`, no reserved names (CON, NUL …), and a whole path under 240
+characters. Two files that end up with the same name get `_2`, `_3` and so on.
+
+**Kept in series.** After every sync the mirror works out the name each file should have. When shots are reordered,
+a take is re-picked or a scene moves, it renames in two phases (first to temporary names, then to the final names),
+so the folder always lists in cut order. The rename plan can be previewed before it runs (Finishing room → File
+names → Rename plan, then "Rename now"). Tested live on 11 Oct 2026: moving the last shot to the front renamed
+three takes (`…_001_SC02_SH001…`, `…_002_SC01_SH002…`, `…_003_SC01_SH003…`) and rewrote the EDL.
+
+## 4. Desktop app internals (`desktop/src`)
+
+| Module | Job |
+| --- | --- |
+| `main/index.ts` | Lifecycle, single instance, the `tatvam://` deep link, wiring |
+| `main/config.ts` | `settings.json` in userData: `serverUrl`, `gatewayPort`, `uiSource` ("bundled" or "server"), `libraryRoot`, `projectFolders {pid: path}`, `naming {folder: template}`, `pullScope`, `proxyMode`, `encoder` preferences, `workspaces`, `windowState` |
+| `main/gateway.ts` | The local HTTP gateway (§1): static UI with SPA fallback; `/api` and `/media` forwarded with streaming and Range; WebSocket upgrade forwarded; local-first `/media` (with a proxy file in proxy mode); offline cache and write queue |
+| `main/upstream.ts` | Server calls from the main process (session cookie and `X-Requested-With` added), plus the WebSocket listener that triggers re-syncs |
+| `main/library.ts` | Library root, project folders, folder skeleton, move, open, disk usage, clean |
+| `main/naming.ts` | Template engine, safe names, the series rename plan (pure functions with unit tests) |
+| `main/mirror.ts` | SQLite mirror: `projects`, `episodes`, `shots`, `files(key, local_path, name, size, state, synced_at)`, `queue`, `api_cache` |
+| `main/sync.ts` | Manifest → download queue (3 at a time, resumable `.part` files, checked sizes) → series names → cleanup; progress events |
+| `main/watch.ts` | Watches the `Imports` folder; a file whose size has held steady is uploaded to `POST /episodes/{eid}/media` and marked ingested |
+| `main/ffmpeg.ts` | Finds FFmpeg (the path set in the Studio server window, `TATVAM_FFMPEG`, the bundled `resources/ffmpeg.exe`, then `ffmpeg-static` / the system one / the backend's imageio copy in dev, preferring 7.x: 6.1 lacks vidstab and some xfade transitions), probes the encoders, test-encodes on NVENC, QSV and AMF, and runs the machine check |
+| `main/proxies.ts` | 1080p proxies, made on NVENC when it is available |
+| `main/render-args.ts` | Pure FFmpeg argument builders for every render step, checked in tests against the arguments the server's `ffmpeg.py` / `layers.py` build |
+| `main/render.ts` | Runs a render plan locally at 4K with hardware encoding, reports progress and ETA, can cancel, writes into `Renders/` |
+| `main/upload.ts` | Chunked, resumable render upload |
+| `main/edl.ts`, `main/edits.ts` | Write a CMX3600 EDL (dissolves, M2 speed lines) and an FCPXML 1.10 of the cut into `Edits/` |
+| `main/offline.ts` | Pure logic of the offline cache and write queue (which writes queue, how they patch the cached GETs, replay order) |
+| `main/download.ts` | Resumable `.part` downloads with Range |
+| `main/signin.ts` | Google sign-in window that copies the session cookie onto the gateway origin |
+| `main/connect.ts` | The native **Studio server** window (File → Studio server…): server address with a live test, interface source, FFmpeg path |
+| `main/ipc.ts` | The bridge's main-process side; every call checks the sender frame is on the gateway origin |
+| `main/smoke.ts` | `npm run smoke`: UI, sign-in, API, WebSocket, bridge, a pop-out and the machine check, one JSON status line |
+| `main/windows.ts` | The main window, pop-out panels, the display list, move to display, clean full-screen feed, workspaces, saved window state |
+| `main/menu.ts` | The application menu and its shortcuts |
+| `main/updater.ts` | `electron-updater` on GitHub Releases, used only when the app is packaged |
+| `main/log.ts` | A rolling log file in `userData/logs`, plus local crash dumps |
+| `preload/index.ts` | `window.tatvamDesktop`, the typed bridge (§5) |
+| `preload/connect.ts` | `window.tatvamConnect`, only in the Studio server window |
+
+**What the web UI may change.** `settings.set` from a page accepts only `naming`, `pullScope`, `proxyMode`,
+`encoder` and `autoSync` (`RENDERER_SETTINGS`). The server address, interface source and FFmpeg path decide where
+the session cookie goes and which program runs, so only the native Studio server window changes them (its IPC
+answers that window alone); folders change only through native folder dialogs. The gateway serves local media only
+to requests that carry the app's own session cookie and rejects unexpected `Host` headers (DNS rebinding).
+
+### 4.1 Encoder presets
+
+| id | Label | Size (16:9, swapped for 9:16) | Video | Notes |
+| --- | --- | --- | --- | --- |
+| `yt4k` | YouTube 4K | 3840×2160 | HEVC 10-bit, CQ 19 | NVENC → QSV → AMF → x265 |
+| `yt4k_h264` | YouTube 4K (H.264) | 3840×2160 | H.264 8-bit, CQ 18 | |
+| `social4k` | Shorts / Reels 4K | 2160×3840 | HEVC 8-bit | |
+| `master_prores` | Master ProRes 422 HQ | 3840×2160 | prores_ks profile 3, yuv422p10le, .mov | Software encoder |
+| `broadcast1080` | Broadcast 1080p25 | 1920×1080 at 25 fps | H.264 high, 50 Mb/s CBR, AAC 48 kHz | |
+| `review1080` | Review 1080p (fast) | 1920×1080 | H.264 CQ 23 | |
+| `av1_4k` | AV1 4K (archive) | 3840×2160 | AV1 NVENC, only where supported (RTX 40 and up) | Hidden when the probe fails |
+
+- Intermediate segments use the fastest hardware H.264 encoder at CQ 16, falling back to x264 veryfast at CRF 16.
+- At 2160p and above, scaling uses `flags=lanczos`. When a shot has no AI upscale, "Local upscale" adds a light
+  `unsharp`.
+- The hardware baseline is an RTX 3060, 32 GB of RAM and an NVMe SSD. The machine check compares this PC with it.
+
+## 5. Bridge: `window.tatvamDesktop` (preload)
+
+```ts
+interface TatvamDesktop {
+  version: string; platform: string;
+  info(): Promise<{ appVersion; serverUrl; gatewayUrl; libraryRoot; uiSource; packaged: boolean; machine?: string }>;
+  settings: { get(): Promise<DesktopSettings>; set(patch: Partial<DesktopSettings>): Promise<DesktopSettings> };
+  library: {
+    chooseRoot(): Promise<string | null>;
+    projectFolder(pid: number): Promise<{ path: string; exists: boolean; custom: boolean }>;
+    chooseProjectFolder(pid: number): Promise<string | null>;   // pick + move existing files
+    open(pid: number, sub?: string): Promise<void>;
+    usage(pid: number): Promise<{ folders: Record<string, { files: number; bytes: number }>; freeBytes: number }>;
+    clean(pid: number, what: ("cache" | "proxies" | "renders")[]): Promise<{ removedBytes: number }>;
+  };
+  naming: {
+    get(): Promise<Record<string, string>>; set(t: Record<string, string>): Promise<void>;
+    preview(pid: number): Promise<{ from: string; to: string }[]>;   // rename plan
+    tokens(): Promise<{ token: string; help: string }[]>;
+  };
+  sync: {
+    start(pid: number, opts?: { scope?: "approved" | "cut"; episodeId?: number }): Promise<void>;
+    stop(pid: number): Promise<void>;
+    status(pid: number): Promise<SyncStatus>;
+    onProgress(cb: (s: SyncStatus) => void): () => void;
+  };
+  imports: { status(pid: number): Promise<{ watching: boolean; pending: number; ingested: number; failed: string[] }>;
+             setWatching(pid: number, eid: number, on: boolean): Promise<void> };
+  media: { machineCheck(): Promise<MachineReport>; proxies(pid: number, on: boolean): Promise<void>;
+           proxyMode(on: boolean): Promise<void>; proxyStatus(pid); onProxyProgress(cb) };
+  render: {
+    presets(): Promise<RenderPreset[]>;
+    start(job: { pid: number; eid: number; lang: string; preset: string; effects?: boolean; captions?: boolean;
+                 music?: boolean; upscaled?: boolean; localUpscale?: boolean; upload?: boolean }): Promise<string>;
+    cancel(id: string): Promise<void>;
+    list(): Promise<RenderJob[]>;
+    onProgress(cb: (j: RenderJob) => void): () => void;
+    reveal(id: string): Promise<void>;
+    upload(id: string): Promise<void>;
+  };
+  edl: { write(pid: number, eid: number, lang: string): Promise<{ edl: string; fcpxml: string }> };
+  windows: {
+    displays(): Promise<{ id: number; label: string; bounds; primary: boolean; scaleFactor: number }[]>;
+    popOut(panel: PanelId, opts?: { pid?: number; eid?: number; display?: number; fullscreen?: boolean; clean?: boolean }): Promise<number>;
+    list(): Promise<{ id: number; panel: string; display: number; fullscreen: boolean }[]>;
+    moveToDisplay(windowId: number, display: number, fullscreen?: boolean): Promise<void>;
+    close(windowId: number): Promise<void>;
+    workspaces(): Promise<Workspace[]>;
+    saveWorkspace(name: string): Promise<Workspace>;
+    applyWorkspace(id: string): Promise<void>;
+    deleteWorkspace(id: string): Promise<void>;
+    exportWorkspaces(): Promise<string | null>; importWorkspaces(): Promise<number>;
+  };
+  app: { openExternal(url: string): Promise<void>; revealLogs(): Promise<void>; checkForUpdates(): Promise<UpdateState>;
+         openConnection(): Promise<void>;   // opens the native Studio server window
+         onUpdate(cb: (u: UpdateState) => void): () => void; onMenu(cb: (action: string) => void): () => void };
+  offline: { status(): Promise<{ online: boolean; queued: number; lastError?: string }>; onChange(cb): () => void; flush(): Promise<void> };
+}
+type PanelId = "program" | "source" | "timeline" | "scopes" | "mixer" | "notes" | "media" | "renders" | "bible";
+```
+
+The exact shapes (`SyncStatus` with its phases and `inFolder`, `MachineReport`, `RenderPreset.hardware`,
+`RenderJob` with `progress` 0..1, `eta_s`, `export_id`, `version`, `UpdateState`, `OfflineStatus`) live in
+`desktop/src/shared/types.ts`, mirrored by `frontend/src/lib/desktop.ts`. Extra fields are additive. Menu actions
+the page handles (`app.onMenu`): `open-settings` and `machine-check` open the project's Finishing room, `about` shows
+the About box (`components/shell/DesktopMenu.tsx`).
+
+The built-in workspaces are **Edit**, **Colour**, **Audio**, **Review** and **Story**. Each one lists the panels it
+opens, their displays and whether they go full screen.
+
+**Windows talk to each other** over `BroadcastChannel("tatvam-desktop")`, which every window shares because they
+all have the same origin. The messages are `{type: "playhead", eid, t, playing}`, `{type: "select", eid, shotId}`,
+`{type: "marks", eid, in, out}`, `{type: "seek", eid, t}` and `{type: "frame", eid, url, time, ...}` (each with `src` and
+`at`). The same bus also works for
+browser pop-outs on the web.
+
+## 6. Running it
+
+```bash
+cd desktop
+npm ci
+npm run dev        # bundles main + preloads and starts Electron (UI from ../frontend/dist: build it first)
+npm test           # unit tests (node --test; no Electron, GPU or FFmpeg needed)
+npm run smoke      # starts the app against TATVAM_SERVER, checks UI, sign-in, API, socket, bridge, pop-out
+npm run dist       # Windows installer (NSIS) in desktop/release, with the built UI and FFmpeg 7.1 inside
+```
+
+- `TATVAM_SERVER` (default `http://localhost:8100`) sets the server on the first run; after that, File → Studio
+  server… changes it. `TATVAM_UI_DIR` points at another built UI, `TATVAM_USER_DATA` at another settings folder.
+- The end-to-end test (`TATVAM_E2E=1`, see `desktop/test/e2e.test.ts`) syncs a cut, writes the EDL, renders it in 4K
+  and uploads it to a running server.
+- CI runs the desktop typecheck and unit tests (job "Desktop app"). A release builds the Windows installer and
+  attaches it, with `latest.yml`, to the GitHub Release, which is where installed apps update from. Signing uses the
+  optional `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` secrets; without them the installer is unsigned and Windows
+  SmartScreen warns on first run.
+
+## 7. Status (11 October 2026)
+
+Built and tested on the reference laptop (GTX 1660 Ti 6 GB, i7-9750H, 32 GB, NVMe), against a throwaway server
+with mock providers:
+
+| Area | Result |
+| --- | --- |
+| Checks | Backend 195 tests and ruff, frontend `tsc -b` + build, desktop typecheck + 43 unit tests: all pass |
+| Live run | Sign-in through the gateway, checkout, sync of the approved cut (series names, EDL and FCPXML), machine check, 4K HEVC 10-bit render on NVENC (16 s cut in 34–47 s), chunked upload to the Render Center as v1, v2, pop-out program monitor and scopes, five workspaces, Studio server window, and the settings allow-list |
+| Installer | The NSIS installer builds (134 MB, unsigned), and the packaged app passes the same smoke run with the bundled UI and FFmpeg |
+
+Not yet exercised live: proxies, the Imports watcher, a real Google sign-in round trip, display hot-plug, offline
+replay from the real UI (covered by unit tests), and the paid fal upscale (mock only; check fal's current Topaz
+price before relying on `upscale_price_per_s`). Kenburns stills are slow at 4K, captions need the caption font
+installed on the PC for Indic shaping, and there is no app icon yet.
+
+**Next part of Phase 9:** the GPU render engine (WebGPU, WebGL fallback) for shader transitions beyond FFmpeg's 58,
+keyframes, masks, chroma key and colour tools, previewing in the browser and the desktop and rendering headless in
+the desktop (TATVAM_PLAN.md §8.2, §16.5).

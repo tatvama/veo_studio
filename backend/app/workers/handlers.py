@@ -54,7 +54,7 @@ def save_take(db, ctx: JobContext, shot: Shot, kind: str, data: bytes | None, ex
         st.save_bytes(rel, data or b"")
     abs_p = st.abs(rel)
     thumb = ""
-    if kind in ("keyframe", "video", "lipsync", "voicelock"):
+    if kind in ("keyframe", "video", "lipsync", "voicelock", "upscale"):
         try:
             thumb = st.save_file(st.new_path(folder, "jpg"), ff.thumbnail(abs_p, abs_p.with_suffix(".thumb.jpg")))
         except Exception:
@@ -1186,11 +1186,20 @@ def _render(ctx: JobContext, kind: str) -> dict:
     with SessionLocal() as db:
         ex = db.get(Export, p["export_id"]) if p.get("export_id") else None
         if not ex:
+            from ..core import desktop
+            episode = db.get(Episode, ctx.episode_id)
+            # which cut this render shows, so review notes know whether their timecodes still land on the timeline
+            cut = {"cut_version": desktop.latest_number(db, episode.id), "fingerprint": desktop.fingerprint(desktop.snapshot(db, episode))}
             ex = Export(project_id=ctx.project_id, episode_id=ctx.episode_id, language=lang, preset=preset, kind=kind,
-                        options=options, status="running", job_id=ctx.job_id, created_by=ctx.user_id)
+                        options={**options, **cut}, status="running", job_id=ctx.job_id, created_by=ctx.user_id,
+                        version=desktop.next_export_version(db, ctx.episode_id))
             db.add(ex)
             db.commit()
             ctx.save_result(export_id=ex.id)
+        elif ex.version is None:
+            from ..core.desktop import next_export_version
+            ex.version = next_export_version(db, ex.episode_id)
+            db.commit()
         ex_id = ex.id
         emit(db, ctx.project_id, "export.updated", {"export_id": ex_id, "status": "running"})
     ctx.progress(0.1, f"Rendering {kind} [{lang}]")

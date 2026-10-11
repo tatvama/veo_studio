@@ -5,6 +5,8 @@
 # 2. Merging that pull request tags vX.Y.Z and publishes a GitHub Release with the changelog.
 # 3. The release's Docker image is pushed to ghcr.io/<owner>/<repo> (tags X.Y.Z, X.Y, X, latest).
 # 4. If the COOLIFY_WEBHOOK_URL secret is set, the "production" environment is redeployed and checked.
+# 5. The Windows desktop installer (desktop/, Electron) is built and attached to the same GitHub Release; installed
+#    apps update themselves from there. Optional secrets WIN_CSC_LINK + WIN_CSC_KEY_PASSWORD sign it.
 #
 # Optional secrets (Settings → Secrets and variables → Actions):
 #   RELEASE_PLEASE_TOKEN  fine-grained PAT (contents + pull requests: read/write). Without it the release PR is
@@ -111,6 +113,46 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  desktop-installer:
+    name: Desktop installer (Windows)
+    needs: release-please
+    if: ${{ !failure() && !cancelled() && (needs.release-please.outputs.release_created == 'true' || inputs.publish_tag) }}
+    runs-on: windows-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write   # upload the installer to the GitHub Release (electron-updater reads latest.yml from there)
+    env:
+      TAG: ${{ inputs.publish_tag || needs.release-please.outputs.tag_name }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Optional code signing (avoids SmartScreen warnings): a base64 .pfx in WIN_CSC_LINK + its password
+      CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ env.TAG }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Build the web app (bundled into the installer)
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund && npm run build
+
+      - name: Build the installer
+        working-directory: desktop
+        shell: bash
+        run: |
+          [ -n "$CSC_LINK" ] || unset CSC_LINK CSC_KEY_PASSWORD   # unsigned build when no certificate is set
+          npm ci --no-audit --no-fund
+          npm run dist -- --publish never
+
+      - name: Upload to the release
+        working-directory: desktop
+        shell: bash
+        run: gh release upload "$TAG" release/*.exe release/*.blockmap release/latest.yml --clobber
 
   deploy:
     name: Deploy to production

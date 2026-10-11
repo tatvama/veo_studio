@@ -123,21 +123,61 @@ def fit_filter(w: int, h: int, center: tuple[float, float] | None = None) -> str
             f"crop={w}:{h}:'max(0,min(iw-ow,iw*{cx:.4f}-ow/2))':'max(0,min(ih-oh,ih*{cy:.4f}-oh/2))',setsar=1")
 
 
-def still_to_video(image: Path, out: Path, seconds: float, w: int, h: int, fps: int = 24,
-                   audio: Path | None = None, kenburns: bool = True, fx: dict | None = None,
-                   luts: dict[str, str] | None = None) -> Path:
+LOUDNORM = "loudnorm=I=-14:TP=-1.5:LRA=11"  # the final mix: -14 LUFS
+# two-pass stabilising: detect writes a transforms file, transform reads it (before framing)
+STAB_DETECT = "vidstabdetect=shakiness=6:accuracy=12:result='{trf}'"
+STAB_TRANSFORM = "vidstabtransform=input='{trf}':smoothing=12:zoom=2,unsharp=5:5:0.6,"
+
+
+def still_kenburns(fx: dict | None, kenburns: bool = True) -> bool:
+    """A still gets the default slow push-in unless the shot has its own camera move."""
+    return kenburns and not (fx and (fx.get("move") or {}).get("kind", "none") != "none")
+
+
+def still_vf(w: int, h: int, seconds: float, fps: int = 24, kenburns: bool = True, fx: dict | None = None,
+             luts: dict[str, str] | None = None) -> str:
+    """The whole video filter for a still turned into a clip (framing or push-in, then the shot's effects)."""
     from . import fx as fxlib
     frames = max(int(round(seconds * fps)), 1)
-    if fx and (fx.get("move") or {}).get("kind", "none") != "none":
-        kenburns = False  # the shot's own camera move (added below) instead of the default push-in
-    if kenburns:
+    if still_kenburns(fx, kenburns):
         vf = (f"scale={w * 2}:{h * 2}:force_original_aspect_ratio=increase,crop={w * 2}:{h * 2},"
               f"zoompan=z='min(zoom+0.0009,1.12)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={frames}:s={w}x{h}:fps={fps},setsar=1")
     else:
         vf = fit_filter(w, h) + f",fps={fps}"
     extra = fxlib.video_filters(fx, w, h, seconds, fps, luts)
-    if extra:
-        vf += "," + extra
+    return vf + ("," + extra if extra else "")
+
+
+def speed_filters(fx: dict | None) -> str:
+    """Reverse and speed on the source frames, before framing (e.g. "reverse,setpts=(PTS-STARTPTS)/1.5,")."""
+    fx = fx or {}
+    speed = float(fx.get("speed") or 1.0)
+    pre = "reverse," if fx.get("reverse") else ""
+    if abs(speed - 1) > 1e-3:
+        pre += f"setpts=(PTS-STARTPTS)/{speed},"
+    return pre
+
+
+def clip_vf(pre: str, w: int, h: int, center: tuple[float, float] | None, fps: int, post: str) -> str:
+    """A clip's video chain: source-frame filters, framing to w×h, frame rate, effects, then a held last frame."""
+    return f"{pre}{fit_filter(w, h, center)},fps={fps}{',' + post if post else ''},tpad=stop_mode=clone:stop_duration=30"
+
+
+def clip_audio_filters(fx: dict | None, seconds: float) -> str:
+    """What a clip's sound gets after its tracks are mixed: the speed change, then the fades ("" = nothing)."""
+    from . import fx as fxlib
+    speed = float((fx or {}).get("speed") or 1.0)
+    a_fx = [fxlib.atempo_chain(speed)] if abs(speed - 1) > 1e-3 else []
+    if fxlib.audio_filters(fx, seconds):
+        a_fx.append(fxlib.audio_filters(fx, seconds))
+    return ",".join(a_fx)
+
+
+def still_to_video(image: Path, out: Path, seconds: float, w: int, h: int, fps: int = 24,
+                   audio: Path | None = None, kenburns: bool = True, fx: dict | None = None,
+                   luts: dict[str, str] | None = None) -> Path:
+    from . import fx as fxlib
+    vf = still_vf(w, h, seconds, fps, kenburns, fx, luts)
     af = fxlib.audio_filters(fx, seconds)
     args: list = ["-loop", "1", "-framerate", str(fps), "-i", image]
     if audio:
@@ -168,17 +208,14 @@ def normalize_clip(src: Path, out: Path, w: int, h: int, seconds: float | None =
     seg = seconds if seconds else max((src_dur - trim_in) / speed, 0.1)
     pre = ""  # before framing: stabilise, reverse, speed (they work on the source frames)
     if fx.get("stabilize"):
-        trf = out.with_suffix(".trf")
+        trf = fxlib._esc_path(str(out.with_suffix(".trf")))
         try:
             run(["-ss", f"{trim_in:.3f}", "-t", f"{seg * speed + 0.5:.3f}", "-i", src, "-vf",
-                 f"vidstabdetect=shakiness=6:accuracy=12:result='{fxlib._esc_path(str(trf))}'", "-f", "null", "-"])
-            pre += f"vidstabtransform=input='{fxlib._esc_path(str(trf))}':smoothing=12:zoom=2,unsharp=5:5:0.6,"
+                 STAB_DETECT.format(trf=trf), "-f", "null", "-"])
+            pre += STAB_TRANSFORM.format(trf=trf)
         except Exception as e:  # stabilising is a nicety; never fail the export over it
             print(f"[fx] stabilize skipped: {e}")
-    if fx.get("reverse"):
-        pre += "reverse,"
-    if abs(speed - 1) > 1e-3:
-        pre += f"setpts=(PTS-STARTPTS)/{speed},"
+    pre += speed_filters(fx)
     args: list = ["-ss", f"{trim_in:.3f}", "-t", f"{seg * speed + 0.5:.3f}", "-i", src]
     inputs_audio: list[str] = []
     idx = 1
@@ -207,15 +244,12 @@ def normalize_clip(src: Path, out: Path, w: int, h: int, seconds: float | None =
         amap = "[am]"
     else:
         amap = f"[{labels[0]}]"
-    a_fx = [fxlib.atempo_chain(speed)] if abs(speed - 1) > 1e-3 else []
-    if fxlib.audio_filters(fx, seg):
-        a_fx.append(fxlib.audio_filters(fx, seg))
+    a_fx = clip_audio_filters(fx, seg)
     if a_fx:  # the clip's sound follows its speed and fades
-        fc += f";{amap}{','.join(a_fx)},apad[afx]"
+        fc += f";{amap}{a_fx},apad[afx]"
         amap = "[afx]"
     post = fxlib.video_filters(fx, w, h, seg, fps, luts)
-    fc += (f";[0:v]{pre}{fit_filter(w, h, center)},fps={fps}{',' + post if post else ''},"
-           f"tpad=stop_mode=clone:stop_duration=30[vv]")
+    fc += f";[0:v]{clip_vf(pre, w, h, center, fps, post)}[vv]"
     args += ["-filter_complex", fc, "-map", "[vv]", "-map", amap, "-t", f"{seg:.3f}",
              "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
              "-c:a", "aac", "-ar", "48000", "-ac", "2", out]
@@ -316,7 +350,7 @@ def music_bed(music: Path, voice_mix: Path | None, out: Path, length: float, vol
 def replace_audio_mix(video: Path, audio: Path, out: Path, loudnorm: bool = True, subtitles_ass: Path | None = None,
                       fontsdir: Path | None = None) -> Path:
     """Final mux: new audio (loudness-normalised to -14 LUFS) + optional burned subtitles."""
-    af = "loudnorm=I=-14:TP=-1.5:LRA=11" if loudnorm else "anull"
+    af = LOUDNORM if loudnorm else "anull"
     args: list = ["-i", video, "-i", audio]
     if subtitles_ass:
         sub = subtitles_ass.resolve().as_posix().replace(":", r"\:")

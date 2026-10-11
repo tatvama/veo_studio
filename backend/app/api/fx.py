@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..core import collab, studio
+from ..core import collab, desktop, studio
 from ..db import get_db
 from ..events import emit
 from ..models import Episode, Project, Shot, User
@@ -47,6 +47,7 @@ def set_fx(sid: int, body: FxIn, user: User = Depends(require("creator")), db: S
     """Replace a shot's effects (validated). Undo brings the previous ones back."""
     s = get_or_404(db, Shot, sid)
     collab.check_shot(user, s)
+    desktop.check_cut(db, s.episode_id, user)
     p = _project_of(db, s)
     studio.save_revision(db, "shot", s, studio.SHOT_FIELDS, user)
     s.fx = fxlib.clean(body.fx, _lut_ids(p))
@@ -66,6 +67,7 @@ def apply_fx(eid: int, body: ApplyIn, user: User = Depends(require("creator")), 
     """Copy some effects (e.g. the transition and the look) onto many shots at once. Shots a teammate is editing are
     skipped and reported."""
     e = get_or_404(db, Episode, eid)
+    desktop.check_cut(db, eid, user)
     p = db.get(Project, e.project_id)
     src = fxlib.clean(body.fx, _lut_ids(p))
     q = db.query(Shot).filter(Shot.episode_id == eid, Shot.include.is_(True)).order_by(Shot.order)

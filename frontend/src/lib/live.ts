@@ -51,6 +51,9 @@ export function useLiveEvents(projectId: number | null) {
         if (t.startsWith("models")) touch("models", "model", "shot-engines", "shot-alternatives");
         if (t === "providers.credit") touch("provider-credit", "shot-alternatives");
         if (t === "episode.updated") touch("table-read", "script-versions", "marketing", "scenes", "layers");
+        // the finishing room: who holds the cut, and its versions (check-in, restore, saves)
+        if (t === "episode.updated") touch("versions", ...(e.payload.what === "checkout" ? ["checkout"] : []));
+        if (t === "export.updated" || t.startsWith("comment")) touch("review-notes");
         if (t.startsWith("approval")) {
           touch("approvals", "notifications", "jobs");
           if (t === "approval.requested") toast.message(`Approval requested: ${e.payload.summary ?? ""}`, { description: e.payload.reason });

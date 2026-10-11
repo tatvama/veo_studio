@@ -137,6 +137,7 @@ def save_board(db: Session, user: User, project: Project, episode: Episode, boar
     names = {c.id: c.name for c in db.query(Character).filter(Character.id.in_(cast_ids)).all()} if cast_ids else {}
     old_scenes = {s.id: s for s in db.query(Scene).filter(Scene.episode_id == episode.id).all()}
     old_shots = {s.id: s for s in db.query(Shot).filter(Shot.episode_id == episode.id).all()}
+    cut_before = [s.id for s in sorted(old_shots.values(), key=lambda s: (s.order, s.id)) if s.include]
     keep_scenes: set[int] = set()
     keep_shots: set[int] = set()
     order = 0
@@ -256,6 +257,11 @@ def save_board(db: Session, user: User, project: Project, episode: Episode, boar
         db.delete(sc)
     db.flush()
     studio.renumber(db, episode)
+    cut_after = [i for (i,) in db.query(Shot.id).filter(Shot.episode_id == episode.id, Shot.include.is_(True))
+                 .order_by(Shot.order, Shot.id).all()]
+    if cut_after[:len(cut_before)] != cut_before:  # moved or dropped shots change the cut (new ones at the end don't)
+        from .desktop import check_cut
+        check_cut(db, episode.id, user)
 
     # keep the episode script in step, so the Story tab, table read and dubbing see the same words
     prev = episode.script or {}

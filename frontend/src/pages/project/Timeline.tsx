@@ -33,9 +33,19 @@ import {
 import { CutButton, HoldBlock, MainClip, RollHandle, TransitionBlock, type HoldPatch } from "./production/timeline/MainTrack";
 import { LayerInspector, LayerPlayback, LayerTrackRow, useLayersEditor, type LayerSel } from "./production/timeline/Layers";
 import { useTransport } from "./production/timeline/transport";
+import { useReviewNotes } from "../../lib/finish";
+import { CutGuard } from "./finish/CutGuard";
+import { useTransportBus } from "./finish/transportBus";
 
-/** `embedded`: inside a Studio panel — a smaller player on top and the tracks (all layers) filling the rest. */
+/**
+ * `embedded`: inside a Studio panel — a smaller player on top and the tracks (all layers) filling the rest.
+ * While someone else has the cut checked out (finishing room), the CutGuard shows who and makes the cut read-only.
+ */
 export default function TimelinePage({ embedded = false }: { embedded?: boolean } = {}) {
+  return <CutGuard><TimelineEditor embedded={embedded} /></CutGuard>;
+}
+
+function TimelineEditor({ embedded }: { embedded: boolean }) {
   const { project, eid, lang, canEdit, canReview } = useProjectCtx();
   const t = useT();
   const qc = useQueryClient();
@@ -89,6 +99,12 @@ export default function TimelinePage({ embedded = false }: { embedded?: boolean 
   const music = ep?.music?.find((m) => m.selected) ?? ep?.music?.[0];
   const settings = ep?.settings ?? {};
   const tp = useTransport(clips, total);
+  // other windows (program monitor, scopes, notes) follow this playhead and selection; their seeks move it
+  useTransportBus(eid, tp, { sel, total, follow: "seek" });
+  const { notes } = useReviewNotes(eid);
+  const noteMarks = useMemo(() => notes.filter((n) => n.maps_to_cut && n.timecode != null && n.timecode <= total + 0.5)
+    .map((n) => ({ id: n.id, t: Math.min(n.timecode!, total), resolved: n.resolved, label: `v${n.export_version ?? "?"} · ${formatTC(n.timecode!, FPS, true)} · ${n.body.slice(0, 120)}` })),
+  [notes, total]);
 
   // waveforms: decoded in the browser (the API stores peaks only for finished renders)
   const peaks = usePeaks([
@@ -460,7 +476,7 @@ export default function TimelinePage({ embedded = false }: { embedded?: boolean 
 
           <div ref={scrollRef} className={embedded ? "min-h-0 flex-1 overflow-auto overscroll-contain" : "overflow-x-auto"}>
             <div className="relative" style={{ width: contentW, "--tl-major": `${rulerMajor(pps) * pps}px` } as React.CSSProperties}>
-              <TimeRuler total={total} pps={pps} view={view} clock={tp.clock}
+              <TimeRuler total={total} pps={pps} view={view} clock={tp.clock} marks={noteMarks} onMark={(m) => tp.seek(m.t)}
                 onScrub={(x, phase) => {
                   const s = snapTime(x);
                   setSnapLine(phase !== "end" && s !== x ? s : null);

@@ -3,6 +3,7 @@ import { BadgeCheck, Clock, MessageSquareText, Share2 } from "lucide-react";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "../../styles/console.css";
+import { renderPresetLabel, renderTag } from "../../lib/desktop";
 import { LANG_SHORT } from "../../lib/format";
 import { useT } from "../../lib/i18n";
 import { useReviewLinks } from "../../lib/queries";
@@ -24,7 +25,7 @@ export default function ReviewPanel({ renders, presets, pid, canEdit, onManage, 
   const order = { active: 0, expired: 1, revoked: 2 };
   const rows = [...(links ?? [])].sort((a, b) => order[linkState(a)] - order[linkState(b)] || b.created_at.localeCompare(a.created_at));
   const active = rows.filter((r) => linkState(r) === "active");
-  const label = (r: RenderRow) => `#${r.id} · ${r.kind === "final" ? t("Final") : t("Animatic")} · ${LANG_SHORT[r.language] ?? r.language} · ${t(presets[r.preset]?.label ?? r.preset)}`;
+  const label = (r: RenderRow) => `${renderTag(r)} · ${r.kind === "final" ? t("Final") : t("Animatic")} · ${LANG_SHORT[r.language] ?? r.language} · ${t(renderPresetLabel(r.preset, presets))}`;
 
   return (
     <Panel className={className} eyebrow={t("Review")} icon={<Share2 />} title={t("Review links")}

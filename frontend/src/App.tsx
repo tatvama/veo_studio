@@ -4,6 +4,7 @@ import { lazy, Suspense, useEffect } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { GenerateProvider } from "./components/Generate";
 import { Shell } from "./components/Shell";
+import { DesktopMenu } from "./components/shell/DesktopMenu";
 import { ErrorBoundary } from "./components/shell/ErrorBoundary";
 import { useMotionPref } from "./components/shell/theme";
 import { PageSkeleton } from "./components/ui";
@@ -25,6 +26,7 @@ const PostersGallery = lazy(() => import("./pages/posters/Gallery"));
 const PosterEditor = lazy(() => import("./pages/posters/Editor"));
 const ProjectLayout = lazy(() => import("./pages/project/ProjectLayout"));
 const PublicReview = lazy(() => import("./pages/PublicReview"));
+const PanelApp = lazy(() => import("./pages/desktop/PanelApp"));
 const SearchPage = lazy(() => import("./pages/SearchPage"));
 const KitGallery = import.meta.env.DEV ? lazy(() => import("./pages/dev/Kit")) : null;
 
@@ -84,6 +86,22 @@ function AppRoutes() {
   }
   if (!data.user) return <Login setupNeeded={data.setup_needed} googleEnabled={data.google_enabled} />;
 
+  // Pop-out panels (Tatvam Desktop windows and browser pop-outs): signed in, but outside the studio shell.
+  if (loc.pathname.startsWith("/desktop/panel/")) {
+    return (
+      <GenerateProvider>
+        <DesktopMenu />
+        <ErrorBoundary resetKey={loc.pathname}>
+          <Suspense fallback={<PageLoading />}>
+            <Routes>
+              <Route path="/desktop/panel/:panel" element={<PanelApp />} />
+            </Routes>
+          </Suspense>
+        </ErrorBoundary>
+      </GenerateProvider>
+    );
+  }
+
   // Animate between top-level sections only: keyed by the first path segment (plus the project id for /p/:pid),
   // so switching tabs inside a project never remounts ProjectLayout — it animates its own tab content instead.
   // Including the id keeps each exiting ProjectLayout's nested <Routes location> consistent with its parent match.
@@ -92,6 +110,7 @@ function AppRoutes() {
 
   return (
     <GenerateProvider>
+      <DesktopMenu />
       <Shell user={data.user}>
         <AnimatePresence mode="wait" initial={false}>
           <motion.div

@@ -30,11 +30,12 @@ through fal.ai, OpenRouter and BytePlus. The **Director** agent (Claude or Gemin
 5. [Third-party services](#third-party-services)
 6. [Third-party libraries and tools](#third-party-libraries-and-tools)
 7. [MCP server (Claude Code, Claude Desktop, claude.ai)](#mcp-server-claude-code-claude-desktop-claudeai)
-8. [Deployment](#deployment)
-9. [Development workflow, CI/CD and releases](#development-workflow-cicd-and-releases)
-10. [Testing](#testing)
-11. [Project structure](#project-structure)
-12. [Status: what's verified](#status-whats-verified)
+8. [Desktop app: the finishing room](#desktop-app-the-finishing-room)
+9. [Deployment](#deployment)
+10. [Development workflow, CI/CD and releases](#development-workflow-cicd-and-releases)
+11. [Testing](#testing)
+12. [Project structure](#project-structure)
+13. [Status: what's verified](#status-whats-verified)
 
 ---
 
@@ -47,13 +48,14 @@ A project goes through an **Overview** and **five steps** (details in the [user 
 | **1 Story** | Brief (AI fills audience, tone, CTA; trend scout), 6 scored hooks, script writing with the **writers' room** (critic loop, table read in the cast voices, continuity check, native-speaker localization), versions with diff and restore, `@mentions`, scene cards |
 | **2 Cast** | Characters and places from the script, reference sheets, **Character Lock** (face, body, voice, costume, gestures), costumes with turnarounds, props, wardrobe timeline, continuity bible, identity (LoRA) training, consent records |
 | **3 Shots** | Storyboard · List · Studio views; keyframes then videos, engine picker per shot, **shootouts** between 2–4 engines, Film Map shot links, scene continuity (anchor shot first, keyframe QC with automatic retake), Enhance |
-| **4 Edit** | Professional timeline: J/K/L, roll trims, speed, keyframes, waveforms, Auto SFX, titles, caption preview, music ducking |
+| **4 Edit** | Professional timeline: J/K/L, roll trims, speed, keyframes, waveforms, Auto SFX, titles, caption preview, music ducking. **Finishing room**: check the cut out, versions with rollback, 4K AI upscale, review notes on the timeline, pop-out monitors, and on the desktop app local 4K renders |
 | **5 Deliver** | Render for Shorts / Reels / YouTube with karaoke captions and brand end cards, dubbing, cut-downs, marketing pack, YouTube publishing, client review links, Ads & Reels campaigns, **Poster Studio** |
 
 Across the app: the **Director** agent (`Ctrl+J`), **Autopilot**, the **Model Hub** with routing chains (Saver / Balanced /
 Hero) and automatic fallbacks, budgets with team, personal and project caps, an approvals inbox, rupees beside
 dollars, audit log, roles (Admin, Producer, Creator, Reviewer, Viewer), command palette (`Ctrl+K`), dark/light themes,
-installable PWA, and **Mock mode** so the whole flow runs free before you add any keys.
+installable PWA, **Tatvam Studio desktop** (Electron) for 4K finishing on the editor's own graphics card, and **Mock mode** so
+the whole flow runs free before you add any keys.
 
 ## Architecture
 
@@ -352,6 +354,16 @@ Team, personal and project budgets are set in the app (**Settings → Budget**).
 | sonner | Toasts |
 | @fontsource / @fontsource-variable | Bundled fonts incl. Devanagari, Kannada, Telugu and Tamil display faces |
 
+### Desktop app (TypeScript, [desktop/package.json](desktop/package.json))
+
+| Library | Purpose |
+|---|---|
+| Electron 44 | The desktop shell (Chromium 152, Node 24 with built-in `node:sqlite` for the project mirror) |
+| esbuild, TypeScript 7 | Bundling the main process and preloads, type checking |
+| electron-builder, electron-updater | Windows installer (NSIS) and updates from GitHub Releases |
+| ws | The main process's event socket to the server |
+| FFmpeg 7.1 (bundled), ffmpeg-static (dev fallback) | Local renders with NVENC / Quick Sync / AMF, proxies, the machine check |
+
 ### Runtime and infrastructure
 
 | Tool | Purpose |
@@ -408,6 +420,35 @@ Settings → MCP access.
 or approval in the app. Tools that would overwrite a script, shot list or scene cards ask for confirmation first.
 Tokens are stored as hashes; personal tokens can expire and can be limited to some projects. Prompts available as
 slash commands: `film_from_script`, `improve_script`, `storyboard_review`, `continue_scenes`.
+
+## Desktop app: the finishing room
+
+**Tatvam Studio** for Windows is the same studio in an Electron shell, for the one or two editors who finish a cut.
+It adds what a browser can't do: renders in 4K on the PC's graphics card (NVENC, Quick Sync or AMF; ProRes masters),
+a project folder on disk that Premiere and DaVinci can open, several windows across several screens, and cutting
+while offline. AI work still runs on the server, with the same cost check and approvals. Design and APIs:
+[docs/DESKTOP.md](docs/DESKTOP.md).
+
+- **Project folder you choose:** a library folder (default `Documents\Tatvam Projects`); any project can move to its
+  own folder. Approved takes, voices, music, renders, captions and Bible stills sync into `Takes/`, `Audio/`,
+  `Renders/`, `Captions/`, `Bible/` …, with an EDL and FCPXML of the cut in `Edits/`. Files dropped in `Imports/` upload
+  themselves to the episode's media.
+- **File names in series:** templates like `{project}_S{season:02}E{episode:02}_{cut:03}_SC{scene:02}_SH{shot:03}_{kind}{_lang}_T{take:02}`
+  name every file; when the cut changes, files are renamed so the folder always lists in cut order.
+- **Checkout:** one editor checks the cut out and the web timeline goes read-only for everyone else; each check-in is
+  a version you can roll back to.
+- **Windows and screens:** program and source monitors, timeline, scopes (waveform, RGB parade, vectorscope,
+  histogram), mixer, review notes, media, renders and Bible as separate windows on any display, full screen or as a
+  clean feed; five workspaces (Edit, Colour, Audio, Review, Story) on `Ctrl+1…5`; all windows follow one playhead.
+- **4K:** presets YouTube 4K (HEVC 10-bit), Shorts / Reels 4K, ProRes 422 HQ master, broadcast 1080p25, review 1080p;
+  optional AI upscale (fal.ai Topaz, priced before it runs); uploads go to the Render Center as v1, v2 …
+
+```bash
+cd desktop && npm ci && npm run dev     # needs a built frontend (cd frontend && npm run build)
+```
+
+File → **Studio server…** sets the server address (default `http://localhost:8100`). Releases attach the installer to
+the GitHub Release, and installed apps update from there.
 
 ## Deployment
 
@@ -494,6 +535,10 @@ providers, MCP (HTTP, tokens, OAuth, the whole pipeline with continuity checks, 
 continuity, Poster Studio, health checks, storage, database migrations and resilience. Tests use a temporary SQLite
 database and local storage, never the real bucket or keys from `.env`.
 
+Desktop: `cd desktop && npm test` (naming and rename plans, the local gateway incl. cookies, Range and WebSocket,
+offline queue, render arguments checked against the server's FFmpeg calls, EDL / FCPXML, chunked upload) and
+`npm run smoke` (starts the real app against a server).
+
 Frontend: `cd frontend && npm run build` (type check + production build). In development, `/dev/kit` shows every
 shared component in the current theme.
 
@@ -507,9 +552,9 @@ backend/app/
   models.py          database tables       settings_store.py  team settings + encrypted API keys
   api/               REST: auth, admin, projects, bible, board, shots, generate, work (jobs, approvals, agent, ws, media),
                      production, campaign, hub (Model Hub), room (writers' room), growth, designs (posters), layers,
-                     mcp_access, rates, fx
+                     mcp_access, rates, fx, desktop (checkout, versions, manifest, render plan, uploads, upscale)
   core/              studio, generation, model_hub, budget, jobs, lock, continuity, mentions, dependencies (change impact),
-                     scene_chain + scene_order (continuity ordering), autopilot, recovery, youtube, audit, rates …
+                     scene_chain + scene_order (continuity ordering), autopilot, recovery, youtube, audit, rates, desktop …
   agents/            director.py (agent loop: Claude or Gemini, keyword mock), director_claude.py, tools.py, prompts.py
   mcp_server/        MCP server, tools, OAuth provider, tokens
   providers/         gemini, claude_text (writing on Claude), fal, openrouter, byteplus, elevenlabs, syncso, sarvam, mock,
@@ -517,10 +562,11 @@ backend/app/
   pipeline/          prompting, voice, captions (karaoke ASS), assembler, ffmpeg, faces, scene_look, approved_stills
   workers/           worker.py (DB job queue), handlers*.py, run.py (separate worker process)
 backend/tests/       pytest suite (mock providers)
-frontend/src/        pages/, components/, lib/ (api, queries, types, live WebSocket)
+frontend/src/        pages/, components/, lib/ (api, queries, types, live WebSocket, desktop bridge, bus)
+desktop/             Electron app: src/main (gateway, sync, naming, render, windows …), src/preload, test/
 scripts/             dev/ (worktree.py, check.py), get_face_models.py, showcase/, i18n/
 spike/               Phase 0 real-API checks
-docs/                USER_GUIDE.md, MCP.md, V3.md, DESIGN.md
+docs/                USER_GUIDE.md, MCP.md, V3.md, DESIGN.md, DESKTOP.md
 ```
 
 ## Status: what's verified

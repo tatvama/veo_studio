@@ -123,6 +123,12 @@ class Estimator:
         model = self.models["music_clip" if seconds <= 30 else "music"]
         return float(self.prices["music_each"].get(model, 0.1))
 
+    def upscale(self, seconds: float) -> float:
+        """AI upscale on fal (Topaz by default), priced per second of video (team setting upscale_price_per_s)."""
+        if not self._live("fal"):
+            return 0.0
+        return float(self.settings.get("upscale_price_per_s") or 0.08) * max(seconds, 0.0)
+
     def voice_design(self, provider: str) -> float:
         return float(self.prices["voice_design_each"].get(provider, 0.0)) if self._live(provider) else 0.0
 

@@ -1,7 +1,7 @@
 import type { LucideIcon } from "lucide-react";
 import {
   Activity, BookOpen, BookUser, Boxes, Clapperboard, Coins, FileText, Film, Gauge, Globe, Home, LayoutGrid, LayoutTemplate, ListVideo, Megaphone,
-  MessageSquareText, Palette, PanelsTopLeft, ScrollText, Search, Send, Settings, ShieldCheck, SquareKanban, Users,
+  MessageSquareText, MonitorPlay, Palette, PanelsTopLeft, ScrollText, Search, Send, Settings, ShieldCheck, SquareKanban, Users,
 } from "lucide-react";
 import { ROLE_RANK, type Role } from "../../lib/types";
 
@@ -85,6 +85,8 @@ export function getProjectTabs(t: T): ProjectTab[] {
     { to: "shots", area: "shots", label: t("List"), icon: ListVideo, keywords: "shots shot list import script word pdf manual builder dialogue voice-over produce" },
     { to: "studio", area: "shots", label: t("Studio"), icon: PanelsTopLeft, keywords: "shots one screen workspace panels timeline viewer multi monitor drag drop film map" },
     { to: "timeline", area: "edit", label: t("Timeline"), icon: Film, keywords: "edit cut music audio sound titles" },
+    { to: "finish", area: "edit", label: t("Finishing room"), icon: MonitorPlay,
+      keywords: "edit desktop checkout check in lock versions rollback 4k upscale local render folder sync windows screens scopes multi monitor" },
     { to: "export", area: "deliver", label: t("Export"), icon: Clapperboard, keywords: "deliver render publish download" },
     { to: "review", area: "deliver", label: t("Review"), icon: MessageSquareText, keywords: "deliver comments feedback client" },
     { to: "campaign", area: "deliver", label: t("Ads & Reels"), icon: Megaphone, keywords: "deliver advert campaign variants languages aspect reels shorts highlights" },

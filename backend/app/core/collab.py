@@ -8,6 +8,8 @@ lease (LOCK_TTL seconds) that the editing tab renews; it ends when they save, cl
 is never stuck. Saving or generating on something another person holds is refused with HTTP 423.
 
 Kept in memory: one API process holds it (a restart simply clears all locks, which are leases anyway).
+Cut checkouts (the desktop finishing room) are different: they live in the database (core/desktop.py) and never
+expire; presence only mirrors them, so the holder shows as editing "cut:<episode id>".
 """
 from __future__ import annotations
 
@@ -23,6 +25,7 @@ PRESENCE_TTL = 60.0
 _mx = threading.Lock()
 _people: dict[str, dict[str, Any]] = {}  # connection id -> {user_id, name, project_id, view, editing, seen}
 _locks: dict[str, dict[str, Any]] = {}  # target ("shot:12", "board:3") -> {user_id, name, project_id, since, expires}
+_cuts: dict[int, dict[str, Any]] = {}  # episode id -> {user_id, project_id}: cuts checked out (core/desktop.py, in the DB)
 _version = 0
 
 
@@ -78,9 +81,25 @@ def snapshot(project_id: int | None) -> dict[str, Any]:
                 q["views"].append(p["view"])
             if p["editing"] and p["editing"] not in q["editing"]:
                 q["editing"].append(p["editing"])
+        for eid, c in _cuts.items():  # whoever has a cut checked out is editing it, from any of their tabs or the desktop app
+            q = people.get(c["user_id"])
+            if q is not None and c["project_id"] == project_id and f"cut:{eid}" not in q["editing"]:
+                q["editing"].append(f"cut:{eid}")
         locks = [{"target": k, "user_id": v["user_id"], "name": v["name"], "since": v["since"]}
                  for k, v in _locks.items() if project_id is None or v["project_id"] == project_id]
     return {"people": list(people.values()), "locks": locks}
+
+
+def set_cut(episode_id: int, project_id: int | None, user=None) -> None:
+    """Mirror a cut checkout for presence (None = released). The lock itself lives in the database."""
+    with _mx:
+        new = {"user_id": user.id, "project_id": project_id} if user is not None else None
+        if _cuts.get(episode_id) != new:
+            if new is None:
+                _cuts.pop(episode_id, None)
+            else:
+                _cuts[episode_id] = new
+            _bump()
 
 
 # ── locks ────────────────────────────────────────────────────────────────────
@@ -138,4 +157,5 @@ def reset() -> None:  # tests
     with _mx:
         _people.clear()
         _locks.clear()
+        _cuts.clear()
         _bump()
