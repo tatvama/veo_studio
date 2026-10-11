@@ -18,6 +18,7 @@ import type { RenderManager } from "./render.ts";
 import type { SyncManager } from "./sync.ts";
 import { checkForUpdates } from "./updater.ts";
 import type { Upstream } from "./upstream.ts";
+import type { LocalUpscaler } from "./aiupscale.ts";
 import type { ImportWatcher } from "./watch.ts";
 import type { WindowManager } from "./windows.ts";
 
@@ -30,6 +31,7 @@ export interface AppCtx {
   imports: ImportWatcher;
   proxies: ProxyManager;
   renders: RenderManager;
+  upscaler: LocalUpscaler;
   windows: WindowManager;
   ff(): FfmpegInfo | null;
   probe(force?: boolean): Promise<Record<string, boolean>>;
@@ -176,6 +178,18 @@ export function registerIpc(ctx: AppCtx): void {
   });
   handle(IPC.revealLogs, async () => { await shell.openPath(logsDir()); });
   handle(IPC.openConnection, () => { ctx.openConnection(); });
+
+  const upOpts = (o: { pid: number; eid: number; targetH: number; model: string; shotIds?: number[] }) => ({
+    pid: int(o?.pid, "pid"), eid: int(o?.eid, "eid"), targetH: Math.min(4320, Math.max(360, int(o?.targetH, "targetH"))),
+    model: o?.model === "best" ? "best" as const : "fast" as const,
+    shotIds: Array.isArray(o?.shotIds) ? o.shotIds.map((x) => int(x, "shotId")) : undefined,
+  });
+  handle(IPC.upTool, () => ctx.upscaler.tool());
+  handle(IPC.upInstall, () => ctx.upscaler.install());
+  handle(IPC.upEstimate, (o) => ctx.upscaler.estimate(upOpts(o)));
+  handle(IPC.upStart, (o) => ctx.upscaler.start(upOpts(o)));
+  handle(IPC.upList, () => ctx.upscaler.list());
+  handle(IPC.upCancel, (id: string) => ctx.upscaler.cancel(String(id)));
   handle(IPC.checkUpdates, () => checkForUpdates());
 
   handle(IPC.offlineStatus, () => ctx.gateway.status());

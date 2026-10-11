@@ -272,6 +272,67 @@ export interface TatvamDesktop {
          openConnection(): Promise<void>;
          onUpdate(cb: (u: UpdateState) => void): () => void; onMenu(cb: (action: string) => void): () => void };
   offline: { status(): Promise<OfflineStatus>; onChange(cb: (s: OfflineStatus) => void): () => void; flush(): Promise<void> };
+  /** AI upscale on this PC's graphics card (Real-ESRGAN, installed on demand); results upload as the shots' upscale takes. */
+  upscale: {
+    tool(): Promise<UpscaleTool>;
+    install(): Promise<UpscaleTool>;
+    onTool(cb: (t: UpscaleTool) => void): () => void;
+    estimate(opts: { pid: number; eid: number; targetH: number; model: UpscaleModel; shotIds?: number[] }): Promise<LocalUpscaleEstimate>;
+    start(opts: { pid: number; eid: number; targetH: number; model: UpscaleModel; shotIds?: number[] }): Promise<string[]>;
+    list(): Promise<UpscaleJob[]>;
+    cancel(id: string): Promise<void>;
+    onProgress(cb: (j: UpscaleJob) => void): () => void;
+  };
+}
+
+// ── local AI upscale (main/aiupscale.ts) ──
+
+/** fast: Real-ESRGAN's video model (2×/3×/4×, made for video, little flicker); best: Real-ESRGAN x4plus (most natural
+ * detail, many times slower). */
+export type UpscaleModel = "fast" | "best";
+
+export interface UpscaleTool {
+  installed: boolean;
+  version: string;
+  /** Download size of the pinned build. */
+  sizeBytes: number;
+  installing?: boolean;
+  /** 0..1 while installing */
+  progress?: number;
+  error?: string;
+  /** Vulkan devices Real-ESRGAN sees, and the one it uses (the dedicated card when there is one). */
+  gpus?: { index: number; name: string }[];
+  gpu?: { index: number; name: string } | null;
+  platformSupported: boolean;
+}
+
+export type UpscaleState = "queued" | "preparing" | "extracting" | "upscaling" | "encoding" | "uploading" | "done" | "failed" | "cancelled";
+
+export interface UpscaleJob {
+  id: string; pid: number; eid: number; shotId: number; code: string; takeId: number;
+  model: UpscaleModel; from: [number, number]; to: [number, number]; scale: number;
+  status: UpscaleState;
+  /** 0..1 */
+  progress: number;
+  step: string;
+  frames?: number; framesDone?: number;
+  /** Frames per second Real-ESRGAN is managing on this card. */
+  fps?: number;
+  eta_s?: number;
+  elapsed_s?: number;
+  error?: string;
+  /** The upscale take the server made from the upload. */
+  uploadedTakeId?: number;
+  createdAt: string; finishedAt?: string;
+}
+
+export interface LocalUpscaleEstimate {
+  items: { shotId: number; code: string; takeId: number; from: [number, number]; to: [number, number]; seconds: number; frames: number;
+    scale: number; minutes: number }[];
+  skipped: { shot_id: number; code: string; reason: string }[];
+  totalMinutes: number;
+  /** Measured on this PC (true) or the starting guess (false). */
+  measured: boolean;
 }
 
 /** IPC channel names shared by the preload and the main process. */
@@ -328,6 +389,14 @@ export const IPC = {
   offlineChange: "tatvam:offline.change",
   offlineFlush: "tatvam:offline.flush",
   openConnection: "tatvam:app.openConnection",
+  upTool: "tatvam:upscale.tool",
+  upInstall: "tatvam:upscale.install",
+  upToolChange: "tatvam:upscale.toolChange",
+  upEstimate: "tatvam:upscale.estimate",
+  upStart: "tatvam:upscale.start",
+  upList: "tatvam:upscale.list",
+  upCancel: "tatvam:upscale.cancel",
+  upProgress: "tatvam:upscale.progress",
 } as const;
 
 /** Channels of the Studio server window (main/connect.ts); they answer that window only. */

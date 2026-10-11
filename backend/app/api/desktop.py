@@ -3,18 +3,22 @@ AI upscale and review notes. The logic lives in core/desktop.py."""
 from __future__ import annotations
 
 import asyncio
+import shutil
+import tempfile
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from .. import settings_store
 from ..core import desktop, jobs
 from ..db import get_db
 from ..events import emit
-from ..models import Comment, CutLock, CutVersion, Episode, Export, Project, User
+from ..models import Comment, CutLock, CutVersion, Episode, Export, Project, Take, User
 from ..security import current_user, require
-from .common import export_out, get_or_404, user_brief
+from .common import export_out, get_or_404, take_out, user_brief
 
 router = APIRouter(prefix="/api", tags=["desktop"])
 
@@ -233,6 +237,24 @@ def upscale(eid: int, body: UpscaleIn, user: User = Depends(require("creator")),
     plan = desktop.upscale_plan(db, e, body.shot_ids, body.target_h)
     res = jobs.submit(db, user, db.get(Project, e.project_id), desktop.upscale_specs(e, plan))
     return {**res, "items": plan["items"], "not_upscaled": plan["skipped"]}
+
+
+@router.post("/takes/{tid}/upscales")
+def upload_local_upscale(tid: int, file: UploadFile = File(...), model: str = Form("fast"), machine: str = Form(""),
+                         seconds: float = Form(0), user: User = Depends(require("creator")), db: Session = Depends(get_db)):
+    """A clip the desktop upscaled on its own graphics card (Real-ESRGAN): stored as this video's upscale take. Free."""
+    src = get_or_404(db, Take, tid)
+    ext = Path(file.filename or "").suffix.lower().lstrip(".")
+    ext = ext if ext in ("mp4", "mov", "mkv") else "mp4"
+    cap = float(settings_store.get_setting(db, "desktop_upload_max_mb") or 8000) * 1024 * 1024
+    with tempfile.TemporaryDirectory() as tmp:
+        dest = Path(tmp) / f"upscale.{ext}"
+        with open(dest, "wb") as f:
+            shutil.copyfileobj(file.file, f, 4 * 1024 * 1024)
+        if dest.stat().st_size > cap:
+            raise HTTPException(413, "That upscale is bigger than the team allows per upload")
+        t = desktop.save_local_upscale(db, src, user, dest, ext, {"model": model, "machine": machine, "seconds": seconds})
+    return take_out(t)
 
 
 # ── review notes (§2.7) ──────────────────────────────────────────────────────

@@ -3,9 +3,11 @@
  * Start order: logging → settings → library → gateway → windows → menu → updater.
  */
 import { existsSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { app, crashReporter, dialog, screen, session, shell } from "electron";
 import { IPC } from "../shared/types.ts";
+import { LocalUpscaler } from "./aiupscale.ts";
 import { Config } from "./config.ts";
 import { openConnectionWindow, registerConnectIpc, type ConnectDeps } from "./connect.ts";
 import { locateFfmpeg, machineCheck, probeHardware, type FfmpegInfo } from "./ffmpeg.ts";
@@ -147,7 +149,7 @@ async function start(): Promise<void> {
   const appCtx: AppCtx = {
     config, library, gateway, upstream, windows: wm, ff, probe, log,
     openConnection: () => void openConnectionWindow(connectDeps, wm.main),
-    sync: undefined as never, imports: undefined as never, proxies: undefined as never, renders: undefined as never,
+    sync: undefined as never, imports: undefined as never, proxies: undefined as never, renders: undefined as never, upscaler: undefined as never,
     machineCheck: async () => machineCheck({ ffmpeg: ff(), encoders: await probe(), libraryRoot: config.get().libraryRoot,
       gpuInfo: await app.getGPUInfo("complete").catch(() => undefined),
       displays: wm.displays().map((d) => ({ id: d.id, label: d.label, width: d.bounds.width, height: d.bounds.height, scaleFactor: d.scaleFactor, primary: d.primary })) }),
@@ -160,6 +162,9 @@ async function start(): Promise<void> {
   appCtx.proxies = new ProxyManager({ library, ff, probe: () => probe(), broadcast: (s) => wm.broadcast(IPC.proxyProgress, s), log });
   appCtx.renders = new RenderManager({ upstream, library, ff, probe: () => probe(), settings: () => config.get(),
     jobsFile: path.join(userData, "renders.json"), broadcast: (j) => wm.broadcast(IPC.renderProgress, j), log });
+  appCtx.upscaler = new LocalUpscaler({ library, upstream, ff, probe: () => probe(), userData, machine: os.hostname(),
+    prefer: () => config.get().encoder.prefer, broadcast: (j) => wm.broadcast(IPC.upProgress, j),
+    broadcastTool: (t) => wm.broadcast(IPC.upToolChange, t), log });
   ctx = appCtx;
   registerIpc(appCtx);
 
@@ -219,6 +224,7 @@ async function start(): Promise<void> {
     appCtx.imports.stopAll();
     appCtx.proxies.stopAll();
     appCtx.renders.cancelAll();
+    appCtx.upscaler.stopAll();
     void gateway.close().catch(() => undefined).finally(() => {
       library.closeAll();
       app.exit(0);

@@ -90,11 +90,12 @@ export function substituteLuts(filter: string, luts: Record<string, string>): st
   return filter.replace(/@@LUT_([A-Za-z0-9_-]+)@@/g, (m, id: string) => (luts[id] ? escPath(luts[id]) : m));
 }
 
-export const isUhd = (w: number, h: number) => Math.min(w, h) >= 2160;
+/** 2K and 4K output: upscaled from the 1080p clips, so scaling uses Lanczos (and local upscale sharpens). */
+export const isUhd = (w: number, h: number) => Math.min(w, h) >= 1440;
 const scaleFlags = (w: number, h: number) => (isUhd(w, h) ? ":flags=lanczos" : "");
 
 /**
- * The server's ready-made chain, tuned for 2160p and above: every fixed-size `scale=W:H…` gets `flags=lanczos`, and
+ * The server's ready-made chain, tuned for 1440p and above: every fixed-size `scale=W:H…` gets `flags=lanczos`, and
  * `sharpen` (local upscale on a shot without an AI upscale) adds `unsharp=5:5:0.5` right after the framing.
  */
 export function uhdVf(vf: string, w: number, h: number, sharpen = false): string {
@@ -157,6 +158,8 @@ export const PRESETS: PresetDef[] = [
   { id: "yt4k", label: "YouTube 4K", w: 3840, h: 2160, orientation: "project", codec: "hevc", container: "mp4", tenBit: true, cq: 19, note: "HEVC 10-bit, CQ 19" },
   { id: "yt4k_h264", label: "YouTube 4K (H.264)", w: 3840, h: 2160, orientation: "project", codec: "h264", container: "mp4", tenBit: false, cq: 18, note: "H.264 8-bit, CQ 18" },
   { id: "social4k", label: "Shorts / Reels 4K", w: 2160, h: 3840, orientation: "vertical", codec: "hevc", container: "mp4", tenBit: false, cq: 20, note: "HEVC 8-bit, vertical" },
+  { id: "yt2k", label: "YouTube 2K", w: 2560, h: 1440, orientation: "project", codec: "hevc", container: "mp4", tenBit: false, cq: 19, note: "HEVC 8-bit, CQ 19, 2560×1440" },
+  { id: "social2k", label: "Shorts / Reels 2K", w: 1440, h: 2560, orientation: "vertical", codec: "hevc", container: "mp4", tenBit: false, cq: 20, note: "HEVC 8-bit, vertical 1440×2560" },
   { id: "master_prores", label: "Master ProRes 422 HQ", w: 3840, h: 2160, orientation: "project", codec: "prores", container: "mov", tenBit: true, note: "prores_ks profile 3, yuv422p10le (software encoder)" },
   { id: "broadcast1080", label: "Broadcast 1080p25", w: 1920, h: 1080, fps: 25, orientation: "project", codec: "h264", container: "mp4", tenBit: false, cbr: "50M", note: "H.264 high, 50 Mb/s CBR, AAC 48 kHz" },
   { id: "review1080", label: "Review 1080p (fast)", w: 1920, h: 1080, orientation: "project", codec: "h264", container: "mp4", tenBit: false, cq: 23, note: "H.264 CQ 23" },

@@ -3,7 +3,8 @@
  * `electron` external. Every call is an ipcRenderer.invoke; every `on…` returns its unsubscribe function.
  */
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
-import { IPC, type OfflineStatus, type ProxyStatus, type RenderJob, type SyncStatus, type TatvamDesktop, type UpdateState } from "../shared/types.ts";
+import { IPC, type OfflineStatus, type ProxyStatus, type RenderJob, type SyncStatus, type TatvamDesktop, type UpdateState, type UpscaleJob,
+  type UpscaleTool } from "../shared/types.ts";
 
 async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   try {
@@ -92,6 +93,16 @@ const bridge: TatvamDesktop = {
     openConnection: () => invoke(IPC.openConnection),
     onUpdate: listen<UpdateState>(IPC.update),
     onMenu: listen<string>(IPC.menu),
+  },
+  upscale: {
+    tool: () => invoke(IPC.upTool),
+    install: () => invoke(IPC.upInstall),
+    onTool: listen<UpscaleTool>(IPC.upToolChange),
+    estimate: (opts) => invoke(IPC.upEstimate, opts),
+    start: (opts) => invoke(IPC.upStart, opts),
+    list: () => invoke(IPC.upList),
+    cancel: (id) => invoke(IPC.upCancel, id),
+    onProgress: listen<UpscaleJob>(IPC.upProgress),
   },
   offline: {
     status: () => invoke(IPC.offlineStatus),

@@ -192,7 +192,7 @@ uploads older than a week are cleared.
 `Export.version` is a new nullable integer column. Server renders get one too, from the same per-episode counter.
 The team setting `desktop_upload_max_mb` (default 8000) caps the size.
 
-### 2.6 AI upscale step (a paid cloud call)
+### 2.6 AI upscale step (in the cloud, or free on the editor's PC)
 
 - `POST /episodes/{eid}/upscale/estimate` `{shot_ids?: [...], target_h?: 2160}` returns
   `{items: [{shot_id, code, take_id, from: [w,h], to: [w,h], seconds, usd}], total_usd, skipped: [...]}`.
@@ -208,7 +208,13 @@ The team setting `desktop_upload_max_mb` (default 8000) caps the size.
 - An upscale is **stale** once its parent is no longer the shot's current video.
 - As built, `target_h` (360..4320) is the clip's **short side** and the factor is capped at 4×. Estimate items also
   carry `factor`; skipped entries are `{shot_id, code, reason}`. Submit returns the `jobs.submit` shape plus `items`
-  and `not_upscaled`. A fal result without sound gets the source audio added back.
+  and `not_upscaled`. A fal result without sound gets the source audio added back. Estimate items also carry the
+  source take's `key` and `url`, so a desktop can upscale it itself.
+- **On the editor's PC (free):** `POST /takes/{tid}/upscales` (multipart: `file`, `model`, `machine`, `seconds`)
+  stores a clip that Tatvam Desktop upscaled on its own graphics card as `Take(kind="upscale", provider="local",
+  model="realesrgan:<model>", parent_take_id=tid, cost_usd=0)` and selects it. It must be larger than the video with
+  the same shape (else 400), within `desktop_upload_max_mb` (else 413). From then on it is an upscale like any other:
+  the render plan uses it with `upscaled=1`, the manifest lists it in `Takes/`, a newer video makes it stale.
 
 ### 2.7 Review notes for the desktop timeline
 
@@ -298,6 +304,7 @@ three takes (`…_001_SC02_SH001…`, `…_002_SC01_SH002…`, `…_003_SC01_SH0
 | `main/watch.ts` | Watches the `Imports` folder; a file whose size has held steady is uploaded to `POST /episodes/{eid}/media` and marked ingested |
 | `main/ffmpeg.ts` | Finds FFmpeg (the path set in the Studio server window, `TATVAM_FFMPEG`, the bundled `resources/ffmpeg.exe`, then `ffmpeg-static` / the system one / the backend's imageio copy in dev, preferring 7.x: 6.1 lacks vidstab and some xfade transitions), probes the encoders, test-encodes on NVENC, QSV and AMF, and runs the machine check |
 | `main/proxies.ts` | 1080p proxies, made on NVENC when it is available |
+| `main/aiupscale.ts` | **AI upscale on this PC** (§4.2): installs the pinned Real-ESRGAN build on demand, picks the Vulkan GPU, and runs frames out → Real-ESRGAN → HEVC back with the original sound → upload as the shot's upscale take |
 | `main/render-args.ts` | Pure FFmpeg argument builders for every render step, checked in tests against the arguments the server's `ffmpeg.py` / `layers.py` build |
 | `main/render.ts` | Runs a render plan locally at 4K with hardware encoding, reports progress and ETA, can cancel, writes into `Renders/` |
 | `main/upload.ts` | Chunked, resumable render upload |
@@ -328,15 +335,37 @@ to requests that carry the app's own session cookie and rejects unexpected `Host
 | `yt4k` | YouTube 4K | 3840×2160 | HEVC 10-bit, CQ 19 | NVENC → QSV → AMF → x265 |
 | `yt4k_h264` | YouTube 4K (H.264) | 3840×2160 | H.264 8-bit, CQ 18 | |
 | `social4k` | Shorts / Reels 4K | 2160×3840 | HEVC 8-bit | |
+| `yt2k` | YouTube 2K | 2560×1440 | HEVC 8-bit, CQ 19 | Swapped for 9:16 projects |
+| `social2k` | Shorts / Reels 2K | 1440×2560 | HEVC 8-bit, CQ 20 | Always vertical |
 | `master_prores` | Master ProRes 422 HQ | 3840×2160 | prores_ks profile 3, yuv422p10le, .mov | Software encoder |
 | `broadcast1080` | Broadcast 1080p25 | 1920×1080 at 25 fps | H.264 high, 50 Mb/s CBR, AAC 48 kHz | |
 | `review1080` | Review 1080p (fast) | 1920×1080 | H.264 CQ 23 | |
 | `av1_4k` | AV1 4K (archive) | 3840×2160 | AV1 NVENC, only where supported (RTX 40 and up) | Hidden when the probe fails |
 
 - Intermediate segments use the fastest hardware H.264 encoder at CQ 16, falling back to x264 veryfast at CRF 16.
-- At 2160p and above, scaling uses `flags=lanczos`. When a shot has no AI upscale, "Local upscale" adds a light
-  `unsharp`.
+- At 1440p and above (2K and 4K), scaling uses `flags=lanczos`. When a shot has no AI upscale, "Local upscale" adds a
+  light `unsharp`.
 - The hardware baseline is an RTX 3060, 32 GB of RAM and an NVMe SSD. The machine check compares this PC with it.
+
+### 4.2 AI upscale on this PC (Real-ESRGAN)
+
+Finishing room → AI upscale → **This PC · free** (the cloud Topaz route stays as **Cloud · paid**).
+
+- **Engine:** Real-ESRGAN ncnn-vulkan v0.2.5.0 (github.com/xinntao/Real-ESRGAN, BSD-3), installed once on demand into
+  `userData/tools/` with the **Install** button: `realesrgan-ncnn-vulkan-20220424-windows.zip`, 45,474,481 bytes,
+  SHA-256 `abc02804…802d`, checked before it is unpacked with Windows' `tar.exe`. Vulkan, so NVIDIA, AMD and Intel
+  cards all work; the dedicated card is picked over built-in graphics. Windows only for now.
+- **Models:** **Fast** = `realesr-animevideov3` (×2/×3/×4, made for video, little flicker), the default; **Best detail**
+  = `realesrgan-x4plus` (×4 only: the most natural texture, far slower).
+- **Steps per shot:** PNG frames out (FFmpeg) → Real-ESRGAN to JPEG frames on the GPU → back to HEVC at CQ 17 on the
+  hardware encoder at the exact target size (Lanczos), converted from the frames' full-range BT.601 to limited-range
+  BT.709 like the AI clips (left as JPEG levels it rendered about 4 levels brighter), original sound copied → upload
+  (`POST /takes/{tid}/upscales`) → the file moves into `Takes/` and the next sync gives it its series name.
+- **Measured on the reference laptop (GTX 1660 Ti), 11 Oct 2026:** Fast, 1080p → 4K: 1.3–1.5 frames a second, a
+  6-second shot (144 frames) in 100–105 s; x4plus: about 20 s a frame (a 6-second shot ≈ 48 min). The estimate starts
+  from these numbers and then uses what this PC actually managed (`upscale-speed.json`, output megapixels a second).
+- Compared on a 1080p still at 4K: plain Lanczos is soft, the video model gives clearly sharper edges and texture
+  (a little crisp), x4plus the most natural detail.
 
 ## 5. Bridge: `window.tatvamDesktop` (preload)
 
@@ -395,6 +424,8 @@ interface TatvamDesktop {
          openConnection(): Promise<void>;   // opens the native Studio server window
          onUpdate(cb: (u: UpdateState) => void): () => void; onMenu(cb: (action: string) => void): () => void };
   offline: { status(): Promise<{ online: boolean; queued: number; lastError?: string }>; onChange(cb): () => void; flush(): Promise<void> };
+  upscale: { tool(); install(); onTool(cb); estimate({pid, eid, targetH, model: "fast" | "best", shotIds?}); start(same);
+             list(); cancel(id); onProgress(cb) };   // AI upscale on this PC (§4.2)
 }
 type PanelId = "program" | "source" | "timeline" | "scopes" | "mixer" | "notes" | "media" | "renders" | "bible";
 ```
@@ -442,6 +473,7 @@ with mock providers:
 | Area | Result |
 | --- | --- |
 | Checks | Backend 195 tests and ruff, frontend `tsc -b` + build, desktop typecheck + 43 unit tests: all pass |
+| Local AI upscale | Installed through the app in 8 s (download, SHA-256 check, unpack), GTX 1660 Ti picked; two 6 s shots upscaled 1080p → 4K at 1.5 frames/s (100–105 s each), uploaded as upscale takes, renamed into the series by the next sync, and used by a YouTube 2K render (2560×1440 HEVC on NVENC) |
 | Live run | Sign-in through the gateway, checkout, sync of the approved cut (series names, EDL and FCPXML), machine check, 4K HEVC 10-bit render on NVENC (16 s cut in 34–47 s), chunked upload to the Render Center as v1, v2, pop-out program monitor and scopes, five workspaces, Studio server window, and the settings allow-list |
 | Installer | The NSIS installer builds (134 MB, unsigned), and the packaged app passes the same smoke run with the bundled UI and FFmpeg |
 

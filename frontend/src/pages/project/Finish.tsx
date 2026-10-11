@@ -99,7 +99,7 @@ export default function FinishPage() {
             <FolderCard className="@4xl:col-span-7" pid={pid} eid={eid} lang={lang} />
             <NamingCard className="@4xl:col-span-5" pid={pid} />
             <RenderCard className="@4xl:col-span-7" project={project} eid={eid} lang={lang} exports={exports} canEdit={canEdit} />
-            <UpscaleCard className="@4xl:col-span-5" eid={eid} canEdit={canEdit} />
+            <UpscaleCard className="@4xl:col-span-5" pid={pid} eid={eid} canEdit={canEdit} />
             <WindowsCard className="@4xl:col-span-7" pid={pid} eid={eid} />
             <MachineCard className="@4xl:col-span-5" pid={pid} />
             <NotesCard className="@4xl:col-span-12" eid={eid} pid={pid} />
@@ -107,7 +107,7 @@ export default function FinishPage() {
         ) : (
           <>
             <DesktopPromo className="@4xl:col-span-12" pid={pid} eid={eid} />
-            <UpscaleCard className="@4xl:col-span-7" eid={eid} canEdit={canEdit} />
+            <UpscaleCard className="@4xl:col-span-7" pid={pid} eid={eid} canEdit={canEdit} />
             <RenderCard className="@4xl:col-span-5" project={project} eid={eid} lang={lang} exports={exports} canEdit={canEdit} />
             <NotesCard className="@4xl:col-span-7" eid={eid} pid={pid} />
             <WindowsCard className="@4xl:col-span-5" pid={pid} eid={eid} />

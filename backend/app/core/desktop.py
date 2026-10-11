@@ -693,8 +693,46 @@ def upscale_plan(db: Session, episode: Episode, shot_ids: list[int] | None = Non
             continue
         secs = float(v.duration_s or 0) or ff.duration(st.abs(v.path))
         items.append({"shot_id": s.id, "code": s.code, "take_id": v.id, "from": [sw, sh], "to": [_even(sw * factor), _even(sh * factor)],
-                      "factor": round(factor, 3), "seconds": round(secs, 2), "usd": round(est.upscale(secs), 4)})
+                      "factor": round(factor, 3), "seconds": round(secs, 2), "usd": round(est.upscale(secs), 4),
+                      "key": v.path, "url": st.url(v.path)})
     return {"items": items, "total_usd": round(sum(i["usd"] for i in items), 4), "skipped": skipped, "target_h": int(target_h)}
+
+
+def save_local_upscale(db: Session, src: Take, user: User, file: Path, ext: str, meta: dict[str, Any]) -> Take:
+    """A clip upscaled on an editor's own graphics card (Tatvam Desktop, Real-ESRGAN): kept as Take(kind="upscale") of that
+    video, like a cloud upscale, so renders and the other desktops use it. Free: it ran on the editor's machine."""
+    if src.kind != "video" or src.archived or not src.path:
+        raise HTTPException(400, "Only a shot's current video can get an upscale")
+    shot = db.get(Shot, src.shot_id)
+    ep = db.get(Episode, shot.episode_id)
+    st = get_storage()
+    sw, sh = ff.video_size(st.abs(src.path))
+    w, h = ff.video_size(file)
+    if not w or not h:
+        raise HTTPException(400, "That file isn't a readable video")
+    if sw and sh and (min(w, h) <= min(sw, sh) or abs(w / h - sw / sh) > 0.02):
+        raise HTTPException(400, f"An upscale of {sw}×{sh} must be larger with the same shape (got {w}×{h})")
+    folder = f"projects/{ep.project_id}/shots/{shot.id}/upscale"
+    rel = st.save_file(st.new_path(folder, ext), file, move=True)
+    abs_p = st.abs(rel)
+    thumb = ""
+    try:
+        thumb = st.save_file(st.new_path(folder, "jpg"), ff.thumbnail(abs_p, abs_p.with_suffix(".thumb.jpg")))
+    except Exception as e:  # an upscale without a thumbnail still renders
+        print(f"[desktop] upscale thumbnail failed for take {src.id}: {e}")
+    model = re.sub(r"[^A-Za-z0-9._-]+", "-", str(meta.get("model") or "fast"))[:40]
+    params = {"w": w, "h": h, "factor": round(min(w, h) / min(sw, sh), 3) if sw and sh else None, "engine": "local",
+              "model": model, "machine": str(meta.get("machine") or "")[:120], "seconds_taken": float(meta.get("seconds") or 0)}
+    t = Take(shot_id=shot.id, kind="upscale", provider="local", model=f"realesrgan:{model}", params=params, path=rel,
+             thumb_path=thumb, duration_s=ff.duration(abs_p) or src.duration_s, cost_usd=0.0, parent_take_id=src.id,
+             created_by=user.id, status="ready")
+    db.add(t)
+    db.flush()
+    select(db, t)
+    db.commit()
+    emit(db, ep.project_id, "take.created", {"shot_id": shot.id, "take_id": t.id, "kind": "upscale", "source": "desktop"},
+         user_id=user.id)
+    return t
 
 
 def upscale_specs(episode: Episode, plan: dict[str, Any]) -> list[dict]:

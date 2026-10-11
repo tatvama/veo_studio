@@ -95,6 +95,27 @@ export interface ImportsStatus { watching: boolean; pending: number; ingested: n
 export interface FolderUsage { folders: Record<string, { files: number; bytes: number }>; freeBytes: number }
 export interface OfflineStatus { online: boolean; queued: number; lastError?: string }
 
+/** AI upscale on this PC (Real-ESRGAN): fast = its video model, best = x4plus (most natural detail, much slower). */
+export type UpscaleModel = "fast" | "best";
+export interface UpscaleTool {
+  installed: boolean; version: string; sizeBytes: number; installing?: boolean; progress?: number; error?: string;
+  gpus?: { index: number; name: string }[]; gpu?: { index: number; name: string } | null; platformSupported: boolean;
+}
+export interface UpscaleJob {
+  id: string; pid: number; eid: number; shotId: number; code: string; takeId: number; model: UpscaleModel;
+  from: [number, number]; to: [number, number]; scale: number;
+  status: "queued" | "preparing" | "extracting" | "upscaling" | "encoding" | "uploading" | "done" | "failed" | "cancelled";
+  progress: number; step: string; frames?: number; framesDone?: number; fps?: number; eta_s?: number; elapsed_s?: number;
+  error?: string; uploadedTakeId?: number; createdAt: string; finishedAt?: string;
+}
+export interface LocalUpscaleEstimate {
+  items: { shotId: number; code: string; takeId: number; from: [number, number]; to: [number, number]; seconds: number; frames: number;
+    scale: number; minutes: number }[];
+  skipped: { shot_id: number; code: string; reason: string }[];
+  totalMinutes: number;
+  measured: boolean;
+}
+
 export interface TatvamDesktop {
   version: string; platform: string;
   info(): Promise<DesktopInfo>;
@@ -150,6 +171,17 @@ export interface TatvamDesktop {
          openConnection(): Promise<void>;
          onUpdate(cb: (u: UpdateState) => void): () => void; onMenu(cb: (action: string) => void): () => void };
   offline: { status(): Promise<OfflineStatus>; onChange(cb: (s: OfflineStatus) => void): () => void; flush(): Promise<void> };
+  /** AI upscale on this PC's graphics card; results upload as the shots' upscale takes. Missing in older desktop builds. */
+  upscale?: {
+    tool(): Promise<UpscaleTool>;
+    install(): Promise<UpscaleTool>;
+    onTool(cb: (t: UpscaleTool) => void): () => void;
+    estimate(opts: { pid: number; eid: number; targetH: number; model: UpscaleModel; shotIds?: number[] }): Promise<LocalUpscaleEstimate>;
+    start(opts: { pid: number; eid: number; targetH: number; model: UpscaleModel; shotIds?: number[] }): Promise<string[]>;
+    list(): Promise<UpscaleJob[]>;
+    cancel(id: string): Promise<void>;
+    onProgress(cb: (j: UpscaleJob) => void): () => void;
+  };
 }
 
 declare global {
@@ -255,6 +287,37 @@ export function useRenderJobs(): RenderJob[] {
   return jobs;
 }
 
+/** The local upscaler's install state, kept live while it downloads. */
+export function useUpscaleTool(): UpscaleTool | null {
+  const [s, setS] = useState<UpscaleTool | null>(null);
+  useEffect(() => {
+    const u = desktop()?.upscale;
+    if (!u) return;
+    let alive = true;
+    u.tool().then((v) => { if (alive) setS(v); }).catch(() => undefined);
+    const off = u.onTool((v) => { if (alive) setS(v); });
+    return () => { alive = false; off(); };
+  }, []);
+  return s;
+}
+
+/** Local upscale jobs, kept live from the bridge's progress events. */
+export function useUpscaleJobs(): UpscaleJob[] {
+  const [jobs, setJobs] = useState<UpscaleJob[]>([]);
+  useEffect(() => {
+    const u = desktop()?.upscale;
+    if (!u) return;
+    let alive = true;
+    u.list().then((v) => { if (alive) setJobs(v ?? []); }).catch(() => undefined);
+    const off = u.onProgress((j) => {
+      if (!alive) return;
+      setJobs((list) => (list.some((x) => x.id === j.id) ? list.map((x) => (x.id === j.id ? { ...x, ...j } : x)) : [j, ...list]));
+    });
+    return () => { alive = false; off(); };
+  }, []);
+  return jobs;
+}
+
 /** The gateway's connection to the studio server and its queue of cut edits made offline (null in the browser). */
 export function useOffline(): OfflineStatus | null {
   const [s, setS] = useState<OfflineStatus | null>(null);
@@ -293,7 +356,8 @@ export function eta(s: number | null | undefined): string {
 
 /** Desktop render presets as the Render Center names them (Export.preset is "desktop:<id>", docs/DESKTOP.md §4.1). */
 const DESKTOP_PRESET_LABELS: Record<string, string> = {
-  yt4k: "YouTube 4K", yt4k_h264: "YouTube 4K (H.264)", social4k: "Shorts / Reels 4K", master_prores: "Master ProRes 422 HQ",
+  yt4k: "YouTube 4K", yt4k_h264: "YouTube 4K (H.264)", social4k: "Shorts / Reels 4K", yt2k: "YouTube 2K", social2k: "Shorts / Reels 2K",
+  master_prores: "Master ProRes 422 HQ",
   broadcast1080: "Broadcast 1080p25", review1080: "Review 1080p", av1_4k: "AV1 4K",
 };
 

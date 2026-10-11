@@ -18,7 +18,7 @@ How to use the studio day to day. For installing, configuring and deploying it, 
 | Cast (Bible) | 2 Cast › Characters & places | **Build from script** creates the cast, locations and style. Generate sheets and voices, approve images and **Lock**. **Train identity** gives a character a face model so every keyframe keeps the exact face. A consent record is asked for when a real person's face or voice is used |
 | Shots | 3 Shots › Storyboard · List · Studio | **Keyframes** (cents each), then **Videos**, then **Voice + lip-sync**, then **Music**. Click a shot to edit it, pick the **engine** (or Auto), run a **shootout** between 2–4 engines and pick the winner, compare takes, retake, extend, **Edit with words** or approve. Each take shows its engine and QC (face match, lip-sync score) |
 | Timeline | 4 Edit › Timeline | Zoom, snap, J/K/L shuttle, waveforms for dialogue, music and SFX, **Auto SFX**, title and lower-third track, caption preview, music volume and ducking |
-| Finishing room | 4 Edit › Finishing room | **Check out** the cut so the web timeline goes read-only for everyone else, **check in** with a note (every check-in is a version you can **restore**), **4K upscale** with the price shown first, **review notes** from your renders as markers on the timeline, and **pop-out** program monitor, scopes, mixer and notes windows. In the **desktop app** it also has the project folder, file names in series, local 4K renders on your graphics card and the machine check (see below) |
+| Finishing room | 4 Edit › Finishing room | **Check out** the cut so the web timeline goes read-only for everyone else, **check in** with a note (every check-in is a version you can **restore**), **AI upscale** to 4K or 2K (free on the desktop's graphics card, or in the cloud with the price shown first), **review notes** from your renders as markers on the timeline, and **pop-out** program monitor, scopes, mixer and notes windows. In the **desktop app** it also has the project folder, file names in series, local 4K renders on your graphics card and the machine check (see below) |
 | Export | 5 Deliver › Export | **Animatic** (free preview), **Render** (Shorts / Reels / YouTube / Square, karaoke or clean captions, auto-reframe, brand-kit end card), **Dub**, **Cut into shorts**, **Marketing pack** (titles, descriptions, hashtags and thumbnails per platform and language), **Publish to YouTube** (or schedule it), **Client link** |
 | Review | 5 Deliver › Review | Frame-accurate player, timecoded comments, draw on the frame, A/B **wipe compare** between renders, approve the final. Clients get a link that works without an account, on phone or desktop |
 | Director | Right panel (`Ctrl+J`) | Ask in plain words, e.g. *"dub into Telugu"*, *"Ravi wears his wedding outfit in this episode"*, *"cut this into 3 shorts"*, *"freeze Ravi's look for episodes 1-3"*, *"what is stale?"*. In Co-pilot mode it proposes the work with a price and you click **Approve** |
@@ -104,7 +104,12 @@ For the editors who finish a cut in 4K. It is the same studio in a Windows app, 
 - **File names in series:** **File names** shows the template for each folder (tokens like `{cut:03}`, `{scene:02}`,
   `{shot:03}`, `{take:02}`, `{lang}`) and the **Rename plan**. When the cut changes, a sync renames the files so the
   folder always lists in cut order.
-- **Render:** pick a preset (YouTube 4K, Shorts / Reels 4K, ProRes master, broadcast 1080p25, review 1080p), turn on
+- **AI upscale to 4K or 2K:** in **AI upscale**, choose **This PC · free** (Real-ESRGAN on your graphics card; press
+  **Install the upscaler** once, 45 MB) or **Cloud · paid** (Topaz, priced first). Pick **4K · 2160p** or **2K · 1440p**
+  and **Fast** (the default, about 2 minutes per 6-second shot on a GTX 1660 Ti) or **Best detail** (much slower, for a
+  hero shot), then **Estimate the time** and **Upscale**. Each finished shot uploads as its upscale take, so renders with
+  **Use AI upscales** and the rest of the team use it.
+- **Render:** pick a preset (YouTube 4K, Shorts / Reels 4K, YouTube 2K, Shorts / Reels 2K, ProRes master, broadcast 1080p25, review 1080p), turn on
   **Use AI upscales** or **Local upscale**, and **Render**. It runs on the graphics card (NVENC, Quick Sync or AMF), shows
   progress and time left, and with **Upload when done** the file appears in 5 Deliver › Export and Review as the
   next version (v1, v2 …), ready for review links and phone approvals. No AI runs here, so nothing is charged.

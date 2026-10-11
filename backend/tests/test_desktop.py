@@ -397,6 +397,35 @@ def test_upscale_estimate_submit_and_plan(client: TestClient):
     assert not any(i.get("take_id") == up_id for i in ok(c.get(f"/api/projects/{pid}/desktop/manifest?scope=cut"))["items"])
 
 
+def test_local_upscale_upload_becomes_the_shots_upscale(client: TestClient, tmp_path):
+    """Tatvam Desktop upscales on its own graphics card and uploads the clip: it becomes the video's upscale take."""
+    c = client
+    pid, eid, sids, tids = _cut(c)
+    item = next(i for i in ok(c.post(f"/api/episodes/{eid}/upscale/estimate", headers=H, json={"target_h": 480}))["items"]
+                if i["shot_id"] == sids[1])
+    assert item["key"].startswith(f"projects/{pid}/shots/{sids[1]}/video/") and item["url"].startswith("/media/")
+    src = get_storage().abs(item["key"])
+    big = tmp_path / "up.mp4"
+    ff.run(["-i", src, "-vf", "scale=640:480:flags=lanczos", "-c:v", "libx264", "-preset", "veryfast", "-c:a", "copy", big])
+    small = tmp_path / "small.mp4"
+    ff.run(["-i", src, "-vf", "scale=160:120", "-c:v", "libx264", "-preset", "veryfast", "-an", small])
+    # smaller than the video, or not a video: refused
+    r = c.post(f"/api/takes/{tids[1]}/upscales", headers=H, files={"file": ("s.mp4", small.read_bytes(), "video/mp4")})
+    assert r.status_code == 400
+    r = c.post(f"/api/takes/{tids[1]}/upscales", headers=H, files={"file": ("x.mp4", b"not a video", "video/mp4")})
+    assert r.status_code == 400
+    t = ok(c.post(f"/api/takes/{tids[1]}/upscales", headers=H, data={"model": "fast", "machine": "Edit PC", "seconds": "12.5"},
+                  files={"file": ("up.mp4", big.read_bytes(), "video/mp4")}))
+    assert t["kind"] == "upscale" and t["provider"] == "local" and t["parent_take_id"] == tids[1] and t["cost_usd"] == 0
+    assert t["params"]["w"] == 640 and t["params"]["engine"] == "local" and t["params"]["machine"] == "Edit PC"
+    # renders and the other desktops pick it up like a cloud upscale; the estimate no longer offers that shot
+    plan = ok(c.get(f"/api/episodes/{eid}/render-plan?w=640&h=480&upscaled=1"))
+    assert [s["upscaled"] for s in plan["segments"]] == [False, True, False] and plan["segments"][1]["source"] == t["path"]
+    est = ok(c.post(f"/api/episodes/{eid}/upscale/estimate", headers=H, json={"target_h": 480}))
+    assert {"shot_id": sids[1], "code": est["skipped"][0]["code"], "reason": "Already upscaled"} in est["skipped"]
+    assert c.post("/api/takes/999999/upscales", headers=H, files={"file": ("u.mp4", b"x", "video/mp4")}).status_code == 404
+
+
 def test_migration_adds_desktop_tables_and_columns(client: TestClient):
     from sqlalchemy import inspect, text
 

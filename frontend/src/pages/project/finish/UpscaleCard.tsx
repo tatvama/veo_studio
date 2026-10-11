@@ -6,21 +6,25 @@ import { CostConfirm } from "../../../components/growth/common";
 import { SectionCard } from "../../../components/room/kit";
 import { Button, Segmented } from "../../../components/ui";
 import { api } from "../../../lib/api";
+import { isDesktop } from "../../../lib/desktop";
 import { estimateUpscale, skipLabel, type UpscaleEstimate } from "../../../lib/finish";
 import { secs, usd } from "../../../lib/format";
 import { useT } from "../../../lib/i18n";
 import type { SubmitResult } from "../../../lib/types";
+import { LocalUpscale } from "./LocalUpscale";
 import { Quiet } from "./parts";
 
-const TARGETS = [{ value: 2160, label: "4K · 2160p" }, { value: 1440, label: "1440p" }];
+const TARGETS = [{ value: 2160, label: "4K · 2160p" }, { value: 1440, label: "2K · 1440p" }];
 const wh = (v?: [number, number]) => (v && v.length === 2 ? `${v[0]}×${v[1]}` : "—");
 
 /**
- * The AI upscale step (a paid cloud call): estimate first, with what each shot costs and which are skipped, then run it
- * through the same budget and approval path as every paid job.
+ * The AI upscale step, to 4K or 2K. In the cloud (a paid call): estimate first, with what each shot costs and which are
+ * skipped, then run it through the same budget and approval path as every paid job. In Tatvam Desktop it can also run on
+ * this PC's graphics card for free (LocalUpscale). Either way the result is the shot's upscale take.
  */
-export function UpscaleCard({ eid, canEdit, className }: { eid: number; canEdit: boolean; className?: string }) {
+export function UpscaleCard({ pid, eid, canEdit, className }: { pid: number; eid: number; canEdit: boolean; className?: string }) {
   const t = useT();
+  const [engine, setEngine] = useState<"local" | "cloud">(isDesktop ? "local" : "cloud");
   const qc = useQueryClient();
   const { submit } = useGenerate();
   const [target, setTarget] = useState(2160);
@@ -42,9 +46,16 @@ export function UpscaleCard({ eid, canEdit, className }: { eid: number; canEdit:
   const seconds = est?.items.reduce((a, i) => a + (i.seconds || 0), 0) ?? 0;
 
   return (
-    <SectionCard className={className} icon={<ScanEye />} title={t("4K upscale")}
-      description={t("AI-upscales the current video of each shot so 4K renders aren't just stretched. Paid per second; shots already sharp enough are skipped.")}
-      actions={<Segmented size="sm" value={target} aria-label={t("Target height")} onChange={(v) => { setTarget(v); if (est) void estimate(v); }} options={TARGETS} />}>
+    <SectionCard className={className} icon={<ScanEye />} title={t("AI upscale")}
+      description={isDesktop
+        ? t("AI-upscales the current video of each shot to 4K or 2K so renders aren't just stretched: free on this PC's graphics card, or in the cloud (Topaz, paid per second).")
+        : t("AI-upscales the current video of each shot so 4K renders aren't just stretched. Paid per second; shots already sharp enough are skipped.")}
+      actions={<>
+        {isDesktop && <Segmented size="sm" value={engine} aria-label={t("Where to upscale")} onChange={setEngine}
+          options={[{ value: "local", label: t("This PC · free") }, { value: "cloud", label: t("Cloud · paid") }]} />}
+        <Segmented size="sm" value={target} aria-label={t("Target height")} onChange={(v) => { setTarget(v); if (est) void estimate(v); }} options={TARGETS} />
+      </>}>
+      {engine === "local" ? <LocalUpscale pid={pid} eid={eid} target={target} canEdit={canEdit} /> : (
       <div className="space-y-3">
         {!est ? (
           <div className="flex flex-wrap items-center gap-2">
@@ -104,6 +115,7 @@ export function UpscaleCard({ eid, canEdit, className }: { eid: number; canEdit:
         )}
         <p className="text-2xs leading-relaxed text-dim">{t("Local renders use an upscale when \"Use AI upscales\" is on. It goes stale when the shot gets a new video.")}</p>
       </div>
+      )}
       <CostConfirm open={confirm} onClose={() => setConfirm(false)} title={t("4K upscale")} amount={est?.total_usd ?? 0}
         lines={(est?.items ?? []).map((i) => ({ label: `${i.code} · ${wh(i.from)} → ${wh(i.to)} · ${i.seconds.toFixed(1)}s`, usd: i.usd }))}
         confirmLabel={est?.total_usd ? t("Upscale · {usd}", { usd: usd(est.total_usd) }) : t("Upscale · free")}

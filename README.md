@@ -363,6 +363,7 @@ Team, personal and project budgets are set in the app (**Settings → Budget**).
 | electron-builder, electron-updater | Windows installer (NSIS) and updates from GitHub Releases |
 | ws | The main process's event socket to the server |
 | FFmpeg 7.1 (bundled), ffmpeg-static (dev fallback) | Local renders with NVENC / Quick Sync / AMF, proxies, the machine check |
+| Real-ESRGAN ncnn-vulkan 0.2.5.0 (BSD-3, downloaded on demand, SHA-256 pinned) | AI upscale on the editor's graphics card |
 
 ### Runtime and infrastructure
 
@@ -440,8 +441,11 @@ while offline. AI work still runs on the server, with the same cost check and ap
 - **Windows and screens:** program and source monitors, timeline, scopes (waveform, RGB parade, vectorscope,
   histogram), mixer, review notes, media, renders and Bible as separate windows on any display, full screen or as a
   clean feed; five workspaces (Edit, Colour, Audio, Review, Story) on `Ctrl+1…5`; all windows follow one playhead.
-- **4K:** presets YouTube 4K (HEVC 10-bit), Shorts / Reels 4K, ProRes 422 HQ master, broadcast 1080p25, review 1080p;
-  optional AI upscale (fal.ai Topaz, priced before it runs); uploads go to the Render Center as v1, v2 …
+- **4K and 2K:** presets YouTube 4K (HEVC 10-bit), Shorts / Reels 4K, YouTube 2K, Shorts / Reels 2K, ProRes 422 HQ
+  master, broadcast 1080p25, review 1080p; uploads go to the Render Center as v1, v2 …
+- **AI upscale of the 1080p clips to 4K or 2K:** free on the PC's own graphics card with Real-ESRGAN (installed on
+  demand; about 2 minutes per 6-second shot on a GTX 1660 Ti), or in the cloud with fal.ai Topaz (priced before it runs).
+  Either way the result is the shot's upscale take, used by every render.
 
 ```bash
 cd desktop && npm ci && npm run dev     # needs a built frontend (cd frontend && npm run build)
