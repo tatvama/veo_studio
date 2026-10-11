@@ -256,6 +256,8 @@ class Project(Base, Serializable):
     brand_kit_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(30), default="draft")
     autopilot: Mapped[Any] = mapped_column(JSON, default=dict)
+    # the Director's project memory: notes it saved with remember(), shown to it every turn [{text, at, by}] (max 40)
+    agent_memory: Mapped[Any] = mapped_column(JSON, default=list)
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
