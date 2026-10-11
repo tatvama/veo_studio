@@ -74,14 +74,15 @@ const f4 = (x: number) => x.toFixed(4);
 /** A raw number where the server formats one with str() (e.g. volume=…dB); FFmpeg reads "-6" and "-6.0" alike. */
 const num = (x: number) => String(x);
 
-/** A file path inside an FFmpeg filter argument (backend fx._esc_path). */
+/** A file path inside an FFmpeg filter argument (backend fx._esc_path): separators become "/", then every backslash,
+ * colon and quote left is escaped in one pass (a Windows path has no backslash left by then, so this matches the server). */
 export function escPath(p: string): string {
-  return p.replace(/\\/g, "/").replace(/:/g, "\\:").replace(/'/g, "\\'");
+  return p.replace(/\\/g, "/").replace(/[\\:']/g, (c) => `\\${c}`);
 }
 
 /** The ASS/fontsdir escaping of backend ffmpeg.replace_audio_mix (posix path, colons escaped). */
 export function escAssPath(p: string): string {
-  return p.replace(/\\/g, "/").replace(/:/g, "\\:");
+  return p.replace(/\\/g, "/").replace(/[\\:]/g, (c) => `\\${c}`);
 }
 
 /** Swap `@@LUT_<id>@@` for the escaped local .cube path. Unknown ids are left (FFmpeg then reports them). */

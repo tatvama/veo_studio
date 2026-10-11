@@ -118,7 +118,8 @@ def test_checkout_lock_and_enforcement(client: TestClient):
     ok(other.post(f"/api/shots/{sids[1]}/approve", headers=H, json={"approved": True}))
     assert other.post(f"/api/episodes/{eid}/checkout/heartbeat", headers=H).status_code == 409
     assert other.post(f"/api/episodes/{eid}/checkout", headers=H, json={"force": True}).status_code == 403  # creators can't force
-    assert other.delete(f"/api/episodes/{eid}/checkout", headers=H).status_code == 403
+    r = other.delete(f"/api/episodes/{eid}/checkout", headers=H)
+    assert r.status_code == 403
     assert other.post(f"/api/episodes/{eid}/checkin", headers=H, json={}).status_code == 409
     # the holder edits freely
     assert ok(c.patch(f"/api/shots/{sids[0]}", headers=H, json={"trim_in": 0.3}))["trim_in"] == 0.3
@@ -145,7 +146,8 @@ def test_checkout_lock_and_enforcement(client: TestClient):
     with SessionLocal() as db:
         a = db.query(AuditEntry).filter(AuditEntry.action == "cut.checkout.force").order_by(AuditEntry.id.desc()).first()
         assert a and a.target == f"episode {eid}" and a.detail["from"] == "Ravi"
-    assert ok(c.delete(f"/api/episodes/{eid}/checkout", headers=H))["lock"] is None
+    released = ok(c.delete(f"/api/episodes/{eid}/checkout", headers=H))
+    assert released["lock"] is None
     assert ok(c.get(f"/api/episodes/{eid}/checkout"))["lock"] is None
     collab.reset()
 

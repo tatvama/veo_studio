@@ -33,7 +33,20 @@ export async function uploadFile(up: Upstream, opts: {
   eid: number; file: string; meta: UploadMeta; srt?: string; uploadId?: string; signal?: AbortSignal;
   onProgress?(p: UploadProgress): void; onInit?(uploadId: string): void; retries?: number; retryDelayMs?: number;
 }): Promise<{ uploadId: string; export: Record<string, unknown> }> {
-  const size = (await fsp.stat(opts.file)).size;
+  // open once and take the size from the open handle, so the file we measure is the file we send
+  const fh = await fsp.open(opts.file, "r");
+  let uid = "";
+  try {
+    uid = await sendChunks(up, opts, fh);
+  } finally {
+    await fh.close();
+  }
+  const exp = await up.json<Record<string, unknown>>(`/api/renders/uploads/${uid}/complete`, { method: "POST", body: { srt: opts.srt ?? null } });
+  return { uploadId: uid, export: exp };
+}
+
+async function sendChunks(up: Upstream, opts: Parameters<typeof uploadFile>[1], fh: fsp.FileHandle): Promise<string> {
+  const size = (await fh.stat()).size;
   let uploadId = opts.uploadId;
   let chunk = DEFAULT_CHUNK;
   let received = 0;
@@ -58,44 +71,38 @@ export async function uploadFile(up: Upstream, opts: {
   }
   const uid = uploadId;
   opts.onProgress?.({ uploadId: uid, received, size });
-  const fh = await fsp.open(opts.file, "r");
   const maxTries = opts.retries ?? 8;
   let tries = 0;
-  try {
-    while (received < size) {
-      if (opts.signal?.aborted) throw new Error("cancelled");
-      const len = Math.min(chunk, size - received);
-      const buf = Buffer.alloc(len);
-      await fh.read(buf, 0, len, received);
-      try {
-        const r = await up.fetch(`/api/renders/uploads/${uid}?offset=${received}`, {
-          method: "PUT", body: buf, headers: { "Content-Type": "application/octet-stream" }, signal: opts.signal,
-        });
-        const text = await r.text();
-        let body: unknown;
-        try { body = text ? JSON.parse(text) : undefined; } catch { body = text; }
-        if (r.status === 409) {
-          const at = receivedOf(body);
-          if (at === undefined) throw new UpstreamError(409, body, "upload offset rejected without a position");
-          received = at;
-          continue;
-        }
-        if (!r.ok) throw new UpstreamError(r.status, (body as { detail?: unknown })?.detail ?? body, `upload chunk: HTTP ${r.status}`);
-        received = receivedOf(body) ?? received + len;
-        tries = 0;
-        opts.onProgress?.({ uploadId: uid, received, size });
-      } catch (e) {
-        const retryable = isNetworkError(e) || (e instanceof UpstreamError && e.status >= 500);
-        if (!retryable || opts.signal?.aborted || ++tries > maxTries) throw e;
-        await sleep(Math.min(30_000, (opts.retryDelayMs ?? 1000) * 2 ** (tries - 1)), opts.signal);
-        try { // where did the server get to?
-          received = (await up.json<{ received: number }>(`/api/renders/uploads/${uid}`)).received;
-        } catch { /* still down: retry the same chunk */ }
+  while (received < size) {
+    if (opts.signal?.aborted) throw new Error("cancelled");
+    const len = Math.min(chunk, size - received);
+    const buf = Buffer.alloc(len);
+    await fh.read(buf, 0, len, received);
+    try {
+      const r = await up.fetch(`/api/renders/uploads/${uid}?offset=${received}`, {
+        method: "PUT", body: buf, headers: { "Content-Type": "application/octet-stream" }, signal: opts.signal,
+      });
+      const text = await r.text();
+      let body: unknown;
+      try { body = text ? JSON.parse(text) : undefined; } catch { body = text; }
+      if (r.status === 409) {
+        const at = receivedOf(body);
+        if (at === undefined) throw new UpstreamError(409, body, "upload offset rejected without a position");
+        received = at;
+        continue;
       }
+      if (!r.ok) throw new UpstreamError(r.status, (body as { detail?: unknown })?.detail ?? body, `upload chunk: HTTP ${r.status}`);
+      received = receivedOf(body) ?? received + len;
+      tries = 0;
+      opts.onProgress?.({ uploadId: uid, received, size });
+    } catch (e) {
+      const retryable = isNetworkError(e) || (e instanceof UpstreamError && e.status >= 500);
+      if (!retryable || opts.signal?.aborted || ++tries > maxTries) throw e;
+      await sleep(Math.min(30_000, (opts.retryDelayMs ?? 1000) * 2 ** (tries - 1)), opts.signal);
+      try { // where did the server get to?
+        received = (await up.json<{ received: number }>(`/api/renders/uploads/${uid}`)).received;
+      } catch { /* still down: retry the same chunk */ }
     }
-  } finally {
-    await fh.close();
   }
-  const exp = await up.json<Record<string, unknown>>(`/api/renders/uploads/${uid}/complete`, { method: "POST", body: { srt: opts.srt ?? null } });
-  return { uploadId: uid, export: exp };
+  return uid;
 }

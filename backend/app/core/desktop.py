@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 import time
@@ -552,8 +553,14 @@ def upload_files(uid: str) -> tuple[Path, Path]:
     """(the partial file, its JSON sidecar). Both survive a restart, so an upload can resume."""
     if not re.fullmatch(r"[0-9a-f]{32}", uid or ""):
         raise HTTPException(404, "Upload not found")
-    d = _uploads()
-    return d / f"{uid}.part", d / f"{uid}.json"
+    root = os.path.realpath(_uploads())
+    out: list[Path] = []
+    for ext in ("part", "json"):
+        p = os.path.realpath(os.path.join(root, f"{uid}.{ext}"))
+        if not p.startswith(root + os.sep):  # never with a 32-hex id; it keeps every upload path inside _uploads
+            raise HTTPException(404, "Upload not found")
+        out.append(Path(p))
+    return out[0], out[1]
 
 
 def upload_meta(uid: str, user: User) -> dict[str, Any]:
@@ -583,8 +590,8 @@ def start_upload(db: Session, episode: Episode, user: User, body: dict[str, Any]
         try:
             if now - f.stat().st_mtime > UPLOAD_KEEP_S:
                 f.unlink()
-        except OSError:
-            pass
+        except OSError as e:  # in use or already gone: the next upload tries again
+            print(f"[desktop] couldn't clear old upload {f.name}: {e}")
     uid = uuid.uuid4().hex
     part, side = upload_files(uid)
     part.write_bytes(b"")
