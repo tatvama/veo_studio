@@ -176,19 +176,26 @@ export class LocalUpscaler {
       await fsp.mkdir(dl, { recursive: true });
       const r = await fetch(ESRGAN.url, { redirect: "follow" });
       if (!r.ok || !r.body) throw new Error(`Download failed: HTTP ${r.status}`);
+      // unchecked bytes stay in a .part file, capped at the pinned size; only a file whose SHA-256 matches becomes the zip
       const hash = createHash("sha256");
-      const out = createWriteStream(zip);
+      const part = `${zip}.part`;
+      const out = createWriteStream(part);
       let got = 0;
       let last = 0;
-      for await (const chunk of r.body as unknown as AsyncIterable<Uint8Array>) {
-        hash.update(chunk);
-        got += chunk.byteLength;
-        if (!out.write(chunk)) await new Promise<void>((res) => out.once("drain", () => res()));
-        if (got - last > 1_000_000) { last = got; void setState({ progress: Math.min(0.95, got / ESRGAN.size) }); }
+      try {
+        for await (const chunk of r.body as unknown as AsyncIterable<Uint8Array>) {
+          got += chunk.byteLength;
+          if (got > ESRGAN.size) throw new Error("The download is bigger than the expected file, so it was stopped");
+          hash.update(chunk);
+          if (!out.write(chunk)) await new Promise<void>((res) => out.once("drain", () => res()));
+          if (got - last > 1_000_000) { last = got; void setState({ progress: Math.min(0.95, got / ESRGAN.size) }); }
+        }
+      } finally {
+        await new Promise<void>((res, rej) => out.end((e?: Error | null) => (e ? rej(e) : res())));
       }
-      await new Promise<void>((res, rej) => out.end((e?: Error | null) => (e ? rej(e) : res())));
       const sum = hash.digest("hex");
       if (got !== ESRGAN.size || sum !== ESRGAN.sha256) throw new Error("The download didn't match the expected file, so it wasn't installed");
+      await fsp.rename(part, zip);
       await fsp.rm(this.dir, { recursive: true, force: true });
       await fsp.mkdir(this.dir, { recursive: true });
       const tar = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe");
