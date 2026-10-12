@@ -1,12 +1,15 @@
 /**
  * The editor's one door to the GPU engine (frontend/src/engine, docs/ENGINE.md §4). Everything the editor uses goes
- * through here: createEngine → load(comp, {mode: "live", sources}) → drawLive(t, {playing, rate}), resize, dispose,
- * warnings, and the catalogue (listTransitions / listEffects). The engine is its own lazily loaded chunk.
+ * through here: createEngine → load(comp, {mode: "live", sources}) once, then update(comp) on every edit (the engine
+ * loads only what changed and keeps a custom source while its object for a URL stays the same) → drawLive(t, {playing,
+ * rate, resolution}), resize, dispose, warnings; the catalogue (listTransitions / listEffects with declared params),
+ * renderThumbnail for the Effects panel, and registerEffect / registerTransition for custom shaders. The engine is
+ * its own lazily loaded chunk.
  *
- * Titles and colour mattes are drawn here (Canvas2D) and handed to the engine as custom sources; procedural demo media
- * comes in the same way.
+ * With FEATURES.videoTracks the engine draws titles and mattes itself; without it they're drawn here (Canvas2D) and
+ * handed over as custom sources. The demo's procedural media always comes in as custom sources.
  */
-import type { CustomSource, Engine, TransitionInfo } from "../engine";
+import type { Composition, CustomSource, EffectInfo, EffectParamDef, Engine, TransitionInfo } from "../engine";
 import type { EditProject } from "./model/types";
 import { toComposition, toVideoComposition, type CompositionOptions, type CompositionResult, type GeneratedSource } from "./model/toComposition";
 import { drawTitle, ensureFont } from "./render/title";
@@ -31,17 +34,103 @@ export function buildComposition(project: EditProject, sequenceId: string, opts:
 export const usesGenericTracks = () => generic;
 
 export type { TransitionInfo };
-/** What the engine declares about a parameter (engine/effects/registry.ts EffectParamDef), once listEffects() has it. */
-export interface EngineParam { name: string; label?: string; type: string; default: unknown; min?: number; max?: number; step?: number; unit?: string; options?: { value: string | number; label: string }[]; description?: string }
-export interface EngineEffect { id: string; label: string; gpuOnly: boolean; keys?: string[]; group?: string; params?: EngineParam[]; description?: string }
+/** An effect as the engine's registry declares it (id, label, group, params, gpuOnly, custom, keys, author …). */
+export type EngineEffect = EffectInfo;
+export type EngineParam = EffectParamDef;
 
 let transitionsP: Promise<TransitionInfo[]> | null = null;
-/** Every transition the engine draws (58 xfade + the gl-transitions), loaded once. */
+/** Every transition the engine draws (58 xfade, the gl-transitions, then registered custom ones), cached. */
 export const listTransitions = () => (transitionsP ??= engineModule().then((m) => m.listTransitions()).catch(() => [] as TransitionInfo[]));
-/** The effects the engine draws. */
+/** The effects the engine draws (the built-in registry plus custom ones). */
 export const listEffects = (): Promise<EngineEffect[]> => engineModule().then((m) => m.listEffects()).catch(() => []);
+/** The registry's group order. */
+export const effectGroups = (): Promise<readonly string[]> => engineModule().then((m) => m.EFFECT_GROUPS as readonly string[]).catch(() => []);
 
-// ── generated pictures ───────────────────────────────────────────────────────
+// ── catalogue changes (custom shaders) ───────────────────────────────────────
+
+const catalogSubs = new Set<() => void>();
+/** Called when the catalogue changes (a custom shader was registered). */
+export function onCatalog(cb: () => void) { catalogSubs.add(cb); return () => { catalogSubs.delete(cb); }; }
+function catalogChanged() { transitionsP = null; thumbs.clear(); catalogSubs.forEach((f) => f()); }
+
+export interface ShaderEntry { id: string; name: string; kind: "transition" | "effect"; glsl: string }
+const RESERVED = new Set(["progress", "ratio", "from", "to", "uInput", "uOriginal", "uResolution", "uTime", "uFrame", "uScale"]);
+
+/** Uniforms a shader declares ("uniform float amount; // = 0.5", gl-transitions style) → its parameters. */
+export function shaderParams(glsl: string): { name: string; type: string; default: unknown }[] {
+  const out: { name: string; type: string; default: unknown }[] = [];
+  const re = /uniform\s+(float|int|bool|vec2|vec3|vec4)\s+(\w+)\s*;[ \t]*(?:\/\/\s*=\s*([^\n]+))?/g;
+  for (let m = re.exec(glsl); m; m = re.exec(glsl)) {
+    const [, type, name, raw] = m;
+    if (RESERVED.has(name) || out.some((p) => p.name === name)) continue;
+    const nums = (raw ?? "").match(/-?\d*\.?\d+(?:e-?\d+)?/gi)?.map(Number) ?? [];
+    const n = type === "vec2" ? 2 : type === "vec3" ? 3 : type === "vec4" ? 4 : 1;
+    let def: unknown;
+    if (type === "bool") def = /true/i.test(raw ?? "");
+    else if (n === 1) def = nums[0] ?? 0;
+    else def = Array.from({ length: n }, (_, i) => nums[i] ?? nums[0] ?? (n >= 3 ? 1 : 0));
+    out.push({ name, type, default: def });
+  }
+  return out;
+}
+
+/** Registers custom shaders with the engine (imported ones, and all of this PC's on project open). Ids get "custom:". */
+export async function registerShaders(list: ShaderEntry[]): Promise<{ ok: string[]; failed: { name: string; error: string }[] }> {
+  const m = await engineModule();
+  const ok: string[] = [], failed: { name: string; error: string }[] = [];
+  for (const s of list) {
+    const id = `custom:${s.id}`;
+    const ps = shaderParams(s.glsl);
+    try {
+      if (s.kind === "transition") {
+        m.registerTransition({ id, label: s.name, glsl: s.glsl, group: "Custom", params: ps.map((p) => ({ name: p.name, type: p.type, default: p.default as never })) });
+      } else {
+        const type = (t: string) => (t === "vec3" ? "rgb" : t === "vec4" ? "rgba" : t);
+        m.registerEffect({ id, label: s.name, group: "Stylize", custom: true, glsl: s.glsl,
+          params: ps.map((p) => ({ name: p.name, label: p.name.replace(/[_-]+/g, " "), type: type(p.type) as EffectParamDef["type"], default: p.default,
+            ...(p.type === "float" ? { min: 0, max: 1, step: 0.01 } : {}) })) });
+      }
+      ok.push(id);
+    } catch (e) { failed.push({ name: s.name, error: (e as Error).message }); }
+  }
+  if (ok.length) catalogChanged();
+  return { ok, failed };
+}
+
+/**
+ * Registers every custom shader of this PC (bridge.editor.shaders()). The editor calls it when an edit opens; a
+ * window that renders an edit (the desktop's hidden GPU render page) must call it before building the composition.
+ */
+export async function registerDesktopShaders(): Promise<{ ok: string[]; failed: { name: string; error: string }[] }> {
+  const b = (globalThis as { tatvamDesktop?: { editor?: { shaders?: () => Promise<ShaderEntry[]> } } }).tatvamDesktop?.editor;
+  if (!b?.shaders) return { ok: [], failed: [] };
+  const list = await b.shaders().catch(() => [] as ShaderEntry[]);
+  return list.length ? registerShaders(list) : { ok: [], failed: [] };
+}
+
+// ── thumbnails (Effects panel hover previews) ────────────────────────────────
+
+let thumbEngine: Promise<Engine> | null = null;
+const thumbs = new Map<string, Promise<ImageBitmap | null>>();
+let thumbQueue: Promise<unknown> = Promise.resolve();
+
+/** A small picture of a transition half-way or an effect on sample pictures (cached; one at a time). */
+export function thumbnail(id: string, kind: "transition" | "effect", width = 192): Promise<ImageBitmap | null> {
+  const key = `${kind}:${id}:${width}`;
+  let p = thumbs.get(key);
+  if (!p) {
+    thumbEngine ??= engineModule().then((m) => m.createEngine({ width: 320, height: 180 }));
+    p = (thumbQueue = thumbQueue.then(async () => {
+      const eng = await thumbEngine!;
+      return eng.renderThumbnail(id, width, kind);
+    }).catch(() => null)) as Promise<ImageBitmap | null>;
+    thumbs.set(key, p);
+    if (thumbs.size > 160) { const k = thumbs.keys().next().value as string; thumbs.get(k)?.then((b) => b?.close()).catch(() => undefined); thumbs.delete(k); }
+  }
+  return p;
+}
+
+// ── generated pictures (only without FEATURES.videoTracks) ───────────────────
 
 const genCache = new Map<string, { key: string; src: CustomSource }>();
 
@@ -67,7 +156,8 @@ function makeGenerated(g: GeneratedSource): CustomSource {
   };
 }
 
-/** Custom sources for a composition's titles and mattes (reused while their spec doesn't change). */
+/** Custom sources for a composition's titles and mattes: the same object for a URL while its content is the same
+ *  (so update() keeps them). */
 export function generatedSources(gen: Record<string, GeneratedSource>): Record<string, CustomSource> {
   const out: Record<string, CustomSource> = {};
   for (const [url, g] of Object.entries(gen)) {
@@ -80,13 +170,20 @@ export function generatedSources(gen: Record<string, GeneratedSource>): Record<s
   return out;
 }
 
+/** Every media URL a composition uses, nested compositions included. */
+function urlsOf(comp: Composition, out = new Set<string>()): Set<string> {
+  for (const t of comp.tracks) for (const c of t.clips) { if (c.media?.url) out.add(c.media.url); if (c.comp) urlsOf(c.comp, out); }
+  return out;
+}
+
 // ── the preview engine ───────────────────────────────────────────────────────
 
 export interface PreviewEngine {
   readonly canvas: HTMLCanvasElement;
-  /** Loads a composition (a newer call supersedes one still loading). */
+  /** Loads a composition: the first time in full, then only what changed (a newer call supersedes one in flight). */
   load(r: CompositionResult, extra?: Record<string, CustomSource>): Promise<void>;
-  draw(t: number, opts?: { playing?: boolean; rate?: number }): void;
+  /** `resolution`: 1, 0.5 or 0.25 of the output (playback resolution). */
+  draw(t: number, opts?: { playing?: boolean; rate?: number; resolution?: number }): void;
   resize(w: number, h: number): void;
   warnings(): string[];
   lastMs(): number;
@@ -100,22 +197,29 @@ export async function createPreview(canvas: HTMLCanvasElement, width: number, he
   let loaded = false;
   let disposed = false;
   let lastKey = "";
+  let chain: Promise<void> = Promise.resolve();
   return {
     canvas,
-    async load(r, extra) {
+    load(r, extra) {
       const key = JSON.stringify(r.comp);
-      if (key === lastKey && loaded) return;
       const my = ++token;
-      const sources = { ...generatedSources(r.generated), ...(extra ?? {}) };
-      // only the custom sources this composition uses
-      const used: Record<string, CustomSource> = {};
-      for (const tk of r.comp.tracks) for (const c of tk.clips) if (sources[c.media.url]) used[c.media.url] = sources[c.media.url];
-      await eng.load(r.comp, { mode: "live", sources: used }).catch((e) => console.warn("[editor] engine load", e));
-      if (my !== token || disposed) return;
-      lastKey = key;
-      loaded = true;
+      chain = chain.then(async () => {
+        if (my !== token || disposed || (key === lastKey && loaded)) return;
+        const sources = { ...generatedSources(r.generated), ...(extra ?? {}) };
+        const used: Record<string, CustomSource> = {};
+        for (const u of urlsOf(r.comp)) if (sources[u]) used[u] = sources[u];
+        const opts = { mode: "live" as const, sources: used };
+        await (loaded ? eng.update(r.comp, opts) : eng.load(r.comp, opts)).catch((e) => console.warn("[editor] engine load", e));
+        if (disposed) return;
+        lastKey = key;
+        loaded = true;
+      });
+      return chain;
     },
-    draw(t, o) { if (loaded && !disposed) { try { eng.drawLive(t, { playing: o?.playing, rate: o?.rate }); } catch (e) { console.warn("[editor] draw", e); } } },
+    draw(t, o) {
+      if (!loaded || disposed) return;
+      try { eng.drawLive(t, { playing: o?.playing, rate: o?.rate, resolution: o?.resolution }); } catch (e) { console.warn("[editor] draw", e); }
+    },
     resize(w, h) { if (!disposed && (eng.width !== Math.round(w) || eng.height !== Math.round(h))) eng.resize(w, h); },
     warnings: () => eng.warnings,
     lastMs: () => eng.stats.lastMs,

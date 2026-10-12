@@ -2,7 +2,8 @@
  * The sequence's sound in the preview (WebAudio): one MediaElementAudioSourceNode per clip near the playhead →
  * the clip's effects (gain, 3-band EQ, compressor, limiter) → its gain (level keyframes, fades, crossfades) and pan →
  * its track's fader, pan, mute / solo → the master. Elements follow the program clock (re-seeked when they drift);
- * AnalyserNodes feed the Audio Mixer's peak meters. Reverse and shuttle faster than 4× play silent.
+ * AnalyserNodes feed the Audio Mixer's peak meters. A reversed clip plays a reversed copy of its decoded sound (an
+ * AudioBuffer, re-started when it drifts). Shuttling backwards or faster than 4× plays silent.
  */
 import { clipGainAt, sampleKeys, type AudioClipPlan, type AudioMix } from "../model/toComposition";
 
@@ -10,6 +11,11 @@ interface TrackNode { gain: GainNode; pan: StereoPannerNode; an: AnalyserNode }
 interface Voice { el: HTMLAudioElement; src: MediaElementAudioSourceNode; head: AudioNode; gain: GainNode; pan: StereoPannerNode; fx: AudioNode[]; fxKey: string; url: string; trackId: string; plan: AudioClipPlan; lastUse: number }
 
 const dbToLin = (db: number) => (db <= -96 ? 0 : Math.pow(10, db / 20));
+
+/** A reversed clip's sound: its span of the decoded file, backwards, and the node playing it now. */
+interface RevVoice { buf: AudioBuffer | null; loading: boolean; key: string; node: AudioBufferSourceNode | null; startedAt: number; offset: number; rate: number;
+  gain: GainNode; pan: StereoPannerNode; trackId: string; plan: AudioClipPlan }
+const decoded = new Map<string, Promise<AudioBuffer | null>>();
 const POOL = 24;
 
 export class Mixer {
@@ -18,6 +24,7 @@ export class Mixer {
   private masterAn: AnalyserNode | null = null;
   private tracks = new Map<string, TrackNode>();
   private voices = new Map<string, Voice>();
+  private revs = new Map<string, RevVoice>();
   private mix: AudioMix | null = null;
   private buf = new Float32Array(1024);
   masterDb = 0;
@@ -44,6 +51,10 @@ export class Mixer {
   setMix(mix: AudioMix) {
     this.mix = mix;
     const ids = new Set(mix.clips.map((c) => c.clipId));
+    for (const [id, r] of this.revs) {
+      const plan = mix.clips.find((c) => c.clipId === id);
+      if (!plan || !plan.reverse || plan.trackId !== r.trackId) this.dropRev(id); else r.plan = plan;
+    }
     for (const [id, v] of this.voices) {
       const plan = mix.clips.find((c) => c.clipId === id);
       if (!ids.has(id) || !plan || plan.url !== v.url || plan.trackId !== v.trackId) this.drop(id);
@@ -127,6 +138,47 @@ export class Mixer {
     this.voices.delete(id);
   }
 
+  private decode(url: string): Promise<AudioBuffer | null> {
+    let p = decoded.get(url);
+    if (!p && this.ctx) {
+      const ctx = this.ctx;
+      p = fetch(url, { credentials: "include" }).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status))))).then((b) => ctx.decodeAudioData(b)).catch(() => null);
+      decoded.set(url, p);
+      if (decoded.size > 12) decoded.delete(decoded.keys().next().value as string);
+    }
+    return p ?? Promise.resolve(null);
+  }
+
+  /** The reversed copy of [in, in + duration·rate] source seconds (built once per span). */
+  private rev(p: AudioClipPlan): RevVoice | null {
+    if (!this.ctx) return null;
+    const t = this.track(p.trackId);
+    if (!t) return null;
+    const key = `${p.url}|${p.in.toFixed(3)}|${(p.duration * p.rate).toFixed(3)}`;
+    let r = this.revs.get(p.clipId);
+    if (r && r.key !== key) { this.dropRev(p.clipId); r = undefined; }
+    if (!r) {
+      const gain = this.ctx.createGain(), pan = this.ctx.createStereoPanner();
+      gain.gain.value = 0; gain.connect(pan); pan.connect(t.gain);
+      r = { buf: null, loading: true, key, node: null, startedAt: 0, offset: 0, rate: 1, gain, pan, trackId: p.trackId, plan: p };
+      this.revs.set(p.clipId, r);
+      const rv = r;
+      void this.decode(p.url).then((src) => {
+        if (!src || !this.ctx || this.revs.get(p.clipId) !== rv) { rv.loading = false; return; }
+        const a = Math.max(0, Math.floor(p.in * src.sampleRate)), n = Math.max(1, Math.min(src.length - a, Math.ceil(p.duration * p.rate * src.sampleRate)));
+        const out = this.ctx.createBuffer(src.numberOfChannels, n, src.sampleRate);
+        for (let ch = 0; ch < src.numberOfChannels; ch++) {
+          const from = src.getChannelData(ch), to = out.getChannelData(ch);
+          for (let i = 0; i < n; i++) to[i] = from[a + n - 1 - i] ?? 0;
+        }
+        rv.buf = out; rv.loading = false;
+      });
+    }
+    return r;
+  }
+  private stopRev(r: RevVoice) { if (r.node) { try { r.node.stop(); } catch { /* ended */ } r.node.disconnect(); r.node = null; } }
+  private dropRev(id: string) { const r = this.revs.get(id); if (!r) return; this.stopRev(r); try { r.gain.disconnect(); r.pan.disconnect(); } catch { /* gone */ } this.revs.delete(id); }
+
   /** Follows the program clock: `t` seconds on the sequence. */
   sync(t: number, playing: boolean, rate: number) {
     const mix = this.mix;
@@ -141,6 +193,26 @@ export class Mixer {
     }
     for (const p of mix.clips) {
       const local = t - p.start;
+      if (p.reverse) {
+        const inside = local >= 0 && local < p.duration;
+        const r = inside || this.revs.has(p.clipId) ? this.rev(p) : null;
+        if (!r) continue;
+        const want = local * p.rate;  // seconds into the reversed copy
+        const speed = Math.max(0.0625, Math.min(16, rate * p.rate));
+        if (audibleRate && inside && r.buf) {
+          const pos = r.node ? r.offset + (now - r.startedAt) * r.rate : -1;
+          if (!r.node || Math.abs(pos - want) > 0.12 || Math.abs(r.rate - speed) > 1e-3) {
+            this.stopRev(r);
+            const node = this.ctx.createBufferSource();
+            node.buffer = r.buf; node.playbackRate.value = speed; node.connect(r.gain);
+            node.start(0, Math.max(0, Math.min(r.buf.duration - 0.01, want)));
+            r.node = node; r.startedAt = now; r.offset = want; r.rate = speed;
+          }
+          r.gain.gain.setTargetAtTime(clipGainAt(p, local), now, 0.012);
+          r.pan.pan.setTargetAtTime(Math.max(-1, Math.min(1, sampleKeys(p.pan, local))), now, 0.02);
+        } else { this.stopRev(r); r.gain.gain.setTargetAtTime(0, now, 0.01); }
+        continue;
+      }
       const near = local > -1.2 && local < p.duration + 0.2;
       const v = near ? this.voice(p) : this.voices.get(p.clipId);
       if (!v) continue;
@@ -163,7 +235,10 @@ export class Mixer {
     }
   }
 
-  stopAll() { for (const v of this.voices.values()) { v.el.pause(); if (this.ctx) v.gain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.01); } }
+  stopAll() {
+    for (const v of this.voices.values()) { v.el.pause(); if (this.ctx) v.gain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.01); }
+    for (const r of this.revs.values()) this.stopRev(r);
+  }
 
   private peak(an: AnalyserNode): number {
     an.getFloatTimeDomainData(this.buf);
@@ -180,6 +255,7 @@ export class Mixer {
 
   dispose() {
     for (const id of [...this.voices.keys()]) this.drop(id);
+    for (const id of [...this.revs.keys()]) this.dropRev(id);
     try { void this.ctx?.close(); } catch { /* closed */ }
     this.ctx = null; this.master = null; this.masterAn = null; this.tracks.clear();
   }

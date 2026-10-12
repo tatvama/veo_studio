@@ -114,8 +114,8 @@ export default function EditorApp() {
     let on = false;
     try { on = localStorage.getItem("tatvam-editor:debug") === "1"; } catch { /* blocked */ }
     if (!on) return;
-    void Promise.all([import("./store"), import("./model/ops"), import("./session"), import("./dialogs"), import("./model/params")]).then(([store, ops, session, dialogs, params]) => {
-      (window as unknown as Record<string, unknown>).__tatvamEditor = { store, ops, actions: A, session, dialogs, params, program, showPanel: (id: string) => window.dispatchEvent(new CustomEvent("ed:panel", { detail: id })) };
+    void Promise.all([import("./store"), import("./model/ops"), import("./session"), import("./dialogs"), import("./model/params"), import("./effects"), import("./engine")]).then(([store, ops, session, dialogs, params, effects, engine]) => {
+      (window as unknown as Record<string, unknown>).__tatvamEditor = { store, ops, actions: A, session, dialogs, params, effects, engine, program, showPanel: (id: string) => window.dispatchEvent(new CustomEvent("ed:panel", { detail: id })) };
     });
   }, []);
   // the playhead starts where the sequence was left

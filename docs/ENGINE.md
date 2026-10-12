@@ -137,3 +137,29 @@ cached.
   driven over CDP in Electron and in the browser pane, and screenshots are compared.
 - **Parity:** a desktop GPU render of a cut with fades and xfade transitions against the FFmpeg render of the same
   cut (PSNR, frame by frame).
+
+## 7. Status (12 October 2026)
+
+Built and verified on the reference laptop (GTX 1660 Ti, Electron 44, D3D11 through ANGLE). The desktop app passes
+`force_high_performance_gpu`, so laptops with two GPUs use the dedicated one; set `TATVAM_INTEGRATED_GPU=1` to
+opt out.
+
+| Area | Result |
+| --- | --- |
+| Catalogue | 183 transitions: 58 xfade redrawn plus 125 gl-transitions, none excluded (`luma` and `displacement` get a generated noise texture), plus custom ones through `registerTransition`. 67 registry effects in 8 groups (Colour 18, Keying 7, Blur & Sharpen 11, Distort 7, Stylize 13, Light 5, Generate 2, Transform 4): pixi-filters 6.1.5 ports (MIT) except backdrop-blur, glfx.js ports (MIT), and our own. Custom effects come through `registerEffect`. Credits are in `effects/licenses.ts` |
+| Self-test | `/dev/engine?selftest=1`: 301 of 301 pass (every transition and effect compiles, renders and visibly changes the picture; plus cut transitions, nested sequences, titles, adjustment layers, incremental load, ½ resolution, thumbnails, and context loss/restore) |
+| Fidelity vs FFmpeg | A plain clip is bit-exact (99 dB Y/U/V). xfade transitions are ≥ 50 dB luma for 55 of 58. Preset looks run as their FFmpeg filters (teal_orange 51 dB); the 6 curves-based presets use the baked .cube |
+| Desktop GPU export | 1080p cut on the GPU: 46 dB Y and 48.7 dB U/V against the server's own FFmpeg export, 368 of 368 frames (the desktop FFmpeg path gets 48 dB; the gap is the encoder). 1080p in 15–18 s against 51 s through FFmpeg; 4K with a `gl:cube` transition in 70 s on NVENC |
+| Speed | Studio cut 1.0–2.3 ms a frame at 1080p. Editor scene (2 tracks, transition, 4 effects per clip, title) 5.9 ms on average at 1080p and 20–23 ms at 4K. Exact export with read-back runs at 3.4× realtime at 4K |
+
+**Measuring against FFmpeg.** FFmpeg 7 negotiates colour tags between filter inputs. The GPU export is tagged
+BT.709 limited range and most AI clips aren't tagged, so `psnr` silently converts one side. Put
+`setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv` on both inputs first. Without it, a
+correct render reads as about 27 dB.
+
+**Known gaps:**
+- Chroma downsampling is a 2×2 box, not FFmpeg's scaler.
+- `stabilize` isn't drawn on the GPU.
+- Edge-fade dips on upper tracks darken the whole frame (xfade semantics).
+- A blend mode falls back to normal inside a transition.
+- Masks aren't keyframed yet.

@@ -32,10 +32,15 @@ export default function RenderJob() {
         const engine = await eng.createEngine({ width: job.w, height: job.h });
         if (job.kind === "composition") {
           // the editor's own mapping: generic video tracks once this engine build draws them, else V1 + layers
-          const { buildComposition, engineModule, generatedSources } = await import("../../editor/engine");
+          const [{ buildComposition, engineModule, generatedSources, registerDesktopShaders }, { ensureFont }] = await Promise.all([
+            import("../../editor/engine"), import("../../editor/render/title"), import("../posters/fonts")]);
           await engineModule();
-          const r = buildComposition(job.project as Parameters<typeof buildComposition>[0], job.sequenceId,
-            job.range ? { range: [job.range.in, job.range.out] } : {});
+          await registerDesktopShaders(); // custom effects and transitions the edit may use
+          const project = job.project as Parameters<typeof buildComposition>[0];
+          // every title's font is in before the first frame (the preview may redraw later; an export can't)
+          await Promise.all(project.sequences.flatMap((s) => s.clips).filter((c) => c.source.type === "title")
+            .map((c) => ensureFont((c.source as { text: Parameters<typeof ensureFont>[0] }).text)));
+          const r = buildComposition(project, job.sequenceId, job.range ? { range: [job.range.in, job.range.out] } : {});
           await engine.load(r.comp, { mode: "exact", sources: generatedSources(r.generated) });
         } else {
           await engine.load(eng.fromPlan(job.plan as Parameters<typeof eng.fromPlan>[0], mediaUrl), { mode: "exact" });

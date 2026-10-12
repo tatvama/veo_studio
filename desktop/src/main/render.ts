@@ -350,7 +350,9 @@ export class RenderManager {
       const soundBand = meter.band(prepWeight, soundTo, stepWeights(small, { music: o.music }).filter((x) => x.id !== "prepare"), "Mixing the sound");
       const sound = await this.assemble(job, small, draft.w, draft.h, ctxFor(smallLocal, small), soundBand, false);
       // 2. the picture: every frame drawn by the GPU engine in a hidden window and encoded as it arrives
-      const frames = Math.max(1, Math.round((plan.duration_s || sound.total) * fps));
+      // the FFmpeg timeline's real length (segments round up to whole frames), so the GPU render has exactly the
+      // frames the server's render would
+      const frames = Math.max(1, Math.round((sound.total || plan.duration_s || 0) * fps));
       await this.gpuFrames(job, { kind: "plan", plan }, { w, h, fps, frames, audio: sound.finalAudio, ass, out: finalTmp, encoder: enc.args,
         container: preset.container, ff, tmp, signal, meter, from: soundTo, loudnorm: plan.loudnorm });
     }

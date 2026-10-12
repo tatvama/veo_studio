@@ -7,7 +7,7 @@ import { create } from "zustand";
 import { Button, Field, Input, Modal, Select, Textarea, Toggle } from "../components/ui";
 import { desktop, type RenderPreset } from "../lib/desktop";
 import * as A from "./actions";
-import { listTransitions, type TransitionInfo } from "./engine";
+import { listTransitions, onCatalog, type TransitionInfo } from "./engine";
 import { MARKER_COLORS, PRESET_SIZES } from "./model/defaults";
 import { AUDIO_TRANSITIONS, clipById, isAudioTransition, maxTransition, MAX_SPEED, MIN_SPEED, transitionRepeats } from "./model/ops";
 import { FPS_LIST, fpsLabel, parseTimecode, shortDuration, toTimecode } from "./model/time";
@@ -52,7 +52,9 @@ const EASINGS: { value: Easing; label: string }[] = [
 ];
 
 let catalog: TransitionInfo[] = [];
-void listTransitions().then((l) => { catalog = l; });
+const loadCatalog = () => void listTransitions().then((l) => { catalog = l; });
+loadCatalog();
+onCatalog(loadCatalog);
 /** A transition's display name ("gl:cube" → "Cube"). */
 export function transitionLabel(type: string): string {
   const a = AUDIO_TRANSITIONS.find((x) => x.id === type);

@@ -19,6 +19,8 @@ export interface EditProject {
   settings: { copyMedia: boolean; proxy: "off" | "auto" | "always"; autosaveSeconds: number };
   /** The studio project that carries this edit's AI costs, budget and approvals (§8; made on first AI use). */
   studioProjectId?: number;
+  /** Additive: .cube LUTs imported into this edit (bridge.editor.importLut); looks use them as "lut:<id>". */
+  luts?: { id: string; name: string; path?: string; size?: number; /** runtime: its gateway URL, when the bridge fills it */ url?: string }[];
 }
 
 export interface Bin { id: string; name: string; parentId: string | null; color?: string }

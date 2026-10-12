@@ -186,9 +186,54 @@ export async function exportSequence(opts: { preset: string; range: "all" | "ino
   } catch (e) { toast.error(`Export failed: ${msg(e)}`); return null; }
 }
 
-export async function importLut() {
+/** Imports a .cube LUT into the edit: it becomes a look ("lut:<id>") in the Look effect's picker. */
+export async function importLut(): Promise<string | null> {
   const b = editorBridge();
   const st = ed();
-  if (!b || !st.path) { toast.message("Importing LUTs needs Tatvam Desktop"); return; }
-  try { const r = await b.importLut(st.path); if (r) toast.success(`LUT ${r.name} imported`); } catch (e) { toast.error(msg(e)); }
+  if (!b || !st.path) { toast.message("Importing LUTs needs Tatvam Desktop"); return null; }
+  try {
+    const r = await b.importLut(st.path);
+    if (!r) return null;
+    exec(`Import LUT ${r.name}`, (p) => ({ ...p, luts: [...(p.luts ?? []).filter((l) => l.id !== r.id), { id: r.id, name: r.name, ...(r.path ? { path: r.path } : {}), ...(r.size ? { size: r.size } : {}) }] }));
+    if (r.url) setUrls({ [`lut:${r.id}`]: r.url });
+    toast.success(`LUT ${r.name} imported: pick it in a Look / LUT effect`);
+    return r.id;
+  } catch (e) { toast.error(msg(e)); return null; }
+}
+
+/** Gateway URLs for the edit's imported LUTs (on open). */
+export async function resolveLutUrls() {
+  const b = editorBridge();
+  const path = ed().path;
+  if (!b || !path) return;
+  const out: Record<string, string> = {};
+  await Promise.all((project().luts ?? []).filter((l) => l.path).map(async (l) => { try { out[`lut:${l.id}`] = await b.mediaUrl(path, l.path!); } catch { /* missing: the look is left out */ } }));
+  if (Object.keys(out).length) setUrls(out);
+}
+
+/** Registers this PC's custom shaders with the engine (on open, and after an import). */
+export async function loadShaders(): Promise<void> {
+  try {
+    const { registerDesktopShaders } = await import("./engine");
+    const r = await registerDesktopShaders();
+    for (const f of r.failed.slice(0, 3)) toast.error(`Custom shader ${f.name}: ${f.error}`);
+  } catch (e) { console.warn("[editor] shaders", e); }
+}
+
+/** Effects panel → Import shader…: a GLSL effect or a gl-transitions transition. */
+export async function importShader(kind: "transition" | "effect"): Promise<string | null> {
+  const b = editorBridge();
+  const st = ed();
+  if (!b || !st.path) { toast.message("Importing shaders needs Tatvam Desktop"); return null; }
+  try {
+    const r = await b.importShader(st.path, kind);
+    if (!r) return null;
+    const list = await b.shaders();
+    const mine = list.filter((x) => x.id === r.id && x.kind === kind);
+    const { registerShaders } = await import("./engine");
+    const res = await registerShaders(mine);
+    if (res.failed.length) { toast.error(`${r.name}: ${res.failed[0].error}`); return null; }
+    toast.success(`${kind === "effect" ? "Effect" : "Transition"} ${r.name} added`);
+    return `custom:${r.id}`;
+  } catch (e) { toast.error(`Import failed: ${msg(e)}`); return null; }
 }

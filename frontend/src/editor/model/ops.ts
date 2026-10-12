@@ -1078,12 +1078,12 @@ export function nestClips(p: EditProject, seqId: string, ids: string[], name = "
   const made: TimelineClip[] = [];
   const pick = (cs: TimelineClip[]) => cs.map((c) => trackById(seq, c.trackId)!).sort((x, y) => x.index - y.index)[0];
   if (vChosen.length) {
-    const c = baseClip(seq, pick(vChosen).id, a, b - a, { type: "nested", sequenceId: nested.id, in: 0 }, name);
+    const c = baseClip(seq, pick(vChosen).id, a, b - a, { type: "nested", sequenceId: nested.id, in: 0 }, name, { width: nested.width, height: nested.height });
     if (lid) c.linkId = lid;
     made.push(c);
   }
   if (aChosen.length) {
-    const c = baseClip(seq, pick(aChosen).id, a, b - a, { type: "nested", sequenceId: nested.id, in: 0 }, name);
+    const c = baseClip(seq, pick(aChosen).id, a, b - a, { type: "nested", sequenceId: nested.id, in: 0 }, name, { width: nested.width, height: nested.height });
     if (lid) c.linkId = lid;
     made.push(c);
   }

@@ -184,6 +184,10 @@ export function parseProject(input: unknown): { project: EditProject; warnings: 
     },
   };
   if (isNum(v.studioProjectId)) project.studioProjectId = v.studioProjectId as number;
+  const luts = arr(v.luts).filter(isObj).filter((l) => typeof l.id === "string")
+    .map((l) => ({ id: l.id as string, name: str(l.name, "LUT"), ...(typeof l.path === "string" ? { path: l.path } : {}), ...(isNum(l.size) ? { size: l.size as number } : {}),
+      ...(typeof l.url === "string" ? { url: l.url } : {}) }));
+  if (luts.length) project.luts = luts;
   // clips pointing at media or sequences that aren't there
   const mids = new Set(project.media.map((m) => m.id)), sids = new Set(project.sequences.map((s) => s.id));
   const ctx = ctxOf(project);

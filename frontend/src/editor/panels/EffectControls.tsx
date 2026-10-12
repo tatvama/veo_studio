@@ -6,16 +6,16 @@
  * merge into one undo step.
  */
 import { clsx } from "clsx";
-import { ArrowDown, ArrowUp, ChevronDown, ChevronLeft, ChevronRight, Diamond, RotateCcw, Timer, Trash2, Type } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronLeft, ChevronRight, Diamond, RotateCcw, Timer, Trash2, Type, VenetianMask } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import * as A from "../actions";
 import { effectDef, effectDefaults, videoEffects, type EffectDef, type ParamDef } from "../effects";
 import { kindOf, MAX_SPEED, MIN_SPEED, updateClips, updateEffect, updateParam, moveEffect, removeEffect } from "../model/ops";
 import { addKeyframe, isAnimated, moveKeyframe, nextKeyframe, prevKeyframe, removeKeyframe, setKeyframeEase, setParam, toggleStopwatch, valueAt } from "../model/params";
 import { toTimecode } from "../model/time";
-import type { BlendMode, Easing, Param, Sequence, TimelineClip } from "../model/types";
+import type { BlendMode, Easing, MaskSpec, Param, Sequence, TimelineClip } from "../model/types";
 import { program } from "../playback/transport";
-import { gesture, seqExec, setFocus, useEditor, useSequence } from "../store";
+import { gesture, seqExec, setFocus, useEditor, useProject, useSequence } from "../store";
 import { IBtn, openMenu, ScrubNumber } from "../ui";
 
 const BLENDS: BlendMode[] = ["normal", "add", "multiply", "screen", "overlay", "lighten", "darken"];
@@ -50,8 +50,34 @@ export default function EffectControls() {
   return <Controls key={c.id} c={c} s={s} defs={defs} />;
 }
 
+const DEFAULT_MASK: MaskSpec = { shape: "ellipse", x: 0.5, y: 0.5, w: 0.5, h: 0.5, rotation: 0, feather: 0.15, invert: false };
+
+/** A per-effect mask: the effect applies only inside (or outside, inverted) the shape. */
+function MaskRows({ mask, onChange }: { mask: MaskSpec; onChange: (m: MaskSpec) => void }) {
+  const num = (k: "x" | "y" | "w" | "h" | "rotation" | "feather", label: string, min: number, max: number, step: number, unit?: string) => (
+    <Plain key={k} label={label}><ScrubNumber value={Number(mask[k] ?? 0) * (unit === "%" ? 100 : 1)} min={min} max={max} step={step} unit={unit}
+      onChange={(v) => onChange({ ...mask, [k]: unit === "%" ? v / 100 : v })} /></Plain>
+  );
+  return (
+    <>
+      <Plain label="Mask">
+        <select className="ed-field" value={mask.shape} onChange={(e) => onChange({ ...mask, shape: e.target.value as MaskSpec["shape"] })}>
+          <option value="ellipse">Ellipse</option><option value="rect">Rectangle</option>
+        </select>
+        <label className="ml-2 flex items-center gap-1 text-2xs text-mute"><input type="checkbox" checked={!!mask.invert} onChange={(e) => onChange({ ...mask, invert: e.target.checked })} />Inverted</label>
+      </Plain>
+      {num("x", "Mask centre X", 0, 100, 0.5, "%")}{num("y", "Mask centre Y", 0, 100, 0.5, "%")}
+      {num("w", "Mask width", 0, 100, 0.5, "%")}{num("h", "Mask height", 0, 100, 0.5, "%")}
+      {num("rotation", "Mask rotation", -180, 180, 0.5, "°")}{num("feather", "Mask feather", 0, 100, 0.5, "%")}
+    </>
+  );
+}
+
 function Controls({ c, s, defs }: { c: TimelineClip; s: Sequence; defs: EffectDef[] }) {
   const frame = useSlowFrame();
+  const luts = useProject().luts ?? [];
+  const setMask = (effectId: string, m: MaskSpec | undefined, label: string, coalesce?: string) =>
+    seqExec(label, (sq, cx) => updateEffect(sq, cx, c.id, effectId, (x) => { const y = { ...x }; if (m) y.mask = m; else delete y.mask; return y; }), coalesce);
   const local = Math.max(0, Math.min(c.duration - 1, frame - c.start));
   const audio = kindOf(s, c) === "audio";
   const grid = useRef<HTMLDivElement>(null);
@@ -150,6 +176,14 @@ function Controls({ c, s, defs }: { c: TimelineClip; s: Sequence; defs: EffectDe
                     onChange={() => seqExec(e.enabled ? "Turn off effect" : "Turn on effect", (sq, cx) => updateEffect(sq, cx, c.id, e.id, (x) => ({ ...x, enabled: !x.enabled })))} />
                   <span className={clsx(!e.enabled && "line-through opacity-60")}>{d?.label ?? (e.type === "shotfx" ? "Studio shot effects" : e.type)}</span>
                 </span>, <>
+                  {e.type !== "shotfx" && !e.type.startsWith("audio:") && (
+                    <IBtn title={e.mask ? "Mask on: confines this effect" : "Add a mask (this effect only)"} className={clsx("!size-5", e.mask && "on")}
+                      onClick={(ev) => openMenu(ev.currentTarget.getBoundingClientRect(), [
+                        { label: "Ellipse mask", checked: e.mask?.shape === "ellipse", onClick: () => setMask(e.id, { ...(e.mask ?? DEFAULT_MASK), shape: "ellipse" }, "Add mask") },
+                        { label: "Rectangle mask", checked: e.mask?.shape === "rect", onClick: () => setMask(e.id, { ...(e.mask ?? DEFAULT_MASK), shape: "rect" }, "Add mask") },
+                        e.mask && { label: "Remove mask", danger: true, separator: true, onClick: () => setMask(e.id, undefined, "Remove mask") },
+                      ])}><VenetianMask className="size-3" /></IBtn>
+                  )}
                   <IBtn title="Move up" className="!size-5" disabled={i === 0} onClick={() => seqExec("Reorder effects", (sq, cx) => moveEffect(sq, cx, c.id, e.id, -1))}><ArrowUp className="size-3" /></IBtn>
                   <IBtn title="Move down" className="!size-5" disabled={i === c.effects.length - 1} onClick={() => seqExec("Reorder effects", (sq, cx) => moveEffect(sq, cx, c.id, e.id, 1))}><ArrowDown className="size-3" /></IBtn>
                   {d && <IBtn title="Reset" className="!size-5" onClick={() => seqExec("Reset effect", (sq, cx) => updateEffect(sq, cx, c.id, e.id, (x) => ({ ...x, params: effectDefaults(e.type) })))}><RotateCcw className="size-3" /></IBtn>}
@@ -158,15 +192,16 @@ function Controls({ c, s, defs }: { c: TimelineClip; s: Sequence; defs: EffectDe
                 {!closed[key] && (d?.params ?? Object.keys(e.params).map((k) => ({ name: k, label: k, type: "number", default: 0 } as ParamDef))).map((pd) => {
                   const prm = e.params[pd.name] ?? { value: pd.default };
                   const path = `fx.${e.id}.${pd.name}`;
-                  if (pd.type === "number" || pd.type === "rgb") {
+                  if (pd.type === "number" || pd.type === "rgb" || pd.type === "pair") {
                     return row({ label: pd.label, path, param: prm as Param<number | number[]>, def: pd.default as number, step: pd.step ?? 0.01, min: pd.min, max: pd.max, unit: pd.unit, ensure: !e.params[pd.name] ? { effectId: e.id, name: pd.name, value: pd.default } : undefined });
                   }
                   return (
                     <Plain key={path} label={pd.label}>
-                      <StaticParam pd={pd} value={prm.value} onChange={(v) => seqExec(`Set ${pd.label}`, (sq, cx) => updateEffect(sq, cx, c.id, e.id, (x) => ({ ...x, params: { ...x.params, [pd.name]: { value: v } } })), `ec:${c.id}:${path}`)} />
+                      <StaticParam pd={e.type === "look" && pd.name === "look" && luts.length ? { ...pd, options: [...(pd.options ?? []), ...luts.map((l) => ({ value: `lut:${l.id}`, label: `LUT · ${l.name}` }))] } : pd} value={prm.value} onChange={(v) => seqExec(`Set ${pd.label}`, (sq, cx) => updateEffect(sq, cx, c.id, e.id, (x) => ({ ...x, params: { ...x.params, [pd.name]: { value: v } } })), `ec:${c.id}:${path}`)} />
                     </Plain>
                   );
                 })}
+                {!closed[key] && e.mask && <MaskRows mask={e.mask} onChange={(m) => setMask(e.id, m, "Edit mask", `mask:${c.id}:${e.id}`)} />}
                 {d?.note && <div className="col-span-2 px-3 py-1 text-2xs text-dim">{d.note}</div>}
                 {e.type === "shotfx" && <div className="col-span-2 px-3 py-1.5 text-2xs text-dim">The studio shot's look, adjustments and camera move, as they were in the cut.</div>}
               </EffectBlock>

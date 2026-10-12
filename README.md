@@ -451,6 +451,23 @@ while offline. AI work still runs on the server, with the same cost check and ap
 cd desktop && npm ci && npm run dev     # needs a built frontend (cd frontend && npm run build)
 ```
 
+**Tatvam Editor** (in the desktop app: the Command center's *Tatvam Editor* button, Window → Editor, `Ctrl+Shift+E`) is a
+Premiere-style editor for any footage. It has a project bin, source and program monitors with in/out points and
+markers, and a multi-track timeline with drag and drop, the Premiere tools and shortcuts, and 500 undo steps. Effect
+Controls has keyframes, and there's an audio mixer, titles, and an **AI panel**:
+- Paid, priced first: captions, translation, voice-over, dubbing, voice clean-up, sound effects, music, B-roll,
+  extend, edit with words, upscale, and an edit assistant.
+- Free, on the PC: remove silences, scene detection, beat markers, loudness.
+
+Edits are local project folders (`Tatvam Projects\Edits\`). Details: [docs/EDITOR.md](docs/EDITOR.md).
+
+Both the editor and the finishing room draw with the **GPU render engine** (WebGL2, [docs/ENGINE.md](docs/ENGINE.md)):
+- 183 transitions (the 58 FFmpeg ones redrawn, plus gl-transitions)
+- 67 effects (pixi-filters and glfx.js ports, colour wheels, curves, keys, masks, glow …) and your own GLSL
+- titles, adjustment layers and nested sequences
+
+Exports render frame by frame on the GPU and are encoded on NVENC, Quick Sync or AMF.
+
 File → **Studio server…** sets the server address (default `http://localhost:8100`). Releases attach the installer to
 the GitHub Release, and installed apps update from there.
 
@@ -566,11 +583,12 @@ backend/app/
   pipeline/          prompting, voice, captions (karaoke ASS), assembler, ffmpeg, faces, scene_look, approved_stills
   workers/           worker.py (DB job queue), handlers*.py, run.py (separate worker process)
 backend/tests/       pytest suite (mock providers)
-frontend/src/        pages/, components/, lib/ (api, queries, types, live WebSocket, desktop bridge, bus)
+frontend/src/        pages/, components/, lib/ (api, queries, types, live WebSocket, desktop bridge, bus),
+                     engine/ (GPU render engine), editor/ (Tatvam Editor)
 desktop/             Electron app: src/main (gateway, sync, naming, render, windows …), src/preload, test/
 scripts/             dev/ (worktree.py, check.py), get_face_models.py, showcase/, i18n/
 spike/               Phase 0 real-API checks
-docs/                USER_GUIDE.md, MCP.md, V3.md, DESIGN.md, DESKTOP.md
+docs/                USER_GUIDE.md, MCP.md, V3.md, DESIGN.md, DESKTOP.md, ENGINE.md, EDITOR.md
 ```
 
 ## Status: what's verified

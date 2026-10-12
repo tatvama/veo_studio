@@ -84,6 +84,11 @@ function picSize(c: TimelineClip, ctx: Ctx, seq: Sequence): { w: number; h: numb
     const m = ctx.media(c.source.mediaId);
     if (m && m.width > 0 && m.height > 0) return { w: m.width, h: m.height };
   }
+  // a nested clip's picture is its sequence (its anchor is in that sequence's pixels)
+  if (c.source.type === "nested") {
+    const ns = ctx.sequence(c.source.sequenceId);
+    if (ns) return { w: ns.width, h: ns.height };
+  }
   return { w: seq.width, h: seq.height };
 }
 
@@ -237,8 +242,25 @@ function transitionsByClip(seq: Sequence, trackId: string) {
 /** The preset looks' LUTs as the studio server bakes them (GET /api/fx/looks/{look}.cube); imported LUTs need their own URL. */
 export const defaultLutUrl = (look: string) => (look.startsWith("lut:") ? undefined : `/api/fx/looks/${encodeURIComponent(look)}.cube`);
 
+/**
+ * LUT URLs for a sequence: the caller's, else for "lut:<id>" the edit's imported LUT (its runtime url) or the studio
+ * project's team LUT (sequences imported from an episode know their studio project), else a preset look's.
+ */
+function lutResolver(project: EditProject, seq: Sequence | undefined, given?: (look: string) => string | undefined) {
+  return (look: string): string | undefined => {
+    const u = given?.(look);
+    if (u) return u;
+    if (!look.startsWith("lut:")) return defaultLutUrl(look);
+    const id = look.slice(4);
+    const mine = project.luts?.find((l) => l.id === id)?.url;
+    if (mine) return mine;
+    const pid = seq?.source?.pid ?? project.studioProjectId;
+    return pid ? `/media/projects/${pid}/luts/${encodeURIComponent(id)}.cube` : undefined;
+  };
+}
+
 export function toComposition(project: EditProject, sequenceId: string, opts: CompositionOptions = {}): CompositionResult {
-  opts = { lutUrl: defaultLutUrl, ...opts };
+  opts = { ...opts, lutUrl: lutResolver(project, project.sequences.find((s) => s.id === sequenceId), opts.lutUrl) };
   const root = project.sequences.find((s) => s.id === sequenceId);
   if (!root) throw new Error(`No sequence ${sequenceId}`);
   const ctx = ctxOf(project);
@@ -413,7 +435,6 @@ export function toAudioMix(project: EditProject, sequenceId: string, opts: { url
         rate: c.speed > 0 ? c.speed : 1, reverse: c.reverse, gain: keyed(a.gain), pan: keyed(a.pan),
         fadeIn: sec(a.fadeIn), fadeOut: sec(a.fadeOut), effects: c.effects.filter((e) => e.enabled).map((e) => ({ type: e.type, params: Object.fromEntries(Object.entries(e.params).map(([k, p]) => [k, p.value])) })),
       };
-      if (c.reverse) warn(`"${c.name}" plays backwards: its sound is left out of the preview`);
       const tin = into.get(c.id), tout = outOf.get(c.id);
       const curve = (x: Transition) => (x.type === "audio:constant_gain" ? "gain" as const : "power" as const);
       // a crossfade at a cut plays the incoming clip early (into its head) and the outgoing one late (into its tail)
@@ -473,7 +494,9 @@ export function sampleKeys(p: { value: number; keys: { t: number; v: number; eas
 // ── generic editor tracks (engine "video" tracks, docs/EDITOR.md §6) ─────────
 
 type EParam = { value: unknown; keyframes?: { t: number; frame: number; value: unknown; ease: Easing }[] };
-const LEGACY_FX = new Set(["look", "adjust", "wheels", "curves", "chroma", "mask", "glow", "flip", "move", "fade", "shotfx"]);
+/** Generic tracks: every effect runs in the clip's chain from the engine registry (look, adjust, mask … included, with
+ *  keyframes); only a studio shot's fx stays the FFmpeg-matched `fx`. */
+const LEGACY_FX = new Set(["shotfx"]);
 
 /**
  * The same sequence for the engine's generic "video" tracks: every video track bottom → top with its clips placed by
@@ -483,7 +506,7 @@ const LEGACY_FX = new Set(["look", "adjust", "wheels", "curves", "chroma", "mask
  * sequences as nested compositions. editor/engine.ts uses it once the engine says it draws these tracks.
  */
 export function toVideoComposition(project: EditProject, sequenceId: string, opts: CompositionOptions = {}): CompositionResult {
-  opts = { lutUrl: defaultLutUrl, ...opts };
+  opts = { ...opts, lutUrl: lutResolver(project, project.sequences.find((s) => s.id === sequenceId), opts.lutUrl) };
   const ctx = ctxOf(project);
   const warnings: string[] = [];
   const warn = (s: string) => { if (!warnings.includes(s)) warnings.push(s); };
@@ -499,6 +522,7 @@ export function toVideoComposition(project: EditProject, sequenceId: string, opt
         if (c.trackId !== t.id || !c.enabled) continue;
         const legacy = effectsToFx({ ...c, effects: c.effects.filter((e) => LEGACY_FX.has(e.type)) }, warn);
         if (legacy.fx.look && legacy.fx.look !== "none") looks.add(legacy.fx.look);
+        for (const e of c.effects) if (e.type === "look" && e.enabled && typeof e.params.look?.value === "string" && e.params.look.value !== "none") looks.add(e.params.look.value);
         const ec: EClip = {
           id: c.id, media: { url: "", kind: "image" }, start: sec(c.start), duration: sec(c.duration), in: 0, speed: c.speed > 0 ? c.speed : 1,
           fit: "contain", fx: legacy.fx, label: c.name,
@@ -527,7 +551,9 @@ export function toVideoComposition(project: EditProject, sequenceId: string, opt
         clips.push(ec);
       }
       const transitions = seq.transitions.filter((x) => x.trackId === t.id && !x.type.startsWith("audio:")).map((x) => {
-        const tr: NonNullable<ETrack["transitions"]>[number] = { id: x.id, type: x.type, at: sec(x.at), duration: sec(x.duration), alignment: x.alignment, easing: x.easing };
+        // `start` is exact: the engine would centre at at − d/2, while a centred transition here starts floor(d/2) frames early
+        const tr: NonNullable<ETrack["transitions"]>[number] = { id: x.id, type: x.type, at: sec(x.at), duration: sec(x.duration), alignment: x.alignment,
+          start: sec(transitionRange(x)[0]), easing: x.easing };
         if (x.fromClipId) tr.from = x.fromClipId;
         if (x.toClipId) tr.to = x.toClipId;
         if (x.params && Object.keys(x.params).length) tr.params = x.params as never;
@@ -544,7 +570,8 @@ export function toVideoComposition(project: EditProject, sequenceId: string, opt
     const [a, b] = opts.range.map((f) => framesToSeconds(f, root.fps));
     for (const t of comp.tracks) {
       t.clips = t.clips.flatMap((c) => trimSeconds(c, a, b));
-      t.transitions = (t.transitions ?? []).filter((x) => x.at + x.duration >= a && x.at - x.duration <= b).map((x) => ({ ...x, at: x.at - a }));
+      t.transitions = (t.transitions ?? []).filter((x) => x.at + x.duration >= a && x.at - x.duration <= b)
+        .map((x) => ({ ...x, at: x.at - a, ...(x.start !== undefined ? { start: x.start - a } : {}) }));
     }
     comp.duration = Math.max(0, b - a);
   }

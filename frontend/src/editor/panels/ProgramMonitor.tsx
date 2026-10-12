@@ -13,6 +13,8 @@ import { buildComposition, createPreview, type PreviewEngine } from "../engine";
 import { markedRange, seqEnd } from "../model/ops";
 import { shortDuration } from "../model/time";
 import { toAudioMix } from "../model/toComposition";
+import "../../pages/posters/fonts";
+import { ensureFont } from "../render/title";
 import { mixer } from "../playback/audio";
 import { playProgram } from "../playback/control";
 import { program, useFrame, usePlayState } from "../playback/transport";
@@ -22,7 +24,8 @@ import { fitSize, ScrubBar, TransportButtons } from "./monitor";
 
 const lsNum = (k: string, d: number) => { try { const v = Number(localStorage.getItem(k)); return Number.isFinite(v) && v > 0 ? v : d; } catch { return d; } };
 const lsSet = (k: string, v: string) => { try { localStorage.setItem(k, v); } catch { /* blocked */ } };
-const lutUrl = (look: string) => (look.startsWith("lut:") ? undefined : `/api/fx/looks/${encodeURIComponent(look)}.cube`);
+/** Imported LUTs by their runtime URL; the rest falls through to the builder (team LUTs, preset looks). */
+const lutUrl = (look: string) => (look.startsWith("lut:") ? ed().urls[look] : undefined);
 
 
 export default function ProgramMonitor() {
@@ -36,6 +39,9 @@ export default function ProgramMonitor() {
   const [failed, setFailed] = useState<string | null>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
   const [res, setRes] = useState(() => lsNum("tatvam-editor:program-res", 1));
+  // the engine draws at 1, ½ or ¼ of the sequence size and scales up (drawLive's resolution)
+  const resRef = useRef(1 / res);
+  resRef.current = 1 / res;
   const [zoomMode, setZoomMode] = useState<"fit" | number>("fit");
   const [safe, setSafe] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -47,15 +53,15 @@ export default function ProgramMonitor() {
     const c = document.createElement("canvas");
     c.className = "block";
     holder.current?.appendChild(c);
-    createPreview(c, Math.max(2, Math.round(s.width / res)), Math.max(2, Math.round(s.height / res)))
+    createPreview(c, Math.max(2, s.width), Math.max(2, s.height))
       .then((e) => { if (!alive) { e.dispose(); return; } eng.current = e; setReady(true); })
       .catch((e) => setFailed((e as Error).message || "WebGL2 isn't available"));
     return () => { alive = false; eng.current?.dispose(); eng.current = null; c.remove(); setReady(false); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // render size: the sequence at the playback resolution
-  useEffect(() => { eng.current?.resize(Math.max(2, Math.round(s.width / res)), Math.max(2, Math.round(s.height / res))); redraw(); }, [ready, s.width, s.height, res]);
+  // render size: the sequence's (the playback resolution is applied per draw)
+  useEffect(() => { eng.current?.resize(Math.max(2, s.width), Math.max(2, s.height)); redraw(); }, [ready, s.width, s.height, res]);
 
   // stage size → the canvas's display size
   useEffect(() => {
@@ -86,6 +92,15 @@ export default function ProgramMonitor() {
     return () => window.clearTimeout(id);
   }, [ready, result]);
 
+  // titles: their fonts load on first use; draw again once they're in
+  useEffect(() => {
+    const specs = s.clips.filter((c) => c.source.type === "title").map((c) => (c.source as { text: Parameters<typeof ensureFont>[0] }).text);
+    if (!specs.length) return;
+    let alive = true;
+    void Promise.all(specs.map(ensureFont)).then(() => { if (alive) redraw(); });
+    return () => { alive = false; };
+  }, [s.clips]);
+
   // sound
   useEffect(() => { mixer.setMix(toAudioMix(p, s.id, { urlFor: audioUrlFor })); mixer.sync(program.time, program.playing, program.rate); }, [p, s.id, urls]);
   useEffect(() => () => mixer.stopAll(), []);
@@ -95,20 +110,20 @@ export default function ProgramMonitor() {
   function redraw() {
     const e = eng.current;
     if (!e) return;
-    e.draw(program.time, { playing: program.playing, rate: program.rate });
+    e.draw(program.time, { playing: program.playing, rate: program.rate, resolution: resRef.current });
     if (!program.playing) {
       const until = performance.now() + 700;
       if (settle.current) return;
       const loop = () => {
         if (program.playing || performance.now() > until || !eng.current) { settle.current = 0; return; }
-        eng.current.draw(program.time, { playing: false, rate: 1 });
+        eng.current.draw(program.time, { playing: false, rate: 1, resolution: resRef.current });
         settle.current = requestAnimationFrame(loop);
       };
       settle.current = requestAnimationFrame(loop);
     }
   }
   useEffect(() => program.onTick((t) => {
-    if (program.playing) eng.current?.draw(t, { playing: true, rate: program.rate }); else redraw();
+    if (program.playing) eng.current?.draw(t, { playing: true, rate: program.rate, resolution: resRef.current }); else redraw();
     mixer.sync(t, program.playing, program.rate);
   }), []);
   useEffect(() => program.subscribeState(() => { if (!program.playing) { mixer.sync(program.time, false, 1); redraw(); } }), []);

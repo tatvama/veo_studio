@@ -182,11 +182,11 @@ test("generic video tracks: motion and effect keyframes in seconds, track transi
   assert.equal(v1.clips.length, 2);
   const a = v1.clips[0];
   assert.deepEqual(a.motion?.scale, { value: 100, keyframes: [{ t: 0, frame: 0, value: 100, ease: "ease_in" }, { t: 2, frame: 50, value: 150, ease: "linear" }] });
-  assert.equal(a.fx.look, "noir");
-  assert.equal(a.effects?.length, 1);
-  assert.equal(a.effects?.[0].type, "kawase_blur");
+  assert.equal(a.fx.look, undefined, "every effect runs in the chain on generic tracks");
+  assert.deepEqual(a.effects?.map((e) => e.type), ["kawase_blur", "look"]);
   close(a.start, 0); close(a.duration, 4); close(v1.clips[1].in, 2);
   assert.deepEqual(v1.transitions?.map((t) => [t.type, t.at, t.duration, t.alignment, t.from, t.to]), [["gl:cube", 4, 0.8, "center", a.id, v1.clips[1].id]]);
+  close(v1.transitions![0].start!, 4 - 10 / 25);
   assert.equal(comp.tracks[2].clips[0].type, "title");
   assert.equal(comp.tracks[1].clips[0].color, "#112233");
   assert.equal(comp.lutUrls?.noir, "/api/fx/looks/noir.cube");
@@ -199,4 +199,27 @@ test("generic video tracks: motion and effect keyframes in seconds, track transi
   const ra = r.tracks[0].clips[0];
   close(ra.start, 0); close(ra.in, 1);
   close((ra.motion?.scale as { keyframes: { t: number }[] }).keyframes[1].t, 1);
+  close(r.tracks[0].transitions![0].start!, 4 - 10 / 25 - 1, 1e-9);
+  // an odd number of frames starts floor(d/2) frames before the cut, exactly
+  const odd = addTransition(s, ctx, V(s, 0).id, 100, "fade", 21, { alignment: "center" }).seq;
+  p.sequences = [odd];
+  const t21 = toVideoComposition(p, odd.id).comp.tracks[0].transitions![0];
+  close(t21.start!, (100 - 10) / 25);
+});
+
+test("nested clips anchor in their sequence's pixels; imported LUTs resolve through lutUrl", async () => {
+  const { nestClips } = await import("../model/ops.ts");
+  const p = project(); const ctx = ctxOf(p);
+  let s = put(p, seqOf(p), "m1", 0, { in: 0, out: 49 });
+  p.sequences = [s];
+  const n = nestClips(p, s.id, s.clips.map((c) => c.id));
+  const outer = n.project.sequences.find((x) => x.id === s.id)!;
+  const nc = outer.clips.find((c) => c.source.type === "nested")!;
+  assert.deepEqual(nc.motion.anchor.value, [960, 540]);
+  s = outer;
+  s = { ...s, clips: s.clips.map((c) => (c.id === nc.id ? { ...c, effects: [{ id: "lk", type: "look", enabled: true, params: { look: { value: "lut:abc" } } }] } : c)) };
+  const q = { ...n.project, sequences: n.project.sequences.map((x) => (x.id === s.id ? s : x)) };
+  const r = toVideoComposition(q, s.id, { lutUrl: (l) => (l === "lut:abc" ? "/__media/x/abc.cube" : undefined) }).comp;
+  assert.equal(r.lutUrls?.["lut:abc"], "/__media/x/abc.cube");
+  void ctx;
 });

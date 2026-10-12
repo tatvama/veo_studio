@@ -286,3 +286,38 @@ interface EditorHost {
 //   AiPanel({ host }: { host: EditorHost }): JSX.Element
 //   aiClipActions(host: EditorHost, clipIds: string[]): { id: string; label: string; group: string; run(): void; paid: boolean }[]
 ```
+
+## 9. Status (12 October 2026)
+
+Phases 1 and 2 are built, plus most of 3, together with the §8 AI tools. All of it runs in Tatvam Desktop with the
+real bridge, and GPU exports work.
+
+**Checks:** frontend `test:editor` 49 tests and `test:engine` 28 tests, desktop 81 tests, backend full suite with
+12 tests for the AI tools.
+
+**Measured in Electron:**
+- Import of real files (thumbnails, filmstrips, peaks) in about 1 s.
+- Save and reopen keeps every clip, marker and piece of media.
+- Smooth with 254 clips (a drag step averages 26 ms, a scroll step 17 ms).
+- A V2 wipe between picture-in-picture clips, V1 motion keyframes, and pixelate inside a feathered ellipse mask.
+- ½-resolution playback with no dropped frames.
+- A custom shader imported, applied and exported.
+- GPU export of edits on NVENC with the full audio mix.
+
+**Free analysis tools on test media:** silence detection (exact gaps), scene detection (the cut at 2 s), beats
+(120.1 BPM), loudness (−21.8 LUFS).
+
+**AI tools (mock mode):** captions, voice-over, the assistant applied in one undo step, and remove-silences with
+ripple.
+
+**Not done yet:**
+- Mask keyframes.
+- Mixing the sound of nested sequences.
+- The noise gate in preview.
+- Export progress inside the editor (it shows in the desktop's render queue).
+- Sarvam speech-to-text (there's no provider for it).
+- Karaoke word highlight.
+- Sidechain ducking for AI music.
+- Free Real-ESRGAN upscaling for edit media (edit media upscales in the cloud).
+- Multicam, speed ramps, track groups and OTIO export (phase 4).
+- Live runs of the paid AI providers.

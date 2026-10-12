@@ -5,7 +5,7 @@
 import { clsx } from "clsx";
 import { memo, useEffect, useRef } from "react";
 import * as A from "../actions";
-import { updateMarker } from "../model/ops";
+import { setInOut, updateMarker } from "../model/ops";
 import { snapFrame, snapPoints } from "../model/snapping";
 import { toTimecode } from "../model/time";
 import type { Sequence } from "../model/types";
@@ -94,6 +94,32 @@ function RulerImpl({ seq, zoom, scroll, width, selMarker, onEditMarker }: {
         ]);
       }}>
       <canvas ref={cv} />
+      {(["in", "out"] as const).map((which) => {
+        const f = which === "in" ? seq.inPoint : seq.outPoint !== undefined ? seq.outPoint + 1 : undefined;
+        if (f === undefined) return null;
+        const x = f * zoom - scroll;
+        if (x < -10 || x > width + 10) return null;
+        return (
+          <div key={which} data-marker={which} title={`Drag the ${which} point`} className="absolute bottom-0 z-[4] h-[14px] w-2.5 cursor-ew-resize"
+            style={{ left: which === "in" ? x - 1 : x - 9 }}
+            onPointerDown={(e) => {
+              if (e.button !== 0) return;
+              e.stopPropagation(); e.preventDefault();
+              const x0 = e.clientX, f0 = f;
+              const pts = ed().snapping ? snapPoints(seq) : [];
+              gesture.begin(which === "in" ? "Move in point" : "Move out point");
+              const move = (ev: PointerEvent) => {
+                let nf = Math.max(0, Math.round(f0 + (ev.clientX - x0) / zoom));
+                if (pts.length && !ev.shiftKey) { const sn = snapFrame(nf, pts, zoom, 6); if (sn) nf = sn.frame; }
+                gesture.previewSeq((s) => setInOut(s, which === "in" ? { inPoint: Math.min(nf, (s.outPoint ?? Infinity)) } : { outPoint: Math.max(nf - 1, s.inPoint ?? 0) }));
+              };
+              const up = () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); gesture.commit(); };
+              window.addEventListener("pointermove", move); window.addEventListener("pointerup", up);
+            }}>
+            <span className={clsx("absolute bottom-0 top-0 w-[3px] rounded-sm bg-accent", which === "in" ? "left-0" : "right-0")} />
+          </div>
+        );
+      })}
       {seq.markers.map((m) => {
         const x = m.frame * zoom - scroll;
         if (x < -20 || x > width + 20) return null;

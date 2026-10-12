@@ -7,7 +7,7 @@
 import { ADJUST_INFO, MOVE_LABELS, type AdjustKey, type MoveKind } from "../lib/fx";
 import { uid } from "./model/ids";
 import type { EffectInstance, Param } from "./model/types";
-import { listEffects, type EngineEffect, type EngineParam } from "./engine";
+import { effectGroups, listEffects, onCatalog, type EngineEffect, type EngineParam } from "./engine";
 
 /** An engine-declared parameter as an editor control (image / matrix parameters aren't editable here). */
 function fromEngineParam(p: EngineParam): ParamDef | null {
@@ -18,21 +18,24 @@ function fromEngineParam(p: EngineParam): ParamDef | null {
     case "bool": return { ...base, type: "bool" };
     case "enum": return { ...base, type: "select", options: (p.options ?? []).map((o) => ({ value: String(o.value), label: o.label })) };
     case "color": case "rgb": case "rgba": return typeof p.default === "string" ? { ...base, type: "color" } : { ...base, type: "rgb", step: 0.01, animatable: true };
-    case "vec2": case "point": return { ...base, type: "rgb", step: p.step ?? 0.01, animatable: true };
+    case "vec2": case "point": return { ...base, type: "pair", step: p.step ?? 0.01, animatable: true };
     case "curve": return { ...base, type: "curve" };
     case "string": return { ...base, type: "text" };
     default: return null;
   }
 }
 
-export type ParamType = "number" | "select" | "bool" | "color" | "rgb" | "curve" | "text";
+export type ParamType = "number" | "select" | "bool" | "color" | "rgb" | "pair" | "curve" | "text";
 export interface ParamDef {
   name: string; label: string; type: ParamType; default: unknown;
   min?: number; max?: number; step?: number; unit?: string; options?: { value: string; label: string }[];
   /** Can be keyframed (numbers and colours triples). */
   animatable?: boolean;
 }
-export interface EffectDef { id: string; label: string; group: string; kind: "video" | "audio"; params: ParamDef[]; gpuOnly?: boolean; note?: string }
+export interface EffectDef {
+  id: string; label: string; group: string; kind: "video" | "audio"; params: ParamDef[]; gpuOnly?: boolean; note?: string;
+  custom?: boolean; author?: string; license?: string; source?: string;
+}
 
 export const LOOKS: { value: string; label: string }[] = [
   ["none", "None"], ["cinematic", "Cinematic"], ["teal_orange", "Teal & orange"], ["warm", "Warm"], ["golden_hour", "Golden hour"], ["cool", "Cool"],
@@ -83,9 +86,11 @@ const HIDDEN = new Set(["speed", "fade"]);
 
 let videoP: Promise<EffectDef[]> | null = null;
 let known: EffectDef[] = [];
+// a custom shader registered: list again
+onCatalog(() => { videoP = null; });
 /** The video effects: the engine's list, with the declared params (an engine effect without a declaration gets number sliders). */
 export function videoEffects(): Promise<EffectDef[]> {
-  videoP ??= listEffects().then((list: EngineEffect[]) => {
+  videoP ??= Promise.all([listEffects(), effectGroups()]).then(([list, groups]: [EngineEffect[], readonly string[]]) => {
     const out: EffectDef[] = [];
     const seen = new Set<string>();
     for (const e of list) {
@@ -96,10 +101,14 @@ export function videoEffects(): Promise<EffectDef[]> {
       const mine = EFFECT_DEFS[e.id];
       out.push({
         id: e.id, label: e.label || mine?.label || e.id, group: e.group ?? mine?.group ?? "Other", kind: "video", gpuOnly: e.gpuOnly,
-        params: declared?.length ? declared : mine?.params ?? (e.keys ?? []).map((k) => n(k, k, 0, -1, 1)), note: e.description,
+        params: declared?.length || e.params ? declared ?? [] : mine?.params ?? (e.keys ?? []).map((k) => n(k, k, 0, -1, 1)), note: e.description,
+        custom: e.custom, author: e.author, license: e.license, source: e.source,
       });
     }
     if (!list.length) for (const d of Object.values(EFFECT_DEFS)) if (d.kind === "video" && !seen.has(d.id)) out.push(d);
+    // the registry's group order, custom effects last
+    const gi = (g: string) => { const i = groups.indexOf(g); return i < 0 ? groups.length : i; };
+    out.sort((a, b) => Number(!!a.custom) - Number(!!b.custom) || gi(a.group) - gi(b.group) || a.label.localeCompare(b.label));
     known = out;
     return out;
   });

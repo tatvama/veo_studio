@@ -11,7 +11,7 @@ import { editorBridge } from "../lib/desktop";
 import { registerCustomSources } from "./demoSources";
 import { DesktopOnly } from "./EditorHome";
 import { parseProject } from "./model/serialize";
-import { resolveUrls } from "./session";
+import { loadShaders, resolveLutUrls, resolveUrls } from "./session";
 import { loadProject } from "./store";
 
 const EditorApp = lazy(() => import("./EditorApp"));
@@ -47,6 +47,8 @@ export default function EditorRoute() {
       loadProject(project, { path: r.path });
       for (const w of warnings.slice(0, 3)) toast.warning(w);
       void resolveUrls();
+      void resolveLutUrls();
+      await loadShaders();
       setSt({ kind: "ready", key: r.path });
     })().catch((e) => { if (alive) setSt({ kind: "error", message: (e as Error).message ?? String(e) }); });
     return () => { alive = false; };
