@@ -5,6 +5,7 @@
  *    Set-Cookie made to stick on 127.0.0.1, redirects to the server pointed back at the gateway),
  *  - forwards the /api/ws WebSocket upgrade,
  *  - serves /media/<key> from the local project folder when that file is there (a proxy file in proxy mode),
+ *  - serves /__media/<id>/<name>: files the Tatvam Editor registered for its open edits (docs/EDITOR.md §1),
  *  - keeps working offline: cached GETs answer, cut edits are queued and applied optimistically, replayed on reconnect.
  * No Electron imports: tests start it against a fake upstream (test/gateway.test.ts).
  */
@@ -47,6 +48,8 @@ export interface GatewayDeps {
   uiSource(): "bundled" | "server";
   /** Absolute path of a local copy of a storage key (proxy-aware), or null. */
   resolveMedia?(key: string): string | null;
+  /** The file the editor registered under a /__media id (EditorManager.resolve), or null. */
+  resolveEditorMedia?(id: string): string | null;
   store: OfflineStore;
   /** The session cookie header to replay queued writes with (defaults to the last one the UI sent). */
   getCookie?(): Promise<string | undefined>;
@@ -73,6 +76,7 @@ export const MIME: Record<string, string> = {
   ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".aac": "audio/aac", ".wav": "audio/wav", ".ogg": "audio/ogg", ".flac": "audio/flac",
   ".srt": "text/plain; charset=utf-8", ".vtt": "text/vtt; charset=utf-8", ".ass": "text/plain; charset=utf-8", ".cube": "text/plain",
   ".xml": "application/xml", ".fcpxml": "application/xml", ".edl": "text/plain; charset=utf-8", ".pdf": "application/pdf",
+  ".avi": "video/x-msvideo", ".tif": "image/tiff", ".tiff": "image/tiff", ".opus": "audio/ogg",
 };
 
 export function mimeOf(file: string): string {
@@ -397,6 +401,10 @@ export class Gateway {
       sendJson(res, 404, { detail: "Not found" });
       return;
     }
+    if (pathname.startsWith("/__media/")) {
+      await this.serveEditorMedia(req, res, pathname);
+      return;
+    }
     if (UPSTREAM_PREFIXES.some((p) => pathname.startsWith(p) || pathname === p.replace(/\/$/, ""))) {
       if (pathname.startsWith("/media/") && (req.method === "GET" || req.method === "HEAD") && (await this.serveLocalMedia(req, res, pathname))) return;
       await this.forward(req, res);
@@ -410,6 +418,31 @@ export class Gateway {
     await this.serveStatic(req, res, dir, pathname);
   }
 
+  /** The app holds a session and this request carries the same one: local files are for the app's own pages only. */
+  private async sameSession(req: IncomingMessage): Promise<boolean> {
+    const sent = cookieValue(req.headers.cookie, COOKIE);
+    const held = cookieValue((await this.deps.getCookie?.()) ?? this.lastCookie, COOKIE);
+    return Boolean(sent && held && sent === held);
+  }
+
+  /** /__media/<id>/<name>: a file the editor registered, with Range and ETag; never forwarded to the server. */
+  private async serveEditorMedia(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<void> {
+    const id = /^\/__media\/([A-Za-z0-9_-]{8,64})(?:\/|$)/.exec(pathname)?.[1];
+    const notFound = () => sendJson(res, 404, { detail: "Not found" });
+    if (req.method !== "GET" && req.method !== "HEAD") { sendJson(res, 405, { detail: "Method not allowed" }); return; }
+    const file = id ? this.deps.resolveEditorMedia?.(id) : null;
+    if (!file) return notFound();
+    if (!(await this.sameSession(req))) { sendJson(res, 403, { detail: "Sign in to the app to see local media" }); return; }
+    let st: Stats;
+    try {
+      st = await fsp.stat(file);
+      if (!st.isFile()) return notFound();
+    } catch {
+      return notFound();
+    }
+    await serveFile(req, res, file, { stat: st, cacheControl: "private, max-age=0, must-revalidate" });
+  }
+
   private async serveLocalMedia(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<boolean> {
     if (!this.deps.resolveMedia) return false;
     let key: string;
@@ -417,9 +450,7 @@ export class Gateway {
     const file = this.deps.resolveMedia(key);
     if (!file) return false;
     // Local copies are only for this app's own pages: the request must carry the session the app holds.
-    const sent = cookieValue(req.headers.cookie, COOKIE);
-    const held = cookieValue((await this.deps.getCookie?.()) ?? this.lastCookie, COOKIE);
-    if (!sent || !held || sent !== held) return false;
+    if (!(await this.sameSession(req))) return false;
     let st: Stats;
     try {
       st = await fsp.stat(file);

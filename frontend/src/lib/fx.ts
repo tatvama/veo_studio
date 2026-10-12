@@ -5,13 +5,33 @@
 import type { CSSProperties } from "react";
 
 export interface ShotFx {
-  transition?: { type: string; duration: number };
+  /** `type`: an FFmpeg xfade id, or "gl:<name>" (gl-transitions, GPU render only; a fade on the server). */
+  transition?: { type: string; duration: number; params?: Record<string, TransitionParam>; easing?: Easing };
   look?: string;
+  /** 0..1, how much of the look / LUT to apply (default 1). */
+  lut_strength?: number;
   adjust?: Partial<Record<AdjustKey, number>>;
   speed?: number; reverse?: boolean; flip_h?: boolean; flip_v?: boolean; stabilize?: boolean;
   move?: { kind: MoveKind; amount: number };
   fade_in?: number; fade_out?: number;
+  // GPU-only (docs/ENGINE.md §2): the FFmpeg render ignores them with a warning
+  wheels?: Wheels;
+  curves?: Curves;
+  chroma?: ChromaKey;
+  mask?: FxMask;
+  glow?: Glow;
 }
+export type Easing = "linear" | "ease_in" | "ease_out" | "ease_in_out";
+export type TransitionParam = number | boolean | number[];
+export type Rgb = [number, number, number];
+/** Three-way colour corrector, each value -1..1. */
+export interface Wheels { lift?: Rgb; gamma?: Rgb; gain?: Rgb }
+/** Each curve: 2..16 points [x, y] in 0..1, x ascending (monotone cubic). */
+export interface Curves { master?: [number, number][]; r?: [number, number][]; g?: [number, number][]; b?: [number, number][] }
+export interface ChromaKey { color: string; similarity: number; smoothness: number; spill: number }
+/** x, y = centre and w, h = size as fractions of the frame; rotation in degrees. */
+export interface FxMask { shape: "rect" | "ellipse"; x: number; y: number; w: number; h: number; rotation?: number; feather?: number; invert?: boolean }
+export interface Glow { amount: number; threshold: number; radius: number }
 export type AdjustKey = "exposure" | "contrast" | "saturation" | "temperature" | "tint" | "vibrance" | "gamma" | "hue"
   | "sharpen" | "blur" | "vignette" | "grain";
 export type MoveKind = "none" | "zoom_in" | "zoom_out" | "pan_left" | "pan_right" | "pan_up" | "pan_down";

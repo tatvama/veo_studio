@@ -7,7 +7,7 @@ import shutil
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -15,7 +15,8 @@ from ..core import collab, desktop, studio
 from ..db import get_db
 from ..events import emit
 from ..models import Episode, Project, Shot, User
-from ..pipeline import assembler
+from ..pipeline import assembler, look_lut
+from ..pipeline import ffmpeg as ff
 from ..pipeline import fx as fxlib
 from ..security import current_user, require
 from ..storage import get_storage
@@ -36,6 +37,20 @@ def _lut_ids(p: Project) -> set[str]:
 @router.get("/fx/catalog")
 def fx_catalog(user: User = Depends(current_user)):
     return fxlib.catalog()
+
+
+@router.get("/fx/looks/{look}.cube")
+def look_cube(look: str, user: User = Depends(current_user)):
+    """A preset look as a 33-point 3D LUT, baked from the look's own FFmpeg filter, so the GPU engine applies exactly
+    the server's look. Not project data: shared caches may keep it for a day."""
+    if look not in fxlib.LOOKS:
+        raise HTTPException(404, "There's no look with that name")
+    try:
+        text, key = look_lut.cube(look)
+    except ff.FFmpegError as e:
+        raise HTTPException(500, f"Couldn't make the {fxlib.LOOKS[look]['label']} LUT: {e}")
+    return Response(text, media_type="text/plain; charset=utf-8",
+                    headers={"Cache-Control": "public, max-age=86400", "ETag": f'"{key}"'})
 
 
 class FxIn(BaseModel):
@@ -140,7 +155,8 @@ class PreviewIn(BaseModel):
 
 @router.post("/shots/{sid}/fx/preview")
 def fx_preview(sid: int, body: PreviewIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    """Render this shot (and the transition from the shot before) with the export's own filters, small and quick."""
+    """Render this shot (and the transition from the shot before) with the export's own filters, small and quick.
+    `warnings` names what only the GPU render draws (a gl-transition shows as a fade, GPU-only effects are left out)."""
     s = get_or_404(db, Shot, sid)
     p = _project_of(db, s)
     st = get_storage()
@@ -156,4 +172,6 @@ def fx_preview(sid: int, body: PreviewIn, user: User = Depends(current_user), db
             raise HTTPException(400, str(e))
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
-    return {"url": st.url(rel), "fx": fx}
+    first = (db.query(Shot.id).filter(Shot.episode_id == s.episode_id, Shot.include.is_(True))
+             .order_by(Shot.order, Shot.id).first())
+    return {"url": st.url(rel), "fx": fx, "warnings": fxlib.fallback_warnings(s.code, fx, bool(first) and first[0] != s.id)}

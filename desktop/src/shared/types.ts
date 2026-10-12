@@ -168,7 +168,11 @@ export interface RenderJob {
   version?: number;
   // ── additive ──
   stepId?: string;
-  options: { effects: boolean; captions: boolean; music: boolean; upscaled: boolean; localUpscale: boolean; upload: boolean };
+  options: { effects: boolean; captions: boolean; music: boolean; upscaled: boolean; localUpscale: boolean; upload: boolean;
+    /** auto: the GPU engine when the cut uses a GPU-only transition or effect, else FFmpeg. */
+    engine?: RenderEngine };
+  /** Which engine drew the picture. */
+  engineUsed?: "gpu" | "ffmpeg";
   elapsed_s?: number;
   speed?: string;
   w?: number;
@@ -187,6 +191,12 @@ export interface RenderJob {
   startedAt?: string;
   finishedAt?: string;
   upload: RenderUploadState;
+  /** additive: "edit" = a Tatvam Editor sequence export (pid/eid are its studio episode's, or 0) */
+  kind?: "episode" | "edit";
+  /** additive (edit exports): the .tatvamedit file, the sequence and its name */
+  editPath?: string;
+  sequenceId?: string;
+  sequenceName?: string;
 }
 
 export interface UpdateState {
@@ -211,9 +221,139 @@ export interface PanelWindowInfo { id: number; panel: string; display: number; f
 
 export interface ProxyStatus { pid: number; running: boolean; total: number; done: number; current: string; errors: string[] }
 
+export type RenderEngine = "auto" | "gpu" | "ffmpeg";
+
 export interface RenderJobInput {
   pid: number; eid: number; lang: string; preset: string; effects?: boolean; captions?: boolean;
-  music?: boolean; upscaled?: boolean; localUpscale?: boolean; upload?: boolean;
+  music?: boolean; upscaled?: boolean; localUpscale?: boolean; upload?: boolean; engine?: RenderEngine;
+}
+
+/**
+ * What the GPU render window gets (docs/ENGINE.md §5, docs/EDITOR.md §5). Either the full-size render plan of a studio
+ * episode, or a Tatvam Editor project (media `url`s filled) with the sequence to draw. Frame `i` is at
+ * t = i / fps on the plan; for a composition at t = range.in / sequence.fps + i / fps (seconds on the sequence).
+ * `range` is in sequence frames, out exclusive.
+ */
+export type GpuRenderJob =
+  | { kind: "plan"; plan: unknown; w: number; h: number; fps: number; frames: number }
+  | { kind: "composition"; project: EditProject; sequenceId: string; range: { in: number; out: number }; w: number; h: number; fps: number; frames: number };
+
+// ── Tatvam Editor document (docs/EDITOR.md §2; a copy of frontend/src/editor/model/types.ts, extras marked additive) ──
+
+export type Easing = "linear" | "ease_in" | "ease_out" | "ease_in_out" | "hold";
+export type BlendMode = "normal" | "add" | "multiply" | "screen" | "overlay" | "lighten" | "darken";
+export interface MaskSpec { shape: "rect" | "ellipse"; x: number; y: number; w: number; h: number; rotation?: number; feather?: number; invert?: boolean }
+
+export interface EditProject {
+  format: "tatvam-edit"; version: 1; id: string; name: string; created: string; modified: string;
+  bins: Bin[]; media: MediaItem[]; sequences: Sequence[]; activeSequenceId: string;
+  settings: { copyMedia: boolean; proxy: "off" | "auto" | "always"; autosaveSeconds: number };
+  studioProjectId?: number;
+}
+export interface Bin { id: string; name: string; parentId: string | null; color?: string }
+export interface MediaItem {
+  id: string; binId: string | null; name: string; kind: "video" | "audio" | "image";
+  /** Absolute local path at runtime (on disk: relative to the edit folder when inside it). */
+  path: string;
+  /** Runtime only: the gateway URL (/__media/<id>/<name>). */
+  url?: string;
+  /** Length in source frames at `fps` (video: its frame rate; audio: its sample rate; images: 0). */
+  duration: number; fps: number; width: number; height: number; hasAudio: boolean; audioChannels?: number;
+  /** Runtime: gateway URLs; on disk: paths relative to the edit folder (Cache/<id>/thumb.jpg …). */
+  thumb?: string; filmstrip?: string;
+  peaks?: number[]; proxyPath?: string; missing?: boolean;
+  markers: Marker[]; inPoint?: number; outPoint?: number;
+  colorLabel?: string; comment?: string; offline?: boolean;
+  studioKey?: string;
+  /** additive: length in seconds, the audio sample rate, the proxy's gateway URL (runtime) */
+  seconds?: number; sampleRate?: number; proxyUrl?: string;
+}
+export interface Sequence {
+  id: string; name: string; width: number; height: number; fps: number; sampleRate: 48000;
+  tracks: Track[]; clips: TimelineClip[]; transitions: Transition[];
+  markers: Marker[]; inPoint?: number; outPoint?: number; playhead: number;
+  workArea?: { zoom: number; scroll: number };
+  /** additive: the studio episode this sequence was imported from (importEpisode) */
+  source?: { pid: number; eid: number; lang: string; cutVersion?: number | null };
+}
+export interface Track {
+  id: string; kind: "video" | "audio"; name: string; index: number;
+  locked: boolean; hidden: boolean; muted: boolean; solo: boolean; targeted: boolean; syncLock: boolean;
+  height: number; volume: number; pan: number;
+}
+export type ClipSource =
+  | { type: "media"; mediaId: string; in: number }
+  | { type: "title"; text: TitleSpec }
+  | { type: "color"; color: string }
+  | { type: "adjustment" }
+  | { type: "nested"; sequenceId: string; in: number };
+export interface Motion {
+  /** Pixels in the sequence frame (centre = [width/2, height/2]). */
+  position: Param<[number, number]>;
+  /** Percent; 100 = fitted inside the frame. */
+  scale: Param<number>;
+  rotation: Param<number>;
+  anchor: Param<[number, number]>;
+  /** Percent 0..100. */
+  opacity: Param<number>;
+  blend: BlendMode; uniformScale: boolean;
+}
+export interface ClipAudio { gain: Param<number>; pan: Param<number>; fadeIn: number; fadeOut: number }
+export interface TimelineClip {
+  id: string; trackId: string; start: number; duration: number; source: ClipSource;
+  speed: number; reverse: boolean; enabled: boolean; name: string; colorLabel?: string; linkId?: string;
+  motion: Motion; effects: EffectInstance[]; audio?: ClipAudio; timeRemap?: Param<number>;
+}
+export interface Keyframe<T> { frame: number; value: T; ease: Easing }
+export type Param<T> = { value: T; keyframes?: Keyframe<T>[] };
+export interface EffectInstance { id: string; type: string; enabled: boolean; params: Record<string, Param<unknown>>; mask?: MaskSpec }
+export interface Transition {
+  id: string; trackId: string; at: number; duration: number; alignment: "center" | "start" | "end";
+  /** xfade id | "gl:<name>" | "audio:constant_power" | "audio:constant_gain" */
+  type: string; params?: Record<string, unknown>; easing: Easing; fromClipId?: string; toClipId?: string;
+}
+export interface Marker { id: string; frame: number; duration: number; name: string; color: string; comment?: string }
+export interface TitleSpec {
+  text: string; font: string; size: number; color: string; weight: number; align: "left" | "center" | "right";
+  outline?: { color: string; width: number }; shadow?: { color: string; blur: number; x: number; y: number };
+  background?: { color: string; padding: number; radius: number }; box: [number, number, number, number];
+  animIn?: "none" | "fade" | "slide_up" | "typewriter" | "pop"; animOut?: "none" | "fade" | "slide_down";
+}
+
+export interface EditListEntry { path: string; name: string; modified: string; thumb?: string; /** additive */ recent?: boolean }
+export interface EditPreset { width: number; height: number; fps: number }
+export type AnalyzeKind = "silence" | "scenes" | "beats" | "loudness";
+export interface AnalyzeOptions { noiseDb?: number; minMs?: number; threshold?: number }
+export type AnalyzeResult =
+  | { kind: "silence"; segments: { start: number; end: number }[]; duration: number }
+  | { kind: "scenes"; cuts: number[]; duration: number }
+  | { kind: "beats"; beats: number[]; bpm: number; duration: number }
+  | { kind: "loudness"; lufs: number | null; lra: number | null; truePeak: number | null };
+export interface ShaderEntry { id: string; name: string; kind: "transition" | "effect"; glsl: string }
+export interface LutEntry { id: string; name: string; /** additive */ path?: string; url?: string; size?: number }
+
+/** The Tatvam Editor's side of the bridge (docs/EDITOR.md §5, §8). Paths are the .tatvamedit file of the edit. */
+export interface EditorBridge {
+  list(): Promise<EditListEntry[]>;
+  create(name: string, preset: EditPreset): Promise<{ path: string; project: EditProject }>;
+  open(path?: string): Promise<{ path: string; project: EditProject } | null>;
+  save(path: string, project: EditProject): Promise<{ modified: string }>;
+  importMedia(path: string, files?: string[]): Promise<MediaItem[]>;
+  pathsForDrop(files: File[]): string[];
+  mediaUrl(path: string, file: string): Promise<string>;
+  relink(path: string, mediaId: string): Promise<MediaItem | null>;
+  /** Resolves when the proxy is made, with the item's proxyPath / proxyUrl set (the doc says void: the value is extra). */
+  proxy(path: string, mediaId: string): Promise<MediaItem>;
+  importEpisode(pid: number, eid: number, path: string): Promise<{ sequenceId: string; project: EditProject }>;
+  /** Starts the export; resolves with the RenderJob id (progress on render.onProgress, job.kind "edit"). */
+  export(path: string, sequenceId: string, opts: { preset: string; range: "all" | "inout"; upload?: boolean }): Promise<string>;
+  importLut(path: string): Promise<LutEntry | null>;
+  importShader(path: string, kind: "transition" | "effect"): Promise<{ id: string; name: string } | null>;
+  /** additive: the custom shaders imported on this PC (the engine registers them at load). */
+  shaders(): Promise<ShaderEntry[]>;
+  analyze(path: string, mediaId: string, kind: AnalyzeKind, opts?: AnalyzeOptions): Promise<AnalyzeResult>;
+  uploadAsset(path: string, mediaId: string, projectId: number): Promise<{ key: string; url: string; duration: number }>;
+  importStudioAsset(path: string, key: string, name?: string): Promise<MediaItem>;
 }
 
 export interface TatvamDesktop {
@@ -283,6 +423,15 @@ export interface TatvamDesktop {
     cancel(id: string): Promise<void>;
     onProgress(cb: (j: UpscaleJob) => void): () => void;
   };
+  /** The GPU render window's side of a desktop GPU render (only that hidden window calls these). */
+  engine: {
+    job(id: string): Promise<GpuRenderJob>;
+    frame(id: string, index: number, yuv420: Uint8Array): Promise<void>;
+    done(id: string): Promise<void>;
+    fail(id: string, message: string): Promise<void>;
+  };
+  /** The Tatvam Editor (docs/EDITOR.md §5). */
+  editor: EditorBridge;
 }
 
 // ── local AI upscale (main/aiupscale.ts) ──
@@ -397,6 +546,26 @@ export const IPC = {
   upList: "tatvam:upscale.list",
   upCancel: "tatvam:upscale.cancel",
   upProgress: "tatvam:upscale.progress",
+  engineJob: "tatvam:engine.job",
+  engineFrame: "tatvam:engine.frame",
+  engineDone: "tatvam:engine.done",
+  engineFail: "tatvam:engine.fail",
+  editorList: "tatvam:editor.list",
+  editorCreate: "tatvam:editor.create",
+  editorOpen: "tatvam:editor.open",
+  editorSave: "tatvam:editor.save",
+  editorImportMedia: "tatvam:editor.importMedia",
+  editorMediaUrl: "tatvam:editor.mediaUrl",
+  editorRelink: "tatvam:editor.relink",
+  editorProxy: "tatvam:editor.proxy",
+  editorImportEpisode: "tatvam:editor.importEpisode",
+  editorExport: "tatvam:editor.export",
+  editorImportLut: "tatvam:editor.importLut",
+  editorImportShader: "tatvam:editor.importShader",
+  editorShaders: "tatvam:editor.shaders",
+  editorAnalyze: "tatvam:editor.analyze",
+  editorUploadAsset: "tatvam:editor.uploadAsset",
+  editorImportStudioAsset: "tatvam:editor.importStudioAsset",
 } as const;
 
 /** Channels of the Studio server window (main/connect.ts); they answer that window only. */

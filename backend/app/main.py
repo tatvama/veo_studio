@@ -22,8 +22,8 @@ mimetypes.add_type("image/webp", ".webp")
 mimetypes.add_type("video/mp4", ".mp4")
 
 from . import __version__
-from .api import (admin, auth, bible, board, campaign, designs, desktop, fx, generate, growth, hub, layers, mcp_access,
-                  production, projects, rates, room, shots, work)
+from .api import (admin, auth, bible, board, campaign, designs, desktop, edits, fx, generate, growth, hub, layers,
+                  mcp_access, production, projects, rates, room, shots, work)
 from .config import ROOT, get_settings
 from .db import Base, engine
 from .middleware import RetryReads
@@ -59,7 +59,7 @@ app.add_middleware(RetryReads)  # re-run a GET once if a dropped database connec
 
 for r in (auth.router, admin.router, projects.router, bible.router, shots.router, generate.router, work.router, hub.router,
           room.router, growth.router, board.router, fx.router, layers.router, production.router, campaign.router, rates.router,
-          designs.router, mcp_access.router, desktop.router):
+          designs.router, mcp_access.router, desktop.router, edits.router):
     app.include_router(r)
 
 if settings.mcp_enabled:  # /mcp and the OAuth endpoints for MCP clients (app/mcp_server), before the web app catch-all

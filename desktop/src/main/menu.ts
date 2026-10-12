@@ -1,6 +1,7 @@
 /**
  * The application menu and its shortcuts. Actions the UI handles are sent to the focused window as
- * `app.onMenu(action)` (e.g. "open-settings", "machine-check", "about").
+ * `app.onMenu(action)` (e.g. "open-settings", "machine-check", "about", and "open-editor" / "open-edit" for the Tatvam
+ * Editor: the page goes to /editor, and "open-edit" shows its Open dialog).
  */
 import { app, Menu, type MenuItemConstructorOptions } from "electron";
 import type { PanelId } from "../shared/types.ts";
@@ -29,6 +30,9 @@ const POP: [PanelId, string][] = [["program", "Program monitor"], ["source", "So
 export function buildMenu(d: MenuDeps): void {
   const tpl: MenuItemConstructorOptions[] = [
     { label: "&File", submenu: [
+      { label: "New edit…", click: () => d.sendMenu("open-editor") },
+      { label: "Open edit…", click: () => d.sendMenu("open-edit") },
+      { type: "separator" },
       { label: "Open project folder", accelerator: "CmdOrCtrl+Shift+O", click: () => d.openProjectFolder() },
       { label: "Choose library folder…", click: () => d.chooseLibrary() },
       { label: "Studio server…", click: () => d.openConnection() },
@@ -49,6 +53,8 @@ export function buildMenu(d: MenuDeps): void {
       ...(d.isPackaged ? [] : [{ type: "separator" } as MenuItemConstructorOptions, { role: "toggleDevTools" } as MenuItemConstructorOptions]),
     ] },
     { label: "&Window", submenu: [
+      { label: "Editor", accelerator: "CmdOrCtrl+Shift+E", click: () => d.sendMenu("open-editor") },
+      { type: "separator" },
       { label: "Pop out", submenu: POP.map(([panel, label], i) => ({ label, accelerator: `CmdOrCtrl+Shift+${i + 1}`, click: () => d.popOut(panel) })) },
       { label: "Send program monitor to next display", accelerator: "CmdOrCtrl+Shift+M", click: () => d.programToNextDisplay() },
       { label: "Workspaces", submenu: d.workspaces().map((w, i) => ({ label: w.name, ...(i < 5 ? { accelerator: `CmdOrCtrl+${i + 1}` } : {}),

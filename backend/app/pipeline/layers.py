@@ -189,7 +189,8 @@ def animated(kfs: list[dict] | None, key: str) -> bool:
 
 
 def resolve(layers: dict | None, abspath) -> tuple[list[dict], list[dict]]:
-    """(picture items bottom→top, sound items) with absolute file paths, skipping hidden / muted tracks and missing files."""
+    """(picture items bottom→top, sound items) with absolute file paths, skipping hidden / muted tracks and missing files.
+    A picture item also names its track (`track`, the track's id)."""
     pics, sounds = [], []
     for t in (layers or {}).get("video") or []:
         if t.get("hidden"):
@@ -198,7 +199,7 @@ def resolve(layers: dict | None, abspath) -> tuple[list[dict], list[dict]]:
             p = abspath(c["src"])
             if not p:
                 continue
-            pics.append({**c, "path": p})
+            pics.append({**c, "path": p, "track": t.get("id")})
             if c["kind"] == "video" and not c.get("muted") and not t.get("muted"):
                 sounds.append({**c, "path": p, "gain_db": c.get("gain_db", 0) + t.get("gain_db", 0)})
     for t in (layers or {}).get("audio") or []:

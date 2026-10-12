@@ -8,14 +8,17 @@ import { randomUUID } from "node:crypto";
 import { existsSync, promises as fsp, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { DesktopSettings, RenderJob, RenderJobInput, RenderPreset, RenderState } from "../shared/types.ts";
+import type { DesktopSettings, EditProject, GpuRenderJob, RenderJob, RenderJobInput, RenderPreset, RenderState } from "../shared/types.ts";
 import { writeFileAtomic } from "./config.ts";
 import { downloadTo, pool } from "./download.ts";
-import { probeMedia, runFfmpeg, type FfmpegInfo, type FfProgress } from "./ffmpeg.ts";
+import { mixJobs, mixPlan } from "./editor-audio.ts";
+import { editDims, framesToSeconds, renderName } from "./editor-model.ts";
+import { probeMedia, runFfmpeg, spawnFfmpegPipe, type FfmpegInfo, type FfProgress } from "./ffmpeg.ts";
 import type { Library } from "./library.ts";
 import { dateToken, fitName, pathKey, safePart, uniquePath } from "./naming.ts";
 import {
-  PRESETS, STAB_DETECT, concatArgs, concatList, extractAudioArgs, finalArgs, finalEncoder, intermediateEncoder, mixArgs, mixAudioArgs,
+  PRESETS, STAB_DETECT, concatArgs, concatList, draftDims, extractAudioArgs, finalArgs, finalEncoder, gpuFinalArgs, intermediateEncoder, mixArgs,
+  mixAudioArgs,
   musicBedArgs, overlayArgs, presetDims, presetList, segmentArgs, stabilizeDetectArgs, stepWeights, stillArgs, xfadeArgs, type RenderPlan,
 } from "./render-args.ts";
 import { uploadFile } from "./upload.ts";
@@ -30,6 +33,31 @@ export interface RenderDeps {
   jobsFile: string;
   broadcast(job: RenderJob): void;
   log(msg: string): void;
+  /** A hidden window on the gateway (`urlPath`) for the GPU engine; `onClosed` fires if it goes away. */
+  openRenderWindow?(urlPath: string, onClosed: () => void): { close(): void };
+}
+
+interface AssembleCtx {
+  ff: string; tmp: string; signal: AbortSignal; fps: number; inter: string[]; localUpscale: boolean; effects: boolean; music: boolean;
+  luts: Record<string, string>; need(key: string): string;
+}
+
+interface Band { step(id: string, args: string[], seconds?: number): Promise<void> }
+
+/** What the GPU engine draws: a studio render plan, or a Tatvam Editor sequence (docs/EDITOR.md §5). */
+export type GpuSource =
+  | { kind: "plan"; plan: RenderPlan }
+  | { kind: "composition"; project: EditProject; sequenceId: string; range: { in: number; out: number } };
+
+interface GpuSession {
+  src: GpuSource; w: number; h: number; fps: number; frames: number; next: number;
+  frame(i: number, bytes: Uint8Array): Promise<void>; done(): void; fail(msg: string): void;
+}
+
+/** An edit export (EditorManager.export): the runtime project (media URLs registered), the sequence and its range. */
+export interface EditExportInput {
+  editPath: string; editDir: string; project: EditProject; sequenceId: string; range: { in: number; out: number };
+  preset: string; upload: boolean; source?: { pid: number; eid: number; lang: string } | null;
 }
 
 /** Every storage key the plan refers to (the plan lists them in `keys`; this also covers older plans). */
@@ -49,6 +77,12 @@ export function planKeys(plan: RenderPlan): string[] {
   return [...out];
 }
 
+/** The render window's job (shared GpuRenderJob): the source with the output size and frame count. */
+export function gpuJob(src: GpuSource, size: { w: number; h: number; fps: number; frames: number }): GpuRenderJob {
+  if (src.kind === "plan") return { kind: "plan", plan: src.plan, ...size };
+  return { kind: "composition", project: src.project, sequenceId: src.sequenceId, range: { ...src.range }, ...size };
+}
+
 const nowIso = () => new Date().toISOString();
 const ACTIVE: RenderState[] = ["preparing", "downloading", "rendering"];
 
@@ -59,6 +93,8 @@ export class RenderManager {
   private running: { id: string; abort: AbortController } | null = null;
   private uploads = new Map<string, AbortController>();
   private lastEmit = new Map<string, number>();
+  private gpuSessions = new Map<string, GpuSession>();
+  private editJobs = new Map<string, EditExportInput>();
 
   constructor(deps: RenderDeps) {
     this.deps = deps;
@@ -108,9 +144,31 @@ export class RenderManager {
     const job: RenderJob = {
       id: randomUUID(), pid: input.pid, eid: input.eid, lang: input.lang, preset: input.preset,
       options: { effects: input.effects !== false, captions: input.captions !== false, music: input.music !== false, upscaled: input.upscaled !== false,
-        localUpscale: Boolean(input.localUpscale), upload: Boolean(input.upload) },
+        localUpscale: Boolean(input.localUpscale), upload: Boolean(input.upload),
+        engine: input.engine === "gpu" || input.engine === "ffmpeg" ? input.engine : "auto" },
       status: "queued", progress: 0, step: "Waiting", stepId: "queued", warnings: [], createdAt: nowIso(), upload: { state: "idle" }, uploaded: false,
     };
+    this.jobs.push(job);
+    this.queue.push(job.id);
+    this.emit(job, true);
+    void this.next();
+    return job.id;
+  }
+
+  /** Queue a Tatvam Editor sequence export (GPU picture, FFmpeg sound); returns the job id. */
+  startEdit(input: EditExportInput): string {
+    if (!PRESETS.some((p) => p.id === input.preset)) throw new Error(`Unknown preset ${input.preset}`);
+    const seq = input.project.sequences.find((s) => s.id === input.sequenceId);
+    if (!seq) throw new Error("No such sequence");
+    if (!(input.range.out > input.range.in)) throw new Error("The export range is empty");
+    const src = input.source ?? null;
+    const job: RenderJob = {
+      id: randomUUID(), pid: src?.pid ?? 0, eid: src?.eid ?? 0, lang: src?.lang ?? "", preset: input.preset, kind: "edit",
+      editPath: input.editPath, sequenceId: seq.id, sequenceName: seq.name,
+      options: { effects: true, captions: false, music: true, upscaled: false, localUpscale: false, upload: Boolean(input.upload && src?.eid), engine: "gpu" },
+      status: "queued", progress: 0, step: "Waiting", stepId: "queued", warnings: [], createdAt: nowIso(), upload: { state: "idle" }, uploaded: false,
+    };
+    this.editJobs.set(job.id, input);
     this.jobs.push(job);
     this.queue.push(job.id);
     this.emit(job, true);
@@ -144,11 +202,13 @@ export class RenderManager {
     if (!job) return void this.next();
     const abort = new AbortController();
     this.running = { id, abort };
-    Object.assign(job, { status: "preparing", startedAt: nowIso(), stepId: "prepare", step: "Getting the render plan", progress: 0, error: undefined });
+    Object.assign(job, { status: "preparing", startedAt: nowIso(), stepId: "prepare", step: job.kind === "edit" ? "Preparing the export" : "Getting the render plan",
+      progress: 0, error: undefined });
     this.emit(job, true);
     const tmpHolder: { dir?: string } = {};
     try {
-      await this.run(job, abort.signal, tmpHolder);
+      if (job.kind === "edit") await this.runEdit(job, abort.signal, tmpHolder);
+      else await this.run(job, abort.signal, tmpHolder);
       job.elapsed_s = Math.round((Date.now() - Date.parse(job.startedAt!)) / 1000);
       Object.assign(job, { status: "done", progress: 1, stepId: "done", step: "Done", eta_s: 0, finishedAt: nowIso() });
       this.deps.log(`render ${job.id} done in ${job.elapsed_s}s with ${job.encoder}: ${job.output}`);
@@ -159,6 +219,7 @@ export class RenderManager {
       if (!cancelled) this.deps.log(`render ${job.id} failed: ${(e as Error).stack || e}`);
     } finally {
       if (tmpHolder.dir && !process.env.TATVAM_KEEP_RENDER_TMP) await fsp.rm(tmpHolder.dir, { recursive: true, force: true, maxRetries: 3 }).catch(() => undefined);
+      this.editJobs.delete(job.id);
       this.running = null;
       this.emit(job, true);
     }
@@ -245,65 +306,120 @@ export class RenderManager {
     const tmp = path.join(folder, "Cache", `render-${job.id.slice(0, 8)}`);
     tmpHolder.dir = tmp;
     await fsp.mkdir(tmp, { recursive: true });
+    const gpu = o.engine === "gpu" || (o.engine !== "ffmpeg" && (plan.gpu_only?.length ?? 0) > 0);
+    job.engineUsed = gpu ? "gpu" : "ffmpeg";
     const steps = stepWeights(plan, { music: o.music });
-    const prepWeight = steps.find((x) => x.id === "prepare")!.weight;
+    const prepWeight = gpu ? 0.04 : steps.find((x) => x.id === "prepare")!.weight;
     const local = await this.ensureLocal(job.pid, planKeys(plan), signal, job, prepWeight);
-    const need = (k: string) => {
-      const p = local.get(k);
-      if (!p) throw new Error(`Missing media ${k}`);
-      return p;
+    const ctxFor = (m: Map<string, string>, p: RenderPlan): AssembleCtx => {
+      const luts: Record<string, string> = {};
+      for (const [id, k] of Object.entries(p.luts ?? {})) if (m.get(k)) luts[id] = m.get(k)!;
+      return { ff, tmp, signal, fps, inter: inter.args, localUpscale: o.localUpscale, effects: o.effects, music: o.music, luts,
+        need: (k: string) => {
+          const v = m.get(k);
+          if (!v) throw new Error(`Missing media ${k}`);
+          return v;
+        } };
     };
-    const luts: Record<string, string> = {};
-    for (const [id, k] of Object.entries(plan.luts ?? {})) if (local.get(k)) luts[id] = local.get(k)!;
 
     job.status = "rendering";
-    const t0 = Date.now();
-    let doneWeight = prepWeight;
-    const step = async (id: string, args: string[], seconds?: number) => {
-      const st = steps.find((x) => x.id === id);
-      job.stepId = id;
-      job.step = st?.label ?? id;
-      this.emit(job, true);
-      const expected = seconds ?? st?.seconds ?? 0;
-      await runFfmpeg(ff, args, {
-        signal, cwd: tmp,
-        onProgress: (p: FfProgress) => {
-          const frac = expected > 0 ? Math.min(1, p.outTimeS / expected) : 0;
-          const prog = Math.min(0.995, doneWeight + (st?.weight ?? 0) * frac);
-          job.progress = Math.round(prog * 1000) / 1000;
-          job.speed = p.speed;
-          const el = (Date.now() - t0) / 1000;
-          job.elapsed_s = Math.round(el);
-          const span = prog - prepWeight;
-          job.eta_s = span > 0.02 ? Math.round((el / span) * (1 - prog)) : undefined;
-          this.emit(job);
-        },
-      });
-      doneWeight += st?.weight ?? 0;
-    };
+    const meter = this.meter(job, Date.now(), prepWeight, { ff, tmp, signal });
+    let ass: string | null = null;
+    if (plan.captions?.ass) {
+      ass = path.join(tmp, "captions.ass");
+      await fsp.writeFile(ass, plan.captions.ass, "utf8");
+    }
+    const finalTmp = path.join(tmp, `final.${preset.container}`);
 
+    if (!gpu) {
+      // the server's pipeline at full size, every step on this PC's encoders
+      const band = meter.band(prepWeight, 1, steps.filter((x) => x.id !== "prepare"));
+      const a = await this.assemble(job, plan, w, h, ctxFor(local, plan), band, true);
+      await band.step("final", finalArgs({ video: a.body, audio: a.finalAudio, out: finalTmp, ass, loudnorm: plan.loudnorm, encoder: enc.args,
+        container: preset.container, fps: preset.fps }), a.total);
+    } else {
+      // 1. the sound: the same pipeline at draft size (crossfades, voice, layers, music with ducking); its picture is thrown away
+      const draft = draftDims(w, h);
+      const dq = new URLSearchParams(q);
+      dq.set("w", String(draft.w));
+      dq.set("h", String(draft.h));
+      const small = await this.deps.upstream.json<RenderPlan>(`/api/episodes/${job.eid}/render-plan?${dq}`, { signal, timeoutMs: 300_000 });
+      const extra = await this.ensureLocal(job.pid, planKeys(small).filter((k) => !local.has(k)), signal, job, prepWeight);
+      const smallLocal = new Map([...local, ...extra]);
+      const soundTo = prepWeight + 0.14;
+      const soundBand = meter.band(prepWeight, soundTo, stepWeights(small, { music: o.music }).filter((x) => x.id !== "prepare"), "Mixing the sound");
+      const sound = await this.assemble(job, small, draft.w, draft.h, ctxFor(smallLocal, small), soundBand, false);
+      // 2. the picture: every frame drawn by the GPU engine in a hidden window and encoded as it arrives
+      const frames = Math.max(1, Math.round((plan.duration_s || sound.total) * fps));
+      await this.gpuFrames(job, { kind: "plan", plan }, { w, h, fps, frames, audio: sound.finalAudio, ass, out: finalTmp, encoder: enc.args,
+        container: preset.container, ff, tmp, signal, meter, from: soundTo, loudnorm: plan.loudnorm });
+    }
+    await this.finish(job, { project, ep, preset, folder, finalTmp, plan, ff });
+  }
+
+  /** Overall progress and ETA for a job, split into bands (prepare, sound, frames …) that FFmpeg steps fill. */
+  private meter(job: RenderJob, t0: number, prepWeight: number, run: { ff: string; tmp: string; signal: AbortSignal }) {
+    const set = (prog: number, extra: Partial<RenderJob> = {}) => {
+      job.progress = Math.round(Math.min(0.995, prog) * 1000) / 1000;
+      const el = (Date.now() - t0) / 1000;
+      job.elapsed_s = Math.round(el);
+      const span = job.progress - prepWeight;
+      job.eta_s = span > 0.02 ? Math.round((el / span) * (1 - job.progress)) : undefined;
+      Object.assign(job, extra);
+      this.emit(job);
+    };
+    const band = (from: number, to: number, weights: { id: string; label: string; weight: number; seconds: number }[], label?: string): Band => {
+      const sum = weights.reduce((a, x) => a + x.weight, 0) || 1;
+      let done = from;
+      return {
+        step: async (id, args, seconds) => {
+          const st = weights.find((x) => x.id === id);
+          const share = ((st?.weight ?? 0) / sum) * (to - from);
+          job.stepId = id;
+          job.step = label ? `${label} · ${st?.label ?? id}` : st?.label ?? id;
+          this.emit(job, true);
+          const expected = seconds ?? st?.seconds ?? 0;
+          await runFfmpeg(run.ff, args, {
+            signal: run.signal, cwd: run.tmp,
+            onProgress: (pr: FfProgress) => {
+              job.speed = pr.speed;
+              set(done + share * (expected > 0 ? Math.min(1, pr.outTimeS / expected) : 0));
+            },
+          });
+          done += share;
+        },
+      };
+    };
+    return { set, band };
+  }
+
+  /** Segments → end card → join → sound mix (and picture layers when `pictures`): the server's assembler, step by step. */
+  private async assemble(job: RenderJob, plan: RenderPlan, w: number, h: number, c: AssembleCtx, band: Band, pictures: boolean):
+    Promise<{ body: string; finalAudio: string; total: number }> {
+    const { ff, tmp, signal, fps, need, luts } = c;
+    const tag = pictures ? "" : "snd_";
     // 1. segments
     const clips: string[] = [];
     const lengths: number[] = [];
     const transitions: ([string, number] | null)[] = [];
     for (let i = 0; i < plan.segments.length; i++) {
       const seg = plan.segments[i];
-      const out = path.join(tmp, `seg_${String(i).padStart(3, "0")}.mp4`);
+      const out = path.join(tmp, `${tag}seg_${String(i).padStart(3, "0")}.mp4`);
       const extra = (seg.extra_audio ?? []).filter((a) => a.key).map((a) => ({ path: need(a.key), offset: a.offset, gain_db: a.gain_db }));
       const override = seg.audio_override ? need(seg.audio_override) : null;
       if (seg.source_kind === "still") {
         let audio = override;
         if (extra.length) {
-          audio = path.join(tmp, `segaud_${i}.wav`);
+          audio = path.join(tmp, `${tag}segaud_${i}.wav`);
           await runFfmpeg(ff, mixAudioArgs(override, extra, seg.seg_len, audio), { signal, cwd: tmp });
         }
-        await step(`seg${i}`, stillArgs({ image: need(seg.source), out, seconds: seg.seg_len, w, h, fps, audio, kenburns: seg.kenburns,
-          vf: seg.vf, vfPost: seg.vf_post, afFx: seg.af_fx, luts, enc: inter.args, localUpscale: o.localUpscale && !seg.upscaled }));
+        await band.step(`seg${i}`, stillArgs({ image: need(seg.source), out, seconds: seg.seg_len, w, h, fps, audio, kenburns: seg.kenburns,
+          vf: seg.vf, vfPost: seg.vf_post, afFx: seg.af_fx, luts, enc: c.inter, localUpscale: c.localUpscale && !seg.upscaled }));
       } else {
         const src = need(seg.source);
         const hasAudio = seg.has_audio ?? (await probeMedia(ff, src)).hasAudio;
         let trf: string | null = null;
-        if (seg.stabilize) {
+        if (seg.stabilize && pictures) { // the sound-only pass doesn't need the picture stabilised
           trf = path.join(tmp, `seg_${i}.trf`);
           try {
             await runFfmpeg(ff, stabilizeDetectArgs(seg, src, trf, plan.stabilize_filters?.detect ?? STAB_DETECT), { signal, cwd: tmp });
@@ -313,8 +429,9 @@ export class RenderManager {
             trf = null;
           }
         }
-        await step(`seg${i}`, segmentArgs(seg, { w, h, fps, src, out, enc: inter.args, override, extra, hasAudio, luts,
-          localUpscale: o.localUpscale, trf, stabTransform: plan.stabilize_filters?.transform }));
+        const s2 = pictures || !seg.stabilize ? seg : { ...seg, stabilize: false };
+        await band.step(`seg${i}`, segmentArgs(s2, { w, h, fps, src, out, enc: c.inter, override, extra, hasAudio, luts,
+          localUpscale: c.localUpscale, trf, stabTransform: plan.stabilize_filters?.transform }));
       }
       clips.push(out);
       lengths.push(seg.seg_len);
@@ -322,68 +439,188 @@ export class RenderManager {
     }
     // 2. end card
     if (plan.end_card?.key) {
-      const out = path.join(tmp, "seg_endcard.mp4");
-      await step("endcard", stillArgs({ image: need(plan.end_card.key), out, seconds: plan.end_card.seconds, w, h, fps, kenburns: false,
-        vf: plan.end_card.vf, enc: inter.args }));
+      const out = path.join(tmp, `${tag}seg_endcard.mp4`);
+      await band.step("endcard", stillArgs({ image: need(plan.end_card.key), out, seconds: plan.end_card.seconds, w, h, fps, kenburns: false,
+        vf: plan.end_card.vf, enc: c.inter }));
       clips.push(out);
       lengths.push(plan.end_card.seconds);
       transitions.push(plan.end_card.transition ?? null);
     }
     // 3. join
-    let body = path.join(tmp, "body.mp4");
-    const xa = xfadeArgs(clips, lengths, transitions, body, fps, inter.args);
-    if (xa) await step("join", xa);
+    let body = path.join(tmp, `${tag}body.mp4`);
+    const xa = xfadeArgs(clips, lengths, transitions, body, fps, c.inter);
+    if (xa) await band.step("join", xa);
     else {
-      const list = path.join(tmp, "body_list.txt");
+      const list = path.join(tmp, `${tag}body_list.txt`);
       await fsp.writeFile(list, concatList(clips), "utf8");
-      await step("join", concatArgs(list, body));
+      await band.step("join", concatArgs(list, body));
     }
     const total = (await probeMedia(ff, body)).duration;
     // 4. sound
-    let voice = path.join(tmp, "voice_mix.wav");
-    await step("voice", extractAudioArgs(body, voice), total);
+    let voice = path.join(tmp, `${tag}voice_mix.wav`);
+    await band.step("voice", extractAudioArgs(body, voice), total);
     const pics = (plan.layers?.pics ?? []).map((p) => ({ ...p, path: need(p.key) }));
     const sounds = await Promise.all((plan.layers?.sounds ?? []).map(async (sd) => {
       const p = need(sd.key);
       return { ...sd, path: p, has_audio: sd.has_audio ?? (await probeMedia(ff, p)).hasAudio };
     }));
-    if (o.effects && pics.length) {
+    if (pictures && c.effects && pics.length) {
       const out = path.join(tmp, "body_layers.mp4");
-      await step("layers", overlayArgs(body, pics, out, inter.args), total);
+      await band.step("layers", overlayArgs(body, pics, out, c.inter), total);
       body = out;
     }
-    if (o.effects && sounds.length) {
-      const out = path.join(tmp, "voice_layers.wav");
+    if (c.effects && sounds.length) {
+      const out = path.join(tmp, `${tag}voice_layers.wav`);
       const ma = mixArgs(voice, sounds, total, out);
       if (ma) {
-        await step("mix", ma, total);
+        await band.step("mix", ma, total);
         voice = out;
       }
     }
     let finalAudio = voice;
-    if (plan.music?.key && o.music) {
-      const out = path.join(tmp, "mixed.wav");
-      await step("music", musicBedArgs(need(plan.music.key), voice, out, total, plan.music.volume_db ?? -16, plan.music.duck !== false), total);
+    if (plan.music?.key && c.music) {
+      const out = path.join(tmp, `${tag}mixed.wav`);
+      await band.step("music", musicBedArgs(need(plan.music.key), voice, out, total, plan.music.volume_db ?? -16, plan.music.duck !== false), total);
       finalAudio = out;
     }
-    // 5. final
-    let ass: string | null = null;
-    if (plan.captions?.ass) {
-      ass = path.join(tmp, "captions.ass");
-      await fsp.writeFile(ass, plan.captions.ass, "utf8");
-    }
-    const ext = `.${preset.container}`;
-    const finalTmp = path.join(tmp, `final${ext}`);
-    await step("final", finalArgs({ video: body, audio: finalAudio, out: finalTmp, ass, loudnorm: plan.loudnorm, encoder: enc.args,
-      container: preset.container, fps: preset.fps }), total);
+    return { body, finalAudio, total };
+  }
 
-    // 6. into Renders/ with the series name, SRT beside it
+  /**
+   * The GPU path's picture (docs/ENGINE.md §5): FFmpeg waits on stdin with the preset's encoder, a hidden window runs the
+   * engine over the full-size plan and hands over every frame (engine.frame), and each frame is written as it arrives.
+   */
+  private async gpuFrames(job: RenderJob, src: GpuSource, o: { w: number; h: number; fps: number; frames: number; audio: string;
+    ass: string | null; out: string; encoder: string[]; container: "mp4" | "mov"; ff: string; tmp: string; signal: AbortSignal;
+    meter: { set(prog: number, extra?: Partial<RenderJob>): void }; from: number; loudnorm?: string }): Promise<void> {
+    const open = this.deps.openRenderWindow;
+    if (!open) throw new Error("The GPU engine needs the desktop app's render window");
+    const pipe = spawnFfmpegPipe(o.ff, gpuFinalArgs({ w: o.w, h: o.h, fps: o.fps, frames: o.frames, audio: o.audio, out: o.out, ass: o.ass,
+      loudnorm: o.loudnorm, encoder: o.encoder, container: o.container }), { signal: o.signal, cwd: o.tmp });
+    const frameBytes = Math.round(o.w * o.h * 1.5);
+    let win: { close(): void } | null = null;
+    const t0 = Date.now();
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const session: GpuSession = {
+          src, w: o.w, h: o.h, fps: o.fps, frames: o.frames, next: 0,
+          frame: async (i, bytes) => {
+            if (i !== session.next) throw new Error(`frame ${i} arrived, ${session.next} expected`);
+            if (bytes.byteLength !== frameBytes) throw new Error(`frame ${i} has ${bytes.byteLength} bytes, ${frameBytes} expected`);
+            await pipe.write(bytes);
+            session.next++;
+            const secs = Math.max((Date.now() - t0) / 1000, 0.001);
+            o.meter.set(o.from + (0.98 - o.from) * (session.next / o.frames), {
+              stepId: "gpu", step: `GPU frame ${session.next} of ${o.frames}`, speed: `${(session.next / o.fps / secs).toFixed(2)}x`,
+            });
+          },
+          done: () => (session.next === o.frames ? resolve() : reject(new Error(`the engine stopped at frame ${session.next} of ${o.frames}`))),
+          fail: (msg) => reject(new Error(`GPU engine: ${msg}`)),
+        };
+        this.gpuSessions.set(job.id, session);
+        job.stepId = "gpu";
+        job.step = "Starting the GPU engine";
+        this.emit(job, true);
+        o.signal.addEventListener("abort", () => reject(new Error("cancelled")), { once: true });
+        win = open(`/desktop/render-job?id=${encodeURIComponent(job.id)}`, () => {
+          if (this.gpuSessions.has(job.id)) reject(new Error("The GPU render window closed before the render finished"));
+        });
+      });
+      job.step = "Finishing the file";
+      this.emit(job, true);
+      this.gpuSessions.delete(job.id);
+      await pipe.end();
+    } catch (e) {
+      pipe.kill();
+      throw e;
+    } finally {
+      this.gpuSessions.delete(job.id);
+      try { (win as { close(): void } | null)?.close(); } catch { /* already closed */ }
+    }
+  }
+
+  /** What the render window needs: the full-size plan or the edit's project and sequence, the size and the frame count. */
+  engineJob(id: string): GpuRenderJob {
+    const s = this.gpuSessions.get(id);
+    if (!s) throw new Error("No GPU render is waiting for this window");
+    return gpuJob(s.src, { w: s.w, h: s.h, fps: s.fps, frames: s.frames });
+  }
+
+  async engineFrame(id: string, index: number, bytes: Uint8Array): Promise<void> {
+    const s = this.gpuSessions.get(id);
+    if (!s) throw new Error("No GPU render is running for this window");
+    await s.frame(index, bytes);
+  }
+
+  engineDone(id: string): void { this.gpuSessions.get(id)?.done(); }
+
+  engineFail(id: string, message: string): void { this.gpuSessions.get(id)?.fail(String(message || "failed").slice(0, 1000)); }
+
+  /**
+   * A Tatvam Editor export (docs/EDITOR.md §5): the sequence's sound mixed by FFmpeg (editor-audio.ts) into a WAV, then
+   * every frame drawn by the GPU engine from the project and muxed with the preset's encoder (loudnorm in the mux),
+   * into the edit's Renders folder as `<Sequence name>_v###.<ext>`.
+   */
+  private async runEdit(job: RenderJob, signal: AbortSignal, tmpHolder: { dir?: string }): Promise<void> {
+    const input = this.editJobs.get(job.id);
+    if (!input) throw new Error("The edit isn't loaded any more: export again");
+    const ffi = this.deps.ff();
+    if (!ffi) throw new Error("FFmpeg wasn't found: set its path in Settings");
+    const ff = ffi.path;
+    const probe = await this.deps.probe();
+    const s = this.deps.settings();
+    const preset = PRESETS.find((p) => p.id === job.preset)!;
+    const seq = input.project.sequences.find((x) => x.id === input.sequenceId);
+    if (!seq) throw new Error("The sequence isn't in the edit any more");
+    const { w, h } = editDims(preset, seq.width, seq.height);
+    const fps = preset.fps ?? seq.fps;
+    const enc = finalEncoder(preset, probe, s.encoder.prefer, s.encoder.hevc10bit);
+    if (!enc) throw new Error(`${preset.label} can't be encoded on this PC`);
+    Object.assign(job, { w, h, fps, encoder: enc.name, codec: preset.codec, engineUsed: "gpu" });
+    const tmp = path.join(input.editDir, "Cache", `export-${job.id.slice(0, 8)}`);
+    tmpHolder.dir = tmp;
+    await fsp.mkdir(tmp, { recursive: true });
+    job.status = "rendering";
+    const meter = this.meter(job, Date.now(), 0.01, { ff, tmp, signal });
+    // 1. the sound
+    const seconds = framesToSeconds(input.range.out - input.range.in, seq.fps);
+    const plan = mixPlan(input.project, seq, input.range);
+    job.warnings.push(...plan.warnings);
+    const mix = path.join(tmp, "mix.wav");
+    const runs = mixJobs(plan, mix, { part: (i) => path.join(tmp, `mix_part${i}.wav`) });
+    const band = meter.band(0.01, 0.1, runs.map((_, i) => ({ id: `mix${i}`, label: runs.length > 1 ? `Sound mix ${i + 1} of ${runs.length}` : "Sound mix",
+      weight: 1, seconds })), "Mixing the sound");
+    for (let i = 0; i < runs.length; i++) await band.step(`mix${i}`, runs[i], seconds);
+    // 2. the picture, drawn by the GPU engine
+    const frames = Math.max(1, Math.round(seconds * fps));
+    const finalTmp = path.join(tmp, `final.${preset.container}`);
+    await this.gpuFrames(job, { kind: "composition", project: input.project, sequenceId: seq.id, range: input.range },
+      { w, h, fps, frames, audio: mix, ass: null, out: finalTmp, encoder: enc.args, container: preset.container, ff, tmp, signal, meter, from: 0.1 });
+    // 3. into Renders
+    const rendersDir = path.join(input.editDir, "Renders");
+    await fsp.mkdir(rendersDir, { recursive: true });
+    const name = renderName(seq.name, preset.container, await fsp.readdir(rendersDir));
+    const outPath = path.join(rendersDir, name);
+    await fsp.rename(finalTmp, outPath).catch(async () => {
+      await fsp.copyFile(finalTmp, outPath);
+      await fsp.rm(finalTmp, { force: true });
+    });
+    job.output = outPath;
+    job.localVersion = Number(/_v(\d+)\.[^.]+$/.exec(name)?.[1] ?? 1);
+    job.duration_s = Math.round((await probeMedia(ff, outPath)).duration * 100) / 100;
+  }
+
+  /** Into Renders/ with the series name, the SRT beside it. */
+  private async finish(job: RenderJob, c: { project: { title: string }; ep: { number: number; season: number }; preset: (typeof PRESETS)[number];
+    folder: string; finalTmp: string; plan: RenderPlan; ff: string }): Promise<void> {
+    const { project, ep, preset, folder, finalTmp, plan, ff } = c;
+    const ext = `.${preset.container}`;
     const version = 1 + Math.max(0, ...this.jobs.filter((j) => j !== job && j.pid === job.pid && j.eid === job.eid && j.lang === job.lang
       && j.preset === job.preset && j.status === "done").map((j) => j.localVersion ?? 0));
     job.localVersion = version;
     const values = { project: project.title, season: ep.season, episode: ep.number, lang: job.lang, preset: job.preset, version,
       date: dateToken(), id: job.id.slice(0, 8), label: preset.label, kind: "render" };
-    const tpl = s.naming;
+    const tpl = this.deps.settings().naming;
     const rendersDir = path.join(folder, "Renders");
     await fsp.mkdir(rendersDir, { recursive: true });
     const taken = new Set((await fsp.readdir(rendersDir)).map((n) => pathKey(path.join(rendersDir, n))));
@@ -406,6 +643,7 @@ export class RenderManager {
     const job = this.get(id);
     if (!job) throw new Error("No such render");
     if (!job.output || !existsSync(job.output) || !["done", "uploading"].includes(job.status)) throw new Error("Only a finished render can be uploaded");
+    if (job.kind === "edit" && !job.eid) throw new Error("Only an edit imported from a studio episode can go to that episode's Render Center");
     if (this.uploads.has(id) || job.uploaded) return;
     const abort = new AbortController();
     this.uploads.set(id, abort);

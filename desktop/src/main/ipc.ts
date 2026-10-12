@@ -5,8 +5,9 @@
 import os from "node:os";
 import path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from "electron";
-import { IPC, RENDERER_SETTINGS, type DesktopSettings, type PanelId, type RenderJobInput } from "../shared/types.ts";
+import { IPC, RENDERER_SETTINGS, type AnalyzeKind, type DesktopSettings, type EditPreset, type EditProject, type PanelId, type RenderJobInput } from "../shared/types.ts";
 import type { Config } from "./config.ts";
+import type { EditorManager } from "./editor.ts";
 import { projectTitle, writeEdits } from "./edits.ts";
 import type { FfmpegInfo } from "./ffmpeg.ts";
 import type { Gateway } from "./gateway.ts";
@@ -32,6 +33,7 @@ export interface AppCtx {
   proxies: ProxyManager;
   renders: RenderManager;
   upscaler: LocalUpscaler;
+  editor: EditorManager;
   windows: WindowManager;
   ff(): FfmpegInfo | null;
   probe(force?: boolean): Promise<Record<string, boolean>>;
@@ -190,7 +192,50 @@ export function registerIpc(ctx: AppCtx): void {
   handle(IPC.upStart, (o) => ctx.upscaler.start(upOpts(o)));
   handle(IPC.upList, () => ctx.upscaler.list());
   handle(IPC.upCancel, (id: string) => ctx.upscaler.cancel(String(id)));
+
+  handle(IPC.engineJob, (id: string) => ctx.renders.engineJob(String(id)));
+  handle(IPC.engineFrame, (id: string, index: number, bytes: Uint8Array) => {
+    if (!(bytes instanceof Uint8Array)) throw new Error("A frame must be bytes");
+    return ctx.renders.engineFrame(String(id), int(index, "index"), bytes);
+  });
+  handle(IPC.engineDone, (id: string) => ctx.renders.engineDone(String(id)));
+  handle(IPC.engineFail, (id: string, message: string) => ctx.renders.engineFail(String(id), String(message ?? "")));
   handle(IPC.checkUpdates, () => checkForUpdates());
+
+  // ── Tatvam Editor (docs/EDITOR.md §5): the manager checks every edit path against its allow-list ──
+  const str = (v: unknown, name: string): string => {
+    if (typeof v !== "string" || !v || v.length > 4096) throw new Error(`${name} must be text`);
+    return v;
+  };
+  const ed = () => ctx.editor;
+  handle(IPC.editorList, () => ed().list());
+  handle(IPC.editorCreate, (name: string, preset: EditPreset) => ed().create(str(name, "name"), preset));
+  handle(IPC.editorOpen, (file?: string) => ed().open(file ? str(file, "path") : undefined));
+  handle(IPC.editorSave, (file: string, project: EditProject) => {
+    if (!project || typeof project !== "object") throw new Error("Nothing to save");
+    return ed().save(str(file, "path"), project);
+  });
+  handle(IPC.editorImportMedia, (file: string, files?: string[]) => ed().importMedia(str(file, "path"),
+    Array.isArray(files) ? files.filter((f) => typeof f === "string").slice(0, 2000) : undefined));
+  handle(IPC.editorMediaUrl, (file: string, media: string) => ed().mediaUrl(str(file, "path"), str(media, "file")));
+  handle(IPC.editorRelink, (file: string, mediaId: string) => ed().relink(str(file, "path"), str(mediaId, "mediaId")));
+  handle(IPC.editorProxy, (file: string, mediaId: string) => ed().proxy(str(file, "path"), str(mediaId, "mediaId")));
+  handle(IPC.editorImportEpisode, (pid: number, eid: number, file: string) => ed().importEpisode(int(pid, "pid"), int(eid, "eid"), str(file, "path")));
+  handle(IPC.editorExport, (file: string, sequenceId: string, opts: { preset: string; range: "all" | "inout"; upload?: boolean }) =>
+    ed().export(str(file, "path"), str(sequenceId, "sequenceId"), { preset: str(opts?.preset, "preset"), range: opts?.range === "inout" ? "inout" : "all",
+      upload: Boolean(opts?.upload) }));
+  handle(IPC.editorImportLut, (file: string) => ed().importLut(str(file, "path")));
+  handle(IPC.editorImportShader, (file: string, kind: "transition" | "effect") => ed().importShader(str(file, "path"), kind === "effect" ? "effect" : "transition"));
+  handle(IPC.editorShaders, () => ed().shaders());
+  handle(IPC.editorAnalyze, (file: string, mediaId: string, kind: AnalyzeKind, opts?: Record<string, unknown>) => {
+    if (!["silence", "scenes", "beats", "loudness"].includes(kind)) throw new Error("Unknown analysis");
+    const o = opts && typeof opts === "object" ? opts : {};
+    const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+    return ed().analyze(str(file, "path"), str(mediaId, "mediaId"), kind, { noiseDb: n(o.noiseDb), minMs: n(o.minMs), threshold: n(o.threshold) });
+  });
+  handle(IPC.editorUploadAsset, (file: string, mediaId: string, projectId: number) => ed().uploadAsset(str(file, "path"), str(mediaId, "mediaId"), int(projectId, "projectId")));
+  handle(IPC.editorImportStudioAsset, (file: string, key: string, name?: string) => ed().importStudioAsset(str(file, "path"), str(key, "key"),
+    typeof name === "string" && name ? name.slice(0, 200) : undefined));
 
   handle(IPC.offlineStatus, () => ctx.gateway.status());
   handle(IPC.offlineFlush, () => ctx.gateway.flush());

@@ -237,6 +237,8 @@ class Project(Base, Serializable):
     __tablename__ = "projects"
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(200))
+    # catalog.PROJECT_TYPES, or "edit": the hidden studio project of a Tatvam Editor edit (api/edits.py; brief.edit_id),
+    # which carries its AI costs, budget and approvals and is left out of the studio's project lists
     type: Mapped[str] = mapped_column(String(20), default="short")
     concept: Mapped[str] = mapped_column(Text, default="")
     aspect: Mapped[str] = mapped_column(String(8), default="9:16")

@@ -26,6 +26,13 @@ export function DesktopMenu() {
         else if (action === "open-settings") void d.app.openConnection();
         else setAbout(true);
       } else if (action === "sync-now") toast.message(t("Open a project to sync its folder"));
+      else if (action === "open-editor" || action === "open-edit") {
+        // an open editor handles these itself (it asks about unsaved changes first)
+        const ev = new CustomEvent("ed:desktop-menu", { detail: action, cancelable: true });
+        if (!window.dispatchEvent(ev)) return;
+        if (action === "open-editor") nav("/editor");
+        else void d.editor?.open().then((r) => { if (r) nav(`/editor/edit?path=${encodeURIComponent(r.path)}`); }).catch((e) => toast.error(String((e as Error)?.message ?? e)));
+      }
     });
   }, [nav, pid, t]);
 

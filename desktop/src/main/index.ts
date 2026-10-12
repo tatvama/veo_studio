@@ -5,11 +5,13 @@
 import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { app, crashReporter, dialog, screen, session, shell } from "electron";
+import { app, BrowserWindow, crashReporter, dialog, screen, session, shell } from "electron";
 import { IPC } from "../shared/types.ts";
 import { LocalUpscaler } from "./aiupscale.ts";
 import { Config } from "./config.ts";
 import { openConnectionWindow, registerConnectIpc, type ConnectDeps } from "./connect.ts";
+import { EditorManager } from "./editor.ts";
+import { editorDeepLink } from "./editor-model.ts";
 import { locateFfmpeg, machineCheck, probeHardware, type FfmpegInfo } from "./ffmpeg.ts";
 import { Gateway } from "./gateway.ts";
 import { chooseLibraryRoot, projectTitle, registerIpc, writeEdits, type AppCtx } from "./ipc.ts";
@@ -27,14 +29,21 @@ import { ImportWatcher } from "./watch.ts";
 import { WindowManager } from "./windows.ts";
 
 if (process.env.TATVAM_USER_DATA) app.setPath("userData", process.env.TATVAM_USER_DATA);
+// laptops with two GPUs: the GPU engine and WebCodecs run on the dedicated card, not the built-in one
+if (process.env.TATVAM_INTEGRATED_GPU !== "1") app.commandLine.appendSwitch("force_high_performance_gpu");
 crashReporter.start({ uploadToServer: false, compress: true });
 const userData = app.getPath("userData");
 initLog(userData);
 const log = (m: string) => console.log(m);
 const smoke = process.env.TATVAM_SMOKE === "1";
 
-/** tatvam://open?project=12&episode=3 → /p/12/finish?episode=3 */
+/** tatvam://open?project=12&episode=3 → /p/12/finish?episode=3; tatvam://editor?path=… → /editor/edit?path=… */
 export function deepLinkPath(url: string): string | null {
+  const ed = editorDeepLink(url);
+  if (ed) {
+    if (ed.file) editorRef?.allowEditFile(ed.file); // the link hands this edit over: the page may open it
+    return ed.urlPath;
+  }
   try {
     const u = new URL(url);
     if (u.protocol !== "tatvam:") return null;
@@ -55,6 +64,7 @@ function uiDir(): string | null {
 }
 
 let ctx: AppCtx | null = null;
+let editorRef: EditorManager | null = null;
 let pendingLink = process.argv.find((a) => a.startsWith("tatvam://")) ?? null;
 
 if (!app.requestSingleInstanceLock()) {
@@ -99,6 +109,7 @@ async function start(): Promise<void> {
     uiDir: () => dir,
     uiSource: () => config.get().uiSource,
     resolveMedia: (key) => library.resolveKey(key),
+    resolveEditorMedia: (id) => editorRef?.resolve(id) ?? null,
     store: library,
     getCookie: cookie,
     onStatus: (s) => windows?.broadcast(IPC.offlineChange, s),
@@ -150,6 +161,7 @@ async function start(): Promise<void> {
     config, library, gateway, upstream, windows: wm, ff, probe, log,
     openConnection: () => void openConnectionWindow(connectDeps, wm.main),
     sync: undefined as never, imports: undefined as never, proxies: undefined as never, renders: undefined as never, upscaler: undefined as never,
+    editor: undefined as never,
     machineCheck: async () => machineCheck({ ffmpeg: ff(), encoders: await probe(), libraryRoot: config.get().libraryRoot,
       gpuInfo: await app.getGPUInfo("complete").catch(() => undefined),
       displays: wm.displays().map((d) => ({ id: d.id, label: d.label, width: d.bounds.width, height: d.bounds.height, scaleFactor: d.scaleFactor, primary: d.primary })) }),
@@ -161,10 +173,25 @@ async function start(): Promise<void> {
   appCtx.imports = new ImportWatcher({ library, upstream, template: () => config.get().naming.Imports, log });
   appCtx.proxies = new ProxyManager({ library, ff, probe: () => probe(), broadcast: (s) => wm.broadcast(IPC.proxyProgress, s), log });
   appCtx.renders = new RenderManager({ upstream, library, ff, probe: () => probe(), settings: () => config.get(),
-    jobsFile: path.join(userData, "renders.json"), broadcast: (j) => wm.broadcast(IPC.renderProgress, j), log });
+    jobsFile: path.join(userData, "renders.json"), broadcast: (j) => wm.broadcast(IPC.renderProgress, j), log,
+    openRenderWindow: (urlPath, onClosed) => wm.openRenderWindow(urlPath, onClosed) });
   appCtx.upscaler = new LocalUpscaler({ library, upstream, ff, probe: () => probe(), userData, machine: os.hostname(),
     prefer: () => config.get().encoder.prefer, broadcast: (j) => wm.broadcast(IPC.upProgress, j),
     broadcastTool: (t) => wm.broadcast(IPC.upToolChange, t), log });
+  appCtx.editor = new EditorManager({
+    libraryRoot: () => config.get().libraryRoot, userData, upstream, localKey: (k) => library.resolveKeyOriginal(k), ff, probeHw: () => probe(),
+    renders: appCtx.renders, log,
+    dialogs: {
+      openFiles: async (o) => {
+        const parent = BrowserWindow.getFocusedWindow() ?? wm.main;
+        const opts: Electron.OpenDialogOptions = { title: o.title, filters: o.filters, defaultPath: o.defaultPath,
+          properties: o.multi ? ["openFile", "multiSelections"] : ["openFile"] };
+        const r = parent ? await dialog.showOpenDialog(parent, opts) : await dialog.showOpenDialog(opts);
+        return r.canceled ? [] : r.filePaths;
+      },
+    },
+  });
+  editorRef = appCtx.editor;
   ctx = appCtx;
   registerIpc(appCtx);
 

@@ -203,6 +203,22 @@ export class WindowManager {
     }
   }
 
+  /**
+   * A hidden window for the GPU engine's final render (docs/ENGINE.md §5): the bridge, never shown, never throttled, so
+   * frames keep coming while the editor works in other windows. `onClosed` fires if it goes away (a crash, say).
+   */
+  openRenderWindow(urlPath: string, onClosed: () => void): { close(): void } {
+    const win = new BrowserWindow({
+      width: 640, height: 360, show: false, title: "GPU render · Tatvam Studio", backgroundColor: "#000000", autoHideMenuBar: true,
+      webPreferences: { ...this.webPreferences(), backgroundThrottling: false },
+    });
+    this.harden(win.webContents, win);
+    win.webContents.on("render-process-gone", () => onClosed());
+    win.on("closed", () => onClosed());
+    void win.loadURL(this.deps.gatewayUrl() + urlPath);
+    return { close: () => { if (!win.isDestroyed()) win.destroy(); } };
+  }
+
   // ── panels ──
   popOut(panel: PanelId, opts: { pid?: number; eid?: number; display?: number; fullscreen?: boolean; clean?: boolean } = {}): number {
     if (!(PANELS as string[]).includes(panel)) throw new Error(`Unknown panel ${panel}`);

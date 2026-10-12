@@ -6,9 +6,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  PRESETS, STAB_TRANSFORM, atempoChain, concatList, escPath, finalArgs, finalEncoder, fitFilter, intermediateEncoder, mixArgs, musicBedArgs,
-  overlayArgs, presetDims, presetList, segmentArgs, stabilizeDetectArgs, stepWeights, stillArgs, substituteLuts, uhdVf, xfadeArgs,
-  type PlanSegment, type RenderPlan,
+  atempoChain, concatList, draftDims, escPath, finalArgs, finalEncoder, fitFilter, gpuFinalArgs, intermediateEncoder, mixArgs, musicBedArgs, overlayArgs, presetDims, presetList, PRESETS, segmentArgs, STAB_TRANSFORM, stabilizeDetectArgs, stepWeights, stillArgs, substituteLuts, type PlanSegment, type RenderPlan, uhdVf, xfadeArgs,
 } from "../src/main/render-args.ts";
 import { planKeys } from "../src/main/render.ts";
 
@@ -150,7 +148,7 @@ test("final mux: loudnorm, burned ASS with shaping, preset encoder, ProRes audio
   const a = finalArgs({ video: "body.mp4", audio: "mixed.wav", out: "final.mp4", ass: "D:\\p\\Cache\\captions.ass", loudnorm: "loudnorm=I=-14:TP=-1.5:LRA=11",
     encoder: ["-c:v", "hevc_nvenc"], container: "mp4" });
   assert.deepEqual(a, ["-i", "body.mp4", "-i", "mixed.wav", "-vf", "ass='D\\:/p/Cache/captions.ass':shaping=complex", "-c:v", "hevc_nvenc", "-map", "0:v", "-map", "1:a",
-    "-af", "loudnorm=I=-14:TP=-1.5:LRA=11", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", "-shortest", "final.mp4"]);
+    "-af", "loudnorm=I=-14:TP=-1.5:LRA=11,apad", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", "-shortest", "final.mp4"]);
   const m = finalArgs({ video: "b.mp4", audio: "a.wav", out: "f.mov", encoder: ["-c:v", "prores_ks"], container: "mov", fps: 25 });
   assert.ok(!m.includes("-vf"));
   assert.ok(m.join(" ").includes("-r 25"));
@@ -166,4 +164,22 @@ test("step weights sum to 1 and plan keys are collected", () => {
   assert.deepEqual(w.map((x) => x.id), ["prepare", "seg0", "seg1", "endcard", "join", "voice", "layers", "music", "final"]);
   assert.deepEqual(planKeys(plan).sort(), ["projects/1/b.mp4", "projects/1/desktop/end.png", "projects/1/l.png", "projects/1/luts/3.cube", "projects/1/m.mp3",
     "projects/1/n.wav", "projects/1/shots/41/video/a.mp4", "projects/1/v.wav"]);
+});
+
+test("GPU path: raw YUV frames on stdin, the draft pass's sound, ASS burned, length fixed by the frame count", () => {
+  const args = gpuFinalArgs({ w: 3840, h: 2160, fps: 24, frames: 382, audio: "mixed.wav", out: "final.mp4", ass: "C:\\tmp\\captions.ass",
+    encoder: ["-c:v", "hevc_nvenc"], container: "mp4" });
+  assert.deepEqual(args.slice(0, 15), ["-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", "3840x2160", "-framerate", "24", "-color_range", "tv",
+    "-colorspace", "bt709", "-i", "pipe:0", "-i"]);
+  assert.equal(args[args.indexOf("-vf") + 1], "ass='C\\:/tmp/captions.ass':shaping=complex");
+  assert.equal(args[args.indexOf("-af") + 1], "loudnorm=I=-14:TP=-1.5:LRA=11,apad,atrim=0:15.917");
+  assert.equal(args[args.indexOf("-frames:v") + 1], "382");
+  assert.ok(args.includes("hevc_nvenc") && args.at(-1) === "final.mp4" && args.includes("aac"));
+  assert.ok(gpuFinalArgs({ w: 64, h: 36, fps: 25, frames: 25, audio: "a.wav", out: "m.mov", encoder: [], container: "mov" }).includes("pcm_s24le"));
+});
+
+test("draft size keeps the shape with a 144 short side", () => {
+  assert.deepEqual(draftDims(3840, 2160), { w: 256, h: 144 });
+  assert.deepEqual(draftDims(2160, 3840), { w: 144, h: 256 });
+  assert.deepEqual(draftDims(1440, 1440), { w: 144, h: 144 });
 });

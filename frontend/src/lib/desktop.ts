@@ -6,6 +6,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import type { EditProject, MediaItem } from "../editor/model/types";
 
 // ── types (docs/DESKTOP.md §4 and §5) ────────────────────────────────────────
 
@@ -63,7 +64,15 @@ export interface MachineReport {
 /** §4.1. `hardware` names the hardware encoder used for this preset on this machine (or false for software). */
 export interface RenderPreset { id: string; label: string; w: number; h: number; fps: number; codec: string; container: string; hardware?: string | boolean }
 
+/** auto: the GPU engine when the cut uses a GPU-only transition or effect, else FFmpeg. */
+export type RenderEngine = "auto" | "gpu" | "ffmpeg";
+
+/** What the hidden GPU render window gets from the desktop (docs/ENGINE.md §5): the full-size render plan and the frame count. */
+export interface GpuRenderJob { plan: unknown; w: number; h: number; fps: number; frames: number }
+
 export interface RenderJob {
+  /** Which engine drew the picture (newer desktop builds). */
+  engineUsed?: "gpu" | "ffmpeg";
   id: string; pid: number; eid: number; lang: string; preset: string;
   status: "queued" | "preparing" | "downloading" | "rendering" | "uploading" | "done" | "failed" | "cancelled";
   /** 0..1 */
@@ -146,7 +155,7 @@ export interface TatvamDesktop {
   render: {
     presets(): Promise<RenderPreset[]>;
     start(job: { pid: number; eid: number; lang: string; preset: string; effects?: boolean; captions?: boolean;
-                 music?: boolean; upscaled?: boolean; localUpscale?: boolean; upload?: boolean }): Promise<string>;
+                 music?: boolean; upscaled?: boolean; localUpscale?: boolean; upload?: boolean; engine?: RenderEngine }): Promise<string>;
     cancel(id: string): Promise<void>;
     list(): Promise<RenderJob[]>;
     onProgress(cb: (j: RenderJob) => void): () => void;
@@ -172,6 +181,13 @@ export interface TatvamDesktop {
          onUpdate(cb: (u: UpdateState) => void): () => void; onMenu(cb: (action: string) => void): () => void };
   offline: { status(): Promise<OfflineStatus>; onChange(cb: (s: OfflineStatus) => void): () => void; flush(): Promise<void> };
   /** AI upscale on this PC's graphics card; results upload as the shots' upscale takes. Missing in older desktop builds. */
+  /** The hidden GPU render window's side of a desktop GPU render. Missing in older desktop builds. */
+  engine?: {
+    job(id: string): Promise<GpuRenderJob>;
+    frame(id: string, index: number, yuv420: Uint8Array): Promise<void>;
+    done(id: string): Promise<void>;
+    fail(id: string, message: string): Promise<void>;
+  };
   upscale?: {
     tool(): Promise<UpscaleTool>;
     install(): Promise<UpscaleTool>;
@@ -182,6 +198,52 @@ export interface TatvamDesktop {
     cancel(id: string): Promise<void>;
     onProgress(cb: (j: UpscaleJob) => void): () => void;
   };
+  /** Tatvam Editor (docs/EDITOR.md §5): edit projects on this PC. Missing in older desktop builds. */
+  editor?: EditorBridge;
+}
+
+export interface EditListEntry { path: string; name: string; modified: string; thumb?: string; /** additive */ recent?: boolean }
+export interface EditPreset { width: number; height: number; fps: number }
+export type AnalyzeKind = "silence" | "scenes" | "beats" | "loudness";
+export interface AnalyzeOptions { noiseDb?: number; minMs?: number; threshold?: number }
+export type AnalyzeResult =
+  | { kind: "silence"; segments: { start: number; end: number }[]; duration: number }
+  | { kind: "scenes"; cuts: number[]; duration: number }
+  | { kind: "beats"; beats: number[]; bpm: number; duration: number }
+  | { kind: "loudness"; lufs: number | null; lra: number | null; truePeak: number | null };
+export interface ShaderEntry { id: string; name: string; kind: "transition" | "effect"; glsl: string }
+export interface LutEntry { id: string; name: string; /** additive */ path?: string; url?: string; size?: number }
+
+/** The Tatvam Editor's side of the bridge (docs/EDITOR.md §5, §8; same as desktop/src/shared/types.ts). Paths are the
+ *  .tatvamedit file of the edit. export, importEpisode and proxy read the SAVED file: save first. */
+export interface EditorBridge {
+  list(): Promise<EditListEntry[]>;
+  create(name: string, preset: EditPreset): Promise<{ path: string; project: EditProject }>;
+  open(path?: string): Promise<{ path: string; project: EditProject } | null>;
+  save(path: string, project: EditProject): Promise<{ modified: string }>;
+  importMedia(path: string, files?: string[]): Promise<MediaItem[]>;
+  pathsForDrop(files: File[]): string[];
+  mediaUrl(path: string, file: string): Promise<string>;
+  relink(path: string, mediaId: string): Promise<MediaItem | null>;
+  /** Resolves when the proxy is made, with the item's proxyPath / proxyUrl set (the doc says void: the value is extra). */
+  proxy(path: string, mediaId: string): Promise<MediaItem>;
+  importEpisode(pid: number, eid: number, path: string): Promise<{ sequenceId: string; project: EditProject; warnings?: string[] }>;
+  /** Starts the export; resolves with the RenderJob id (progress on render.onProgress, job.kind "edit"). */
+  export(path: string, sequenceId: string, opts: { preset: string; range: "all" | "inout"; upload?: boolean }): Promise<string>;
+  importLut(path: string): Promise<LutEntry | null>;
+  importShader(path: string, kind: "transition" | "effect"): Promise<{ id: string; name: string } | null>;
+  /** additive: the custom shaders imported on this PC (the engine registers them at load). */
+  shaders(): Promise<ShaderEntry[]>;
+  analyze(path: string, mediaId: string, kind: AnalyzeKind, opts?: AnalyzeOptions): Promise<AnalyzeResult>;
+  uploadAsset(path: string, mediaId: string, projectId: number): Promise<{ key: string; url: string; duration: number }>;
+  importStudioAsset(path: string, key: string, name?: string): Promise<MediaItem>;
+}
+
+/** The editor bridge, or null in a browser or an older desktop build. */
+export const editorBridge = (): EditorBridge | null => desktop()?.editor ?? null;
+/** Same, as a hook (the bridge never changes during a page's life). */
+export function useEditorBridge(): EditorBridge | null {
+  return editorBridge();
 }
 
 declare global {

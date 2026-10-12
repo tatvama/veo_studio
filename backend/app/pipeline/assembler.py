@@ -290,6 +290,8 @@ def render(db: Session, episode: Episode, lang: str, preset: str, kind: str, opt
         luts = project_luts(project)
         effects = options.get("effects", True) is not False  # transitions, looks and moves (off = plain cut)
         timed, cues, overlays = timeline(segs, effects, ro["sfx"])
+        for tm in timed:  # FFmpeg draws a gl-transition as a fade and leaves the GPU-only effects out
+            warnings += fxlib.fallback_warnings(tm.sg.shot.code, tm.fx, tm.transition is not None)
         lengths = [tm.seg_len for tm in timed]
         transitions: list[tuple[str, float] | None] = [tm.transition for tm in timed]
         clips: list[Path] = []
@@ -374,7 +376,8 @@ def _mix_audio(out: Path, base: Path | None, extra: list[tuple], seconds: float)
 
 def preview_fx(db: Session, shot: Shot, fx_override: dict | None, out: Path, height: int = 480) -> Path:
     """A few seconds of this shot exactly as the export renders it (same filters, same transition from the shot
-    before), small and quick, so the team can check an effect before a full render."""
+    before), small and quick, so the team can check an effect before a full render. Like the export, a gl-transition
+    shows as a fade and the GPU-only effects are left out (fx.fallback_warnings says which)."""
     st = get_storage()
     episode = db.get(Episode, shot.episode_id)
     project = db.get(Project, episode.project_id)

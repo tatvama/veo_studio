@@ -1,6 +1,6 @@
 """Run the same checks as CI on this machine, before you push.
 
-    python scripts/dev/check.py              # backend lint + tests, frontend typecheck + build, desktop typecheck + tests
+    python scripts/dev/check.py              # backend lint + tests, frontend typecheck + build + engine tests, desktop typecheck + tests
     python scripts/dev/check.py --backend    # only the backend
     python scripts/dev/check.py --frontend   # only the frontend
     python scripts/dev/check.py --desktop    # only the desktop app (desktop/)
@@ -74,6 +74,8 @@ def main() -> None:
         tsc = [npm, "exec", "--", "tsc", "-b"] if a.fast else [npm, "run", "build"]
         title = "Frontend typecheck (tsc -b)" if a.fast else "Frontend typecheck + build (tsc -b && vite build)"
         results.append(("frontend", step(title, tsc, fe)))
+        if not a.fast and '"test:engine"' in (fe / "package.json").read_text(encoding="utf-8"):
+            results.append(("engine tests", step("GPU engine unit tests (node --test)", [npm, "run", "test:engine"], fe)))
 
     if (a.desktop or both) and (HERE / "desktop" / "package.json").exists():
         npm = shutil.which("npm")

@@ -240,6 +240,48 @@ export function runFfmpeg(ff: string, args: string[], opts: RunOptions = {}): Pr
   });
 }
 
+/**
+ * FFmpeg fed through stdin (the GPU engine's raw frames). `write` resolves once FFmpeg has taken the bytes, so the
+ * producer can't run ahead of the encoder; `end` closes stdin and resolves when FFmpeg exits cleanly.
+ */
+export function spawnFfmpegPipe(ff: string, args: string[], opts: { signal?: AbortSignal; cwd?: string; onProgress?(p: FfProgress): void } = {}): {
+  write(buf: Uint8Array): Promise<void>; end(): Promise<{ stderr: string }>; kill(): void;
+} {
+  const full = ["-hide_banner", "-nostats", "-y", "-progress", "pipe:2", ...args];
+  const child = spawn(ff, full, { cwd: opts.cwd, windowsHide: true, stdio: ["pipe", "ignore", "pipe"] });
+  let stderr = "";
+  let failed: Error | null = null;
+  child.stderr.setEncoding("utf8");
+  child.stderr.on("data", (d: string) => {
+    stderr += d;
+    if (stderr.length > 200_000) stderr = stderr.slice(-100_000);
+    const m = /frame=(\d+)[\s\S]*?out_time_us=(\d+)[\s\S]*?speed=\s*([\d.]+x|N\/A)/.exec(d);
+    if (m) opts.onProgress?.({ frame: Number(m[1]), outTimeS: Number(m[2]) / 1e6, speed: m[3], fps: 0 });
+  });
+  const exited = new Promise<number | null>((res) => child.on("close", (code) => res(code)));
+  child.on("error", (e) => { failed = new FfmpegError(`ffmpeg could not start: ${e.message}`, null, ""); });
+  child.stdin.on("error", (e) => { failed ??= new FfmpegError(`ffmpeg stopped reading frames: ${e.message}`, null, stderr.slice(-2000)); });
+  const kill = () => { if (child.pid && child.exitCode === null) killTree(child.pid); };
+  opts.signal?.addEventListener("abort", kill, { once: true });
+  return {
+    write: (buf) => new Promise<void>((resolve, reject) => {
+      if (failed) return reject(failed);
+      if (child.stdin.write(buf)) resolve();
+      else child.stdin.once("drain", () => (failed ? reject(failed) : resolve()));
+    }),
+    end: async () => {
+      child.stdin.end();
+      const code = await exited;
+      opts.signal?.removeEventListener("abort", kill);
+      const tail = stderr.trim().split(/\r?\n/).filter((l) => !/^\w+=/.test(l)).slice(-15).join("\n");
+      if (opts.signal?.aborted) throw new FfmpegError("cancelled", code, tail);
+      if (code !== 0) throw new FfmpegError(`ffmpeg failed (${code}): ${tail}`, code, tail);
+      return { stderr };
+    },
+    kill,
+  };
+}
+
 export interface MediaInfo { duration: number; width: number; height: number; hasAudio: boolean; hasVideo: boolean }
 
 /** Duration, size and streams from `ffmpeg -i` (the same parsing the server does). */

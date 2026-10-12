@@ -38,8 +38,13 @@ export interface PlanSegment {
   vf_post: string;
   af_fx: string;
   transition: [string, number] | null;
+  /** The cleaned shot fx ({} when effects are off) and the effective transition for the GPU engine (docs/ENGINE.md §2). */
+  fx?: Record<string, unknown>;
+  gpu_transition?: { type: string; duration: number; params?: Record<string, unknown>; easing?: string } | null;
 }
-export interface PlanPic { key: string; kind: string; start: number; in: number; dur: number; chain: string[]; x: string; y: string }
+export interface PlanPic { key: string; kind: string; start: number; in: number; dur: number; chain: string[]; x: string; y: string;
+  /** The layer clip's own values (the GPU engine composites from these, not from the FFmpeg expressions). */
+  raw?: Record<string, unknown> }
 export interface PlanSound { key: string; start: number; in: number; dur: number; gain_db?: number; fade_in?: number; fade_out?: number; has_audio?: boolean }
 export interface RenderPlan {
   episode_id: number;
@@ -64,6 +69,8 @@ export interface RenderPlan {
   /** Stabilising filters with a @@TRF@@ placeholder for the transforms file (backend ffmpeg.STAB_DETECT / STAB_TRANSFORM). */
   stabilize_filters?: { detect: string; transform: string };
   keys?: string[];
+  /** GPU-only features the cut uses (e.g. "chroma", "gl:cube"): the desktop then renders on the GPU engine. */
+  gpu_only?: string[];
 }
 
 export const STAB_DETECT = "vidstabdetect=shakiness=6:accuracy=12:result='@@TRF@@'";
@@ -486,7 +493,9 @@ export function musicBedArgs(music: string, voiceMix: string | null, out: string
 /** The final mux: loudness-normalised sound, burned ASS captions / titles, the preset's encoder (backend replace_audio_mix). */
 export function finalArgs(opts: { video: string; audio: string; out: string; ass?: string | null; fontsDir?: string | null; loudnorm?: string;
   encoder: string[]; container: "mp4" | "mov"; fps?: number }): string[] {
-  const af = opts.loudnorm || "loudnorm=I=-14:TP=-1.5:LRA=11";
+  // apad: with -shortest the picture decides the length, so a sound mix that comes out a little short can't cut the
+  // end of the cut off (seen once: a 15.3 s cut rendered as 14.5 s, the last shot's tail missing)
+  const af = `${opts.loudnorm || "loudnorm=I=-14:TP=-1.5:LRA=11"},apad`;
   const args: string[] = ["-i", opts.video, "-i", opts.audio];
   if (opts.ass) {
     let vf = `ass='${escAssPath(opts.ass)}':shaping=complex`;
@@ -498,6 +507,34 @@ export function finalArgs(opts: { video: string; audio: string; out: string; ass
   const audio = opts.container === "mov" ? ["-c:a", "pcm_s24le", "-ar", "48000"] : ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"];
   args.push("-map", "0:v", "-map", "1:a", "-af", af, ...audio, "-movflags", "+faststart", "-shortest", opts.out);
   return args;
+}
+
+/**
+ * The final encode of the GPU path: raw YUV 4:2:0 frames from the engine on stdin (BT.709 limited range, as the engine
+ * writes them), the sound from the draft-size FFmpeg pass, the plan's ASS burned with libass (HarfBuzz shaping), and the
+ * preset's encoder. `frames` fixes the length; the sound is padded or cut to it.
+ */
+export function gpuFinalArgs(opts: { w: number; h: number; fps: number; frames: number; audio: string; out: string; ass?: string | null;
+  fontsDir?: string | null; loudnorm?: string; encoder: string[]; container: "mp4" | "mov" }): string[] {
+  const seconds = (opts.frames / opts.fps).toFixed(3);
+  const args: string[] = ["-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", `${opts.w}x${opts.h}`, "-framerate", String(opts.fps),
+    "-color_range", "tv", "-colorspace", "bt709", "-i", "pipe:0", "-i", opts.audio];
+  if (opts.ass) {
+    let vf = `ass='${escAssPath(opts.ass)}':shaping=complex`;
+    if (opts.fontsDir) vf += `:fontsdir='${escAssPath(opts.fontsDir)}'`;
+    args.push("-vf", vf);
+  }
+  const af = `${opts.loudnorm || "loudnorm=I=-14:TP=-1.5:LRA=11"},apad,atrim=0:${seconds}`;
+  const audio = opts.container === "mov" ? ["-c:a", "pcm_s24le", "-ar", "48000"] : ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"];
+  args.push(...opts.encoder, "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv",
+    "-map", "0:v", "-map", "1:a", "-af", af, ...audio, "-frames:v", String(opts.frames), "-movflags", "+faststart", opts.out);
+  return args;
+}
+
+/** A draft size with the same shape (the GPU path's sound-only FFmpeg pass): short side 144, even numbers. */
+export function draftDims(w: number, h: number): { w: number; h: number } {
+  const even = (v: number) => Math.max(2, Math.round(v / 2) * 2);
+  return w >= h ? { w: even((144 * w) / h), h: 144 } : { w: 144, h: even((144 * h) / w) };
 }
 
 /** Step weights for the overall progress bar. */

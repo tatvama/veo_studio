@@ -2,7 +2,7 @@
  * `window.tatvamDesktop`, the typed bridge (docs/DESKTOP.md §5). Sandboxed preload: bundled to CommonJS with only
  * `electron` external. Every call is an ipcRenderer.invoke; every `on…` returns its unsubscribe function.
  */
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from "electron";
 import { IPC, type OfflineStatus, type ProxyStatus, type RenderJob, type SyncStatus, type TatvamDesktop, type UpdateState, type UpscaleJob,
   type UpscaleTool } from "../shared/types.ts";
 
@@ -103,6 +103,32 @@ const bridge: TatvamDesktop = {
     list: () => invoke(IPC.upList),
     cancel: (id) => invoke(IPC.upCancel, id),
     onProgress: listen<UpscaleJob>(IPC.upProgress),
+  },
+  engine: {
+    job: (id) => invoke(IPC.engineJob, id),
+    frame: (id, index, bytes) => invoke(IPC.engineFrame, id, index, bytes),
+    done: (id) => invoke(IPC.engineDone, id),
+    fail: (id, message) => invoke(IPC.engineFail, id, message),
+  },
+  editor: {
+    list: () => invoke(IPC.editorList),
+    create: (name, preset) => invoke(IPC.editorCreate, name, preset),
+    open: (file) => invoke(IPC.editorOpen, file),
+    save: (file, project) => invoke(IPC.editorSave, file, project),
+    importMedia: (file, files) => invoke(IPC.editorImportMedia, file, files),
+    // runs here, synchronously: File objects from a drop can't cross IPC, their paths can
+    pathsForDrop: (files) => Array.from(files ?? []).map((f) => { try { return webUtils.getPathForFile(f); } catch { return ""; } }).filter(Boolean),
+    mediaUrl: (file, media) => invoke(IPC.editorMediaUrl, file, media),
+    relink: (file, mediaId) => invoke(IPC.editorRelink, file, mediaId),
+    proxy: (file, mediaId) => invoke(IPC.editorProxy, file, mediaId),
+    importEpisode: (pid, eid, file) => invoke(IPC.editorImportEpisode, pid, eid, file),
+    export: (file, sequenceId, opts) => invoke(IPC.editorExport, file, sequenceId, opts),
+    importLut: (file) => invoke(IPC.editorImportLut, file),
+    importShader: (file, kind) => invoke(IPC.editorImportShader, file, kind),
+    shaders: () => invoke(IPC.editorShaders),
+    analyze: (file, mediaId, kind, opts) => invoke(IPC.editorAnalyze, file, mediaId, kind, opts),
+    uploadAsset: (file, mediaId, projectId) => invoke(IPC.editorUploadAsset, file, mediaId, projectId),
+    importStudioAsset: (file, key, name) => invoke(IPC.editorImportStudioAsset, file, key, name),
   },
   offline: {
     status: () => invoke(IPC.offlineStatus),
