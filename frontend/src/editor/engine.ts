@@ -12,7 +12,7 @@
 import type { Composition, CustomSource, EffectInfo, EffectParamDef, Engine, TransitionInfo } from "../engine";
 import type { EditProject } from "./model/types";
 import { toComposition, toVideoComposition, type CompositionOptions, type CompositionResult, type GeneratedSource } from "./model/toComposition";
-import { drawTitle, ensureFont } from "./render/title";
+import { drawTitle, ensureFont, isExtendedTitle, titleFrameKey } from "./render/title";
 
 type EngineModule = typeof import("../engine");
 let modP: Promise<EngineModule> | null = null;
@@ -29,7 +29,31 @@ export const engineModule = () => (modP ??= import("../engine").then((m) => {
  * else V1 as the main track with motion and V2+ as layers (toComposition's mapping, with warnings for the rest).
  */
 export function buildComposition(project: EditProject, sequenceId: string, opts: CompositionOptions = {}): CompositionResult {
-  return generic ? toVideoComposition(project, sequenceId, opts) : toComposition(project, sequenceId, opts);
+  return generic ? withExtendedTitles(toVideoComposition(project, sequenceId, opts)) : toComposition(project, sequenceId, opts);
+}
+
+/**
+ * Additive (editor-looks): titles with a template look, karaoke words or a shape are drawn by render/title.ts (the
+ * engine's own title source draws the plain ones): they go in as generated pictures (custom sources), with motion,
+ * effects and transitions kept. The same in the preview and the export (RenderJob uses buildComposition too).
+ */
+function withExtendedTitles(r: CompositionResult): CompositionResult {
+  const walk = (comp: Composition, path: string) => {
+    for (const t of comp.tracks) {
+      for (let i = 0; i < t.clips.length; i++) {
+        const c = t.clips[i];
+        if (c.comp) walk(c.comp, `${path}${c.id}/`);
+        if (c.type !== "title" || !c.title || !isExtendedTitle(c.title as never)) continue;
+        const url = `gen:xtitle:${path}${c.id}`;
+        r.generated[url] = { kind: "title", spec: c.title as never, width: comp.width, height: comp.height, duration: c.duration };
+        const { title: _t, ...rest } = c;
+        void _t;
+        t.clips[i] = { ...rest, type: "media", media: { url, kind: "video", width: comp.width, height: comp.height, duration: c.duration } };
+      }
+    }
+  };
+  walk(r.comp, "");
+  return r;
 }
 export const usesGenericTracks = () => generic;
 
@@ -142,17 +166,22 @@ function makeGenerated(g: GeneratedSource): CustomSource {
     ctx.fillStyle = g.color; ctx.fillRect(0, 0, g.width, g.height);
     return { kind: "canvas", width: g.width, height: g.height, still: true, draw: () => c };
   }
-  void ensureFont(g.spec);
-  let last = NaN;
+  // editor-looks: the engine asks version(t) first (no draw or upload while it's the same) and bounds(t) after a draw
+  // (only the union with the last box is uploaded); a font that arrives late counts as a change
+  let fonts = 0, last = "", vKey = "", vNum = 0;
+  let box: [number, number, number, number] | null = [0, 0, g.width, g.height];
+  void ensureFont(g.spec).then(() => { fonts++; });
+  const keyAt = (t: number) => `${fonts}|${titleFrameKey(g.spec, t, g.duration)}`;
   return {
     kind: "canvas", width: g.width, height: g.height,
+    version(t: number) { const k = keyAt(t); if (k !== vKey) { vKey = k; vNum++; } return vNum; },
     draw(t: number) {
-      // static between its animations: draw once
-      const anim = g.spec.animIn === "typewriter" ? g.duration : 0.5;
-      const key = t < anim || t > g.duration - 0.5 ? t : -1;
-      if (key !== last) { last = key; drawTitle(ctx, g.spec, g.width, g.height, t, g.duration); }
+      // static between its animations (and karaoke words): draw once
+      const key = keyAt(t);
+      if (key !== last) { last = key; box = drawTitle(ctx, g.spec, g.width, g.height, t, g.duration); }
       return c;
     },
+    bounds: () => box,
   };
 }
 
@@ -188,6 +217,8 @@ export interface PreviewEngine {
   warnings(): string[];
   lastMs(): number;
   dispose(): void;
+  /** Additive (editor-looks, Scopes): the last frame drawn as RGBA (rows top first) at its render size. */
+  readFrame(): { data: Uint8Array; width: number; height: number } | null;
 }
 
 export async function createPreview(canvas: HTMLCanvasElement, width: number, height: number): Promise<PreviewEngine> {
@@ -224,5 +255,14 @@ export async function createPreview(canvas: HTMLCanvasElement, width: number, he
     warnings: () => eng.warnings,
     lastMs: () => eng.stats.lastMs,
     dispose() { disposed = true; try { eng.dispose(); } catch { /* lost context */ } },
+    readFrame() {
+      if (!loaded || disposed) return null;
+      try {
+        const res = eng.stats.resolution || 1;
+        const width = Math.max(2, Math.round(eng.width * res)), height = Math.max(2, Math.round(eng.height * res));
+        const data = eng.readRgba();
+        return data.length === width * height * 4 ? { data, width, height } : null;
+      } catch { return null; }
+    },
   };
 }

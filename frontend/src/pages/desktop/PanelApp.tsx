@@ -24,6 +24,11 @@ const MediaPanel = lazy(() => import("./panels/Media"));
 const RendersPanel = lazy(() => import("./panels/Renders"));
 const BiblePanel = lazy(() => import("./panels/Bible"));
 const TimelinePage = lazy(() => import("../project/Timeline"));
+// the desktop's own pages share the /desktop/panel/ route (Start, Settings, the first-run steps; desktop shell)
+const StartPage = lazy(() => import("./start/StartPage"));
+const SettingsPage = lazy(() => import("./settings/SettingsPage"));
+const WelcomePage = lazy(() => import("./welcome/WelcomePage"));
+const DESKTOP_PAGES: Record<string, React.LazyExoticComponent<() => React.JSX.Element>> = { start: StartPage, settings: SettingsPage, welcome: WelcomePage };
 
 /** Panels always run on the dark ground (they sit next to footage), whatever the studio's theme. */
 function useDarkGround() {
@@ -78,6 +83,13 @@ function PanelBody({ panel, clean, pid, eid }: { panel: PanelId; clean: boolean;
  * alone. Windows talk to each other over the bus (lib/bus.ts).
  */
 export default function PanelApp() {
+  const params = useParams();
+  const Page = DESKTOP_PAGES[params.panel ?? ""];
+  if (Page) return <Suspense fallback={<Centered><Spinner /></Centered>}><Page /></Suspense>;
+  return <PanelWindow />;
+}
+
+function PanelWindow() {
   const t = useT();
   useDarkGround();
   const params = useParams();

@@ -8,10 +8,14 @@ import { randomUUID } from "node:crypto";
 import { existsSync, promises as fsp, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { DesktopSettings, EditProject, GpuRenderJob, RenderJob, RenderJobInput, RenderPreset, RenderState } from "../shared/types.ts";
+import type {
+  DesktopSettings, DuckingOptions, EditProject, GpuRenderJob, LoudnessPreset, RenderJob, RenderJobInput, RenderPreset, RenderState,
+} from "../shared/types.ts";
 import { writeFileAtomic } from "./config.ts";
 import { downloadTo, pool } from "./download.ts";
-import { mixJobs, mixPlan } from "./editor-audio.ts";
+import { defaultLoudness, LOUDNESS, measureArgs, mixJobs, mixPlan, nextGain, normalizeArgs } from "./editor-audio.ts";
+import { parseEbur128 } from "./editor-analyze.ts";
+import type { IrPreset } from "./editor-irs.ts";
 import { editDims, framesToSeconds, renderName } from "./editor-model.ts";
 import { probeMedia, runFfmpeg, spawnFfmpegPipe, type FfmpegInfo, type FfProgress } from "./ffmpeg.ts";
 import type { Library } from "./library.ts";
@@ -50,7 +54,7 @@ export type GpuSource =
   | { kind: "composition"; project: EditProject; sequenceId: string; range: { in: number; out: number } };
 
 interface GpuSession {
-  src: GpuSource; w: number; h: number; fps: number; frames: number; next: number;
+  src: GpuSource; w: number; h: number; fps: number; frames: number; next: number; bits: 8 | 10;
   frame(i: number, bytes: Uint8Array): Promise<void>; done(): void; fail(msg: string): void;
 }
 
@@ -58,6 +62,10 @@ interface GpuSession {
 export interface EditExportInput {
   editPath: string; editDir: string; project: EditProject; sequenceId: string; range: { in: number; out: number };
   preset: string; upload: boolean; source?: { pid: number; eid: number; lang: string } | null;
+  /** the loudness target (default: by preset), music ducking (default on), the output's base name (default: the sequence's) */
+  loudness?: LoudnessPreset; ducking?: boolean | DuckingOptions; name?: string;
+  /** the built-in impulse responses (reverb, guitar cabinet) */
+  irFile?(preset: IrPreset): string;
 }
 
 /** Every storage key the plan refers to (the plan lists them in `keys`; this also covers older plans). */
@@ -77,11 +85,19 @@ export function planKeys(plan: RenderPlan): string[] {
   return [...out];
 }
 
-/** The render window's job (shared GpuRenderJob): the source with the output size and frame count. */
-export function gpuJob(src: GpuSource, size: { w: number; h: number; fps: number; frames: number }): GpuRenderJob {
-  if (src.kind === "plan") return { kind: "plan", plan: src.plan, ...size };
-  return { kind: "composition", project: src.project, sequenceId: src.sequenceId, range: { ...src.range }, ...size };
+/** The render window's job (shared GpuRenderJob): the source with the output size and frame count (and `bits: 10` for 10-bit encoders). */
+export function gpuJob(src: GpuSource, size: { w: number; h: number; fps: number; frames: number; bits?: 8 | 10 }): GpuRenderJob {
+  const { bits, ...rest } = size;
+  const b = bits === 10 ? { bits: 10 as const } : {};
+  if (src.kind === "plan") return { kind: "plan", plan: src.plan, ...rest, ...b };
+  return { kind: "composition", project: src.project, sequenceId: src.sequenceId, range: { ...src.range }, ...rest, ...b };
 }
+
+/** An encoder that keeps 10 bits (HEVC main10, ProRes, x265 10-bit): the GPU frames are then asked for in 10 bits. */
+export const isTenBitEncoder = (args: string[]) => args.some((a) => /^(p010le|yuv420p10le|yuv422p10le|yuv444p10le)$/.test(a));
+
+/** Bytes of one frame: 8-bit I420 is W·H·1.5, 10-bit (yuv420p10le, 16-bit samples) twice that. */
+export const frameBytes = (w: number, h: number, bits: 8 | 10) => Math.round(w * h * 1.5) * (bits === 10 ? 2 : 1);
 
 const nowIso = () => new Date().toISOString();
 const ACTIVE: RenderState[] = ["preparing", "downloading", "rendering"];
@@ -336,7 +352,7 @@ export class RenderManager {
       const band = meter.band(prepWeight, 1, steps.filter((x) => x.id !== "prepare"));
       const a = await this.assemble(job, plan, w, h, ctxFor(local, plan), band, true);
       await band.step("final", finalArgs({ video: a.body, audio: a.finalAudio, out: finalTmp, ass, loudnorm: plan.loudnorm, encoder: enc.args,
-        container: preset.container, fps: preset.fps }), a.total);
+        container: preset.container, fps: preset.fps, audioBitrate: preset.audioBitrate }), a.total);
     } else {
       // 1. the sound: the same pipeline at draft size (crossfades, voice, layers, music with ducking); its picture is thrown away
       const draft = draftDims(w, h);
@@ -354,7 +370,7 @@ export class RenderManager {
       // frames the server's render would
       const frames = Math.max(1, Math.round((sound.total || plan.duration_s || 0) * fps));
       await this.gpuFrames(job, { kind: "plan", plan }, { w, h, fps, frames, audio: sound.finalAudio, ass, out: finalTmp, encoder: enc.args,
-        container: preset.container, ff, tmp, signal, meter, from: soundTo, loudnorm: plan.loudnorm });
+        container: preset.container, ff, tmp, signal, meter, from: soundTo, loudnorm: plan.loudnorm, audioBitrate: preset.audioBitrate });
     }
     await this.finish(job, { project, ep, preset, folder, finalTmp, plan, ff });
   }
@@ -494,21 +510,33 @@ export class RenderManager {
    */
   private async gpuFrames(job: RenderJob, src: GpuSource, o: { w: number; h: number; fps: number; frames: number; audio: string;
     ass: string | null; out: string; encoder: string[]; container: "mp4" | "mov"; ff: string; tmp: string; signal: AbortSignal;
-    meter: { set(prog: number, extra?: Partial<RenderJob>): void }; from: number; loudnorm?: string }): Promise<void> {
+    meter: { set(prog: number, extra?: Partial<RenderJob>): void }; from: number; loudnorm?: string; audioBitrate?: string }): Promise<void> {
     const open = this.deps.openRenderWindow;
     if (!open) throw new Error("The GPU engine needs the desktop app's render window");
-    const pipe = spawnFfmpegPipe(o.ff, gpuFinalArgs({ w: o.w, h: o.h, fps: o.fps, frames: o.frames, audio: o.audio, out: o.out, ass: o.ass,
-      loudnorm: o.loudnorm, encoder: o.encoder, container: o.container }), { signal: o.signal, cwd: o.tmp });
-    const frameBytes = Math.round(o.w * o.h * 1.5);
+    // FFmpeg starts on the first frame: its size says 8-bit I420 or 10-bit yuv420p10le (whatever the job asked for)
+    let pipe: ReturnType<typeof spawnFfmpegPipe> | null = null;
+    let inBits: 8 | 10 = 8;
+    const want: 8 | 10 = isTenBitEncoder(o.encoder) ? 10 : 8;
+    const sizes = { 8: frameBytes(o.w, o.h, 8), 10: frameBytes(o.w, o.h, 10) };
     let win: { close(): void } | null = null;
     const t0 = Date.now();
     try {
       await new Promise<void>((resolve, reject) => {
         const session: GpuSession = {
-          src, w: o.w, h: o.h, fps: o.fps, frames: o.frames, next: 0,
+          src, w: o.w, h: o.h, fps: o.fps, frames: o.frames, next: 0, bits: want,
           frame: async (i, bytes) => {
             if (i !== session.next) throw new Error(`frame ${i} arrived, ${session.next} expected`);
-            if (bytes.byteLength !== frameBytes) throw new Error(`frame ${i} has ${bytes.byteLength} bytes, ${frameBytes} expected`);
+            if (!pipe) {
+              if (bytes.byteLength !== sizes[8] && bytes.byteLength !== sizes[10]) {
+                throw new Error(`frame ${i} has ${bytes.byteLength} bytes, ${sizes[want]} expected (${want}-bit ${o.w}×${o.h})`);
+              }
+              inBits = bytes.byteLength === sizes[10] ? 10 : 8;
+              pipe = spawnFfmpegPipe(o.ff, gpuFinalArgs({ w: o.w, h: o.h, fps: o.fps, frames: o.frames, audio: o.audio, out: o.out, ass: o.ass,
+                loudnorm: o.loudnorm, encoder: o.encoder, container: o.container, bits: inBits, audioBitrate: o.audioBitrate }), { signal: o.signal, cwd: o.tmp });
+              job.warnings = job.warnings.filter((w) => !w.startsWith("The GPU engine sent 8-bit"));
+              if (want === 10 && inBits === 8) job.warnings.push("The GPU engine sent 8-bit frames: the 10-bit file has 8-bit picture detail");
+            }
+            if (bytes.byteLength !== sizes[inBits]) throw new Error(`frame ${i} has ${bytes.byteLength} bytes, ${sizes[inBits]} expected`);
             await pipe.write(bytes);
             session.next++;
             const secs = Math.max((Date.now() - t0) / 1000, 0.001);
@@ -531,9 +559,10 @@ export class RenderManager {
       job.step = "Finishing the file";
       this.emit(job, true);
       this.gpuSessions.delete(job.id);
-      await pipe.end();
+      if (!pipe) throw new Error("The GPU engine sent no frames");
+      await (pipe as ReturnType<typeof spawnFfmpegPipe>).end();
     } catch (e) {
-      pipe.kill();
+      (pipe as ReturnType<typeof spawnFfmpegPipe> | null)?.kill();
       throw e;
     } finally {
       this.gpuSessions.delete(job.id);
@@ -545,7 +574,7 @@ export class RenderManager {
   engineJob(id: string): GpuRenderJob {
     const s = this.gpuSessions.get(id);
     if (!s) throw new Error("No GPU render is waiting for this window");
-    return gpuJob(s.src, { w: s.w, h: s.h, fps: s.fps, frames: s.frames });
+    return gpuJob(s.src, { w: s.w, h: s.h, fps: s.fps, frames: s.frames, bits: s.bits });
   }
 
   async engineFrame(id: string, index: number, bytes: Uint8Array): Promise<void> {
@@ -586,22 +615,49 @@ export class RenderManager {
     const meter = this.meter(job, Date.now(), 0.01, { ff, tmp, signal });
     // 1. the sound
     const seconds = framesToSeconds(input.range.out - input.range.in, seq.fps);
-    const plan = mixPlan(input.project, seq, input.range);
+    const plan = mixPlan(input.project, seq, input.range, undefined, { ducking: input.ducking, irFile: input.irFile });
     job.warnings.push(...plan.warnings);
-    const mix = path.join(tmp, "mix.wav");
-    const runs = mixJobs(plan, mix, { part: (i) => path.join(tmp, `mix_part${i}.wav`) });
-    const band = meter.band(0.01, 0.1, runs.map((_, i) => ({ id: `mix${i}`, label: runs.length > 1 ? `Sound mix ${i + 1} of ${runs.length}` : "Sound mix",
-      weight: 1, seconds })), "Mixing the sound");
+    const raw = path.join(tmp, "mix.wav");
+    const runs = mixJobs(plan, raw, { part: (i) => path.join(tmp, `mix_part${i}.wav`) });
+    const loud = input.loudness ?? defaultLoudness(job.preset);
+    const passes = loud === "off" ? 0 : 2;
+    const band = meter.band(0.01, 0.1, [...runs.map((_, i) => ({ id: `mix${i}`, label: runs.length > 1 ? `Sound mix ${i + 1} of ${runs.length}` : "Sound mix",
+      weight: 1, seconds })), ...Array.from({ length: passes }, (_, i) => ({ id: `loud${i}`, label: "Loudness", weight: 0.5, seconds }))], "Mixing the sound");
     for (let i = 0; i < runs.length; i++) await band.step(`mix${i}`, runs[i], seconds);
+    // loudness: measure, gain to the target with a true-peak limiter, measure again and correct once
+    let mix = raw;
+    if (loud !== "off") {
+      const target = LOUDNESS[loud];
+      const measure = async (f: string) => {
+        job.step = "Mixing the sound · Measuring the loudness";
+        this.emit(job);
+        const r = await runFfmpeg(ff, measureArgs(f), { signal, cwd: tmp });
+        return parseEbur128(r.stderr.split(/\r?\n/)).lufs;
+      };
+      let gain = 0;
+      let measured = await measure(raw);
+      for (let pass = 0; pass < passes; pass++) {
+        const g = nextGain(gain, measured, target.lufs);
+        if (g === null) break;
+        gain = g;
+        const out = path.join(tmp, `mix_loud${pass}.wav`);
+        // half a dB under the ceiling: the AAC encode adds a little to the true peak
+        await band.step(`loud${pass}`, normalizeArgs(raw, out, gain, target.truePeak - 0.5), seconds);
+        mix = out;
+        measured = await measure(out);
+      }
+      job.loudness = { preset: loud, target: target.lufs, measured: measured ?? undefined, gainDb: Math.round(gain * 100) / 100 };
+    }
     // 2. the picture, drawn by the GPU engine
     const frames = Math.max(1, Math.round(seconds * fps));
     const finalTmp = path.join(tmp, `final.${preset.container}`);
     await this.gpuFrames(job, { kind: "composition", project: input.project, sequenceId: seq.id, range: input.range },
-      { w, h, fps, frames, audio: mix, ass: null, out: finalTmp, encoder: enc.args, container: preset.container, ff, tmp, signal, meter, from: 0.1 });
+      { w, h, fps, frames, audio: mix, ass: null, out: finalTmp, encoder: enc.args, container: preset.container, ff, tmp, signal, meter, from: 0.1,
+        loudnorm: loud === "off" ? "loudnorm=I=-14:TP=-1.5:LRA=11" : "anull", audioBitrate: preset.audioBitrate });
     // 3. into Renders
     const rendersDir = path.join(input.editDir, "Renders");
     await fsp.mkdir(rendersDir, { recursive: true });
-    const name = renderName(seq.name, preset.container, await fsp.readdir(rendersDir));
+    const name = renderName(input.name || seq.name, preset.container, await fsp.readdir(rendersDir));
     const outPath = path.join(rendersDir, name);
     await fsp.rename(finalTmp, outPath).catch(async () => {
       await fsp.copyFile(finalTmp, outPath);

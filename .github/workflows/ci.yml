@@ -77,6 +77,9 @@ jobs:
       - name: GPU engine unit tests (node --test)
         run: npm run test:engine
 
+      - name: Editor unit tests (node --test)
+        run: npm run test:editor
+
   desktop:
     name: Desktop app (typecheck + tests)
     runs-on: ubuntu-latest

@@ -217,11 +217,13 @@ export async function suggestSounds(host: EditorHost): Promise<string[]> {
   return jobs?.[0]?.result.suggestions ?? [];
 }
 
-export async function music(host: EditorHost, opts: { prompt: string; seconds: number; at: number; volumeDb: number }): Promise<void> {
+/** Music to a length; `mood` (any mood name) and `bpm` steer it (the studio turns a known mood into musical words). */
+export async function music(host: EditorHost, opts: { prompt: string; seconds: number; at: number; volumeDb: number; mood?: string; bpm?: number | null }): Promise<void> {
   await runFlow(host, {
-    title: "Music",
+    title: opts.mood ? `Music (${opts.mood})` : "Music",
     note: "The track is placed on a new audio track, under the dialogue at the volume you set.",
-    prepare: async () => [{ tool: "music", params: { prompt: opts.prompt, seconds: Math.max(5, Math.min(300, opts.seconds)) } }],
+    prepare: async () => [{ tool: "music", params: { prompt: opts.prompt, seconds: Math.max(5, Math.min(300, opts.seconds)),
+      ...(opts.mood ? { mood: opts.mood } : {}), ...(opts.bpm ? { bpm: Math.round(opts.bpm) } : {}) } }],
     apply: async (js) => {
       const o = firstOutput(js[0]);
       const item = await importOutput(host, o);
@@ -233,11 +235,20 @@ export async function music(host: EditorHost, opts: { prompt: string; seconds: n
 
 // ── picture ──────────────────────────────────────────────────────────────────
 
-export interface BrollOpts { prompt: string; quality: "saver" | "balanced" | "hero"; route?: string; useFrame: boolean; seconds?: number }
+export interface BrollOpts { prompt: string; quality: "saver" | "balanced" | "hero"; route?: string; useFrame: boolean; seconds?: number;
+  /** A timeline frame to put it at (a B-roll idea's time) instead of the in/out range or the playhead. */
+  at?: number }
 
-/** Where B-roll would go now: the in/out range, else the gap at the playhead, else 5 s from the playhead. */
-export function brollTarget(host: EditorHost, seconds?: number): { trackId: string | null; start: number; end: number } {
+/** Where B-roll would go now: at `at` (a free video track there), else the in/out range, else the gap at the playhead,
+ *  else 5 s from the playhead. */
+export function brollTarget(host: EditorHost, seconds?: number, at?: number): { trackId: string | null; start: number; end: number } {
   const seq = host.sequence();
+  if (at !== undefined) {
+    const len = secondsToFrames(seconds ?? 5, seq.fps);
+    // a cutaway covers the main picture: the lowest free track above V1 that isn't a caption track
+    const t = tracksOf(seq, "video").filter((x) => !x.locked && x.index >= 1 && !/^captions\b/i.test(x.name)).find((x) => trackFree(seq, x.id, at, at + len));
+    return { trackId: t?.id ?? null, start: at, end: at + len };
+  }
   const io = inOutRange(host);
   if (io) {
     const t = tracksOf(seq, "video").find((x) => !x.locked && trackFree(seq, x.id, io[0], io[1]));
@@ -249,7 +260,7 @@ export function brollTarget(host: EditorHost, seconds?: number): { trackId: stri
 
 export async function broll(host: EditorHost, opts: BrollOpts): Promise<void> {
   const seq = host.sequence();
-  const slot = brollTarget(host, opts.seconds);
+  const slot = brollTarget(host, opts.seconds, opts.at);
   const seconds = Math.max(1, Math.min(30, Math.round(framesToSeconds(slot.end - slot.start, seq.fps) * 10) / 10));
   const pic = opts.useFrame ? pictureAtPlayhead(host) : null;
   if (opts.useFrame && !pic) { host.toast("No picture under the playhead to start from", "warn"); return; }
@@ -405,14 +416,14 @@ export async function findScenes(host: EditorHost, clipId: string, threshold = 0
 export function applyScenes(host: EditorHost, clipId: string, frames: number[], mode: "split" | "markers"): boolean {
   const p = host.project(), sid = host.sequence().id;
   return commitSeq(host, mode === "split" ? `Split at ${frames.length} scene cuts` : `${frames.length} scene markers`,
-    mode === "split" ? splitClipAt(p, sid, clipId, frames) : addSequenceMarkers(p, sid, frames, "Scene {n}", "#a78bfa"));
+    mode === "split" ? splitClipAt(p, sid, clipId, frames) : addSequenceMarkers(p, sid, frames, "Scene {n}", "#a78bfa", "scene"));
 }
 
 export async function beatMarkers(host: EditorHost, clipId: string): Promise<number> {
   const part = soundParts(host.project(), host.sequence(), { clipIds: [clipId] })[0];
   if (!part) throw new Error("Pick a clip with sound (music)");
   const frames = partFrames(part, readBeats(await analyze(host, part, "beats")), fps(host));
-  if (frames.length) commitSeq(host, `${frames.length} beat markers`, addSequenceMarkers(host.project(), host.sequence().id, frames, "Beat", "#fbbf24"));
+  if (frames.length) commitSeq(host, `${frames.length} beat markers`, addSequenceMarkers(host.project(), host.sequence().id, frames, "Beat", "#fbbf24", "beat"));
   return frames.length;
 }
 

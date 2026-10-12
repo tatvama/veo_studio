@@ -10,6 +10,9 @@ const sameOrigin = (url: string) => {
   try { return new URL(url, location.href).origin === location.origin; } catch { return true; }
 };
 
+/** A playbackRate the element accepts (Chrome refuses anything outside 1/16 .. 16). */
+const okRate = (r: number) => Math.min(16, Math.max(0.0625, r));
+
 export class LiveVideo implements FrameSource {
   readonly kind = "video" as const;
   readonly ready: Promise<void>;
@@ -57,14 +60,17 @@ export class LiveVideo implements FrameSource {
   live(t: number, playing: boolean, rate: number): Frame | null {
     const el = this.el;
     if (el.readyState < 1) return null;
+    // slower than the element can play (a freeze, the slow end of a ramp): hold the frame, seeking as t moves
+    if (rate < 0.0625) playing = false;
+    rate = Math.min(rate, 16);
     if (playing && rate > 0) {
       const drift = el.currentTime - t;
       if (el.paused) {
         if (Math.abs(drift) > this.half) this.seek(t);
-        el.playbackRate = rate;
+        el.playbackRate = okRate(rate);
         void el.play().catch(() => undefined);
       } else if (Math.abs(drift) > 0.3) this.seek(t);
-      else el.playbackRate = Math.abs(drift) > this.half ? rate * (1 - Math.max(-0.12, Math.min(0.12, drift * 1.5))) : rate;
+      else el.playbackRate = okRate(Math.abs(drift) > this.half ? rate * (1 - Math.max(-0.12, Math.min(0.12, drift * 1.5))) : rate);
     } else {
       if (!el.paused) el.pause();
       if (Math.abs(el.currentTime - t) > this.half) this.seek(t);

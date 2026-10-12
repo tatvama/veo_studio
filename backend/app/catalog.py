@@ -68,6 +68,8 @@ PRICES: dict[str, dict] = {
         "claude-fable-5-1": {"in": 10.00, "out": 50.00, "cache_write": 12.50, "cache_read": 0.25},
     },
     "voice_design_each": {"gemini": 0.01, "elevenlabs": 0.05, "sarvam": 0.0},
+    # $ per instant voice clone (ElevenLabs includes cloning in its plans; set a price here to book one)
+    "voice_clone_each": {"elevenlabs": 0.0},
 }
 
 QUALITY_MODES = {

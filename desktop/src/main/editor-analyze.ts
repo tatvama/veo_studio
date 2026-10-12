@@ -50,9 +50,18 @@ export function parseScenes(lines: string[]): number[] {
 }
 
 // ── loudness ──
-export function loudnessArgs(src: string): string[] {
-  return ["-nostats", "-i", src, "-vn", "-af", "ebur128=peak=true", "-f", "null", "-"];
+/**
+ * ebur128 over the file, or over [inS, outS) of it (media seconds): a fast seek to a second before, then atrim cuts
+ * the decoded sound to the exact sample, so a clip's own range is measured, not the whole file.
+ */
+export function loudnessArgs(src: string, inS?: number, outS?: number): string[] {
+  if (inS === undefined && outS === undefined) return ["-nostats", "-i", src, "-vn", "-af", "ebur128=peak=true", "-f", "null", "-"];
+  const a = Math.max(0, inS ?? 0);
+  const pre = Math.max(0, a - 1);
+  const trim = [`start=${r6(a - pre)}`, ...(outS !== undefined && outS > a ? [`duration=${r6(outS - a)}`] : [])].join(":");
+  return ["-nostats", ...(pre > 0 ? ["-ss", r6(pre)] : []), "-i", src, "-vn", "-af", `atrim=${trim},asetpts=PTS-STARTPTS,ebur128=peak=true`, "-f", "null", "-"];
 }
+const r6 = (x: number) => String(Math.round(x * 1e6) / 1e6);
 /** The ebur128 summary: integrated loudness (LUFS), loudness range (LU) and true peak (dBTP). */
 export function parseEbur128(lines: string[]): { lufs: number | null; lra: number | null; truePeak: number | null } {
   let i = lines.length - 1;

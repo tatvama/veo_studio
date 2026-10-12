@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { desktop } from "../../lib/desktop";
 
-type PlanJob = { kind?: "plan"; plan: unknown; w: number; h: number; fps: number; frames: number };
+type PlanJob = { kind?: "plan"; plan: unknown; w: number; h: number; fps: number; frames: number; bits?: 8 | 10 };
 type CompositionJob = { kind: "composition"; project: unknown; sequenceId: string; range?: { in: number; out: number };
-  w: number; h: number; fps: number; frames: number };
+  w: number; h: number; fps: number; frames: number; bits?: 8 | 10 };
 
 const mediaUrl = (key: string) => `/media/${key.split("/").map(encodeURIComponent).join("/")}`;
 
@@ -45,11 +45,13 @@ export default function RenderJob() {
         } else {
           await engine.load(eng.fromPlan(job.plan as Parameters<typeof eng.fromPlan>[0], mediaUrl), { mode: "exact" });
         }
+        // 10-bit encoders (HEVC Main10, ProRes) get yuv420p10le; an engine without it sends 8-bit and the desktop warns
+        const ten = job.bits === 10 && typeof engine.readYuv420p10 === "function";
         const t0 = performance.now();
         for (let i = 0; i < job.frames; i++) {
           await engine.renderExact(i / job.fps);
           // the IPC copies the bytes, so the engine may reuse its read-back buffer for the next frame
-          await bridge.frame(id, i, engine.readYuv420());
+          await bridge.frame(id, i, ten ? engine.readYuv420p10() : engine.readYuv420());
           if (i % 24 === 0) setStatus(`Frame ${i + 1} of ${job.frames} · ${((i + 1) / ((performance.now() - t0) / 1000)).toFixed(1)} fps`);
         }
         engine.dispose();

@@ -45,11 +45,19 @@ export interface GatewayDeps {
   upstream(): string;
   /** Folder of the built UI; null forwards the UI to the server too. */
   uiDir(): string | null;
-  uiSource(): "bundled" | "server";
+  uiSource(): "bundled" | "server" | "auto";
+  /**
+   * additive (docs/DESKTOP.md §4.3, main/uicache.ts): in "auto", the folders the UI is served from, the build new windows
+   * get first; older builds after it still answer for the hashed assets of windows opened before a switch. null or
+   * empty: the bundled uiDir() (or the server when there is none).
+   */
+  uiDirs?(): string[] | null;
   /** Absolute path of a local copy of a storage key (proxy-aware), or null. */
   resolveMedia?(key: string): string | null;
   /** The file the editor registered under a /__media id (EditorManager.resolve), or null. */
   resolveEditorMedia?(id: string): string | null;
+  /** /__media/irs/<preset>.wav: the built-in impulse response (written on first use), or null (EditorManager.impulseFile). */
+  resolveImpulse?(name: string): Promise<string | null>;
   store: OfflineStore;
   /** The session cookie header to replay queued writes with (defaults to the last one the UI sent). */
   getCookie?(): Promise<string | undefined>;
@@ -410,12 +418,25 @@ export class Gateway {
       await this.forward(req, res);
       return;
     }
-    const dir = this.deps.uiSource() === "bundled" ? this.deps.uiDir() : null;
-    if (!dir) {
+    const dirs = this.uiDirs();
+    if (!dirs) {
       await this.forward(req, res);
       return;
     }
-    await this.serveStatic(req, res, dir, pathname);
+    await this.serveStatic(req, res, dirs, pathname);
+  }
+
+  /** Where the UI comes from now (docs/DESKTOP.md §4.3): "server" forwards it; "auto" serves the UI cache's builds. */
+  private uiDirs(): string[] | null {
+    const src = this.deps.uiSource();
+    if (src === "server") return null;
+    if (src === "auto") {
+      const dirs = this.deps.uiDirs?.();
+      if (dirs?.length) return dirs;
+      if (dirs === null && this.deps.uiDirs) return null; // the cache says: no copy here, forward to the server
+    }
+    const dir = this.deps.uiDir();
+    return dir ? [dir] : null;
   }
 
   /** The app holds a session and this request carries the same one: local files are for the app's own pages only. */
@@ -430,7 +451,8 @@ export class Gateway {
     const id = /^\/__media\/([A-Za-z0-9_-]{8,64})(?:\/|$)/.exec(pathname)?.[1];
     const notFound = () => sendJson(res, 404, { detail: "Not found" });
     if (req.method !== "GET" && req.method !== "HEAD") { sendJson(res, 405, { detail: "Method not allowed" }); return; }
-    const file = id ? this.deps.resolveEditorMedia?.(id) : null;
+    const ir = /^\/__media\/irs\/([a-z0-9_]{1,40}\.wav)$/.exec(pathname)?.[1];
+    const file = ir ? await this.deps.resolveImpulse?.(ir).catch(() => null) ?? null : id ? this.deps.resolveEditorMedia?.(id) : null;
     if (!file) return notFound();
     if (!(await this.sameSession(req))) { sendJson(res, 403, { detail: "Sign in to the app to see local media" }); return; }
     let st: Stats;
@@ -462,25 +484,29 @@ export class Gateway {
     return true;
   }
 
-  private async serveStatic(req: IncomingMessage, res: ServerResponse, dir: string, pathname: string): Promise<void> {
+  /** Static UI from one or more build folders: the first that has the file answers; the SPA fallback is the first's index.html. */
+  private async serveStatic(req: IncomingMessage, res: ServerResponse, dirs: string[], pathname: string): Promise<void> {
     if (req.method !== "GET" && req.method !== "HEAD") {
       sendJson(res, 405, { detail: "Method not allowed" });
       return;
     }
     let rel: string;
     try { rel = decodeURIComponent(pathname); } catch { rel = pathname; }
-    const root = path.resolve(dir);
-    const file = path.resolve(root, `.${path.posix.normalize(`/${rel}`)}`);
-    if (file !== root && !file.startsWith(root + path.sep)) {
-      sendJson(res, 403, { detail: "Forbidden" });
-      return;
-    }
-    let st: Stats | null = null;
-    try { st = await fsp.stat(file); } catch { st = null; }
-    if (st?.isFile()) {
-      const immutable = rel.replace(/^\/+/, "").startsWith("assets/");
-      await serveFile(req, res, file, { stat: st, cacheControl: immutable ? "public, max-age=31536000, immutable" : "no-cache" });
-      return;
+    const root = path.resolve(dirs[0]);
+    for (const dir of dirs) {
+      const base = path.resolve(dir);
+      const file = path.resolve(base, `.${path.posix.normalize(`/${rel}`)}`);
+      if (file !== base && !file.startsWith(base + path.sep)) {
+        sendJson(res, 403, { detail: "Forbidden" });
+        return;
+      }
+      let st: Stats | null = null;
+      try { st = await fsp.stat(file); } catch { st = null; }
+      if (st?.isFile()) {
+        const immutable = rel.replace(/^\/+/, "").startsWith("assets/");
+        await serveFile(req, res, file, { stat: st, cacheControl: immutable ? "public, max-age=31536000, immutable" : "no-cache" });
+        return;
+      }
     }
     const last = rel.split("/").pop() || "";
     if (last.includes(".") && !last.endsWith(".html")) {

@@ -10,11 +10,12 @@
  * mattes are pictures the editor draws itself: they come back in `generated` and editor/engine.ts hands them to the
  * engine as custom sources. Nested sequences are flattened into layers. Pure.
  */
-import type { Clip as EClip, Composition, Keyframe as EKeyframe, ShotFx, Track as ETrack, Transform } from "../../engine/types.ts";
+import type { Clip as EClip, Composition, Keyframe as EKeyframe, ParamKey, ShotFx, TimePoint, Track as ETrack, Transform } from "../../engine/types.ts";
 import { clipEnd, ctxOf, seqEnd, sourceRate, trimEndBy, trimStartBy, tracksOf, transitionRange, type Ctx } from "./ops.ts";
-import { valueAt } from "./params.ts";
+import { ease, valueAt } from "./params.ts";
+import { clipSpan, hasRamp, rampPieces } from "./remap.ts";
 import { fpsExact, framesToSeconds } from "./time.ts";
-import type { BlendMode, EditProject, Easing, MediaItem, Param, Sequence, TimelineClip, TitleSpec, Transition } from "./types.ts";
+import type { BlendMode, EditProject, Easing, Keyframe, MediaItem, Param, Sequence, TimelineClip, TitleSpec, Transition } from "./types.ts";
 
 export type GeneratedSource =
   | { kind: "title"; spec: TitleSpec; width: number; height: number; duration: number }
@@ -31,7 +32,28 @@ export interface CompositionOptions {
 }
 export interface CompositionResult { comp: Composition; generated: Record<string, GeneratedSource>; warnings: string[] }
 
-const ENGINE_EASE = (e: Easing | undefined) => (e === "hold" || !e ? "linear" : e);
+const ENGINE_EASE = (e: Easing | undefined) => (e === "hold" || !e || !ENGINE_KEY_EASES.has(e) ? "linear" : e) as "linear" | "ease_in" | "ease_out" | "ease_in_out";
+/** Keyframe eases the engine draws itself. */
+const ENGINE_KEY_EASES = new Set<string>(["linear", "ease_in", "ease_out", "ease_in_out", "hold"]);
+
+/**
+ * Keyframes the engine can draw: a segment with a "bezier", "bounce" or "elastic" ease, or a curved motion path,
+ * becomes a key on every frame (every few frames on very long segments), straight between them; the rest pass as they
+ * are without handles. Frame-exact at whole frames (what the export samples).
+ */
+export function bakeKeys<T>(p: Param<T>): Keyframe<T>[] {
+  const ks = p.keyframes ?? [];
+  const out: Keyframe<T>[] = [];
+  for (let i = 0; i < ks.length; i++) {
+    const a = ks[i], b = ks[i + 1];
+    const curved = !!b && (!ENGINE_KEY_EASES.has(a.ease) || (a.ease !== "hold" && (!!a.tangentOut || !!b.tangentIn)));
+    if (!curved) { out.push({ frame: a.frame, value: a.value, ease: ENGINE_KEY_EASES.has(a.ease) ? a.ease : "linear" }); continue; }
+    const len = b.frame - a.frame;
+    const step = Math.max(1, Math.ceil(len / 2400));
+    for (let f = a.frame; f < b.frame; f += step) out.push({ frame: f, value: valueAt(p, f), ease: "linear" });
+  }
+  return out;
+}
 const FADE_TYPES = new Set(["fade", "fadeblack", "fadewhite", "fadegrays", "dissolve", "fadefast", "fadeslow", "distance"]);
 
 /** The share of the frame width a picture of w×h takes when fitted inside W×H (Motion scale 100 %). */
@@ -56,7 +78,7 @@ function videoTracks(seq: Sequence, ctx: Ctx, warn: (s: string) => void, depth =
         const [a, b] = window;
         if (clipEnd(c) <= a || c.start >= b) continue;
         const r = sourceRate(c, seq, ctx);
-        if (c.start < a) c = trimStartBy(c, a - c.start, r);
+        if (c.start < a) c = trimStartBy(c, a - c.start, r, seq.fps);
         if (clipEnd(c) > b) c = trimEndBy(c, b - clipEnd(c), r);
       }
       const start = offset + c.start - (window?.[0] ?? 0);
@@ -103,7 +125,7 @@ export function motionIsDefault(c: TimelineClip, seq: Sequence, ctx?: Ctx): bool
 /** Engine keyframes for one property: a hold keyframe gets a twin just before the next one. */
 function kfs(p: Param<number>, key: "scale" | "rotation" | "opacity", fps: number, map: (v: number) => number): EKeyframe[] {
   const out: EKeyframe[] = [];
-  const ks = p.keyframes ?? [];
+  const ks = bakeKeys(p);
   ks.forEach((k, i) => {
     out.push({ t: framesToSeconds(k.frame, fps), [key]: map(k.value), easing: ENGINE_EASE(k.ease) });
     if (k.ease === "hold" && ks[i + 1]) out.push({ t: framesToSeconds(ks[i + 1].frame, fps) - 1e-4, [key]: map(k.value), easing: "linear" });
@@ -112,7 +134,7 @@ function kfs(p: Param<number>, key: "scale" | "rotation" | "opacity", fps: numbe
 }
 function kfsPos(p: Param<[number, number]>, fps: number, map: (v: [number, number]) => [number, number]): EKeyframe[] {
   const out: EKeyframe[] = [];
-  const ks = p.keyframes ?? [];
+  const ks = bakeKeys(p);
   ks.forEach((k, i) => {
     const [x, y] = map(k.value);
     out.push({ t: framesToSeconds(k.frame, fps), x, y, easing: ENGINE_EASE(k.ease) });
@@ -363,6 +385,8 @@ function trimSeconds(c: EClip, a: number, b: number): EClip[] {
     if (!x.reverse) x.in += d * x.speed;
     x.start = a; x.duration -= d;
     if (x.transform?.keyframes) x.transform = { ...x.transform, keyframes: x.transform.keyframes.map((k) => ({ ...k, t: k.t - d })) };
+    // a speed ramp's time map is in seconds from the clip's start too (its source times stay)
+    if (x.timeMap) x.timeMap = x.timeMap.map((q) => ({ t: q.t - d, s: q.s }));
     // generic tracks: motion and effect keyframes are clip-relative too
     const shift = (p: unknown): unknown => {
       const q = p as EParam;
@@ -403,7 +427,9 @@ export interface AudioClipPlan {
 export interface AudioTrackPlan { id: string; name: string; index: number; volume: number; pan: number; muted: boolean; solo: boolean; audible: boolean }
 export interface AudioMix { tracks: AudioTrackPlan[]; clips: AudioClipPlan[]; duration: number; warnings: string[] }
 
-/** The sequence's sound: audio-track clips with their levels, fades and crossfades (solo and mute applied). */
+/** The sequence's sound: audio-track clips with their levels, fades and crossfades (solo and mute applied). A speed
+ *  ramp plays as constant-rate pieces (pitch-corrected by the player, silent while frozen); a nested clip's sound is
+ *  its sequence's audio tracks (a multicam clip: its audio angle's track) in its window. */
 export function toAudioMix(project: EditProject, sequenceId: string, opts: { urlFor?(m: MediaItem): string | undefined } = {}): AudioMix {
   const seq = project.sequences.find((s) => s.id === sequenceId);
   if (!seq) throw new Error(`No sequence ${sequenceId}`);
@@ -416,41 +442,93 @@ export function toAudioMix(project: EditProject, sequenceId: string, opts: { url
   const anySolo = ats.some((t) => t.solo);
   const tracks: AudioTrackPlan[] = ats.map((t) => ({ id: t.id, name: t.name, index: t.index, volume: t.volume, pan: t.pan, muted: t.muted, solo: t.solo,
     audible: !t.muted && !t.hidden && (!anySolo || t.solo) }));
-  const keyed = (p: Param<number>) => ({ value: p.value, keys: (p.keyframes ?? []).map((k) => ({ t: sec(k.frame), v: k.value, ease: k.ease })) });
+  const keyed = (p: Param<number>) => ({ value: p.value, keys: bakeKeys(p).map((k) => ({ t: sec(k.frame), v: k.value, ease: k.ease })) });
   const clips: AudioClipPlan[] = [];
+  /** One clip's plan(s): `xs` is its sequence, `offset` moves it onto the root (frames), `trackId` the root track. */
+  const add = (c: TimelineClip, xs: Sequence, offset: number, trackId: string, extra: { gainDb?: number; id?: string } = {}) => {
+    if (c.source.type !== "media") return;
+    const m = ctx.media(c.source.mediaId);
+    if (!m) return;
+    const url = opts.urlFor ? opts.urlFor(m) : m.url;
+    if (!url) { warn(`"${c.name}": no URL for its media yet`); return; }
+    const f = m.fps > 0 ? m.fps : fps;
+    const a = c.audio ?? { gain: { value: 0 }, pan: { value: 0 }, fadeIn: 0, fadeOut: 0 };
+    const id = extra.id ?? c.id;
+    const plan: AudioClipPlan = {
+      clipId: id, trackId, url, name: c.name, start: sec(c.start + offset), duration: sec(c.duration), in: framesToSeconds(c.source.in, f),
+      rate: c.speed > 0 ? c.speed : 1, reverse: c.reverse, gain: keyed(a.gain), pan: keyed(a.pan),
+      fadeIn: sec(a.fadeIn), fadeOut: sec(a.fadeOut), effects: c.effects.filter((e) => e.enabled).map((e) => ({ type: e.type, params: Object.fromEntries(Object.entries(e.params).map(([k, p]) => [k, p.value])) })),
+    };
+    const gd = extra.gainDb ?? 0;
+    if (gd) plan.gain = { value: plan.gain.value + gd, keys: plan.gain.keys.map((k) => ({ ...k, v: k.v + gd })) };
+    const { into, outOf } = transitionsByClip(xs, c.trackId);
+    const tin = into.get(c.id), tout = outOf.get(c.id);
+    const curve = (x: Transition) => (x.type === "audio:constant_gain" ? "gain" as const : "power" as const);
+    // a crossfade at a cut plays the incoming clip early (into its head) and the outgoing one late (into its tail)
+    const rin = tin?.fromClipId ? transitionRange(tin) : null, rout = tout?.toClipId ? transitionRange(tout) : null;
+    const pre = rin ? Math.max(0, tin!.at - rin[0]) : 0, post = rout ? Math.max(0, rout[1] - tout!.at) : 0;
+    if (pre) {
+      plan.start -= sec(pre); plan.in -= sec(pre) * plan.rate;
+      plan.gain.keys = plan.gain.keys.map((k) => ({ ...k, t: k.t + sec(pre) }));
+      plan.pan.keys = plan.pan.keys.map((k) => ({ ...k, t: k.t + sec(pre) }));
+    }
+    plan.duration = sec(c.duration + pre + post);
+    if (rin) plan.xIn = { start: sec(rin[0] - c.start + pre), duration: sec(rin[1] - rin[0]), curve: curve(tin!) };
+    else if (tin) plan.fadeIn = Math.max(plan.fadeIn, sec(tin.duration));
+    if (rout) plan.xOut = { start: sec(rout[0] - c.start + pre), duration: sec(rout[1] - rout[0]), curve: curve(tout!) };
+    else if (tout) plan.fadeOut = Math.max(plan.fadeOut, sec(tout.duration));
+    if (!hasRamp(c)) { clips.push(plan); return; }
+    if (c.reverse) { warn(`"${c.name}": a reversed speed ramp's sound plays at its base speed`); clips.push(plan); return; }
+    // a ramp: constant-rate pieces (the player keeps the pitch); a freeze is silence
+    const pieces = rampPieces(c);
+    const sp = c.speed > 0 ? c.speed : 1;
+    const k = sp / fpsExact(fps);
+    const inS = framesToSeconds(c.source.in, f);
+    const preS = sec(pre);
+    pieces.forEach((pc, i) => {
+      if (pc.freeze) return;
+      const first = i === 0, last = i === pieces.length - 1;
+      const a0 = first ? 0 : preS + sec(c.start + pc.from) - sec(c.start), a1 = last ? plan.duration : preS + sec(c.start + pc.to) - sec(c.start);
+      const rate = Math.max(0.0625, Math.min(16, pc.speed * sp));
+      const shift = <K extends { t: number }>(ks: K[]) => ks.map((x) => ({ ...x, t: x.t - a0 }));
+      clips.push({
+        ...plan, clipId: first ? id : `${id}~${i}`, start: plan.start + a0, duration: Math.max(0, a1 - a0), rate,
+        in: first ? inS - preS * rate : inS + pc.offset * k,
+        gain: { value: plan.gain.value, keys: shift(plan.gain.keys) }, pan: { value: plan.pan.value, keys: shift(plan.pan.keys) },
+        fadeIn: first ? plan.fadeIn : 0, fadeOut: last ? plan.fadeOut : 0,
+        xIn: first ? plan.xIn : undefined, xOut: last && plan.xOut ? { ...plan.xOut, start: plan.xOut.start - a0 } : undefined,
+      });
+    });
+  };
   for (const t of ats) {
-    const { into, outOf } = transitionsByClip(seq, t.id);
     for (const c of seq.clips) {
       if (c.trackId !== t.id || !c.enabled) continue;
-      if (c.source.type === "nested") { warn(`TODO: the sound of nested sequence "${c.name}" isn't mixed yet`); continue; }
-      if (c.source.type !== "media") continue;
-      const m = ctx.media(c.source.mediaId);
-      if (!m) continue;
-      const url = opts.urlFor ? opts.urlFor(m) : m.url;
-      if (!url) { warn(`"${c.name}": no URL for its media yet`); continue; }
-      const f = m.fps > 0 ? m.fps : fps;
-      const a = c.audio ?? { gain: { value: 0 }, pan: { value: 0 }, fadeIn: 0, fadeOut: 0 };
-      const plan: AudioClipPlan = {
-        clipId: c.id, trackId: t.id, url, name: c.name, start: sec(c.start), duration: sec(c.duration), in: framesToSeconds(c.source.in, f),
-        rate: c.speed > 0 ? c.speed : 1, reverse: c.reverse, gain: keyed(a.gain), pan: keyed(a.pan),
-        fadeIn: sec(a.fadeIn), fadeOut: sec(a.fadeOut), effects: c.effects.filter((e) => e.enabled).map((e) => ({ type: e.type, params: Object.fromEntries(Object.entries(e.params).map(([k, p]) => [k, p.value])) })),
-      };
-      const tin = into.get(c.id), tout = outOf.get(c.id);
-      const curve = (x: Transition) => (x.type === "audio:constant_gain" ? "gain" as const : "power" as const);
-      // a crossfade at a cut plays the incoming clip early (into its head) and the outgoing one late (into its tail)
-      const rin = tin?.fromClipId ? transitionRange(tin) : null, rout = tout?.toClipId ? transitionRange(tout) : null;
-      const pre = rin ? Math.max(0, tin!.at - rin[0]) : 0, post = rout ? Math.max(0, rout[1] - tout!.at) : 0;
-      if (pre) {
-        plan.start -= sec(pre); plan.in -= sec(pre) * plan.rate;
-        plan.gain.keys = plan.gain.keys.map((k) => ({ ...k, t: k.t + sec(pre) }));
-        plan.pan.keys = plan.pan.keys.map((k) => ({ ...k, t: k.t + sec(pre) }));
+      if (c.source.type === "nested") {
+        const ns = ctx.sequence(c.source.sequenceId);
+        if (!ns || ns.id === seq.id) continue;
+        if (c.speed !== 1 || hasRamp(c) || fpsExact(ns.fps) !== fpsExact(fps)) { warn(`TODO: the sound of nested sequence "${c.name}" at another speed or frame rate isn't mixed yet`); continue; }
+        // the nested sequence's audio tracks (a multicam clip: the audio angle's track) within the clip's window
+        const inner = tracksOf(ns, "audio");
+        const angle = c.multicam && ns.multicam ? (c.multicam.audioAngle ?? c.multicam.angle) : -1;
+        const solo = inner.some((x) => x.solo);
+        const win0 = Math.round(c.source.in), win1 = win0 + c.duration;
+        let outerGain = c.audio?.gain.value ?? 0;
+        if (c.audio?.gain.keyframes?.length) { warn(`TODO: volume keyframes on the nested clip "${c.name}" aren't mixed yet`); outerGain = c.audio.gain.keyframes[0].value; }
+        inner.forEach((it, i) => {
+          if (angle >= 0 ? i !== angle : it.muted || (solo && !it.solo)) return;
+          for (const x0 of ns.clips) {
+            if (x0.trackId !== it.id || !x0.enabled || clipEnd(x0) <= win0 || x0.start >= win1) continue;
+            if (x0.source.type === "nested") { warn(`TODO: the sound of a nest inside "${c.name}" isn't mixed yet`); continue; }
+            const r = sourceRate(x0, ns, ctx);
+            let x = x0;
+            if (x.start < win0) x = trimStartBy(x, win0 - x.start, r);
+            if (clipEnd(x) > win1) x = trimEndBy(x, win1 - clipEnd(x), r);
+            add(x, ns, c.start - win0, t.id, { gainDb: (angle >= 0 ? 0 : it.volume) + outerGain, id: `${c.id}/${x.id}` });
+          }
+        });
+        continue;
       }
-      plan.duration = sec(c.duration + pre + post);
-      if (rin) plan.xIn = { start: sec(rin[0] - c.start + pre), duration: sec(rin[1] - rin[0]), curve: curve(tin!) };
-      else if (tin) plan.fadeIn = Math.max(plan.fadeIn, sec(tin.duration));
-      if (rout) plan.xOut = { start: sec(rout[0] - c.start + pre), duration: sec(rout[1] - rout[0]), curve: curve(tout!) };
-      else if (tout) plan.fadeOut = Math.max(plan.fadeOut, sec(tout.duration));
-      clips.push(plan);
+      add(c, seq, 0, t.id);
     }
   }
   return { tracks, clips, duration: sec(seqEnd(seq)), warnings };
@@ -481,11 +559,7 @@ export function sampleKeys(p: { value: number; keys: { t: number; v: number; eas
       const a = ks[i - 1], b = ks[i];
       const span = b.t - a.t;
       if (span <= 0 || a.ease === "hold") return a.v;
-      let x = (t - a.t) / span;
-      if (a.ease === "ease_in") x = x * x * x;
-      else if (a.ease === "ease_out") x = 1 - Math.pow(1 - x, 3);
-      else if (a.ease === "ease_in_out") x = x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2;
-      return a.v + (b.v - a.v) * x;
+      return a.v + (b.v - a.v) * ease(a.ease, (t - a.t) / span);
     }
   }
   return ks[ks.length - 1].v;
@@ -493,10 +567,90 @@ export function sampleKeys(p: { value: number; keys: { t: number; v: number; eas
 
 // ── generic editor tracks (engine "video" tracks, docs/EDITOR.md §6) ─────────
 
-type EParam = { value: unknown; keyframes?: { t: number; frame: number; value: unknown; ease: Easing }[] };
+type EParam = { value: unknown; keyframes?: (ParamKey & { t: number; frame: number })[] };
 /** Generic tracks: every effect runs in the clip's chain from the engine registry (look, adjust, mask … included, with
  *  keyframes); only a studio shot's fx stays the FFmpeg-matched `fx`. */
 const LEGACY_FX = new Set(["shotfx"]);
+
+/** Shifts a generic-track param's keyframes `d` seconds / `df` frames earlier (a ramp piece starts later in the clip). */
+function shiftEParam(p: unknown, d: number, df: number): unknown {
+  const q = p as EParam;
+  if (!q || typeof q !== "object" || !Array.isArray(q.keyframes)) return p;
+  return { ...q, keyframes: q.keyframes.map((k) => ({ ...k, t: k.t - d, frame: k.frame - df })) };
+}
+
+const third = (from: unknown, to: unknown): number[] | undefined =>
+  (Array.isArray(from) && Array.isArray(to) ? from.map((v, j) => (Number(to[j]) - Number(v)) / 3) : undefined);
+
+/**
+ * A model param as the engine's (types.ts ParamKey): keys in seconds and frames with their eases passed through —
+ * "bezier" with its `out` / `in` handles, "bounce", "elastic", "hold" — and the motion path's spatial tangents. The
+ * engine has no default tangent, so a segment with only one side set gets the model's straight third on the other.
+ */
+export function engineParam<T>(p: Param<T>, fps: number): EParam {
+  const ks = p.keyframes ?? [];
+  if (!ks.length) return { value: p.value };
+  return { value: p.value, keyframes: ks.map((k, i) => {
+    const x: ParamKey & { t: number; frame: number } = { t: framesToSeconds(k.frame, fps), frame: k.frame, value: k.value, ease: k.ease };
+    if (k.out) x.out = k.out;
+    if (k.in) x.in = k.in;
+    const next = ks[i + 1], prev = ks[i - 1];
+    if (next && (k.tangentOut || next.tangentIn)) x.tangentOut = k.tangentOut ?? third(k.value, next.value);
+    if (prev && (prev.tangentOut || k.tangentIn)) x.tangentIn = k.tangentIn ?? third(k.value, prev.value);
+    return x;
+  }) };
+}
+
+/** A speed ramp as the engine's time map (local seconds → source seconds from `base` at the clip's start): a point on
+ *  every frame (every few on very long clips, plus every keyframe), the integral of the curve there. */
+export function rampTimeMap(c: TimelineClip, base: number, fps: number): TimePoint[] {
+  const k = (c.speed > 0 ? c.speed : 1) / fpsExact(fps);  // source seconds per speed-frame
+  const D = Math.max(1, c.duration);
+  const step = Math.max(1, Math.ceil(D / 2400));
+  const frames = new Set<number>([D]);
+  for (let f = 0; f < D; f += step) frames.add(f);
+  for (const kf of c.timeRemap?.keyframes ?? []) if (kf.frame > 0 && kf.frame < D) frames.add(kf.frame);
+  return [...frames].sort((a, b) => a - b).map((f) => ({ t: framesToSeconds(f, fps), s: base + clipSpan(c, 0, f) * k }));
+}
+
+/**
+ * A speed-ramped clip for the engine: one clip with a time map (a frame hold: a freeze, speed 0, on its frame). The
+ * engine's time maps only run forwards, so a reversed ramp is still constant-speed clips back to back (rampPieces),
+ * "<id>~<n>" after the first, with freezes at speed 0.
+ */
+function rampClips(c: TimelineClip, ec: EClip, seq: Sequence, ctx: Ctx, warn: (s: string) => void): EClip[] {
+  const fps = seq.fps;
+  const sec = (f: number) => framesToSeconds(f, fps);
+  const base = ec.in;
+  const k = (c.speed > 0 ? c.speed : 1) / fpsExact(fps);  // source seconds per speed-frame
+  const total = clipSpan(c, 0, c.duration);
+  const m = c.source.type === "media" ? ctx.media(c.source.mediaId) : undefined;
+  const mediaS = m && m.duration > 0 ? framesToSeconds(m.duration, m.fps > 0 ? m.fps : fps) : Infinity;
+  if (base + total * k > mediaS + 0.05) warn(`"${c.name}": its speed ramp runs past the end of the media (the last frame holds)`);
+  const remap = c.timeRemap!;
+  if (!remap.keyframes?.length && !(remap.value > 0)) return [{ ...ec, speed: 0, reverse: undefined }];
+  if (!c.reverse) return [{ ...ec, timeMap: rampTimeMap(c, base, fps) }];
+  const pieces = rampPieces(c);
+  return pieces.map((pc, i) => {
+    const t0 = sec(c.start + pc.from), t1 = sec(c.start + pc.to);
+    const d = t0 - sec(c.start);
+    const x: EClip = {
+      ...ec, id: i === 0 ? c.id : `${c.id}~${i}`, start: t0, duration: t1 - t0,
+      motion: ec.motion ? Object.fromEntries(Object.entries(ec.motion).map(([key, v]) => [key, key === "blend" ? v : shiftEParam(v, d, pc.from)])) as EClip["motion"] : ec.motion,
+      effects: ec.effects?.map((e) => ({ ...e, params: e.params ? Object.fromEntries(Object.entries(e.params).map(([key, v]) => [key, shiftEParam(v, d, pc.from)])) : e.params })),
+    };
+    let speed = pc.speed * (c.speed > 0 ? c.speed : 1);
+    // a freeze (or a crawl slower than 1/16) is one held frame: speed 0 shows `in`
+    if (pc.freeze || speed < 0.0625) {
+      const at = base + (total - pc.offset - (pc.freeze ? 0 : clipSpan(c, pc.from, pc.to) / 2)) * k;
+      return { ...x, in: Math.max(0, at), speed: 0 };
+    }
+    if (speed > 16) { warn(`"${c.name}": its speed ramp goes past 1600 %; shown at 1600 %`); speed = 16; }
+    x.speed = speed;
+    x.in = base + (total - pc.offset - clipSpan(c, pc.from, pc.to)) * k;
+    return x;
+  });
+}
 
 /**
  * The same sequence for the engine's generic "video" tracks: every video track bottom → top with its clips placed by
@@ -513,9 +667,9 @@ export function toVideoComposition(project: EditProject, sequenceId: string, opt
   const looks = new Set<string>();
   const build = (seq: Sequence, depth: number): Composition => {
     const sec = (f: number) => framesToSeconds(f, seq.fps);
-    const param = <T>(p: Param<T>): EParam => (p.keyframes?.length
-      ? { value: p.value, keyframes: p.keyframes.map((k) => ({ t: sec(k.frame), frame: k.frame, value: k.value, ease: k.ease })) }
-      : { value: p.value });
+    const param = <T>(p: Param<T>): EParam => engineParam(p, seq.fps);
+    /** A reversed ramp's last piece (transitions out of the clip leave from it). */
+    const lastPiece = new Map<string, string>();
     const tracks: ETrack[] = tracksOf(seq, "video").map((t) => {
       const clips: EClip[] = [];
       for (const c of seq.clips) {
@@ -540,6 +694,12 @@ export function toVideoComposition(project: EditProject, sequenceId: string, opt
           if (!md) continue;
           ec.media = md.media; ec.in = md.in;
           if (legacy.kenburns && md.media.kind === "image") ec.kenburns = true;
+          if (hasRamp(c) && md.media.kind === "video") {
+            const ps = rampClips(c, ec, seq, ctx, warn);
+            if (ps.length > 1) lastPiece.set(c.id, ps[ps.length - 1].id);
+            clips.push(...ps);
+            continue;
+          }
         } else if (s.type === "title") { ec.type = "title"; ec.title = { ...s.text } as EClip["title"]; }
         else if (s.type === "color") { ec.type = "color"; ec.color = s.color; }
         else if (s.type === "adjustment") ec.type = "adjustment";
@@ -547,14 +707,20 @@ export function toVideoComposition(project: EditProject, sequenceId: string, opt
           const ns = ctx.sequence(s.sequenceId);
           if (!ns || depth > 4 || ns.id === seq.id) { warn(`Nested sequence of "${c.name}" is missing`); continue; }
           ec.type = "nested"; ec.comp = build(ns, depth + 1); ec.in = framesToSeconds(s.in, ns.fps);
+          // a multicam clip shows one angle: its video track of the multicam sequence
+          if (c.multicam && ns.multicam) {
+            const a = c.multicam.angle;
+            ec.comp = { ...ec.comp, tracks: ec.comp.tracks.map((x, i) => (i === a ? x : { ...x, hidden: true })) };
+          }
+          if (hasRamp(c)) warn(`TODO(engine): the speed ramp on the nested clip "${c.name}" isn't drawn yet (it plays at ${Math.round(c.speed * 100)} %)`);
         }
         clips.push(ec);
       }
       const transitions = seq.transitions.filter((x) => x.trackId === t.id && !x.type.startsWith("audio:")).map((x) => {
         // `start` is exact: the engine would centre at at − d/2, while a centred transition here starts floor(d/2) frames early
         const tr: NonNullable<ETrack["transitions"]>[number] = { id: x.id, type: x.type, at: sec(x.at), duration: sec(x.duration), alignment: x.alignment,
-          start: sec(transitionRange(x)[0]), easing: x.easing };
-        if (x.fromClipId) tr.from = x.fromClipId;
+          start: sec(transitionRange(x)[0]), easing: x.easing === "hold" ? "hold" : ENGINE_EASE(x.easing) };
+        if (x.fromClipId) tr.from = lastPiece.get(x.fromClipId) ?? x.fromClipId;
         if (x.toClipId) tr.to = x.toClipId;
         if (x.params && Object.keys(x.params).length) tr.params = x.params as never;
         return tr;

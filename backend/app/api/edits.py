@@ -1,21 +1,26 @@
-"""Tatvam Editor's studio side (docs/EDITOR.md §8): an edit's hidden studio project (it carries the AI costs, budget,
-approvals and history), media uploads for the AI tools, and each tool's price and run. Tools, prices and schemas live
-in core/edit_ai.py; the jobs in workers/handlers_edit.py."""
+"""Tatvam Editor's studio side (docs/EDITOR.md §8, §10): an edit's hidden studio project (it carries the AI costs,
+budget, approvals and history), media uploads for the AI tools, each tool's price and run, backups of the edit, and the
+studio scenes of an imported episode. Tools, prices and schemas live in core/edit_ai.py, backups in core/edit_backups.py;
+the jobs in workers/handlers_edit.py. Timeline review comments on an edit use the comments API (api/work.py,
+target_type "edit")."""
 from __future__ import annotations
 
 import hashlib
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from .. import settings_store
-from ..core import budget, edit_ai, jobs
+from ..core import budget, edit_ai, edit_backups, jobs
 from ..core.edit_ai import EDIT_TYPE, ToolError
+from ..core.edit_backups import BackupError
 from ..db import get_db
-from ..models import Job, Project, User, VoiceProfile
+from ..events import emit
+from ..models import EditBackup, Episode, Job, Project, Scene, Shot, User, VoiceProfile, role_rank
 from ..pipeline import ffmpeg as ff
 from ..security import current_user, require
 from ..storage import get_storage
@@ -130,7 +135,9 @@ class ToolIn(BaseModel):
     what: str = Field("", max_length=120)  # names the clip in the job's label ("Captions: interview.mp4")
 
 
-def _plan(db: Session, p: Project, body: ToolIn) -> dict:
+def _plan(db: Session, p: Project, body: ToolIn, user: User | None = None) -> dict:
+    if user is not None and body.tool in edit_ai.PRODUCER_TOOLS and role_rank(user.role) < role_rank("producer"):
+        raise HTTPException(403, "Only a producer can clone a voice (it needs the speaker's consent record)")
     try:
         return edit_ai.plan(db, p, body.tool, body.params, body.what)
     except ToolError as e:
@@ -175,7 +182,7 @@ def ai_voices(pid: int, language: str = "en", user: User = Depends(current_user)
 def ai_estimate(pid: int, body: ToolIn, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
     """The price of a tool run, line by line, and whether it would start at once or wait for an approval."""
     p = edit_of(db, pid)
-    plan = _plan(db, p, body)
+    plan = _plan(db, p, body, user)
     return {**plan, "budget": budget.check(db, user, p, plan["total_usd"]), "team": budget.team_status(db)}
 
 
@@ -183,7 +190,7 @@ def ai_estimate(pid: int, body: ToolIn, user: User = Depends(require("creator"))
 def ai_run(pid: int, body: ToolIn, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
     """Start a tool: one job, through the studio's budgets and approvals (over a limit it waits for a producer)."""
     p = edit_of(db, pid)
-    plan = _plan(db, p, body)
+    plan = _plan(db, p, body, user)
     res = jobs.submit(db, user, p, [jobs.spec(plan["job"], payload={"tool": plan["tool"], "params": plan["params"]},
                                               project_id=p.id, estimate=plan["total_usd"], label=plan["label"])])
     return {**res, "job_id": res["jobs"][0]["id"] if res["jobs"] else None, "tool": plan["tool"], "items": plan["items"]}
@@ -219,3 +226,88 @@ def ai_job(pid: int, jid: int, user: User = Depends(current_user), db: Session =
     if j is None or j.project_id != pid:
         raise HTTPException(404, "Job not found")
     return job_out(j)
+
+
+# ── backups of the edit ──────────────────────────────────────────────────────
+
+def _backup_of(db: Session, pid: int, bid: int) -> EditBackup:
+    b = db.get(EditBackup, bid)
+    if b is None or b.project_id != pid:
+        raise HTTPException(404, "Backup not found")
+    return b
+
+
+def _backup_out(db: Session, b: EditBackup) -> dict:
+    return edit_backups.out(b, user_brief(db.get(User, b.created_by)) if b.created_by else None)
+
+
+@router.post("/edits/{pid}/backups")
+def make_backup(pid: int, file: UploadFile = File(...), device: str = Form(""), note: str = Form(""),
+                user: User = Depends(require("creator")), db: Session = Depends(get_db)):
+    """Keeps the edit's .tatvamedit JSON (multipart "file", at most 20 MB) on the studio. The same content is kept once
+    (`deduped`); the newest 50 backups stay, plus one a day for 30 days. `device` names the computer it came from."""
+    p = edit_of(db, pid)
+    data = file.file.read(edit_backups.MAX_BYTES + 1)
+    try:
+        b, deduped = edit_backups.save(db, p, data, device=device, note=note, user=user)
+    except BackupError as e:
+        raise HTTPException(e.status, str(e)) from e
+    db.commit()
+    if not deduped:
+        emit(db, p.id, "edit.backup", {"backup_id": b.id, "by": user.name or user.email, "device": b.device}, user_id=user.id)
+    return {**_backup_out(db, b), "deduped": deduped}
+
+
+@router.get("/edits/{pid}/backups")
+def list_backups(pid: int, limit: int = 100, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """The edit's backups, newest first."""
+    edit_of(db, pid)
+    rows = (db.query(EditBackup).filter(EditBackup.project_id == pid).order_by(EditBackup.created_at.desc(), EditBackup.id.desc())
+            .limit(min(max(limit, 1), 200)).all())
+    users = {u.id: u for u in db.query(User).filter(User.id.in_({b.created_by for b in rows if b.created_by})).all()}
+    return [edit_backups.out(b, user_brief(users.get(b.created_by))) for b in rows]
+
+
+@router.get("/edits/{pid}/backups/{bid}")
+def download_backup(pid: int, bid: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """The backup as a .tatvamedit file."""
+    edit_of(db, pid)
+    b = _backup_of(db, pid, bid)
+    st = get_storage()
+    if not st.exists(b.key):
+        raise HTTPException(404, "That backup's file is gone from the studio")
+    safe = "".join(ch if ch.isalnum() or ch in " ._-" else "_" for ch in (b.name or "edit")).strip() or "edit"
+    return Response(st.abs(b.key).read_bytes(), media_type="application/json",
+                    headers={"Content-Disposition": f'attachment; filename="{safe[:80]} {b.created_at:%Y-%m-%d %H%M}.tatvamedit"',
+                             "X-Content-Type-Options": "nosniff", "Cache-Control": "private, no-store"})
+
+
+@router.post("/edits/{pid}/backups/{bid}/restore")
+def restore_backup(pid: int, bid: int, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
+    """The backup's edit document, for the PC to write as the edit (nothing changes on the studio)."""
+    edit_of(db, pid)
+    b = _backup_of(db, pid, bid)
+    try:
+        doc = edit_backups.load(b)
+    except BackupError as e:
+        raise HTTPException(e.status, str(e)) from e
+    emit(db, pid, "edit.restored", {"backup_id": b.id, "by": user.name or user.email}, user_id=user.id)
+    return {"backup": _backup_out(db, b), "project": doc}
+
+
+# ── the studio scenes of an imported episode (mood per scene) ────────────────
+
+@router.get("/edits/{pid}/episode-scenes")
+def episode_scenes(pid: int, episode_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """The scenes of a studio episode a sequence was imported from: title, emotion, summary and the codes of their shots
+    (the editor names an imported clip after its shot's code), in order."""
+    edit_of(db, pid)
+    ep = db.get(Episode, episode_id)
+    if ep is None:
+        raise HTTPException(404, "Episode not found")
+    shots = db.query(Shot).filter(Shot.episode_id == ep.id).order_by(Shot.order, Shot.id).all()
+    out = []
+    for sc in db.query(Scene).filter(Scene.episode_id == ep.id).order_by(Scene.order, Scene.id).all():
+        out.append({"id": sc.id, "title": sc.title, "emotion": sc.emotion, "summary": (sc.summary or "")[:2000],
+                    "shot_codes": [s.code for s in shots if s.scene_id == sc.id and s.code]})
+    return {"episode_id": ep.id, "title": ep.title, "scenes": out}

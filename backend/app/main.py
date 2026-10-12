@@ -24,6 +24,7 @@ mimetypes.add_type("video/mp4", ".mp4")
 from . import __version__
 from .api import (admin, auth, bible, board, campaign, designs, desktop, edits, fx, generate, growth, hub, layers,
                   mcp_access, production, projects, rates, room, shots, work)
+from .api import ui as ui_api
 from .config import ROOT, get_settings
 from .db import Base, engine
 from .middleware import RetryReads
@@ -61,6 +62,7 @@ for r in (auth.router, admin.router, projects.router, bible.router, shots.router
           room.router, growth.router, board.router, fx.router, layers.router, production.router, campaign.router, rates.router,
           designs.router, mcp_access.router, desktop.router, edits.router):
     app.include_router(r)
+app.include_router(ui_api.router)  # GET /api/ui/manifest for Tatvam Desktop (docs/DESKTOP.md §4.3), before the SPA catch-all
 
 if settings.mcp_enabled:  # /mcp and the OAuth endpoints for MCP clients (app/mcp_server), before the web app catch-all
     from .mcp_server.server import routes as mcp_routes

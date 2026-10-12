@@ -5,7 +5,8 @@
 
 export type ToolId =
   | "transcribe" | "translate" | "tts" | "dub" | "clean_voice" | "sfx" | "sfx_suggest" | "music"
-  | "video" | "extend" | "edit_words" | "upscale" | "assistant";
+  | "video" | "extend" | "edit_words" | "upscale" | "assistant"
+  | "broll_suggest" | "highlights" | "thumbnail" | "voice_clone" | "mood_suggest";
 
 export interface ToolCall { tool: ToolId; params: Record<string, unknown>; what?: string }
 
@@ -15,7 +16,7 @@ export interface Budget { ok: boolean; needs_role: string | null; reason: string
 export interface Estimate {
   tool: ToolId; label: string; job: string; params: Record<string, unknown>; items: CostLine[]; total_usd: number;
   budget: Budget; engine?: string; engine_id?: string; mode?: string; seconds?: number; resolution?: string;
-  to?: [number, number]; voice?: string;
+  to?: [number, number]; voice?: string; images?: number; prompt?: string;
 }
 
 export interface RunResult {
@@ -26,6 +27,8 @@ export interface RunResult {
 export interface Output {
   key: string; url: string; kind: "audio" | "video" | "image"; duration: number; name: string;
   role?: string; start?: number; end?: number; text?: string; width?: number; height?: number;
+  /** thumbnails */
+  aspect?: "16:9" | "9:16"; variant?: number;
 }
 
 export interface Word { start: number; end: number; text: string }
@@ -37,7 +40,37 @@ export interface AiResult {
   suggestions?: string[];
   reply?: string; commands?: AiCommandRow[]; rejected?: { op: string; reason: string }[];
   engine?: string; engine_label?: string; mode?: string; mock?: boolean;
+  ideas?: BrollIdea[]; highlights?: Highlight[]; moods?: MoodPick[]; voice?: ClonedVoice | Record<string, unknown>;
+  prompt?: string; platform?: string; title?: string;
 }
+
+// ── wave 3 tools (docs/EDITOR.md §10; times in seconds on the sequence) ─────────────
+
+export interface BrollIdea { start: number; end: number; prompt: string; reason: string }
+export interface Highlight { start: number; end: number; title: string; hook: string; why: string }
+export interface MoodPick { scene_id: string; mood: string; why: string }
+export type Platform = "shorts" | "reels" | "tiktok" | "any";
+export interface ClonedVoice {
+  provider: string; voice_id: string; name: string; character_id: number; profile_ids: number[]; languages: string[];
+  consent_id: number; subject: string;
+}
+export interface ConsentRow { id: number; kind: string; subject_name: string; scope: string; expires_on: string; character_id: number | null }
+
+/** A copy of the edit on the studio (core/edit_backups.py). */
+export interface Backup {
+  id: number; project_id: number; created_at: string | null; size: number; sha256: string; name: string; edit_id: string;
+  edit_modified: string; clip_count: number; sequence_count: number; duration: number; device: string; note: string;
+  by: { id: number; name: string } | null; download_url: string; deduped?: boolean;
+}
+
+/** A timeline review comment on the edit (comments API, target_type "edit"). */
+export interface EditComment {
+  id: number; project_id: number; target_type: string; target_id: number; body: string; timecode: number | null;
+  sequence_id: string | null; frame: number | null; resolved: boolean; created_at: string; mentions: number[];
+  user: { id: number; name: string; email: string; role: string } | null;
+}
+
+export interface EpisodeScene { id: number; title: string; emotion: string; summary: string; shot_codes: string[] }
 
 export interface AiJob {
   id: number; type: string; status: "queued" | "running" | "awaiting_approval" | "succeeded" | "failed" | "cancelled" | string;

@@ -9,12 +9,24 @@
  * tatvam:// link may be read or written, and only files of those edits (or files imported into them) are served.
  * Electron-free: dialogs come in through `EditorDialogs`, FFmpeg through `MediaTools` (tests pass fakes).
  */
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync, openAsBlob, promises as fsp, readFileSync, statSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type {
-  AnalyzeKind, AnalyzeOptions, AnalyzeResult, EditListEntry, EditPreset, EditProject, LutEntry, MediaItem, ShaderEntry,
+  AnalyzeKind, AnalyzeOptions, AnalyzeResult, EditBackupResult, EditBackupStatus, EditBatchItem, EditExportOptions, EditListEntry, EditorJob, EditPreset,
+  EditProject, EditVersion, InterpolateOptions, LocalTranscript, LutEntry, MediaItem, ShaderEntry, TimelineClip, TranscribeOptions,
 } from "../shared/types.ts";
+import { isLoudnessPreset, previewJob } from "./editor-audio.ts";
+import { interpDiskBytes, interpName, interpPlan, isRifeFrameLine, readMatrix, rifeArgs, rifeEncodeArgs, rifeExtractArgs, RIFE_MODELS, isV4 } from "./editor-interpolate.ts";
+import { IR_LABELS, IR_NAMES, IR_PRESETS, irSeconds, isIrPreset, presetWav, type IrPreset } from "./editor-irs.ts";
+import { etaFrom, LocalJobs, runProc, type ProcRunner } from "./editor-jobs.ts";
+import { LUT_EXTS, scanLutFolder, sidecarName, threeDlToCube } from "./editor-luts.ts";
+import { f32, SYNC_MAX_OFFSET_S, SYNC_RATE, SYNC_WINDOW_S, syncDecodeArgs, syncOffset } from "./editor-sync.ts";
+import { checkLanguage, noGpuInLog, parseWhisperJson, parseWhisperProgress, wavArgs, whisperArgs, whisperThreads } from "./editor-whisper.ts";
+import { pickGpu } from "./aiupscale.ts";
+import { finalEncoder, type PresetDef } from "./render-args.ts";
+import { WHISPER_MODELS, type ToolManager } from "./tools.ts";
 import { writeFileAtomic } from "./config.ts";
 import { downloadTo, pool } from "./download.ts";
 import {
@@ -22,13 +34,14 @@ import {
 } from "./editor-analyze.ts";
 import { dimsFor, episodePlan, episodeSequence, type StudioEpisode, type StudioLayers } from "./editor-episode.ts";
 import {
-  filmstripArgs, Limiter, parseCubeHeader, probeFile, proxyShortSide, readText, runFfmpegLines, runPeaks, thumbArgs, type ProbeInfo,
+  filmstripArgs, Limiter, needsProxy, parseCubeHeader, probeFile, proxyShortSide, readText, runFfmpegLines, runPeaks, thumbArgs, type ProbeInfo,
 } from "./editor-media.ts";
 import {
-  BACKUP_EVERY_MS, bakName, EDIT_EXT, EditorError, exportRange, isInside, isServable, MAX_BACKUPS, MEDIA_FILTERS, mediaIdOfUrl,
-  mediaKindOf, newProject, safeEditName, toDisk, toRuntime, uid, validatePreset, validateProject, VIDEO_EXTS, AUDIO_EXTS, IMAGE_EXTS,
+  BACKUP_EVERY_MS, bakName, EDIT_EXT, EditorError, exportRange, framesToSeconds, isInside, isServable, MAX_BACKUPS, MEDIA_FILTERS, mediaIdOfUrl,
+  mediaKindOf, newProject, safeEditName, sequenceEnd, toDisk, toRuntime, uid, validatePreset, validateProject, VIDEO_EXTS, AUDIO_EXTS, IMAGE_EXTS,
 } from "./editor-model.ts";
 import { runFfmpeg, type FfmpegInfo } from "./ffmpeg.ts";
+import { PRESETS } from "./render-args.ts";
 import { mimeOf } from "./gateway.ts";
 import { pathKey, safeFileName, safePart, uniquePath } from "./naming.ts";
 import { proxyArgs } from "./proxies.ts";
@@ -38,6 +51,8 @@ import { UpstreamError, type Upstream } from "./upstream.ts";
 export interface EditorDialogs {
   /** A native open dialog; [] when cancelled. */
   openFiles(opts: { title: string; filters: { name: string; extensions: string[] }[]; multi?: boolean; defaultPath?: string }): Promise<string[]>;
+  /** additive: a native folder picker; null when cancelled */
+  openFolder?(opts: { title: string; defaultPath?: string }): Promise<string | null>;
 }
 
 /** What the editor needs from FFmpeg (the default runs the found FFmpeg; tests pass a fake). */
@@ -63,11 +78,34 @@ export interface EditorDeps {
   renders?: RenderManager;
   tools?: MediaTools;
   log(msg: string): void;
+  // ── wave 3 (all optional: tests and older callers leave them out) ──
+  /** The local tools (RIFE, whisper.cpp, models). */
+  localTools?: ToolManager;
+  /** Runs RIFE / whisper (tests pass a fake). */
+  proc?: ProcRunner;
+  /** Local tool job progress (bridge editor.onJob). */
+  onJob?(j: EditorJob): void;
+  /** A media item changed in the background: an automatic proxy (bridge editor.onMediaUpdate). */
+  onMediaUpdate?(u: { path: string; item: MediaItem }): void;
+  /** settings.editorBackups */
+  backupSettings?(): { auto: boolean; minutes: number };
+  /** whether the app holds a studio session */
+  signedIn?(): Promise<boolean>;
+  /** the encoder preference (settings.encoder.prefer) */
+  prefer?(): "auto" | "nvenc" | "qsv" | "amf" | "software";
+  /** the user's LUT folders (settings.lutFolders) */
+  lutFolders?(): string[];
+  setLutFolders?(list: string[]): void;
 }
 
 interface Recent { path: string; opened: string }
 
 const MAX_RECENTS = 20;
+/** The impulse responses' recipe in the audio preview cache key (a changed preset renders afresh). */
+const IR_SIG = createHash("sha1").update(JSON.stringify(IR_PRESETS)).digest("hex").slice(0, 12);
+/** The slow-motion clip's encoder: H.264 at a high constant quality on the fastest hardware (the editor decodes it everywhere). */
+const RIFE_ENCODE: PresetDef = { id: "rife", label: "Slow motion", w: 1920, h: 1080, orientation: "project", codec: "h264", container: "mp4", tenBit: false,
+  cq: 16, note: "" };
 const SHADER_MAX = 256 * 1024;
 const LUT_MAX = 64 * 1024 * 1024;
 const KEY_RE = /^[A-Za-z0-9][A-Za-z0-9_.\-/ ()]*$/;
@@ -102,12 +140,22 @@ export class EditorManager {
   private proxies = new Map<string, string>();
   private writes = new Map<string, Promise<unknown>>();
   private limiter = new Limiter(3);
+  /** automatic proxies, one at a time in the background */
+  private proxyLimiter = new Limiter(1);
+  private proxyQueued = new Set<string>();
+  readonly jobs: LocalJobs;
+  /** open edits (pathKey → last activity, ms) for automatic backups; their last backup */
+  private active = new Map<string, { file: string; at: number }>();
+  private backups = new Map<string, { lastAt?: number; lastError?: string; hash?: string }>();
+  private backupTimer: NodeJS.Timeout | null = null;
+  private irsReady: Promise<string> | null = null;
 
   constructor(deps: EditorDeps) {
     this.deps = deps;
     this.recentsFile = path.join(deps.userData, "editor-recent.json");
     this.uploadsFile = path.join(deps.userData, "editor-uploads.json");
     this.shadersDir = path.join(deps.userData, "shaders");
+    this.jobs = new LocalJobs({ broadcast: (j) => deps.onJob?.(j), log: deps.log });
   }
 
   editsRoot(): string {
@@ -209,23 +257,23 @@ export class EditorManager {
   }
 
   /** Rotate `<file>.bak.1..10` (at most once a minute), then write atomically. One write per file at a time. */
-  private async writeProject(file: string, disk: EditProject): Promise<void> {
+  private async writeProject(file: string, disk: EditProject, forceBackup = false): Promise<void> {
     const k = pathKey(file);
     const prev = this.writes.get(k) ?? Promise.resolve();
     const run = prev.catch(() => undefined).then(async () => {
-      await this.rotateBackups(file);
+      await this.rotateBackups(file, forceBackup);
       await retry(() => writeFileAtomic(file, JSON.stringify(disk)));
     });
     this.writes.set(k, run);
     try { await run; } finally { if (this.writes.get(k) === run) this.writes.delete(k); }
   }
 
-  private async rotateBackups(file: string): Promise<void> {
+  private async rotateBackups(file: string, force = false): Promise<void> {
     if (!existsSync(file)) return;
     const b1 = bakName(file, 1);
     let last = 0;
     try { last = (await fsp.stat(b1)).mtimeMs; } catch { last = 0; }
-    if (Date.now() - last < BACKUP_EVERY_MS) return;
+    if (!force && Date.now() - last < BACKUP_EVERY_MS) return;
     for (let n = MAX_BACKUPS - 1; n >= 1; n--) {
       const from = bakName(file, n);
       if (existsSync(from)) await retry(() => fsp.rename(from, bakName(file, n + 1)));
@@ -282,6 +330,7 @@ export class EditorManager {
     this.allowDir(dir);
     this.files.add(pathKey(file));
     this.touchRecent(file);
+    this.touch(file);
     return { path: file, project: this.runtime(project, dir) };
   }
 
@@ -299,7 +348,10 @@ export class EditorManager {
     const project = await this.readProject(target.file);
     this.allowDir(target.dir);
     this.touchRecent(target.file);
-    return { path: target.file, project: this.runtime(project, target.dir) };
+    this.touch(target.file);
+    const runtime = this.runtime(project, target.dir);
+    if (project.settings.proxy !== "off") this.queueProxies(target.file, target.dir, runtime.media, project.settings.proxy);
+    return { path: target.file, project: runtime };
   }
 
   async save(file: string, project: EditProject): Promise<{ modified: string }> {
@@ -315,6 +367,7 @@ export class EditorManager {
     await this.writeProject(abs, disk);
     this.allowDir(dir);
     this.remember(dir, p.media.filter((m) => !m.path.startsWith("studio:") && path.isAbsolute(m.path) && mediaKindOf(m.path)));
+    this.touch(abs);
     return { modified: disk.modified };
   }
 
@@ -373,6 +426,8 @@ export class EditorManager {
     };
     if (info.channels) item.audioChannels = info.channels;
     if (info.sampleRate) item.sampleRate = info.sampleRate;
+    if (info.codec) item.codec = info.codec;
+    if (info.bits) item.bitDepth = info.bits;
     if (existsSync(thumb)) item.thumb = this.register(thumb); else delete item.thumb;
     if (existsSync(strip)) item.filmstrip = this.register(strip); else delete item.filmstrip;
     if (peaks) item.peaks = peaks; else delete item.peaks;
@@ -383,9 +438,6 @@ export class EditorManager {
     return item;
   }
 
-  private async copyMediaSetting(file: string): Promise<boolean> {
-    try { return (await this.readProject(file)).settings.copyMedia; } catch { return false; }
-  }
 
   async importMedia(file: string, files?: string[]): Promise<MediaItem[]> {
     const { file: abs, dir } = this.editFile(file);
@@ -405,7 +457,9 @@ export class EditorManager {
         } catch { bad.push(`${path.basename(p)}: not found`); }
       }
     }
-    const copy = await this.copyMediaSetting(abs);
+    let settings: EditProject["settings"] | null = null;
+    try { settings = (await this.readProject(abs)).settings; } catch { settings = null; }
+    const copy = Boolean(settings?.copyMedia);
     const items: (MediaItem | null)[] = good.map(() => null);
     await pool(good, 3, async (p, i) => {
       try {
@@ -417,6 +471,7 @@ export class EditorManager {
     const done = items.filter((x): x is MediaItem => x !== null);
     if (bad.length) this.deps.log(`editor import: ${bad.join("; ")}`);
     if (!done.length && bad.length) throw new EditorError(bad.slice(0, 5).join("\n"));
+    if (settings && settings.proxy !== "off") this.queueProxies(abs, dir, done, settings.proxy);
     return done;
   }
 
@@ -462,12 +517,12 @@ export class EditorManager {
     return this.ingest(dir, src, { copy: false, id: it.id, name: it.name, studioKey, keep });
   }
 
-  async proxy(file: string, mediaId: string): Promise<MediaItem> {
+  async proxy(file: string, mediaId: string, shortSide?: number): Promise<MediaItem> {
     const { file: abs, dir } = this.editFile(file);
     const it = await this.item(file, dir, mediaId);
     if (it.kind !== "video") throw new EditorError("Only video clips get proxies");
     const src = await this.existingFile(it);
-    const short = proxyShortSide(it.width || 1920, it.height || 1080);
+    const short = shortSide ?? proxyShortSide(it.width || 1920, it.height || 1080);
     const cache = path.join(dir, "Cache", it.id);
     await fsp.mkdir(cache, { recursive: true });
     const out = path.join(cache, `proxy_${short}.mp4`);
@@ -616,15 +671,31 @@ export class EditorManager {
   }
 
   // ── export ──
-  async export(file: string, sequenceId: string, opts: { preset: string; range: "all" | "inout"; upload?: boolean }): Promise<string> {
+  async export(file: string, sequenceId: string, opts: EditExportOptions): Promise<string> {
+    return (await this.exportBatch(file, sequenceId, [{ ...opts, sequenceId }]))[0];
+  }
+
+  /** Several exports queued in one go (one RenderJob each, in order); every item is checked before any is queued. */
+  async exportBatch(file: string, sequenceId: string, items: EditBatchItem[]): Promise<string[]> {
     const { file: abs, dir } = this.editFile(file);
     if (!this.deps.renders) throw new EditorError("Exports aren't available here");
+    if (!Array.isArray(items) || !items.length) throw new EditorError("Nothing to export");
+    if (items.length > 24) throw new EditorError("At most 24 exports in one batch");
     const project = this.runtime(await this.readProject(abs), dir);
-    const seq = project.sequences.find((s) => s.id === sequenceId);
-    if (!seq) throw new EditorError("That sequence isn't in the saved edit: save first");
-    const range = exportRange(seq, opts?.range === "inout" ? "inout" : "all");
-    return this.deps.renders.startEdit({ editPath: abs, editDir: dir, project, sequenceId, range, preset: String(opts?.preset ?? ""),
-      upload: Boolean(opts?.upload), source: seq.source ?? null });
+    const irDir = await this.ensureIrs();
+    const planned = items.map((o, i) => {
+      const seq = project.sequences.find((s) => s.id === (o?.sequenceId || sequenceId));
+      if (!seq) throw new EditorError(`Export ${i + 1}: that sequence isn't in the saved edit: save first`);
+      const preset = String(o?.preset ?? "");
+      if (!PRESETS.some((p) => p.id === preset)) throw new EditorError(`Export ${i + 1}: unknown preset ${preset}`);
+      if (o?.loudness !== undefined && !isLoudnessPreset(o.loudness)) throw new EditorError(`Export ${i + 1}: unknown loudness target ${String(o.loudness)}`);
+      const range = exportRange(seq, o?.range === "inout" ? "inout" : "all");
+      const name = typeof o?.name === "string" && o.name.trim() ? o.name.trim().slice(0, 100) : undefined;
+      return { seq, preset, range, name, o };
+    });
+    return planned.map(({ seq, preset, range, name, o }) => this.deps.renders!.startEdit({ editPath: abs, editDir: dir, project, sequenceId: seq.id, range,
+      preset, upload: Boolean(o?.upload), source: seq.source ?? null, loudness: o?.loudness, ducking: o?.ducking, name,
+      irFile: (p: IrPreset) => path.join(irDir, `${p}.wav`) }));
   }
 
   // ── local analysis (docs/EDITOR.md §8) ──
@@ -633,6 +704,28 @@ export class EditorManager {
     const it = await this.item(file, dir, mediaId);
     const src = await this.existingFile(it);
     const tools = this.tools();
+    if (kind === "sync") {
+      if (typeof opts.against !== "string" || !opts.against) throw new EditorError("Sync needs the other clip (against)");
+      if (opts.against === mediaId) throw new EditorError("Pick another clip to sync with");
+      const other = await this.item(file, dir, opts.against);
+      const src2 = await this.existingFile(other);
+      if (!it.hasAudio || !other.hasAudio) throw new EditorError(`${!it.hasAudio ? it.name : other.name} has no sound to sync by`);
+      const maxOffset = Number.isFinite(Number(opts.maxOffset)) ? Math.min(SYNC_MAX_OFFSET_S, Math.max(1, Number(opts.maxOffset))) : SYNC_MAX_OFFSET_S;
+      const window = Math.min(SYNC_WINDOW_S + maxOffset, Math.max(SYNC_WINDOW_S, maxOffset * 2));
+      const decode = async (f: string) => {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        const cap = window * SYNC_RATE * 4;
+        await tools.lines(syncDecodeArgs(f, window), () => undefined, { stdout: (b) => { if (size < cap) { chunks.push(b); size += b.length; } } });
+        return f32(Buffer.concat(chunks).subarray(0, cap));
+      };
+      const [a, b] = await Promise.all([decode(src), decode(src2)]);
+      try {
+        return { kind, ...syncOffset(a, b, SYNC_RATE, maxOffset), against: other.id };
+      } catch (e) {
+        throw new EditorError((e as Error).message);
+      }
+    }
     const duration = it.seconds ?? (it.fps > 0 ? it.duration / it.fps : 0);
     const lines: string[] = [];
     const collect = (l: string) => { lines.push(l); };
@@ -663,7 +756,11 @@ export class EditorManager {
     }
     if (kind === "loudness") {
       if (!it.hasAudio) throw new EditorError(`${it.name} has no sound`);
-      await tools.lines(loudnessArgs(src), (l) => { if (!/\bt:\s*[\d.]+\s+TARGET/.test(l)) collect(l); });
+      const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? v : undefined);
+      const inS = n(opts.in);
+      const outS = n(opts.out);
+      if (inS !== undefined && outS !== undefined && !(outS > inS)) throw new EditorError("The out point must be after the in point");
+      await tools.lines(loudnessArgs(src, inS, outS), (l) => { if (!/\bt:\s*[\d.]+\s+TARGET/.test(l)) collect(l); });
       return { kind, ...parseEbur128(lines) };
     }
     throw new EditorError(`Unknown analysis ${String(kind)}`);
@@ -713,5 +810,540 @@ export class EditorManager {
     const dest = uniquePath(path.join(mediaDir, fname), taken);
     await downloadTo(this.deps.upstream, `/media/${k.split("/").map(encodeURIComponent).join("/")}`, dest);
     return this.ingest(dir, dest, { copy: false, name: path.basename(dest), studioKey: k });
+  }
+
+  // ── automatic proxies (project setting proxy "auto" / "always") ──
+  private queueProxies(file: string, dir: string, items: MediaItem[], mode: "auto" | "always"): void {
+    for (const it of items) {
+      if (it.kind !== "video" || it.missing || it.path.startsWith("studio:")) continue;
+      if (it.proxyPath && existsSync(it.proxyPath)) continue;
+      const want = mode === "always" || needsProxy({ kind: "video", width: it.width, height: it.height, codec: it.codec, bits: it.bitDepth });
+      if (!want) continue;
+      const k = `${pathKey(file)}|${it.id}`;
+      if (this.proxyQueued.has(k)) continue;
+      this.proxyQueued.add(k);
+      void this.proxyLimiter.run(async () => {
+        try {
+          const updated = await this.proxy(file, it.id, 1080);
+          this.deps.onMediaUpdate?.({ path: file, item: updated });
+        } catch (e) {
+          this.deps.log(`editor auto proxy ${it.name}: ${(e as Error).message}`);
+        } finally {
+          this.proxyQueued.delete(k);
+        }
+      });
+    }
+  }
+
+  // ── RIFE slow motion (docs/EDITOR.md §10) ──
+  private runner(): ProcRunner { return this.deps.proc ?? runProc; }
+
+  private speedFile(): string { return path.join(this.deps.userData, "rife-speed.json"); }
+
+  /** Output megapixels a second RIFE managed here (a running average), or a GTX 1660 Ti-class starting guess. */
+  private rifeMpps(): number {
+    try { const v = Number(JSON.parse(readFileSync(this.speedFile(), "utf8")).mpps); return v > 0 ? v : 20; } catch { return 20; }
+  }
+
+  private learnRife(frames: number, w: number, h: number, secs: number): void {
+    if (secs <= 0 || frames < 8) return;
+    const mpps = (frames * w * h) / 1e6 / secs;
+    const prev = this.rifeMpps();
+    const exists = existsSync(this.speedFile());
+    try { writeFileAtomic(this.speedFile(), JSON.stringify({ mpps: Math.round((exists ? prev * 0.6 + mpps * 0.4 : mpps) * 100) / 100 })); } catch { /* not important */ }
+  }
+
+  async interpolate(file: string, mediaId: string, opts: InterpolateOptions = {}): Promise<MediaItem> {
+    const { dir } = this.editFile(file);
+    const it = await this.item(file, dir, mediaId);
+    if (it.kind !== "video") throw new EditorError("Slow motion needs a video clip");
+    const src = await this.existingFile(it);
+    const lt = this.deps.localTools;
+    const exe = lt?.pathOf("rife");
+    if (!lt || !exe) throw new EditorError("Install RIFE first (Tools → RIFE slow motion)");
+    const model = opts.model ?? "rife-v4.6";
+    if (!RIFE_MODELS.includes(model)) throw new EditorError(`Unknown RIFE model ${String(model)}`);
+    const seconds = it.seconds ?? (it.fps > 0 ? it.duration / it.fps : 0);
+    const inS = Math.max(0, Number(opts.in) || 0);
+    const outS = opts.out !== undefined && Number(opts.out) > inS ? Math.min(Number(opts.out), seconds || Number(opts.out)) : seconds || undefined;
+    if (outS !== undefined && !(outS > inS)) throw new EditorError("The in point is after the out point");
+    const est = Math.max(2, Math.round(((outS ?? inS + 1) - inS) * (it.fps || 24)));
+    try { interpPlan(it.fps || 24, est, opts); } catch (e) { throw new EditorError((e as Error).message); } // check the options before queueing
+    const tools = this.tools();
+    const run = this.runner();
+    const { result } = this.jobs.run({ kind: "interpolate", editPath: file, mediaId, name: it.name, id: opts.jobId }, "gpu", async (job, c) => {
+      const release = lt.use("rife");
+      const work = path.join(dir, "Cache", `rife-${job.id.slice(0, 8)}`);
+      const inDir = path.join(work, "in");
+      const outDir = path.join(work, "out");
+      try {
+        // 1. room for the frames
+        const need = interpDiskBytes(it.width || 1920, it.height || 1080, est, Math.round(est * (opts.factor ?? 2)));
+        await fsp.mkdir(inDir, { recursive: true });
+        await fsp.mkdir(outDir, { recursive: true });
+        try {
+          const st = await fsp.statfs(work);
+          const free = Number(st.bavail) * Number(st.bsize);
+          if (free < need) throw new EditorError(`Slow motion needs about ${Math.ceil(need / 1e9)} GB free on that drive (${Math.floor(free / 1e9)} GB left)`);
+        } catch (e) { if (e instanceof EditorError) throw e; }
+        // 2. frames out (RGB from the clip's own matrix)
+        c.update({ status: "extracting", step: "Reading frames", progress: 0.02 }, true);
+        const mx = readMatrix(await this.formatOf(src), it.height || 1080);
+        await tools.run(rifeExtractArgs(src, inDir, { in: inS, out: outS, matrix: mx.matrix, range: mx.range }), { signal: c.signal });
+        if (c.signal.aborted) throw new Error("cancelled");
+        const inFrames = (await fsp.readdir(inDir)).filter((n) => n.endsWith(".png")).length;
+        if (inFrames < 2) throw new EditorError("The clip has fewer than two frames there");
+        const plan = interpPlan(it.fps || 24, inFrames, opts);
+        // 3. RIFE on the dedicated card
+        const gpu = pickGpu(await lt.vulkanGpus("rife"));
+        const w = it.width || 1920;
+        const h = it.height || 1080;
+        const guess = Math.round((plan.outFrames * w * h) / 1e6 / this.rifeMpps());
+        c.update({ status: "processing", step: `Making ${plan.outFrames} frames on the graphics card`, progress: 0.06, frames: plan.outFrames, framesDone: 0,
+          device: gpu?.name ?? "Vulkan", eta_s: guess }, true);
+        const t1 = Date.now();
+        let done = 0;
+        await run(exe, rifeArgs({ inDir, outDir, modelDir: path.join(path.dirname(exe), plan.model), outFrames: plan.outFrames, gpu: gpu?.index ?? 0,
+          uhd: Math.min(w, h) > 1080, v4: isV4(plan.model) }), {
+          cwd: path.dirname(exe), signal: c.signal,
+          onLine: (l) => {
+            if (!isRifeFrameLine(l)) return;
+            done++;
+            const secs = (Date.now() - t1) / 1000;
+            c.update({ framesDone: done, speed: secs > 0 ? Math.round((done / secs) * 100) / 100 : undefined, eta_s: etaFrom(secs, done, plan.outFrames),
+              progress: Math.round((0.06 + 0.84 * (done / plan.outFrames)) * 1000) / 1000, step: `Frame ${done} of ${plan.outFrames}` });
+          },
+        });
+        if (c.signal.aborted) throw new Error("cancelled");
+        const made = (await fsp.readdir(outDir)).filter((n) => n.endsWith(".jpg")).length;
+        if (made !== plan.outFrames) throw new EditorError(`RIFE made ${made} of ${plan.outFrames} frames`);
+        const rifeSecs = (Date.now() - t1) / 1000;
+        this.learnRife(plan.outFrames, w, h, rifeSecs);
+        c.update({ framesDone: made, speed: Math.round((made / Math.max(rifeSecs, 0.001)) * 100) / 100 }, true);
+        // 4. back into a clip (H.264 on the hardware encoder, BT.709), the sound stretched or dropped
+        c.update({ status: "encoding", step: "Encoding the new clip", progress: 0.91, eta_s: undefined }, true);
+        const probe = await this.deps.probeHw().catch(() => ({} as Record<string, boolean>));
+        const enc = finalEncoder(RIFE_ENCODE, probe, this.deps.prefer?.() ?? "auto", false)!;
+        const mediaDir = path.join(dir, "Media");
+        await fsp.mkdir(mediaDir, { recursive: true });
+        const taken = new Set((await fsp.readdir(mediaDir)).map((n) => pathKey(path.join(mediaDir, n))));
+        const outFile = uniquePath(path.join(mediaDir, safeFileName(interpName(it.name, plan), "slowmo.mp4")), taken);
+        const [fn, fd] = plan.fpsArg.split("/").map(Number);
+        const part = `${outFile}.part.mp4`;
+        await tools.run(rifeEncodeArgs({ framesDir: outDir, fpsArg: plan.fpsArg, fps: fn / (fd || 1), frames: plan.outFrames, source: src, in: inS, out: outS,
+          stretch: plan.stretch, audio: opts.dropAudio ? "drop" : "stretch", hasAudio: it.hasAudio, outFile: part, enc: enc.args, w, h }), { signal: c.signal });
+        await retry(() => fsp.rename(part, outFile));
+        // 5. into the edit
+        c.update({ status: "importing", step: "Adding it to the project", progress: 0.97 }, true);
+        const item = await this.ingest(dir, outFile, { copy: false, name: path.basename(outFile), keep: { binId: it.binId } });
+        c.update({ resultMediaId: item.id }, true);
+        return item;
+      } finally {
+        release();
+        await fsp.rm(work, { recursive: true, force: true, maxRetries: 3 }).catch(() => undefined);
+      }
+    });
+    return result;
+  }
+
+  /** The video stream's colour tags (for the RGB extract). */
+  private async formatOf(src: string): Promise<{ matrix: string | null; range: "tv" | "pc" | null }> {
+    try {
+      const info = await this.tools().probe(src);
+      return { matrix: info.matrix ?? null, range: info.range ?? null };
+    } catch {
+      return { matrix: null, range: null };
+    }
+  }
+
+  // ── local Whisper (docs/EDITOR.md §10) ──
+  async transcribeLocal(file: string, mediaId: string, opts: TranscribeOptions): Promise<LocalTranscript> {
+    const { dir } = this.editFile(file);
+    const it = await this.item(file, dir, mediaId);
+    if (!it.hasAudio) throw new EditorError(`${it.name} has no sound`);
+    const src = await this.existingFile(it);
+    const lt = this.deps.localTools;
+    if (!lt) throw new EditorError("Local transcription isn't available here");
+    let language: string;
+    try { language = checkLanguage(opts?.language); } catch (e) { throw new EditorError((e as Error).message); }
+    const modelName = opts?.model === "large-v3-turbo-q5" ? "large-v3-turbo-q5" : opts?.model === "base" ? "base" : null;
+    if (!modelName) throw new EditorError("The model is base or large-v3-turbo-q5");
+    const model = lt.pathOf(WHISPER_MODELS[modelName]);
+    if (!model) throw new EditorError(`Install the Whisper ${modelName} model first (Tools)`);
+    const cpuExe = lt.pathOf("whisper");
+    const cudaExe = lt.pathOf("whisper-cuda");
+    const warnings: string[] = [];
+    let useCuda = false;
+    if (opts?.cuda !== false) {
+      // CUDA when the 12.4 build is installed, an NVIDIA card is there with driver ≥ 551.61 and the runtime DLLs are found
+      const ready = await lt.cudaReady();
+      if (ready.ok) useCuda = true;
+      else if (opts?.cuda === true || cudaExe) warnings.push(`${ready.reason ?? "CUDA isn't available"}, so it ran on the processor`);
+    }
+    const exe = useCuda ? cudaExe! : cpuExe;
+    if (!exe) throw new EditorError("Install whisper.cpp first (Tools)");
+    const seconds = it.seconds ?? (it.fps > 0 ? it.duration / it.fps : 0);
+    const inS = Math.max(0, Number(opts?.in) || 0);
+    const outS = opts?.out !== undefined && Number(opts.out) > inS ? Math.min(Number(opts.out), seconds || Number(opts.out)) : undefined;
+    const length = (outS ?? seconds) - inS;
+    if (!(length > 0.05)) throw new EditorError("There's no sound in that range");
+    const tools = this.tools();
+    const run = this.runner();
+    const lane = exe === cudaExe && useCuda ? "gpu" : "cpu";
+    const { result } = this.jobs.run({ kind: "transcribe", editPath: file, mediaId, name: it.name, id: opts?.jobId }, lane, async (job, c) => {
+      const toolId = exe === cudaExe ? "whisper-cuda" : "whisper";
+      const release = lt.use(toolId);
+      const releaseModel = lt.use(WHISPER_MODELS[modelName]);
+      const work = await fsp.mkdtemp(path.join(os.tmpdir(), "tatvam-whisper-"));
+      try {
+        c.update({ status: "extracting", step: "Reading the sound", progress: 0.02, device: useCuda ? "CUDA" : "CPU" }, true);
+        const wav = path.join(work, "audio.wav");
+        await tools.run(wavArgs(src, wav, inS, outS), { signal: c.signal });
+        c.update({ status: "processing", step: `Transcribing on the ${useCuda ? "graphics card" : "processor"}`, progress: 0.05 }, true);
+        const t1 = Date.now();
+        let log = "";
+        const env = { ...process.env };
+        if (useCuda) env.PATH = [...lt.cudaDirs(), env.PATH ?? ""].join(path.delimiter);
+        await run(exe, whisperArgs({ model, wav, outBase: path.join(work, "out"), language, threads: whisperThreads(os.cpus().length), gpu: useCuda,
+          translate: Boolean(opts?.translate), prompt: typeof opts?.prompt === "string" ? opts.prompt : undefined }), {
+          cwd: path.dirname(exe), signal: c.signal, env,
+          onLine: (l) => {
+            if (log.length < 20000) log += `${l}\n`;
+            const p = parseWhisperProgress(l);
+            if (p === null) return;
+            const secs = (Date.now() - t1) / 1000;
+            c.update({ progress: Math.round((0.05 + 0.92 * p) * 1000) / 1000, step: `Transcribing: ${Math.round(p * 100)}%`,
+              speed: secs > 0 && p > 0 ? Math.round(((p * length) / secs) * 10) / 10 : undefined, eta_s: p > 0.02 ? Math.round((secs / p) * (1 - p)) : undefined });
+          },
+        });
+        if (c.signal.aborted) throw new Error("cancelled");
+        const procSecs = (Date.now() - t1) / 1000;
+        const device: "cuda" | "cpu" = useCuda && !noGpuInLog(log) ? "cuda" : "cpu";
+        if (useCuda && device === "cpu") warnings.push("The CUDA build couldn't use the graphics card, so it ran on the processor");
+        const json = await fsp.readFile(path.join(work, "out.json"), "latin1");
+        const parsed = parseWhisperJson(json, inS);
+        c.update({ device: device === "cuda" ? "CUDA" : "CPU", speed: Math.round((length / Math.max(procSecs, 0.001)) * 10) / 10 }, true);
+        return { language: parsed.language || (language === "auto" ? "" : language), segments: parsed.segments, model: modelName, device,
+          seconds: Math.round(procSecs * 100) / 100, duration: Math.round(length * 1000) / 1000, rtf: Math.round((procSecs / length) * 1000) / 1000,
+          ...(warnings.length ? { warnings } : {}) };
+      } finally {
+        release();
+        releaseModel();
+        await fsp.rm(work, { recursive: true, force: true }).catch(() => undefined);
+      }
+    });
+    return result;
+  }
+
+  jobList(): EditorJob[] { return this.jobs.list(); }
+
+  cancelJob(id: string): void { this.jobs.cancel(String(id)); }
+
+  // ── versions and backups (docs/EDITOR.md §10) ──
+  private static summary(p: EditProject): EditVersion["summary"] {
+    const seq = p.sequences.find((s) => s.id === p.activeSequenceId) ?? p.sequences[0];
+    return { name: p.name, modified: p.modified, sequences: p.sequences.length, clips: p.sequences.reduce((n, s) => n + s.clips.length, 0),
+      media: p.media.length, duration: seq ? Math.round(framesToSeconds(sequenceEnd(seq), seq.fps) * 100) / 100 : 0 };
+  }
+
+  async versions(file: string): Promise<EditVersion[]> {
+    const { file: abs } = this.editFile(file);
+    const out: EditVersion[] = [];
+    for (let n = 1; n <= MAX_BACKUPS; n++) {
+      const b = bakName(abs, n);
+      let buf: Buffer;
+      let st: import("node:fs").Stats;
+      try { [buf, st] = await Promise.all([fsp.readFile(b), fsp.stat(b)]); } catch { continue; }
+      let summary: EditVersion["summary"];
+      try { summary = EditorManager.summary(validateProject(JSON.parse(buf.toString("utf8")))); } catch { continue; }
+      out.push({ id: createHash("sha1").update(buf).digest("hex").slice(0, 16), file: path.basename(b), time: st.mtime.toISOString(), size: st.size, summary });
+    }
+    return out.sort((a, b) => b.time.localeCompare(a.time));
+  }
+
+  async restoreVersion(file: string, id: string): Promise<{ path: string; project: EditProject; backup: string }> {
+    const { file: abs, dir } = this.editFile(file);
+    const want = String(id ?? "");
+    let content: string | null = null;
+    for (let n = 1; n <= MAX_BACKUPS && content === null; n++) {
+      try {
+        const buf = await fsp.readFile(bakName(abs, n));
+        if (createHash("sha1").update(buf).digest("hex").slice(0, 16) === want) content = buf.toString("utf8");
+      } catch { /* not there */ }
+    }
+    if (content === null) throw new EditorError("That version isn't there any more: open the list again");
+    const project = validateProject(JSON.parse(content));
+    project.modified = nowIso();
+    await this.writeProject(abs, project, true); // the current file becomes .bak.1 first, whatever its age
+    this.touch(abs);
+    return { path: abs, project: this.runtime(project, dir), backup: path.basename(bakName(abs, 1)) };
+  }
+
+  async backupNow(file: string, projectId?: number): Promise<EditBackupResult> {
+    const { file: abs } = this.editFile(file);
+    const buf = await fsp.readFile(abs);
+    let pid = Number(projectId);
+    if (projectId === undefined || projectId === null) {
+      try { pid = Number(validateProject(JSON.parse(buf.toString("utf8"))).studioProjectId); } catch { pid = NaN; }
+      if (!(pid > 0)) throw new EditorError("This edit has no studio project yet: it gets one on the first AI use");
+    }
+    if (!Number.isInteger(pid) || pid <= 0) throw new EditorError("The studio project id must be a whole number");
+    const form = new FormData();
+    form.append("file", new Blob([buf], { type: "application/json" }), path.basename(abs));
+    const k = pathKey(abs);
+    const rec = this.backups.get(k) ?? {};
+    try {
+      const r = await this.deps.upstream.fetch(`/api/edits/${pid}/backups`, { method: "POST", body: form, timeoutMs: 120_000 });
+      const text = await r.text();
+      let body: unknown = {};
+      try { body = text ? JSON.parse(text) : {}; } catch { body = { detail: text.slice(0, 300) }; }
+      if (!r.ok) {
+        const detail = (body as { detail?: unknown }).detail;
+        throw new UpstreamError(r.status, detail ?? body, `Backup to the studio failed: HTTP ${r.status} ${typeof detail === "string" ? detail : ""}`.trim());
+      }
+      this.backups.set(k, { lastAt: Date.now(), hash: createHash("sha1").update(buf).digest("hex") });
+      return { uploadedAt: nowIso(), bytes: buf.length, backup: body };
+    } catch (e) {
+      this.backups.set(k, { ...rec, lastError: (e as Error).message.slice(0, 300) });
+      throw e;
+    }
+  }
+
+  private touch(file: string): void {
+    this.active.set(pathKey(path.resolve(file)), { file: path.resolve(file), at: Date.now() });
+  }
+
+  async close(file: string): Promise<void> {
+    const { file: abs } = this.editFile(file);
+    this.active.delete(pathKey(abs));
+  }
+
+  async backupStatus(file: string): Promise<EditBackupStatus> {
+    const { file: abs } = this.editFile(file);
+    const s = this.deps.backupSettings?.() ?? { auto: false, minutes: 10 };
+    let sp: number | null = null;
+    try { sp = (await this.readProject(abs)).studioProjectId ?? null; } catch { sp = null; }
+    const rec = this.backups.get(pathKey(abs)) ?? {};
+    const st: EditBackupStatus = { auto: s.auto, minutes: s.minutes, signedIn: Boolean(await this.deps.signedIn?.().catch(() => false)), studioProjectId: sp };
+    if (rec.lastAt) st.lastAt = new Date(rec.lastAt).toISOString();
+    if (rec.lastError) st.lastError = rec.lastError;
+    if (s.auto && sp) st.nextAt = new Date((rec.lastAt ?? Date.now()) + s.minutes * 60_000).toISOString();
+    return st;
+  }
+
+  /** One pass of the automatic backups: open edits (active in the last 30 minutes) that changed since their last backup. */
+  async autoBackupTick(now = Date.now()): Promise<number> {
+    const s = this.deps.backupSettings?.();
+    if (!s?.auto) return 0;
+    if (!(await this.deps.signedIn?.().catch(() => false))) return 0;
+    let n = 0;
+    for (const [k, a] of [...this.active]) {
+      if (now - a.at > 30 * 60_000) { this.active.delete(k); continue; }
+      const rec = this.backups.get(k) ?? {};
+      if (rec.lastAt && now - rec.lastAt < s.minutes * 60_000) continue;
+      try {
+        const buf = await fsp.readFile(a.file);
+        const hash = createHash("sha1").update(buf).digest("hex");
+        if (hash === rec.hash) continue;
+        const p = validateProject(JSON.parse(buf.toString("utf8")));
+        if (!p.studioProjectId) continue;
+        await this.backupNow(a.file, p.studioProjectId);
+        n++;
+      } catch (e) {
+        this.deps.log(`editor auto backup ${path.basename(a.file)}: ${(e as Error).message}`);
+      }
+    }
+    return n;
+  }
+
+  /** Check for automatic backups every minute (index.ts starts it; the timer doesn't keep the app alive). */
+  startAutoBackups(): void {
+    if (this.backupTimer) return;
+    this.backupTimer = setInterval(() => void this.autoBackupTick(), 60_000);
+    this.backupTimer.unref?.();
+  }
+
+  stopAll(): void {
+    if (this.backupTimer) clearInterval(this.backupTimer);
+    this.backupTimer = null;
+    this.jobs.cancelAll();
+  }
+
+  // ── built-in impulse responses and the audio preview cache (docs/EDITOR.md §11) ──
+  /** userData/irs with every built-in impulse response written (once a session: the recipe is deterministic). */
+  ensureIrs(): Promise<string> {
+    this.irsReady ??= (async () => {
+      const dir = path.join(this.deps.userData, "irs");
+      await fsp.mkdir(dir, { recursive: true });
+      for (const name of IR_NAMES) {
+        const f = path.join(dir, `${name}.wav`);
+        const wav = presetWav(name);
+        let same = false;
+        try { same = (await fsp.readFile(f)).equals(wav); } catch { same = false; }
+        if (!same) await fsp.writeFile(f, wav);
+      }
+      return dir;
+    })().catch((e) => { this.irsReady = null; throw e; });
+    return this.irsReady;
+  }
+
+  /** The gateway's /__media/irs/<name>.wav. */
+  async impulseFile(name: string): Promise<string | null> {
+    const m = /^([a-z0-9_]+)\.wav$/.exec(String(name ?? ""));
+    if (!m || !isIrPreset(m[1])) return null;
+    return path.join(await this.ensureIrs(), `${m[1]}.wav`);
+  }
+
+  async impulseResponses(): Promise<{ id: string; label: string; url: string; seconds: number }[]> {
+    await this.ensureIrs();
+    return IR_NAMES.map((id) => ({ id, label: IR_LABELS[id] ?? id, url: `/__media/irs/${id}.wav`, seconds: irSeconds(id) }));
+  }
+
+  async renderAudioPreview(file: string, sequenceId: string, clipId: string, clip?: TimelineClip): Promise<{ url: string; duration: number; cached: boolean;
+    warnings: string[] }> {
+    const { file: abs, dir } = this.editFile(file);
+    const project = this.runtime(await this.readProject(abs), dir);
+    const seq = project.sequences.find((s) => s.id === sequenceId);
+    if (!seq) throw new EditorError("That sequence isn't in the saved edit");
+    if (clip !== undefined) {
+      if (!clip || typeof clip !== "object" || clip.id !== clipId || !clip.source || !Array.isArray(clip.effects)) throw new EditorError("The clip doesn't match");
+      seq.clips = [...seq.clips.filter((x) => x.id !== clipId), structuredClone(clip)];
+    }
+    const known = this.known.get(pathKey(dir));
+    for (const m of known?.values() ?? []) if (!project.media.some((x) => x.id === m.id)) project.media.push(m); // imported, not saved yet
+    const irDir = await this.ensureIrs();
+    const cacheDir = path.join(dir, "Cache", "audio");
+    await fsp.mkdir(cacheDir, { recursive: true });
+    let job;
+    try {
+      job = previewJob(project, seq, clipId, "", { irFile: (p) => path.join(irDir, `${p}.wav`) });
+    } catch (e) {
+      throw new EditorError((e as Error).message);
+    }
+    let stamp = "";
+    if (job.file) {
+      try { const st = await fsp.stat(job.file); stamp = `${st.size}|${Math.floor(st.mtimeMs)}`; } catch { throw new EditorError("The clip's media is missing"); }
+    }
+    const hash = createHash("sha1").update(`${job.key}|${stamp}|${IR_SIG}`).digest("hex").slice(0, 24);
+    const out = path.join(cacheDir, `${hash}.wav`);
+    let cached = existsSync(out);
+    if (!cached) {
+      const part = `${out}.part.wav`;
+      const args = [...job.args.slice(0, -1), part];
+      await this.tools().run(args);
+      await retry(() => fsp.rename(part, out));
+      cached = false;
+    }
+    this.allowMedia(out);
+    return { url: this.register(out), duration: job.duration, cached, warnings: job.warnings };
+  }
+
+  // ── LUT folders and sidecars (docs/EDITOR.md §10, editor-looks) ──
+  private lutFolderList(): string[] {
+    return (this.deps.lutFolders?.() ?? []).filter((d) => typeof d === "string" && path.isAbsolute(d));
+  }
+
+  /** A folder picker; the folder is remembered (settings.lutFolders). Null when cancelled. */
+  async addLutFolder(): Promise<{ path: string; files: { name: string; relPath: string; size: number }[] } | null> {
+    if (!this.deps.dialogs.openFolder || !this.deps.setLutFolders) throw new EditorError("LUT folders aren't available here");
+    const dir = await this.deps.dialogs.openFolder({ title: "Add a LUT folder" });
+    if (!dir) return null;
+    const abs = path.resolve(dir);
+    const list = this.lutFolderList();
+    if (!list.some((d) => pathKey(d) === pathKey(abs))) this.deps.setLutFolders([...list, abs].slice(-50));
+    return { path: abs, files: await scanLutFolder(abs) };
+  }
+
+  async lutFolders(): Promise<{ path: string; files: { name: string; relPath: string; size: number }[] }[]> {
+    return Promise.all(this.lutFolderList().map(async (d) => ({ path: d, files: await scanLutFolder(d) })));
+  }
+
+  async removeLutFolder(dir: string): Promise<void> {
+    if (!this.deps.setLutFolders) return;
+    const k = pathKey(path.resolve(String(dir ?? "")));
+    this.deps.setLutFolders(this.lutFolderList().filter((d) => pathKey(d) !== k));
+  }
+
+  /**
+   * Copy a .cube or .3dl from one of the user's LUT folders into the edit's LUTs\ folder (.3dl converted to .cube),
+   * checked as a 3D LUT; returns it with a gateway URL the export window can load.
+   */
+  async importLutFile(file: string, lut: string): Promise<LutEntry> {
+    const { dir } = this.editFile(file);
+    if (typeof lut !== "string" || !path.isAbsolute(lut)) throw new EditorError("A LUT is named by its full path");
+    const src = path.resolve(lut);
+    if (!this.lutFolderList().some((d) => isInside(d, src))) throw new EditorError("That LUT isn't in one of your LUT folders: add its folder first");
+    const ext = path.extname(src).toLowerCase();
+    if (!LUT_EXTS.includes(ext)) throw new EditorError("LUTs are .cube or .3dl files");
+    let text: string;
+    try { text = await readText(src, LUT_MAX); } catch (e) { throw new EditorError(`${path.basename(src)}: ${(e as Error).message}`); }
+    const base = path.basename(src, path.extname(src));
+    if (ext === ".3dl") {
+      try { text = threeDlToCube(text, base).cube; } catch (e) { throw new EditorError(`${path.basename(src)}: ${(e as Error).message}`); }
+    }
+    let info;
+    try { info = parseCubeHeader(text); } catch (e) { throw new EditorError(`${path.basename(src)}: ${(e as Error).message}`); }
+    const lutsDir = path.join(dir, "LUTs");
+    await fsp.mkdir(lutsDir, { recursive: true });
+    const taken = new Set((await fsp.readdir(lutsDir)).map((n) => pathKey(path.join(lutsDir, n))));
+    const want = path.join(lutsDir, `${safeFileName(base, "lut")}.cube`);
+    let dest = want;
+    try { if ((await fsp.readFile(want, "utf8")) !== text) dest = uniquePath(want, taken); } catch { dest = want; }
+    if (dest !== want || !existsSync(dest)) await fsp.writeFile(dest, text, "utf8");
+    this.allowMedia(dest);
+    return { id: uid("lut"), name: info.title || base, path: dest, url: this.register(dest), size: info.size };
+  }
+
+  /**
+   * A .cube the page made (editor-looks: moods, shot match) into the edit's LUTs\ folder, served at /__media/<id>/<name>
+   * to every window (the export one too). Safe, unique file name; checked as a 3D LUT; at most 8 MB; the same content
+   * already there is reused, not written again.
+   */
+  async writeLut(file: string, name: string, cubeText: string): Promise<{ mediaId: string; url: string; file: string }> {
+    const { dir } = this.editFile(file);
+    if (typeof cubeText !== "string" || !cubeText) throw new EditorError("No LUT text");
+    if (Buffer.byteLength(cubeText) > 8 * 1024 * 1024) throw new EditorError("A LUT is at most 8 MB");
+    try { parseCubeHeader(cubeText); } catch (e) { throw new EditorError(`That isn't a 3D .cube LUT: ${(e as Error).message}`); }
+    const lutsDir = path.join(dir, "LUTs");
+    await fsp.mkdir(lutsDir, { recursive: true });
+    const names = await fsp.readdir(lutsDir);
+    const base = safeFileName(String(name ?? "").replace(/\.cube$/i, "").trim().slice(0, 80) || "lut", "lut");
+    let dest: string | null = null;
+    // the same content already there (any name): reuse it
+    for (const n of names.filter((x) => x.toLowerCase().endsWith(".cube"))) {
+      const f = path.join(lutsDir, n);
+      try { if ((await fsp.stat(f)).size === Buffer.byteLength(cubeText) && (await fsp.readFile(f, "utf8")) === cubeText) { dest = f; break; } } catch { /* vanished */ }
+    }
+    if (!dest) {
+      dest = uniquePath(path.join(lutsDir, `${base}.cube`), new Set(names.map((n) => pathKey(path.join(lutsDir, n)))));
+      await retry(() => writeFileAtomic(dest!, cubeText));
+    }
+    this.allowMedia(dest);
+    const url = this.register(dest);
+    return { mediaId: mediaIdOfUrl(url)!, url, file: dest };
+  }
+
+  private sidecarFile(file: string, name: string): string {
+    const { dir } = this.editFile(file);
+    let n: string;
+    try { n = sidecarName(name); } catch (e) { throw new EditorError((e as Error).message); }
+    return path.join(dir, ".tatvam", `${n}.json`);
+  }
+
+  /** <edit folder>/.tatvam/<name>.json, parsed; null when there is none. */
+  async readSidecar(file: string, name: string): Promise<unknown> {
+    const f = this.sidecarFile(file, name);
+    try { return JSON.parse(await fsp.readFile(f, "utf8")); } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") return null;
+      throw new EditorError(`${path.basename(f)} can't be read: ${(e as Error).message}`);
+    }
+  }
+
+  async writeSidecar(file: string, name: string, json: unknown): Promise<{ bytes: number }> {
+    const f = this.sidecarFile(file, name);
+    const text = JSON.stringify(json ?? null);
+    if (text.length > 20 * 1024 * 1024) throw new EditorError("A sidecar is at most 20 MB");
+    await retry(() => writeFileAtomic(f, text));
+    return { bytes: Buffer.byteLength(text) };
   }
 }

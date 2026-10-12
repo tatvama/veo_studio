@@ -1,0 +1,4 @@
+Marker Name	Description	In	Out	Duration	Marker Type
+Intro	Opening line	00:00:00:00	00:00:00:00	00:00:00:00	Comment
+Chapter 1		00:00:12:10	00:00:12:10	00:00:00:00	Chapter
+Big "quote"	Uses, commas	00:01:02:05	00:01:04:05	00:00:02:00	Comment

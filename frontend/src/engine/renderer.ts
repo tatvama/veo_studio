@@ -15,7 +15,7 @@ import { frandGrid, frandRows } from "./frand";
 import { isNativeLook, lookGlsl, NATIVE_LOOKS } from "./effects/looks";
 import { eqInt, fxPlan, gblurWeights, hexRgb, linearTaps, type FxPlan } from "./effects/params";
 import { curveTexels, effectSource, getEffect, paramUniforms, paramValues, passesOf, type EffectApi, type EffectDef, type PassContext } from "./effects/registry";
-import { BLUR, clipShader, COMPOSITE, COPY, FADE, GBLUR, GLOW_EXTRACT, MASK_MIX, PRESENT, UNSHARP, YUV2RGB, YUV_PACK, type ClipFlags } from "./effects/shaders";
+import { BLUR, clipShader, COMPOSITE, COPY, COVER, FADE, GBLUR, GLOW_EXTRACT, MASK_MIX, PRESENT, UNSHARP, YUV10_PACK, YUV2RGB, YUV_PACK, type ClipFlags } from "./effects/shaders";
 import { clipUv, layerRect, minification, motionRect } from "./framing";
 import { isAnimated, isParam } from "./keyframes";
 import { ShaderError, type Program, type RenderTarget, type Texture, type Texture3D, type UniformValue } from "./gl/backend";
@@ -24,10 +24,14 @@ import { ExactVideo } from "./sources/exact";
 import { LiveVideo } from "./sources/live";
 import { CanvasSource, ImageSource, type CustomSource, type Frame, type FrameSource } from "./sources/source";
 import { MatteSource, TitleSource } from "./sources/title";
-import { evaluate, sourceTime, type ClipState, type FrameState, type MotionState, type TrackState, type TransitionState } from "./timeline";
+import { evaluate, sourceRate, sourceTime, type ClipState, type FrameState, type MotionState, type TrackState, type TransitionState } from "./timeline";
 import { loadGl, transitionProgram, transitionUniforms, type TransitionProgram } from "./transitions/gltransitions";
 import { BLEND_MODES, type BlendMode, type Clip, type Composition, type EffectInstance, type FxMask, type ShotFx, type Track } from "./types";
-import { basis, glslMat3, repack, rgbToYuv, yuvLayout } from "./yuv";
+import { basis, glslMat3, repack, repack10, rgbToYuv, yuv10Layout, yuvLayout } from "./yuv";
+import { equalise, matteDef, matteSeed, matteSize, MATTE_CURVE } from "./transitions/pack/mattes";
+import { matteSource } from "./transitions/pack/index";
+import { registeredLut } from "./luts";
+import { loadSegmenter, segmentPerson, segmenterReady } from "./ml/mediapipe";
 
 const M_STILL = glslMat3(basis("bt601", "bt709"));   // a still's RGB → the working RGB of FFmpeg's BT.601 encode
 const M_FF = glslMat3(basis("bt709", "bt601"));      // working RGB → the RGB FFmpeg's filters see (BT.601)
@@ -47,6 +51,21 @@ export interface DrawOptions {
   rate?: number;
   /** Playback resolution: 1, 0.5 or 0.25 of the output size (scaled up onto the canvas). Default 1. */
   resolution?: number;
+}
+/** An effect instance's picture from earlier frames (EffectDef.temporal). */
+interface Hist { frame: number; prev: RenderTarget | null; cur: RenderTarget | null; used: number }
+/** An effect instance's person mask (EffectDef.segmentation). */
+interface SegMask { frame: number; uploads: number; tex: Texture; used: number }
+/** Options of a thumbnail (Engine.renderThumbnail). */
+export interface ThumbOptions {
+  /** The user's own picture instead of the sample one (the LUT and Mood browsers). */
+  source?: TexImageSource & { width: number; height: number };
+  /** Parameters for the effect (or the transition's uniforms). */
+  params?: Record<string, unknown>;
+  /** Transitions: where to show it (default 0.5). */
+  progress?: number;
+  /** A look's .cube URL when it isn't a native look or a registered LUT. */
+  lutUrl?: string;
 }
 interface SrcTex {
   tex: Texture; version: number;
@@ -80,7 +99,8 @@ interface ClipOpts {
 const PRELOAD_S = 3, KEEP_S = 6, MAX_NEST = 8;
 const clamp01 = (x: number) => Math.min(1, Math.max(0, x));
 const blendIdx = (m?: BlendMode) => Math.max(0, BLEND_MODES.indexOf(m ?? "normal"));
-const speedOf = (c: Clip) => (c.speed > 0 ? c.speed : 1);
+/** A nested clip's time inside its composition at cut time t (its time map, speed, freeze). */
+const nestedTime = (c: Clip, t: number) => sourceTime(c, t - c.start, true);
 const hasEffects = (c: Clip) => !!c.effects?.some((e) => e && e.enabled !== false);
 /** Seconds a track's transitions reach past its clips' ends (export keeps their decoders that long). */
 const reachOf = (tk: Track) => Math.max(0, ...(tk.transitions ?? []).map((x) => x.duration || 0), ...tk.clips.map((c) => c.transitionIn?.duration ?? 0));
@@ -94,7 +114,7 @@ export class Renderer {
   /** The last frame drawn (valid until the next draw). */
   frame: RenderTarget | null = null;
   readonly warnings = new Set<string>();
-  readonly stats = { uploads: 0, passes: 0, lastMs: 0, restores: 0, resolution: 1 };
+  readonly stats = { uploads: 0, passes: 0, lastMs: 0, restores: 0, resolution: 1, subUploads: 0 };
   private opts: LoadOptions = {};
   private custom: Record<string, CustomSource> = {};
   private sources = new Map<string, FrameSource>();
@@ -113,6 +133,13 @@ export class Renderer {
   private lookCode = new Map<string, string>();
   private samples: Texture[] | null = null;
   private yuvBuf: Uint8Array | null = null;
+  private yuv10Buf: Uint8Array | null = null;
+  /** Luma mattes of the tv: pack, generated once per matte and aspect ratio. */
+  private mattes = new Map<string, RenderTarget>();
+  private history = new Map<string, Hist>();
+  private segs = new Map<string, SegMask>();
+  /** drawLive calls (segmentation runs at most once per displayed frame). */
+  private drawNo = 0;
   private last = { t: NaN, wall: 0 };
   /** This frame's render size (the output size × the playback resolution). */
   private rw = 0; private rh = 0;
@@ -139,7 +166,7 @@ export class Renderer {
     let gl = false;
     this.eachClip(comp, (c) => { if (c.transitionIn?.type.startsWith("gl:")) gl = true; }, (tk) => { if (tk.transitions?.some((x) => x.type.startsWith("gl:"))) gl = true; });
     if (gl) await loadGl().catch(() => this.warnings.add("gl-transitions didn't load"));
-    await Promise.all([this.loadLuts(comp, opts), this.loadImages(comp)]);
+    await Promise.all([this.loadLuts(comp, opts), this.loadImages(comp), this.prepareEffects(comp)]);
     // the first frame's media
     const waits: Promise<unknown>[] = [];
     this.visit(evaluate(comp, 0), this.rootCtx(this.w, this.h), 1, (cs, ctx) => {
@@ -178,7 +205,7 @@ export class Renderer {
   private visit(fs: FrameState, ctx: Ctx, rate: number, fn: (cs: ClipState, ctx: Ctx, rate: number) => void) {
     for (const ts of fs.tracks) for (const cs of ts.clips) {
       fn(cs, ctx, rate);
-      if (cs.nested && cs.clip.comp) this.visit(cs.nested, this.nestedCtx(ctx, cs.clip), rate * speedOf(cs.clip), fn);
+      if (cs.nested && cs.clip.comp) this.visit(cs.nested, this.nestedCtx(ctx, cs.clip), rate * sourceRate(cs.clip, cs.local), fn);
     }
   }
 
@@ -243,6 +270,19 @@ export class Renderer {
     return out;
   }
 
+  /** Effects the composition uses that need something loaded first (a model): their prepare(), errors as warnings. */
+  private async prepareEffects(comp: Composition) {
+    const defs = new Set<EffectDef>();
+    this.eachClip(comp, (c) => { for (const e of c.effects ?? []) { const d = e && e.enabled !== false ? getEffect(e.type) : undefined; if (d?.prepare) defs.add(d); } });
+    await Promise.all([...defs].map((d) => d.prepare!().catch((e) => this.warnings.add(`${d.label}: ${(e as Error).message}`))));
+  }
+
+  /** Where a look's LUT comes from: a LUT handed in, a registered one, Composition.lutUrls, or the look id itself when
+   *  it is "url:<url>" (a .cube any window can fetch: matchColor's saved LUT). */
+  private lutSource(look: string, comp: Composition | null = this.comp, opts: LoadOptions = this.opts): Lut3D | string | undefined {
+    return opts.luts?.[look] ?? registeredLut(look) ?? comp?.lutUrls?.[look] ?? (look.startsWith("url:") ? look.slice(4) : undefined);
+  }
+
   /** A preset look runs as its FFmpeg filters unless a LUT was handed in for it or the composition asks for LUTs. */
   private useNative(look: string, comp = this.comp, opts = this.opts) { return comp?.nativeLooks !== false && isNativeLook(look) && !opts.luts?.[look]; }
 
@@ -257,8 +297,9 @@ export class Renderer {
     await Promise.all(looks.map(async (look) => {
       try {
         if (this.luts.has(look)) return;
-        let lut = opts.luts?.[look];
-        const url = comp.lutUrls?.[look];
+        const src = this.lutSource(look, comp, opts);
+        let lut = typeof src === "string" ? undefined : src;
+        const url = typeof src === "string" ? src : undefined;
         if (!lut) {
           if (!url) { this.warnings.add(`No LUT for the look "${look}"`); return; }
           const r = await fetch(url, { credentials: "same-origin" });
@@ -266,7 +307,7 @@ export class Renderer {
           lut = parseCube(await r.text());
         }
         if (this.luts.has(look) || this.b.lost) return;
-        this.luts.set(look, { tex: this.b.createTexture3D(lut.size, lut.data), lut, from: opts.luts?.[look] ?? url ?? "" });
+        this.luts.set(look, { tex: this.b.createTexture3D(lut.size, lut.data), lut, from: src ?? "" });
       } catch (e) { this.warnings.add(`Look "${look}" left out: ${(e as Error).message}`); }
     }));
   }
@@ -295,7 +336,7 @@ export class Renderer {
     }
     const looks = this.looksOf(comp);
     for (const [look, l] of [...this.luts]) {
-      if (!looks.has(look) || this.useNative(look, comp, opts) || l.from !== (opts.luts?.[look] ?? comp.lutUrls?.[look] ?? "")) { this.b.deleteTexture(l.tex); this.luts.delete(look); }
+      if (!looks.has(look) || this.useNative(look, comp, opts) || l.from !== (this.lutSource(look, comp, opts) ?? "")) { this.b.deleteTexture(l.tex); this.luts.delete(look); }
     }
     const imgs = this.imagesOf(comp);
     for (const [u, im] of [...this.images]) if (!imgs.has(u)) { if (im.tex) this.b.deleteTexture(im.tex); im.bmp?.close(); this.images.delete(u); }
@@ -348,7 +389,7 @@ export class Renderer {
           const near = t >= c.start - PRELOAD_S && t <= end + 1;
           const far = t < c.start - KEEP_S || t > end + ext;
           if (c.type === "nested") {
-            if (c.comp && depth < MAX_NEST) walk(c.comp, far ? -1e9 : c.in + (t - c.start) * speedOf(c), `${path}${c.id}/`, depth + 1, vis);
+            if (c.comp && depth < MAX_NEST) walk(c.comp, far ? -1e9 : nestedTime(c, t), `${path}${c.id}/`, depth + 1, vis);
             continue;
           }
           if ((c.type ?? "media") !== "media" || c.media.kind !== "video" || this.custom[c.media.url]) continue;
@@ -367,7 +408,7 @@ export class Renderer {
     const walk = (comp: Composition, t: number, path: string, depth: number) => {
       for (const tk of comp.tracks) for (const c of tk.clips) {
         if (c.type === "nested") {
-          if (c.comp && depth < MAX_NEST && t >= c.start - PRELOAD_S && t < c.start + c.duration) walk(c.comp, c.in + (t - c.start) * speedOf(c), `${path}${c.id}/`, depth + 1);
+          if (c.comp && depth < MAX_NEST && t >= c.start - PRELOAD_S && t < c.start + c.duration) walk(c.comp, nestedTime(c, t), `${path}${c.id}/`, depth + 1);
           continue;
         }
         if ((c.type ?? "media") !== "media" || c.media.kind !== "video") continue;
@@ -405,6 +446,11 @@ export class Renderer {
           { u_y: st.planes.y, u_c: st.planes.c, u_c2: st.planes.c2 });
         st.tex = st.rt;
         st.ff601 = p.ffmpeg601;
+      } else if (fr.rect && st.img.w === fr.width && st.img.h === fr.height && st.version >= 0) {
+        // a custom source told us what changed (CustomSource.bounds): only that part goes up
+        b.uploadSub(st.img, fr.image, fr.rect[0], fr.rect[1], fr.rect[2], fr.rect[3]);
+        st.tex = st.img;
+        this.stats.subUploads++;
       } else {
         b.upload(st.img, fr.image, fr.width, fr.height);
         st.tex = st.img;
@@ -420,6 +466,7 @@ export class Renderer {
   drawLive(t: number, opts: DrawOptions = {}): void {
     if (!this.comp || this.b.lost) return;
     const t0 = performance.now();
+    this.drawNo++;
     const rate = opts.rate ?? 1;
     const dt = t - this.last.t, dw = (t0 - this.last.wall) / 1000;
     const playing = opts.playing ?? (dt > 0 && dt < 0.25 && Math.abs(dt - dw * rate) < 0.12);
@@ -435,7 +482,9 @@ export class Renderer {
       if (!s) return;
       active.add(s);
       if (s instanceof TitleSource) s.size(ctx.W, ctx.H, ctx.unit);
-      this.upload(s, s.live(cs.sourceTime, playing && !cs.clip.reverse, rate * cs.clip.speed * k));
+      // the clip's local rate (a time map's slope, 0 on a freeze): the video pauses on the frame rather than running
+      const cr = rate * sourceRate(cs.clip, cs.local) * k;
+      this.upload(s, s.live(cs.sourceTime, playing && (!cs.clip.reverse || !!cs.clip.timeMap?.length) && cr > 0, cr));
     });
     this.cue(t, active);
     this.draw(fs, rw, rh);
@@ -471,7 +520,7 @@ export class Renderer {
   draw(fs: FrameState, w = this.rw || this.w, h = this.rh || this.h): RenderTarget {
     this.rw = w; this.rh = h;
     this.b.tick();
-    if (++this.frames % 90 === 0) this.b.trimOld(240);
+    if (++this.frames % 90 === 0) { this.b.trimOld(240); this.pruneTemporal(240); }
     const acc = this.drawComp(this.rootCtx(w, h), fs, true);
     this.b.release(this.frame);
     this.frame = acc;
@@ -659,7 +708,7 @@ export class Renderer {
       return t;
     };
     const A = side(tr.from), B = side(tr.to);
-    const pic = this.runTransition(tp, A, B, tr, W, H);
+    const pic = this.runTransition(tp, A, B, tr, W, H, true);
     b.release(A); b.release(B);
     const out = this.composite(acc, pic, W / 2, H / 2, W, H, 0, op, blendIdx(ts.track.blend), true);
     b.release(pic);
@@ -804,12 +853,14 @@ export class Renderer {
   /** A clip's registry effects in order on its picture (`rt` is consumed; returns the result). */
   private effectChain(rt: RenderTarget, cs: ClipState, ctx: Ctx, scale: number): RenderTarget {
     let cur = rt;
-    for (const inst of cs.clip.effects ?? []) {
+    const list = cs.clip.effects ?? [];
+    for (let i = 0; i < list.length; i++) {
+      const inst = list[i];
       if (!inst || inst.enabled === false) continue;
       const def = getEffect(inst.type);
       if (!def) { this.warnings.add(`The effect "${inst.type}" isn't available here`); continue; }
       let next: RenderTarget;
-      try { next = this.runEffect(def, inst, cur, cs, ctx, scale); } catch (e) { this.warnings.add(`${def.label}: ${(e as Error).message}`); continue; }
+      try { next = this.runEffect(def, inst, cur, cs, ctx, scale, `${ctx.path}${cs.clip.id}#${inst.id ?? i}:${def.id}`); } catch (e) { this.warnings.add(`${def.label}: ${(e as Error).message}`); continue; }
       if (next === cur) continue;
       const m = inst.mask;
       if (m && (m.w ?? 0) > 0 && (m.h ?? 0) > 0) {
@@ -834,7 +885,7 @@ export class Renderer {
   private paramTextures(def: EffectDef, v: Record<string, unknown>): Record<string, Texture> {
     const out: Record<string, Texture> = {};
     for (const p of def.params) {
-      if (p.type === "curve") { const pts = v[p.name]; out[p.name] = this.curveTexture(`p:${JSON.stringify(pts)}`, () => curveTexels(pts)); }
+      if (p.type === "curve") { const pts = v[p.name]; out[p.name] = this.curveTexture(`p${p.periodic ? "w" : ""}:${JSON.stringify(pts)}`, () => curveTexels(pts, !!p.periodic)); }
       else if (p.type === "image") {
         const im = this.images.get(String(v[p.name] ?? ""));
         if (im?.bmp && !im.tex) { im.tex = this.b.createTexture(); this.b.upload(im.tex, im.bmp, im.bmp.width, im.bmp.height); }
@@ -844,8 +895,9 @@ export class Renderer {
     return out;
   }
 
-  /** One effect on `input` (not consumed): its passes, or a built-in's render through the FFmpeg-matched pipeline. */
-  private runEffect(def: EffectDef, inst: EffectInstance | undefined, input: RenderTarget, cs: ClipState, ctx: Ctx, scale: number): RenderTarget {
+  /** One effect on `input` (not consumed): its passes, or a built-in's render through the FFmpeg-matched pipeline.
+   *  `key` names the instance (its history and person mask live under it; none for thumbnails). */
+  private runEffect(def: EffectDef, inst: EffectInstance | undefined, input: RenderTarget, cs: ClipState, ctx: Ctx, scale: number, key?: string): RenderTarget {
     const b = this.b, fps = ctx.comp.fps || 24;
     const t = cs.local, frame = Math.round((cs.clip.start + cs.local) * fps), duration = cs.clip.duration;
     const values = paramValues(def, inst, t, fps);
@@ -856,14 +908,18 @@ export class Renderer {
     }
     const passes = passesOf(def);
     const base = paramUniforms(def, values);
-    const ptex = this.paramTextures(def, values);
+    const ptex: Record<string, Tex | null | undefined> = this.paramTextures(def, values);
+    const hist = def.temporal ? this.historyFor(key ? `${key}@${input.w}x${input.h}` : null, frame) : null;
+    if (def.temporal) { ptex.uHistory = hist?.tex ?? this.transparent(); base.uHistoryValid = hist?.tex ? 1 : 0; }
+    if (def.segmentation) ptex.uMask = this.personMask(key ?? `thumb:${def.id}`, frame, input);
     const outs: RenderTarget[] = [];
     let cur = input;
     const drop = (x: RenderTarget) => { if (x !== input && !outs.includes(x)) b.release(x); };
     for (let k = 0; k < passes.length; k++) {
       const pass = passes[k];
       const ps = pass.scale ?? 1;
-      const tw = Math.max(1, Math.round(input.w * ps)), th = Math.max(1, Math.round(input.h * ps));
+      const tw = pass.size ? Math.max(1, Math.round(pass.size[0])) : Math.max(1, Math.round(input.w * ps));
+      const th = pass.size ? Math.max(1, Math.round(pass.size[1])) : Math.max(1, Math.round(input.h * ps));
       const n = pass.repeat ? Math.max(1, Math.min(64, Math.round(pass.repeat(values)) || 1)) : 1;
       const sh = this.fxShader(def, k);
       for (let i = 0; i < n; i++) {
@@ -882,8 +938,100 @@ export class Renderer {
       }
       outs.push(cur);
     }
+    if (hist) hist.store(outs[Math.min(Math.max(def.temporal?.pass ?? outs.length - 1, 0), outs.length - 1)]);
     for (const x of outs) if (x !== cur) b.release(x);
     return cur;
+  }
+
+  // ── temporal effects and person masks ──────────────────────────────────────
+  /** The history of an effect instance for `frame`: the previous frame's picture (one or two frames back; a redraw of
+   *  the same frame gets the same one), and store() for this frame's. */
+  private historyFor(key: string | null, frame: number): { tex: RenderTarget | null; store: (rt: RenderTarget) => void } | null {
+    if (!key) return { tex: null, store: () => undefined };
+    let e = this.history.get(key);
+    if (!e) { e = { frame: NaN, prev: null, cur: null, used: 0 }; this.history.set(key, e); }
+    const h = e;
+    h.used = this.frames;
+    const d = frame - h.frame;
+    const mode = d === 0 ? "same" : h.cur && d >= 1 && d <= 2 ? "next" : "reset";
+    const tex = mode === "same" ? h.prev : mode === "next" ? h.cur : null;
+    return {
+      tex,
+      store: (rt: RenderTarget) => {
+        const copy = this.b.target(rt.w, rt.h);
+        this.pass({ name: "copy", source: COPY }, copy, { u_res: [rt.w, rt.h] }, { u_in: rt });
+        if (mode === "same") { this.b.release(h.cur); h.cur = copy; return; }
+        if (mode === "next") { this.b.release(h.prev); h.prev = h.cur; }
+        else { this.b.release(h.prev); this.b.release(h.cur); h.prev = null; }
+        h.cur = copy; h.frame = frame;
+      },
+    };
+  }
+
+  /** The person mask of an effect's input (MediaPipe): computed once per frame (exact) or per displayed frame while
+   *  the picture changes (live), reused while paused. White (everything a person) until the model has loaded. */
+  private personMask(key: string, frame: number, input: RenderTarget): Texture {
+    const e = this.segs.get(key);
+    const live = this.mode === "live";
+    if (e) e.used = this.frames;
+    if (e && e.frame === frame && (!live || e.uploads === this.stats.uploads)) return e.tex;
+    const seg = segmenterReady();
+    if (!seg) {
+      this.warnings.add("Background effects: the segmentation model is still loading");
+      void loadSegmenter().catch(() => undefined);
+      return e?.tex ?? this.white();
+    }
+    const aspect = input.h / Math.max(input.w, 1);
+    const sw = 256, sh = Math.max(16, Math.min(512, Math.round(256 * aspect)));
+    const small = this.b.target(sw, sh, { format: "rgba8" });
+    this.pass({ name: "copy", source: COPY }, small, { u_res: [sw, sh] }, { u_in: input });
+    const px = new Uint8Array(sw * sh * 4);
+    this.b.read(small, 0, 0, sw, sh, px);
+    this.b.release(small);
+    let m: { data: Uint8Array; w: number; h: number } | null = null;
+    try { m = segmentPerson(new ImageData(new Uint8ClampedArray(px.buffer), sw, sh)); } catch (err) { this.warnings.add(`Segmentation failed: ${(err as Error).message}`); }
+    const tex = e?.tex ?? this.b.createTexture();
+    if (m) this.b.uploadData(tex, m.w, m.h, m.data, "r8");
+    else if (!e) this.b.uploadData(tex, 1, 1, new Uint8Array([255]), "r8");
+    this.segs.set(key, { frame, uploads: this.stats.uploads, tex, used: this.frames });
+    return tex;
+  }
+
+  /** Drops histories and masks no frame used for `age` frames. */
+  private pruneTemporal(age: number) {
+    for (const [k, h] of [...this.history]) if (this.frames - h.used > age) { this.b.release(h.prev); this.b.release(h.cur); this.history.delete(k); }
+    for (const [k, m] of [...this.segs]) if (this.frames - m.used > age) { this.b.deleteTexture(m.tex); this.segs.delete(k); }
+  }
+
+  // ── luma mattes (tv: pack) ─────────────────────────────────────────────────
+  /** A pack matte for this aspect ratio: rendered once raw (a small copy read back for its histogram), then at full
+   *  size through the histogram's equalisation table, so every matte sweeps at an even pace. */
+  matteTex(id: string, w: number, h: number): RenderTarget {
+    const ms = matteSize(w / Math.max(h, 1));
+    const k = `${id}@${ms.key}`;
+    const hit = this.mattes.get(k);
+    if (hit) return hit;
+    const d = matteDef(id);
+    if (!d) throw new Error(`No matte "${id}"`);
+    const sh = { name: `matte:${id}`, source: matteSource(d) };
+    const seed = matteSeed(id), asp = ms.w / ms.h;
+    const sw = 256, shh = Math.max(16, Math.round(256 / asp));
+    const raw = this.b.target(sw, shh, { format: this.b.floatTargets ? "rgba16f" : "rgba8" });
+    this.pass(sh, raw, { u_res: [sw, shh], uSeed: seed, uAsp: asp, uFinal: 0, uRange: [0, 1] }, {});
+    const vals = this.b.readFloat(raw, 0, 0, sw, shh);
+    this.b.release(raw);
+    const r = new Float32Array(sw * shh);
+    for (let i = 0; i < r.length; i++) r[i] = vals[i * 4];
+    const eq = equalise(r);
+    const curve = this.b.createTexture();
+    const texels = new Float32Array(MATTE_CURVE * 4);
+    for (let i = 0; i < MATTE_CURVE; i++) texels[i * 4] = texels[i * 4 + 1] = texels[i * 4 + 2] = eq.table[i];
+    this.b.uploadData(curve, MATTE_CURVE, 1, texels, "rgba16f");
+    const out = this.b.target(ms.w, ms.h, { format: this.b.floatTargets ? "rgba16f" : "rgba8" });
+    this.pass(sh, out, { u_res: [ms.w, ms.h], uSeed: seed, uAsp: asp, uFinal: 1, uRange: [eq.min, eq.max] }, { uCurve: curve });
+    this.b.deleteTexture(curve);
+    this.mattes.set(k, out);
+    return out;
   }
 
   /** The FFmpeg-matched clip pipeline (fx keys) on an effect's input. */
@@ -937,19 +1085,20 @@ export class Renderer {
     return transitionProgram("fade")!;
   }
 
-  private runTransition(tp: TransitionProgram, a: RenderTarget, c: RenderTarget, tr: Pick<TransitionState, "progress" | "params">, w: number, h: number): RenderTarget {
+  /** `pm`: the inputs are premultiplied layers (pack transitions draw a transparent background then). */
+  private runTransition(tp: TransitionProgram, a: RenderTarget, c: RenderTarget, tr: Pick<TransitionState, "progress" | "params">, w: number, h: number, pm = false): RenderTarget {
     const b = this.b;
     if (tp.mips) { b.generateMips(a); b.generateMips(c); }
     const out = b.target(w, h);
     const tex: Record<string, Tex> = { u_from: a, u_to: c };
-    for (const n of tp.textures) tex[n] = n === "u_rand" ? this.randTex(false, w, h) : n === "u_rand2" ? this.randTex(true, w, h) : this.noiseTex();
+    for (const n of tp.textures) tex[n] = n === "u_rand" ? this.randTex(false, w, h) : n === "u_rand2" ? this.randTex(true, w, h) : n === "u_matte" ? this.matteTex(tp.matte ?? "", w, h) : this.noiseTex();
     try {
-      this.pass({ name: tp.name, source: tp.source }, out, { u_res: [w, h], progress: tr.progress, ratio: w / h, ...transitionUniforms(tp, tr.params) }, tex, tp.glsl1);
+      this.pass({ name: tp.name, source: tp.source }, out, { u_res: [w, h], progress: tr.progress, ratio: w / h, u_pm: pm ? 1 : 0, ...transitionUniforms(tp, tr.params) }, tex, tp.glsl1);
     } catch (e) {
       if (!(e instanceof ShaderError) || tp.id === "fade") throw e;
       this.warnings.add(`${tp.id}: ${e.message} (drawn as a crossfade)`);
       b.release(out);
-      return this.runTransition(transitionProgram("fade")!, a, c, tr, w, h);
+      return this.runTransition(transitionProgram("fade")!, a, c, tr, w, h, pm);
     }
     return out;
   }
@@ -1039,32 +1188,62 @@ export class Renderer {
     return this.samples;
   }
 
-  /** A transition half-way (or an effect with its defaults) on the sample pictures, w×h RGBA rows top first. */
-  async thumbnail(kind: "transition" | "effect", id: string, w: number, h: number): Promise<{ data: Uint8Array; w: number; h: number }> {
+  /** A transition half-way, an effect (defaults or `params`) or a look on the sample pictures, or on the user's own
+   *  picture (`source`), w×h RGBA rows top first. */
+  async thumbnail(kind: "transition" | "effect" | "look", id: string, w: number, h: number, o: ThumbOptions = {}): Promise<{ data: Uint8Array; w: number; h: number }> {
     if (this.b.lost) throw new Error("The graphics card reset (WebGL context lost)");
     if (kind === "transition" && id.startsWith("gl:")) await loadGl().catch(() => undefined);
     const b = this.b, [sa, sb] = this.sampleTextures();
     const copy = (t: Texture, mips = false) => { const rt = b.target(w, h, { mips }); this.pass({ name: "copy", source: COPY }, rt, { u_res: [w, h] }, { u_in: t }); return rt; };
+    let own: Texture | null = null;
+    const first = (mips = false) => {
+      if (!o.source) return copy(sa, mips);
+      own = b.createTexture();
+      b.upload(own, o.source, o.source.width, o.source.height);
+      const rt = b.target(w, h, { mips });
+      const sa_ = o.source.width / Math.max(o.source.height, 1), ta = w / h;
+      this.pass({ name: "cover", source: COVER }, rt, { u_res: [w, h], u_scale: sa_ > ta ? [ta / sa_, 1] : [1, sa_ / ta] }, { u_in: own });
+      return rt;
+    };
     let out: RenderTarget;
-    if (kind === "transition") {
-      const tp = transitionProgram(id);
-      if (!tp) throw new Error(`No transition "${id}"`);
-      const A = copy(sa, tp.mips), B = copy(sb, tp.mips);
-      out = this.runTransition(tp, A, B, { progress: 0.5, params: undefined }, w, h);
-      b.release(A); b.release(B);
-    } else {
-      const def = getEffect(id);
-      if (!def) throw new Error(`No effect "${id}"`);
-      const input = copy(sa);
-      const clip: Clip = { id: "thumb", media: { url: "", kind: "image" }, start: 0, duration: 2, in: 0, speed: 1, fit: "fill", fx: {} };
-      const comp: Composition = { width: w, height: h, fps: 24, duration: 2, tracks: [] };
-      const ctx: Ctx = { comp, W: w, H: h, unit: 1, px: 1, path: "", depth: 0 };
-      try { out = this.runEffect(def, undefined, input, { clip, index: 0, local: 1, sourceTime: 1, fade: 1 }, ctx, w / 640); } catch (e) { b.release(input); throw e; }
-      if (out !== input) b.release(input);
-    }
+    try {
+      if (kind === "transition") {
+        const tp = transitionProgram(id);
+        if (!tp) throw new Error(`No transition "${id}"`);
+        const A = first(tp.mips), B = copy(sb, tp.mips);
+        out = this.runTransition(tp, A, B, { progress: o.progress ?? 0.5, params: o.params }, w, h);
+        b.release(A); b.release(B);
+      } else {
+        const def = getEffect(kind === "look" ? "look" : id);
+        if (!def) throw new Error(`No effect "${id}"`);
+        if (kind === "look") await this.ensureLook(id, o.lutUrl);
+        const input = first();
+        const clip: Clip = { id: "thumb", media: { url: "", kind: "image" }, start: 0, duration: 2, in: 0, speed: 1, fit: "fill", fx: {} };
+        const comp: Composition = { width: w, height: h, fps: 24, duration: 2, tracks: [] };
+        const ctx: Ctx = { comp, W: w, H: h, unit: 1, px: 1, path: "", depth: 0 };
+        const inst: EffectInstance = { type: def.id, params: kind === "look" ? { look: id, lut_strength: 1, ...(o.params ?? {}) } : o.params };
+        try { out = this.runEffect(def, inst, input, { clip, index: 0, local: 1, sourceTime: 1, fade: 1 }, ctx, w / 640); } catch (e) { b.release(input); throw e; }
+        if (out !== input) b.release(input);
+      }
+    } finally { if (own) b.deleteTexture(own); }
     const data = this.readRgba(out);
     b.release(out);
     return { data, w, h };
+  }
+
+  /** A look's LUT for a thumbnail when it isn't loaded yet (a registered LUT, or `url`). */
+  private async ensureLook(look: string, url?: string) {
+    if (!look || look === "none" || this.useNative(look) || this.luts.has(look)) return;
+    let lut = registeredLut(look) ?? this.opts.luts?.[look];
+    if (!lut) {
+      const s = this.lutSource(look);
+      const u = url ?? (typeof s === "string" ? s : undefined);
+      if (!u) return;
+      const r = await fetch(u, { credentials: "same-origin" });
+      if (!r.ok) throw new Error(`Look "${look}": HTTP ${r.status}`);
+      lut = parseCube(await r.text());
+    }
+    if (!this.luts.has(look)) this.luts.set(look, { tex: this.b.createTexture3D(lut.size, lut.data), lut, from: lut });
   }
 
   // ── read-back ──────────────────────────────────────────────────────────────
@@ -1080,6 +1259,24 @@ export class Renderer {
     this.b.read(rt, 0, 0, L.texW, L.texH, this.yuvBuf);
     this.b.release(rt);
     return repack(L, this.yuvBuf);
+  }
+
+  /** The last frame as planar 4:2:0 10-bit (16-bit little-endian words: w·h Y, then U, then V; limited range), encoded
+   *  for Composition.output (transfer sdr / hlg / pq, primaries bt709 / bt2020; default SDR BT.709). The desktop hands
+   *  it to FFmpeg as yuv420p10le. The buffer is reused: copy it to keep it. */
+  readYuv420p10(): Uint16Array {
+    if (!this.frame) throw new Error("Nothing drawn yet");
+    const fw = this.frame.w, fh = this.frame.h;
+    const o = this.comp?.output;
+    const tf = o?.transfer === "pq" ? 2 : o?.transfer === "hlg" ? 1 : 0, pr = o?.primaries === "bt2020" ? 1 : 0;
+    const L = yuv10Layout(fw, fh);
+    const rt = this.b.target(L.texW, L.texH, { format: "rgba8" });
+    this.pass({ name: "yuv10-pack", source: YUV10_PACK }, rt, { u_res: [L.texW, L.texH], u_size: [fw, fh], u_texW: L.texW, u_cRows: L.cRows, u_out: [tf, pr] }, { u_in: this.frame });
+    const n = L.texW * 4 * L.texH;
+    if (!this.yuv10Buf || this.yuv10Buf.length !== n) this.yuv10Buf = new Uint8Array(n);
+    this.b.read(rt, 0, 0, L.texW, L.texH, this.yuv10Buf);
+    this.b.release(rt);
+    return repack10(L, this.yuv10Buf);
   }
 
   /** The last frame (or a target) as RGBA8, rows top first (tests). */
@@ -1119,6 +1316,7 @@ export class Renderer {
     }
     for (const l of this.luts.values()) l.tex = this.b.createTexture3D(l.lut.size, l.lut.data);
     this.curveTex.clear(); this.rand.clear();
+    this.mattes.clear(); this.history.clear(); this.segs.clear();
     this.noise = null; this.clearTex = null; this.whiteTex = null; this.samples = null;
     for (const im of this.images.values()) im.tex = null;
     this.frame = null;
@@ -1136,6 +1334,10 @@ export class Renderer {
     this.rand.clear();
     for (const im of this.images.values()) { if (im.tex) this.b.deleteTexture(im.tex); im.bmp?.close(); }
     this.images.clear();
+    for (const h of this.history.values()) { this.b.release(h.prev); this.b.release(h.cur); }
+    this.history.clear();
+    for (const m of this.segs.values()) this.b.deleteTexture(m.tex);
+    this.segs.clear();
     this.warnings.clear();
   }
 

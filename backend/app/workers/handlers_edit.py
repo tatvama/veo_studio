@@ -15,20 +15,21 @@ from .. import catalog, settings_store
 from ..core import edit_ai
 from ..core.edit_ai import ToolError
 from ..db import SessionLocal
-from ..models import AIModel, Project
+from ..models import AIModel, Character, Project, User, VoiceProfile
 from ..pipeline import ffmpeg as ff
 from ..pipeline.voice import say
 from ..providers.base import MediaResult, ProviderError
 from ..providers.schema_map import GenRequest
 from ..storage import get_storage
-from .handlers import run_chain
+from .handlers import gen_image, run_chain
 from .worker import GROUP_OF, JobContext, handler
 
 # concurrency groups (worker.GROUP_LIMITS): picture jobs share the video limit, sound the audio one, writing the LLM one
 GROUP_OF.update({"edit_video": "video", "edit_extend": "video", "edit_words": "video", "edit_upscale": "video",
                  "edit_tts": "audio", "edit_dub": "audio", "edit_clean_voice": "audio", "edit_sfx": "audio",
                  "edit_music": "audio", "edit_transcribe": "llm", "edit_translate": "llm", "edit_sfx_suggest": "llm",
-                 "edit_assistant": "llm"})
+                 "edit_assistant": "llm", "edit_broll_suggest": "llm", "edit_highlights": "llm",
+                 "edit_mood_suggest": "llm", "edit_thumbnail": "image", "edit_voice_clone": "audio"})
 
 
 def edit_handler(job_type: str):
@@ -235,12 +236,16 @@ def sfx_suggest(ctx: JobContext, p: edit_ai.SfxSuggestIn, tmp: Path) -> dict:
 
 @edit_handler("edit_music")
 def music(ctx: JobContext, p: edit_ai.MusicIn, tmp: Path) -> dict:
+    """Music to the asked length; a mood adds its musical words and a BPM the tempo (edit_ai.music_prompt)."""
     ctx.progress(0.2, "Composing")
-    res = ctx.services.music(p.prompt, p.seconds)
+    prompt = edit_ai.music_prompt(p)
+    res = ctx.services.music(prompt, p.seconds)
     ctx.cost(res.usage)
     # exactly the asked length: looped or trimmed, with a 2 s fade at the end
     fitted = ff.music_bed(_write(res, tmp / "music"), None, tmp / "music_fit.wav", p.seconds, volume_db=0.0, duck=False)
-    return {"tool": "music", "outputs": [_save(ctx, fitted, "audio", f"Music · {p.prompt[:60]}")]}
+    name = f"Music · {(p.prompt.strip() or p.mood.strip())[:60]}" + (f" ({p.mood.strip()})" if p.mood.strip() and p.prompt.strip() else "")
+    return {"tool": "music", "prompt": prompt, "mood": p.mood.strip(), "bpm": p.bpm,
+            "outputs": [_save(ctx, fitted, "audio", name, mood=p.mood.strip(), bpm=p.bpm)]}
 
 
 # ── picture ──────────────────────────────────────────────────────────────────
@@ -312,3 +317,125 @@ def assistant(ctx: JobContext, p: edit_ai.AssistantIn, tmp: Path) -> dict:
     cmds, rejected = edit_ai.validate_commands([edit_ai.from_flat(c.model_dump()) for c in obj.commands], p.sequence_digest)
     reply = obj.reply.strip() or ("Here is what I would change." if cmds else "I couldn't turn that into edits.")
     return {"tool": "assistant", "reply": reply, "commands": cmds, "rejected": rejected, "outputs": []}
+
+
+# ── wave 3: ideas, highlights, thumbnails, cloned voices, moods ──────────────
+
+@edit_handler("edit_broll_suggest")
+def broll_suggest(ctx: JobContext, p: edit_ai.BrollSuggestIn, tmp: Path) -> dict:
+    """B-roll ideas tied to the transcript's times (Claude writes them); each becomes a prompt for "Generate B-roll"."""
+    ctx.progress(0.1, "Reading the transcript")
+    obj, u = edit_ai.llm(ctx.services, "edit_broll_ideas", edit_ai.BROLL_SYSTEM, edit_ai.broll_prompt(p), edit_ai.BrollOut,
+                         lambda: edit_ai.mock_broll(p))
+    ctx.cost(u)
+    return {"tool": "broll_suggest", "ideas": edit_ai.finish_broll([x.model_dump() for x in obj.ideas], p), "outputs": []}
+
+
+@edit_handler("edit_highlights")
+def highlights(ctx: JobContext, p: edit_ai.HighlightsIn, tmp: Path) -> dict:
+    """The best self-contained moments for Shorts / Reels, on whole transcript lines, close to the asked length."""
+    ctx.progress(0.1, "Finding the best moments")
+    obj, u = edit_ai.llm(ctx.services, "edit_highlights", edit_ai.HIGHLIGHTS_SYSTEM, edit_ai.highlights_prompt(p),
+                         edit_ai.HighlightsOut, lambda: edit_ai.mock_highlights(p))
+    ctx.cost(u)
+    picks = edit_ai.finish_highlights([x.model_dump() for x in obj.highlights], p)
+    if not picks:  # the model's ranges didn't fit: the deterministic picks
+        picks = edit_ai.finish_highlights(edit_ai.mock_highlights(p)["highlights"], p)
+    return {"tool": "highlights", "highlights": picks, "platform": p.platform, "target_seconds": p.target_seconds,
+            "outputs": []}
+
+
+@edit_handler("edit_thumbnail")
+def thumbnail(ctx: JobContext, p: edit_ai.ThumbnailIn, tmp: Path) -> dict:
+    """Thumbnails from a frame through the team's image chain (Google first): `count` in each aspect asked for. A retry
+    keeps the images already made."""
+    st = get_storage()
+    frame = edit_ai.frame_of(_src(ctx, p.frame_key or p.key or ""), tmp / "frame.png", p.at if p.at is not None else 0.0)
+    outs: list[dict] = [o for o in ctx.result.get("outputs") or [] if isinstance(o, dict) and o.get("key")]
+    todo = [(aspect, i) for aspect in p.aspects for i in range(p.count)]
+    engine = str(ctx.result.get("engine") or "")
+    for n, (aspect, i) in enumerate(todo):
+        if any(o.get("aspect") == aspect and o.get("variant") == i + 1 for o in outs):
+            continue
+        ctx.check_cancel()
+        ctx.progress(0.05 + 0.9 * n / len(todo), f"Thumbnail {n + 1} of {len(todo)}")
+        res, engine = gen_image(ctx, edit_ai.thumbnail_prompt(p, aspect, i), [frame], aspect, title=p.title or "thumbnail",
+                                explicit=p.route or None)
+        ctx.cost(res.usage)
+        name = f"Thumbnail {aspect} #{i + 1}" + (f" · {p.title.strip()[:40]}" if p.title.strip() else "")
+        o = _save(ctx, _write(res, tmp / f"thumb_{n}"), "image", name, aspect=aspect, variant=i + 1, engine=engine)
+        w, h = ff.video_size(st.abs(o["key"]))
+        outs.append({**o, "width": w, "height": h})
+        ctx.save_result(outputs=outs, engine=engine)
+    return {"tool": "thumbnail", "engine": engine, "title": p.title, "outputs": outs}
+
+
+@edit_handler("edit_voice_clone")
+def voice_clone(ctx: JobContext, p: edit_ai.VoiceCloneIn, tmp: Path) -> dict:
+    """An instant voice clone (ElevenLabs) of a sample, only with the speaker's consent record. The voice becomes a
+    studio voice (a cast entry with a voice profile per language), so voice-over and dubbing can use it."""
+    with SessionLocal() as db:
+        consent = edit_ai.check_consent(db, p.consent_id)
+        subject, consent_char = consent.subject_name, consent.character_id
+    langs = edit_ai.clone_languages(p.languages)
+    src = _src(ctx, p.sample_key)
+    s, n = edit_ai.span(src, p.start, p.end)
+    if n < edit_ai.CLONE_MIN_S:
+        raise ToolError(f"Use at least {edit_ai.CLONE_MIN_S:.0f} seconds of clean speech for a cloned voice")
+    wav = edit_ai.cut_audio(src, tmp / "sample.wav", s, s + min(n, edit_ai.CLONE_MAX_S), rate=44100)
+    voice_id = str(ctx.result.get("voice_id") or "")
+    if not voice_id:  # a retry keeps the voice made before
+        ctx.progress(0.3, "Cloning the voice")
+        voice_id, usage = ctx.services.clone_voice(f"{p.name} (Tatvam clone)", [("sample.wav", wav.read_bytes(), "audio/wav")],
+                                                   description=f"Cloned voice of {subject}, with consent record {p.consent_id}",
+                                                   remove_noise=p.remove_noise)
+        ctx.cost(usage)
+        ctx.save_result(voice_id=voice_id)
+    st = get_storage()
+    sample = st.save_file(st.new_path(f"projects/{ctx.project_id}/edit_ai", "wav"), wav)
+    from ..core.audit import audit
+    with SessionLocal() as db:
+        ch = db.get(Character, int(ctx.result["character_id"])) if ctx.result.get("character_id") else None
+        if ch is None:
+            ch = Character(name=p.name.strip()[:120], role="Cloned voice", voice_description=f"Cloned voice of {subject}",
+                           created_by=ctx.user_id)
+            db.add(ch)
+            db.flush()
+        ids = []
+        for lang in langs:
+            vp = db.query(VoiceProfile).filter(VoiceProfile.character_id == ch.id, VoiceProfile.language == lang).first()
+            if vp is None:
+                vp = VoiceProfile(character_id=ch.id, language=lang)
+                db.add(vp)
+            vp.provider, vp.voice_id, vp.voice_name = "elevenlabs", voice_id, f"{p.name.strip()[:80]} · cloned voice"
+            vp.description = f"Cloned in Tatvam Editor from a sample of {subject} (consent record {p.consent_id})"
+            vp.sts_voice_id, vp.sample_path, vp.style_prompt = voice_id, sample, ""
+            vp.settings = {**(vp.settings or {}), "consent_id": p.consent_id, "source": "editor", "edit_project_id": ctx.project_id}
+            db.flush()
+            ids.append(vp.id)
+        if consent_char is None:  # the record now covers this voice (the cast shows "consent on file")
+            c = edit_ai.check_consent(db, p.consent_id)
+            c.character_id = ch.id
+        audit(db, db.get(User, ctx.user_id) if ctx.user_id else None, "voice.clone", ch.name,
+              {"character_id": ch.id, "subject": subject, "consent_id": p.consent_id, "languages": langs, "voice_id": voice_id,
+               "source": "editor", "edit_project_id": ctx.project_id}, commit=False)
+        db.commit()
+        cid = ch.id
+    ctx.save_result(character_id=cid)
+    from ..events import emit
+    emit(None, None, "bible.updated", {"character_id": cid})
+    return {"tool": "voice_clone", "voice": {"provider": "elevenlabs", "voice_id": voice_id, "name": p.name.strip(),
+                                             "character_id": cid, "profile_ids": ids, "languages": langs,
+                                             "consent_id": p.consent_id, "subject": subject},
+            "outputs": [], "offset": s}
+
+
+@edit_handler("edit_mood_suggest")
+def mood_suggest(ctx: JobContext, p: edit_ai.MoodSuggestIn, tmp: Path) -> dict:
+    """A mood per scene from its emotion (Claude; the deterministic mapping when the text route is mock)."""
+    allowed = edit_ai.allowed_moods(p)
+    obj, u = edit_ai.llm(ctx.services, "edit_moods", edit_ai.MOOD_SYSTEM, edit_ai.mood_prompt(p, allowed), edit_ai.MoodOut,
+                         lambda: edit_ai.mock_moods(p, allowed))
+    ctx.cost(u)
+    return {"tool": "mood_suggest", "moods": edit_ai.finish_moods([x.model_dump() for x in obj.picks], p, allowed),
+            "outputs": []}

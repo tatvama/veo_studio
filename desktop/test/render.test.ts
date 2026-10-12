@@ -8,7 +8,7 @@ import { test } from "node:test";
 import {
   atempoChain, concatList, draftDims, escPath, finalArgs, finalEncoder, fitFilter, gpuFinalArgs, intermediateEncoder, mixArgs, musicBedArgs, overlayArgs, presetDims, presetList, PRESETS, segmentArgs, STAB_TRANSFORM, stabilizeDetectArgs, stepWeights, stillArgs, substituteLuts, type PlanSegment, type RenderPlan, uhdVf, xfadeArgs,
 } from "../src/main/render-args.ts";
-import { planKeys } from "../src/main/render.ts";
+import { frameBytes, gpuJob, isTenBitEncoder, planKeys } from "../src/main/render.ts";
 
 /** Python prints -3.0dB / d=1.0 where JS prints -3dB / d=1: the same to FFmpeg. */
 const norm = (s: string) => s.replace(/(\d+)\.0(?!\d)/g, "$1");
@@ -147,10 +147,13 @@ test("preset sizes follow the project aspect", () => {
 test("final mux: loudnorm, burned ASS with shaping, preset encoder, ProRes audio", () => {
   const a = finalArgs({ video: "body.mp4", audio: "mixed.wav", out: "final.mp4", ass: "D:\\p\\Cache\\captions.ass", loudnorm: "loudnorm=I=-14:TP=-1.5:LRA=11",
     encoder: ["-c:v", "hevc_nvenc"], container: "mp4" });
-  assert.deepEqual(a, ["-i", "body.mp4", "-i", "mixed.wav", "-vf", "ass='D\\:/p/Cache/captions.ass':shaping=complex", "-c:v", "hevc_nvenc", "-map", "0:v", "-map", "1:a",
+  // tagged BT.709 like the GPU path (the joined body has no colour tags; FFmpeg 7 takes the frames' tags over -color_*)
+  assert.deepEqual(a, ["-i", "body.mp4", "-i", "mixed.wav", "-vf",
+    "ass='D\\:/p/Cache/captions.ass':shaping=complex,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv", "-c:v", "hevc_nvenc",
+    "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv", "-map", "0:v", "-map", "1:a",
     "-af", "loudnorm=I=-14:TP=-1.5:LRA=11,apad", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", "-shortest", "final.mp4"]);
   const m = finalArgs({ video: "b.mp4", audio: "a.wav", out: "f.mov", encoder: ["-c:v", "prores_ks"], container: "mov", fps: 25 });
-  assert.ok(!m.includes("-vf"));
+  assert.equal(m[m.indexOf("-vf") + 1], "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv");
   assert.ok(m.join(" ").includes("-r 25"));
   assert.ok(m.join(" ").includes("-c:a pcm_s24le"));
 });
@@ -171,7 +174,7 @@ test("GPU path: raw YUV frames on stdin, the draft pass's sound, ASS burned, len
     encoder: ["-c:v", "hevc_nvenc"], container: "mp4" });
   assert.deepEqual(args.slice(0, 15), ["-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", "3840x2160", "-framerate", "24", "-color_range", "tv",
     "-colorspace", "bt709", "-i", "pipe:0", "-i"]);
-  assert.equal(args[args.indexOf("-vf") + 1], "ass='C\\:/tmp/captions.ass':shaping=complex");
+  assert.equal(args[args.indexOf("-vf") + 1], "ass='C\\:/tmp/captions.ass':shaping=complex,setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv");
   assert.equal(args[args.indexOf("-af") + 1], "loudnorm=I=-14:TP=-1.5:LRA=11,apad,atrim=0:15.917");
   assert.equal(args[args.indexOf("-frames:v") + 1], "382");
   assert.ok(args.includes("hevc_nvenc") && args.at(-1) === "final.mp4" && args.includes("aac"));
@@ -182,4 +185,36 @@ test("draft size keeps the shape with a 144 short side", () => {
   assert.deepEqual(draftDims(3840, 2160), { w: 256, h: 144 });
   assert.deepEqual(draftDims(2160, 3840), { w: 144, h: 256 });
   assert.deepEqual(draftDims(1440, 1440), { w: 144, h: 144 });
+});
+
+test("10-bit GPU frames: the job asks for bits 10 when the encoder keeps 10 bits; yuv420p10le on stdin; frame sizes", () => {
+  const enc10 = finalEncoder(PRESETS.find((p) => p.id === "yt4k")!, { hevc_nvenc: true, hevc_nvenc_10bit: true }, "auto", true)!;
+  const prores = finalEncoder(PRESETS.find((p) => p.id === "master_prores")!, {}, "auto", true)!;
+  const h264 = finalEncoder(PRESETS.find((p) => p.id === "review1080")!, { h264_nvenc: true }, "auto", true)!;
+  assert.deepEqual([isTenBitEncoder(enc10.args), isTenBitEncoder(prores.args), isTenBitEncoder(h264.args)], [true, true, false]);
+  const size = { w: 64, h: 36, fps: 24, frames: 10 };
+  assert.equal(gpuJob({ kind: "plan", plan: {} as never }, { ...size, bits: 10 }).bits, 10);
+  assert.equal("bits" in gpuJob({ kind: "plan", plan: {} as never }, { ...size, bits: 8 }), false);
+  assert.deepEqual([frameBytes(3840, 2160, 8), frameBytes(3840, 2160, 10)], [12_441_600, 24_883_200]);
+  const a = gpuFinalArgs({ w: 3840, h: 2160, fps: 24, frames: 48, audio: "m.wav", out: "o.mp4", encoder: enc10.args, container: "mp4", bits: 10, loudnorm: "anull" });
+  assert.deepEqual(a.slice(0, 4), ["-f", "rawvideo", "-pix_fmt", "yuv420p10le"]);
+  assert.equal(a[a.indexOf("-vf") + 1], "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv");
+  assert.equal(a[a.indexOf("-af") + 1], "anull,apad,atrim=0:2.000"); // the mix is already at its loudness target
+  assert.ok(a.includes("p010le") && a.includes("main10"));
+});
+
+test("draft720: 1280×720 H.264 at 4.5 Mb/s on each encoder's quick settings, AAC 160k, BT.709, in the preset list", () => {
+  const p = PRESETS.find((x) => x.id === "draft720")!;
+  assert.deepEqual([p.label, p.w, p.h, p.codec, p.vbr, p.audioBitrate, presetDims(p, "9:16")], ["Draft 720p", 1280, 720, "h264", "4500k", "160k", { w: 720, h: 1280 }]);
+  assert.deepEqual(finalEncoder(p, { h264_nvenc: true })!.args,
+    ["-c:v", "h264_nvenc", "-preset", "p2", "-rc", "vbr", "-b:v", "4500k", "-maxrate", "6750k", "-bufsize", "9000k", "-profile:v", "high", "-pix_fmt", "yuv420p"]);
+  assert.deepEqual(finalEncoder(p, { h264_qsv: true })!.args.slice(0, 4), ["-c:v", "h264_qsv", "-preset", "veryfast"]);
+  assert.deepEqual(finalEncoder(p, { h264_amf: true })!.args.slice(0, 6), ["-c:v", "h264_amf", "-quality", "speed", "-rc", "vbr_peak"]);
+  assert.deepEqual(finalEncoder(p, {})!.args, ["-c:v", "libx264", "-preset", "veryfast", "-b:v", "4500k", "-maxrate", "6750k", "-bufsize", "9000k", "-profile:v", "high", "-pix_fmt", "yuv420p"]);
+  const g = gpuFinalArgs({ w: 1280, h: 720, fps: 24, frames: 24, audio: "m.wav", out: "d.mp4", encoder: finalEncoder(p, { h264_nvenc: true })!.args, container: "mp4",
+    audioBitrate: p.audioBitrate, loudnorm: "anull" });
+  assert.equal(g[g.indexOf("-b:a") + 1], "160k");
+  assert.ok(g.includes("bt709") && g.includes("setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv"));
+  assert.equal(finalArgs({ video: "b.mp4", audio: "a.wav", out: "f.mp4", encoder: [], container: "mp4", audioBitrate: "160k" }).includes("160k"), true);
+  assert.equal(presetList({ h264_nvenc: true }).find((x) => x.id === "draft720")!.encoder, "h264_nvenc");
 });

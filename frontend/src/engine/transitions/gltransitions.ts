@@ -1,6 +1,7 @@
 /**
- * The transition catalogue: the 58 xfade ids (plain names) and the 125 gl-transitions ("gl:<name>"), each with the
- * program source the renderer compiles. gl-transitions loads on first use (its own chunk, ~215 KB). Those GLSL
+ * The transition catalogue: the 58 xfade ids (plain names), the 125 gl-transitions ("gl:<name>") and the wave-3 pack
+ * ("tv:<name>": luma mattes, light, motion, glitch & retro, 3D; transitions/pack), each with the program source the
+ * renderer compiles. gl-transitions loads on first use (its own chunk, ~215 KB). Those GLSL
  * sources are GLSL ES 1.00 (WebGL1 style: texture2D, no #version) and run as written: WebGL2 compiles them with a
  * 1.00 vertex shader. The two that need an extra texture (luma, displacement) get a generated noise image.
  */
@@ -8,12 +9,13 @@ import type { Transition as GlTransition } from "gl-transitions";
 import { HEADER } from "../effects/shaders";
 import type { TransitionParam } from "../types";
 import { XFADE_GLSL, XFADE_GROUPS, XFADE_IDS, XFADE_MIPS, XFADE_PRELUDE, XFADE_TEXTURES } from "./xfade";
+import { PACK, PACK_PREFIX, packSource, packTransition } from "./pack/index";
 
 export interface TransitionParamInfo {
   name: string; type: string; default: TransitionParam; min?: number; max?: number; step?: number; color?: boolean; description?: string;
 }
 export interface TransitionInfo {
-  id: string; label: string; group: string; tags: string[]; params: TransitionParamInfo[]; kind: "xfade" | "gl" | "custom";
+  id: string; label: string; group: string; tags: string[]; params: TransitionParamInfo[]; kind: "xfade" | "gl" | "custom" | "tv";
   author?: string; license?: string; description?: string;
   /** Extra sampler inputs the engine fills with a generated texture. */
   textures?: string[];
@@ -25,8 +27,11 @@ export interface TransitionProgram {
   /** Uniform defaults (gl-transitions params). */
   defaults: Record<string, TransitionParam>;
   types: Record<string, string>;
-  /** Extra samplers: gl-transitions' own (a generated noise image) or u_rand / u_rand2 (FFmpeg's frand tables). */
+  /** Extra samplers: gl-transitions' own (a generated noise image), u_rand / u_rand2 (FFmpeg's frand tables) or
+   *  u_matte (a pack luma matte). */
   textures: string[];
+  /** Pack luma mattes: which matte the renderer generates into u_matte. */
+  matte?: string;
 }
 
 let glList: GlTransition[] | null = null;
@@ -39,9 +44,9 @@ export interface CustomTransition {
 }
 const customs = new Map<string, CustomTransition>();
 
-/** Adds (or replaces) a transition. Its id can't be an xfade id or start with "gl:". */
+/** Adds (or replaces) a transition. Its id can't be an xfade id or start with "gl:" or "tv:". */
 export function registerTransition(t: CustomTransition): void {
-  if (!/^[a-z][a-z0-9_.:-]{0,63}$/i.test(t.id) || t.id.startsWith("gl:") || XFADE_IDS.includes(t.id)) throw new Error(`Transition id "${t.id}" isn't available`);
+  if (!/^[a-z][a-z0-9_.:-]{0,63}$/i.test(t.id) || t.id.startsWith("gl:") || t.id.startsWith(PACK_PREFIX) || XFADE_IDS.includes(t.id)) throw new Error(`Transition id "${t.id}" isn't available`);
   if (!/vec4\s+transition\s*\(/.test(t.glsl)) throw new Error(`Transition "${t.id}" has no vec4 transition(vec2 uv)`);
   customs.set(t.id, { ...t, params: (t.params ?? []).map((p) => ({ ...p })) });
   cache.delete(t.id);
@@ -96,7 +101,16 @@ function xfadeInfos(): TransitionInfo[] {
   return XFADE_GROUPS.flatMap(([group, items]) => items.map(([id, label]) => ({ id, label, group, tags: ["ffmpeg"], params: [], kind: "xfade" as const })));
 }
 
-/** Every transition (xfade first). Before gl-transitions has loaded, only the xfade ones. */
+const packInfos = (): TransitionInfo[] => PACK.map((t) => ({
+  id: PACK_PREFIX + t.id, label: t.label, group: t.group, tags: ["tatvam", ...(t.tags ?? []), ...(t.matte ? ["luma", "matte"] : [])], kind: "tv",
+  author: "Tatvam", license: "Proprietary",
+  params: t.params.map((p) => ({ name: p.name, type: p.type, default: (Array.isArray(p.default) ? [...p.default] : p.default) as TransitionParam,
+    ...(p.min !== undefined ? { min: p.min } : {}), ...(p.max !== undefined ? { max: p.max } : {}), ...(p.step !== undefined ? { step: p.step } : {}),
+    ...(p.color ? { color: true } : {}), ...(p.description ? { description: p.description } : {}) })),
+}));
+
+/** Every transition (xfade first, then gl-transitions, the tv: pack and the registered ones). Before gl-transitions has
+ *  loaded, without the gl: ones. */
 export function transitionInfos(): TransitionInfo[] {
   const gl = (glList ?? []).map((t): TransitionInfo => ({
     id: `gl:${t.name}`, label: human(t.name), group: groupOf(t.tags ?? []), tags: t.tags ?? [], params: glParams(t), kind: "gl",
@@ -106,7 +120,7 @@ export function transitionInfos(): TransitionInfo[] {
     id: t.id, label: t.label, group: t.group ?? "Custom", tags: ["custom"], params: (t.params ?? []).map((p) => ({ ...p })), kind: "custom",
     author: t.author, license: t.license, description: t.description,
   }));
-  return [...xfadeInfos(), ...gl, ...own];
+  return [...xfadeInfos(), ...gl, ...packInfos(), ...own];
 }
 
 export async function listTransitions(): Promise<TransitionInfo[]> {
@@ -137,6 +151,11 @@ export function transitionProgram(id: string): TransitionProgram | null {
     out = { id, name: `custom:${id}`, glsl1: true, mips: false, textures: [],
       source: GL_PRELUDE + own.glsl + "\nvoid main() { gl_FragColor = transition(vec2(v_uv.x, 1.0 - v_uv.y)); }\n",
       defaults: Object.fromEntries(params.map((p) => [p.name, p.default])), types: Object.fromEntries(params.map((p) => [p.name, p.type])) };
+  } else if (id.startsWith(PACK_PREFIX)) {
+    const t = packTransition(id);
+    if (t) out = { id, name: t.matte ? "tv:matte" : id, source: packSource(t), glsl1: false, mips: !!t.mips, textures: t.matte ? ["u_matte"] : [], matte: t.matte,
+      defaults: Object.fromEntries(t.params.map((p) => [p.name, (Array.isArray(p.default) ? [...p.default] : p.default) as TransitionParam])),
+      types: Object.fromEntries(t.params.map((p) => [p.name, p.type])) };
   } else if (XFADE_GLSL[id]) {
     out = { id, name: `xfade:${id}`, source: HEADER + XFADE_PRELUDE + XFADE_GLSL[id] + "\nvoid main() { o_color = transition(v_uv); }\n",
       glsl1: false, mips: XFADE_MIPS.has(id), defaults: {}, types: {}, textures: XFADE_TEXTURES[id] ?? [] };
@@ -167,4 +186,4 @@ export function transitionUniforms(tp: TransitionProgram, params: Record<string,
   return out;
 }
 
-export const isKnownTransition = (id: string) => XFADE_IDS.includes(id) || customs.has(id) || (id.startsWith("gl:") && (!glList || glList.some((t) => t.name === id.slice(3))));
+export const isKnownTransition = (id: string) => XFADE_IDS.includes(id) || customs.has(id) || !!packTransition(id) || (id.startsWith("gl:") && (!glList || glList.some((t) => t.name === id.slice(3))));

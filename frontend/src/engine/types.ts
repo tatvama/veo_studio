@@ -19,8 +19,9 @@ export type { AdjustKey, ChromaKey, Curves, Easing, FxMask, Glow, MoveKind, Rgb,
 export type BlendMode = "normal" | "add" | "multiply" | "screen" | "overlay" | "lighten" | "darken";
 export const BLEND_MODES: BlendMode[] = ["normal", "add", "multiply", "screen", "overlay", "lighten", "darken"];
 
-/** Keyframe easing; "hold" keeps the value until the next keyframe. */
-export type KeyEase = Easing | "hold";
+/** Keyframe easing; "hold" keeps the value until the next keyframe. "bezier" takes the segment's curve from the start
+ *  key's `out` and the end key's `in` handles (CSS cubic-bezier); "bounce" / "elastic" are Penner's easeOut curves. */
+export type KeyEase = Easing | "hold" | "bezier" | "bounce" | "elastic";
 
 export interface Composition {
   width: number; height: number; fps: number; duration: number;
@@ -41,6 +42,10 @@ export interface Composition {
   /** Preset looks made of eq / colorbalance / vibrance / hue / colorchannelmixer / negate run as those FFmpeg filters
    *  (closer to the server render than their .cube); false uses the LUTs from `lutUrls`. Default on. */
   nativeLooks?: boolean;
+  /** The delivery signal for readYuv420p10() (default SDR BT.709). HLG / PQ map the working space's 1.0 to 203 cd/m²
+   *  (BT.2408) and keep half-float highlights above it; bt2020 also switches the Y'CbCr matrix. The canvas, readRgba
+   *  and the 8-bit readYuv420() stay SDR BT.709. */
+  output?: { transfer: "sdr" | "hlg" | "pq"; primaries: "bt709" | "bt2020" };
 }
 
 export interface Track {
@@ -76,8 +81,18 @@ export interface TrackTransition {
 
 export interface Media { url: string; kind: "video" | "image"; width?: number; height?: number; duration?: number }
 
-/** A value that may change over the clip: `t` (seconds from the clip's start) or `frame` (at the composition's fps). */
-export interface ParamKey<T = unknown> { t?: number; frame?: number; value: T; ease?: KeyEase }
+/** A value that may change over the clip: `t` (seconds from the clip's start) or `frame` (at the composition's fps).
+ *  `ease` shapes the segment from this key to the next. With ease "bezier": `out` (this key) and `in` (the next key)
+ *  are the cubic-bezier handles in normalised time / value, exactly CSS cubic-bezier(out[0], out[1], in[0], in[1])
+ *  between the two keys (defaults: linear). Spatial values ([x, y] …): `tangentOut` (this key) and `tangentIn` (the
+ *  next key) are handle offsets from each key's value, so the path is the cubic Bézier value₀, value₀ + tangentOut,
+ *  value₁ + tangentIn, value₁ (a cubic Hermite with tangents 3·tangentOut and −3·tangentIn); the timing along it still
+ *  comes from the ease. */
+export interface ParamKey<T = unknown> {
+  t?: number; frame?: number; value: T; ease?: KeyEase;
+  out?: [number, number]; in?: [number, number];
+  tangentOut?: number[]; tangentIn?: number[];
+}
 export interface Param<T = unknown> { value: T; keyframes?: ParamKey<T>[] }
 
 /** Premiere-style motion: position and anchor in pixels (composition pixels / the picture's own pixels), scale in % of
@@ -124,8 +139,12 @@ export interface Clip {
   duration: number;
   /** Source seconds at the clip's start (trim); nested: seconds into the nested composition. */
   in: number;
-  /** 0.25..4; reverse plays from in + duration·speed backwards. */
+  /** 0.25..4; reverse plays from in + duration·speed backwards. 0 freezes the frame at `in` (a freeze frame). */
   speed: number;
+  /** Speed ramps: local seconds (from the clip's start) → source seconds (in the media, absolute), piecewise linear
+   *  through the points, non-decreasing (a flat segment is a freeze). Wins over in / speed / reverse; held before the
+   *  first point and after the last (transition handles extend the end segments). */
+  timeMap?: TimePoint[];
   reverse?: boolean;
   /** How the picture fits the frame ("fill" stretches): the main track crops (cover), motion scales from it. */
   fit: "cover" | "contain" | "fill";
@@ -155,6 +174,9 @@ export interface Clip {
   /** Nested composition, drawn into a texture (its time = in + (t − start)·speed). */
   comp?: Composition;
 }
+
+/** One point of Clip.timeMap: `t` local seconds, `s` source seconds. */
+export interface TimePoint { t: number; s: number }
 
 export interface Transform { x: number; y: number; scale: number; rotation: number; opacity: number; keyframes?: Keyframe[] }
 

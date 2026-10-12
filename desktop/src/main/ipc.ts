@@ -5,7 +5,12 @@
 import os from "node:os";
 import path from "node:path";
 import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from "electron";
-import { IPC, RENDERER_SETTINGS, type AnalyzeKind, type DesktopSettings, type EditPreset, type EditProject, type PanelId, type RenderJobInput } from "../shared/types.ts";
+import {
+  IPC, RENDERER_SETTINGS, type AnalyzeKind, type DesktopSettings, type DuckingOptions, type EditBatchItem, type EditPreset, type EditProject, type InterpolateOptions,
+  type PanelId, type RenderJobInput, type TimelineClip, type TranscribeOptions,
+} from "../shared/types.ts";
+import { isLoudnessPreset } from "./editor-audio.ts";
+import { isToolId, type ToolManager } from "./tools.ts";
 import type { Config } from "./config.ts";
 import type { EditorManager } from "./editor.ts";
 import { projectTitle, writeEdits } from "./edits.ts";
@@ -34,6 +39,8 @@ export interface AppCtx {
   renders: RenderManager;
   upscaler: LocalUpscaler;
   editor: EditorManager;
+  /** local tools (RIFE, whisper.cpp, models, Real-ESRGAN) */
+  tools: ToolManager;
   windows: WindowManager;
   ff(): FfmpegInfo | null;
   probe(force?: boolean): Promise<Record<string, boolean>>;
@@ -194,8 +201,10 @@ export function registerIpc(ctx: AppCtx): void {
   handle(IPC.upCancel, (id: string) => ctx.upscaler.cancel(String(id)));
 
   handle(IPC.engineJob, (id: string) => ctx.renders.engineJob(String(id)));
-  handle(IPC.engineFrame, (id: string, index: number, bytes: Uint8Array) => {
-    if (!(bytes instanceof Uint8Array)) throw new Error("A frame must be bytes");
+  handle(IPC.engineFrame, (id: string, index: number, frame: Uint8Array | Uint16Array) => {
+    // 8-bit I420 arrives as a Uint8Array, 10-bit yuv420p10le as a Uint16Array (little-endian on every PC we run on)
+    if (!(frame instanceof Uint8Array) && !(frame instanceof Uint16Array)) throw new Error("A frame must be bytes");
+    const bytes = frame instanceof Uint8Array ? frame : new Uint8Array(frame.buffer, frame.byteOffset, frame.byteLength);
     return ctx.renders.engineFrame(String(id), int(index, "index"), bytes);
   });
   handle(IPC.engineDone, (id: string) => ctx.renders.engineDone(String(id)));
@@ -221,17 +230,83 @@ export function registerIpc(ctx: AppCtx): void {
   handle(IPC.editorRelink, (file: string, mediaId: string) => ed().relink(str(file, "path"), str(mediaId, "mediaId")));
   handle(IPC.editorProxy, (file: string, mediaId: string) => ed().proxy(str(file, "path"), str(mediaId, "mediaId")));
   handle(IPC.editorImportEpisode, (pid: number, eid: number, file: string) => ed().importEpisode(int(pid, "pid"), int(eid, "eid"), str(file, "path")));
-  handle(IPC.editorExport, (file: string, sequenceId: string, opts: { preset: string; range: "all" | "inout"; upload?: boolean }) =>
-    ed().export(str(file, "path"), str(sequenceId, "sequenceId"), { preset: str(opts?.preset, "preset"), range: opts?.range === "inout" ? "inout" : "all",
-      upload: Boolean(opts?.upload) }));
+  const ducking = (d: unknown): boolean | DuckingOptions | undefined => {
+    if (typeof d === "boolean") return d;
+    if (!d || typeof d !== "object") return undefined;
+    const o = d as Record<string, unknown>;
+    const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+    return { threshold: n(o.threshold), ratio: n(o.ratio), attack: n(o.attack), release: n(o.release) };
+  };
+  const batchItem = (o: Partial<EditBatchItem> | undefined): EditBatchItem => ({
+    preset: str(o?.preset, "preset"), range: o?.range === "inout" ? "inout" : "all", upload: Boolean(o?.upload),
+    ...(typeof o?.sequenceId === "string" && o.sequenceId ? { sequenceId: o.sequenceId.slice(0, 200) } : {}),
+    ...(typeof o?.name === "string" && o.name.trim() ? { name: o.name.slice(0, 100) } : {}),
+    ...(o?.loudness !== undefined ? { loudness: isLoudnessPreset(o.loudness) ? o.loudness : (() => { throw new Error("Unknown loudness target"); })() } : {}),
+    ...(o?.ducking !== undefined ? { ducking: ducking(o.ducking) } : {}),
+  });
+  handle(IPC.editorExport, (file: string, sequenceId: string, opts: Partial<EditBatchItem>) => {
+    const o = batchItem(opts);
+    delete o.sequenceId;
+    return ed().export(str(file, "path"), str(sequenceId, "sequenceId"), { ...o, range: o.range ?? "all" });
+  });
+  handle(IPC.editorExportBatch, (file: string, sequenceId: string, items: Partial<EditBatchItem>[]) => {
+    if (!Array.isArray(items)) throw new Error("A batch is a list of exports");
+    return ed().exportBatch(str(file, "path"), str(sequenceId, "sequenceId"), items.slice(0, 24).map(batchItem));
+  });
   handle(IPC.editorImportLut, (file: string) => ed().importLut(str(file, "path")));
   handle(IPC.editorImportShader, (file: string, kind: "transition" | "effect") => ed().importShader(str(file, "path"), kind === "effect" ? "effect" : "transition"));
   handle(IPC.editorShaders, () => ed().shaders());
   handle(IPC.editorAnalyze, (file: string, mediaId: string, kind: AnalyzeKind, opts?: Record<string, unknown>) => {
-    if (!["silence", "scenes", "beats", "loudness"].includes(kind)) throw new Error("Unknown analysis");
+    if (!["silence", "scenes", "beats", "loudness", "sync"].includes(kind)) throw new Error("Unknown analysis");
     const o = opts && typeof opts === "object" ? opts : {};
     const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
-    return ed().analyze(str(file, "path"), str(mediaId, "mediaId"), kind, { noiseDb: n(o.noiseDb), minMs: n(o.minMs), threshold: n(o.threshold) });
+    return ed().analyze(str(file, "path"), str(mediaId, "mediaId"), kind, { noiseDb: n(o.noiseDb), minMs: n(o.minMs), threshold: n(o.threshold),
+      maxOffset: n(o.maxOffset), in: n(o.in), out: n(o.out), ...(typeof o.against === "string" && o.against ? { against: o.against.slice(0, 200) } : {}) });
+  });
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+  const jobId = (v: unknown) => (typeof v === "string" && /^[A-Za-z0-9_-]{6,64}$/.test(v) ? v : undefined);
+  handle(IPC.editorInterpolate, (file: string, mediaId: string, opts?: InterpolateOptions) => {
+    const o = (opts && typeof opts === "object" ? opts : {}) as InterpolateOptions;
+    const factor = [2, 4, 8].includes(Number(o.factor)) ? (Number(o.factor) as 2 | 4 | 8) : undefined;
+    return ed().interpolate(str(file, "path"), str(mediaId, "mediaId"), { factor, fps: num(o.fps), in: num(o.in), out: num(o.out),
+      model: typeof o.model === "string" ? o.model : undefined, dropAudio: Boolean(o.dropAudio), jobId: jobId(o.jobId) });
+  });
+  handle(IPC.editorTranscribeLocal, (file: string, mediaId: string, opts: TranscribeOptions) => {
+    const o = (opts && typeof opts === "object" ? opts : {}) as TranscribeOptions;
+    return ed().transcribeLocal(str(file, "path"), str(mediaId, "mediaId"), { language: typeof o.language === "string" ? o.language : "auto",
+      model: o.model, cuda: typeof o.cuda === "boolean" ? o.cuda : undefined, in: num(o.in), out: num(o.out), translate: Boolean(o.translate),
+      prompt: typeof o.prompt === "string" ? o.prompt.slice(0, 600) : undefined, jobId: jobId(o.jobId) });
+  });
+  handle(IPC.editorJobs, () => ed().jobList());
+  handle(IPC.editorCancelJob, (id: string) => ed().cancelJob(str(id, "id")));
+  handle(IPC.editorVersions, (file: string) => ed().versions(str(file, "path")));
+  handle(IPC.editorRestoreVersion, (file: string, id: string) => ed().restoreVersion(str(file, "path"), str(id, "id")));
+  handle(IPC.editorBackupNow, (file: string, projectId?: number) => ed().backupNow(str(file, "path"),
+    projectId === undefined || projectId === null ? undefined : int(projectId, "projectId")));
+  handle(IPC.editorBackupStatus, (file: string) => ed().backupStatus(str(file, "path")));
+  handle(IPC.editorClose, (file: string) => ed().close(str(file, "path")));
+  handle(IPC.editorRenderAudioPreview, (file: string, sequenceId: string, clipId: string, clip?: TimelineClip) =>
+    ed().renderAudioPreview(str(file, "path"), str(sequenceId, "sequenceId"), str(clipId, "clipId"), clip && typeof clip === "object" ? clip : undefined));
+  handle(IPC.editorImpulseResponses, () => ed().impulseResponses());
+  handle(IPC.editorAddLutFolder, () => ed().addLutFolder());
+  handle(IPC.editorLutFolders, () => ed().lutFolders());
+  handle(IPC.editorRemoveLutFolder, (dir: string) => ed().removeLutFolder(str(dir, "path")));
+  handle(IPC.editorImportLutFile, (file: string, lut: string) => ed().importLutFile(str(file, "path"), str(lut, "file")));
+  handle(IPC.editorWriteLut, (file: string, name: string, cube: string) => {
+    if (typeof cube !== "string") throw new Error("A LUT is text");
+    return ed().writeLut(str(file, "path"), typeof name === "string" ? name.slice(0, 200) : "lut", cube);
+  });
+  handle(IPC.editorReadSidecar, (file: string, name: string) => ed().readSidecar(str(file, "path"), str(name, "name")));
+  handle(IPC.editorWriteSidecar, (file: string, name: string, json: unknown) => ed().writeSidecar(str(file, "path"), str(name, "name"), json));
+
+  handle(IPC.toolsStatus, () => ctx.tools.status());
+  handle(IPC.toolsInstall, (id: string) => {
+    if (!isToolId(id)) throw new Error("Unknown tool");
+    return ctx.tools.install(id);
+  });
+  handle(IPC.toolsRemove, (id: string) => {
+    if (!isToolId(id)) throw new Error("Unknown tool");
+    return ctx.tools.remove(id);
   });
   handle(IPC.editorUploadAsset, (file: string, mediaId: string, projectId: number) => ed().uploadAsset(str(file, "path"), str(mediaId, "mediaId"), int(projectId, "projectId")));
   handle(IPC.editorImportStudioAsset, (file: string, key: string, name?: string) => ed().importStudioAsset(str(file, "path"), str(key, "key"),

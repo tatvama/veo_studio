@@ -9,7 +9,7 @@
  */
 import { ease } from "./easing.ts";
 import { paramAt, transformAt } from "./keyframes.ts";
-import type { BlendMode, Clip, Composition, KfKey, Motion, Track, TransitionParam } from "./types.ts";
+import type { BlendMode, Clip, Composition, KfKey, Motion, TimePoint, Track, TransitionParam } from "./types.ts";
 
 export interface MotionState {
   /** Composition pixels (default: the frame centre). */
@@ -59,21 +59,78 @@ export interface FrameState { t: number; tracks: TrackState[] }
 const EPS = 1e-6;
 const MAX_NEST = 8;
 
+const maps = new WeakMap<TimePoint[], TimePoint[] | null>();
+/** Clip.timeMap cleaned (finite points, sorted by t, one per t, source times never going back), or null without one. */
+export function timeMapOf(clip: Clip): TimePoint[] | null {
+  const m = clip.timeMap;
+  if (!Array.isArray(m) || !m.length) return null;
+  let c = maps.get(m);
+  if (c === undefined) {
+    const pts = m.filter((p) => p && Number.isFinite(p.t) && Number.isFinite(p.s)).map((p) => ({ t: Number(p.t), s: Number(p.s) })).sort((a, b) => a.t - b.t);
+    const out: TimePoint[] = [];
+    for (const p of pts) {
+      if (out.length && Math.abs(p.t - out[out.length - 1].t) < 1e-9) { out[out.length - 1] = p; continue; }
+      out.push(p);
+    }
+    for (let i = 1; i < out.length; i++) if (out[i].s < out[i - 1].s) out[i] = { t: out[i].t, s: out[i - 1].s };
+    c = out.length ? out : null;
+    maps.set(m, c);
+  }
+  return c;
+}
+
+/** A time map at `local` seconds: linear between its points; held outside them, or with `extend` carried on along
+ *  the first / last segment's slope (transition handles). */
+export function timeMapAt(map: TimePoint[], local: number, extend = false): number {
+  const n = map.length;
+  if (n === 1) return map[0].s;
+  if (local <= map[0].t) return extend ? map[0].s + (local - map[0].t) * slope(map[0], map[1]) : map[0].s;
+  if (local >= map[n - 1].t) return extend ? map[n - 1].s + (local - map[n - 1].t) * slope(map[n - 2], map[n - 1]) : map[n - 1].s;
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) { const mid = (lo + hi) >> 1; if (map[mid].t <= local) lo = mid; else hi = mid; }
+  const a = map[lo], b = map[hi];
+  return a.s + (local - a.t) * slope(a, b);
+}
+const slope = (a: TimePoint, b: TimePoint) => (b.t - a.t > 1e-9 ? (b.s - a.s) / (b.t - a.t) : 0);
+
+/** Source seconds per second of the cut at `local` (a clip's playback rate there): the time map's slope (0 on a
+ *  flat segment), else the speed (0: a freeze). Always ≥ 0; `reverse` is the direction, not part of the rate. */
+export function sourceRate(clip: Clip, local: number): number {
+  const map = timeMapOf(clip);
+  if (map) {
+    if (map.length < 2) return 0;
+    const n = map.length;
+    if (local < map[0].t || local >= map[n - 1].t) return 0;
+    let i = 0;
+    while (i < n - 2 && local >= map[i + 1].t) i++;
+    return Math.max(0, slope(map[i], map[i + 1]));
+  }
+  if (clip.speed === 0) return 0;
+  return clip.speed > 0 ? clip.speed : 1;
+}
+
 /** Source seconds for a clip at `local` seconds into it: in + local·speed, or backwards from in + span·speed when
  *  reversed; clamped to the trimmed part (a hold freezes its last frame) and to the media's length. With `handles`
- *  (inside a transition) it may run past the trim, into the media around it. */
+ *  (inside a transition) it may run past the trim, into the media around it. A time map (Clip.timeMap) wins over
+ *  in / speed / reverse; speed 0 freezes the frame at `in`. */
 export function sourceTime(clip: Clip, local: number, handles = false): number {
   if (clip.type === "title" || clip.type === "color" || clip.type === "adjustment") return local;
   if (clip.media.kind === "image" && clip.type !== "nested") return 0;
   const span = Math.max(clip.duration - (clip.hold ?? 0), 0);
   const l = handles ? local : Math.min(Math.max(local, 0), span);
+  const len = clip.type === "nested" ? clip.comp?.duration : clip.media.duration;
+  const map = timeMapOf(clip);
+  if (map || clip.speed === 0) {
+    let s = map ? timeMapAt(map, l, handles) : clip.in;
+    if (len && len > 0) s = Math.min(s, Math.max(len - 1e-3, 0));
+    return Math.max(s, 0);
+  }
   const speed = clip.speed > 0 ? clip.speed : 1;
   let s = clip.reverse ? clip.in + (span - l) * speed : clip.in + l * speed;
   if (!handles) {
     const end = clip.in + span * speed - 1e-3;  // the last frame, not the first one after the trim
     s = Math.min(Math.max(s, clip.in), Math.max(end, clip.in));
   }
-  const len = clip.type === "nested" ? clip.comp?.duration : clip.media.duration;
   if (len && len > 0) s = Math.min(s, Math.max(len - 1e-3, 0));
   return Math.max(s, 0);
 }

@@ -10,12 +10,13 @@
  * passes' outputs). Every parameter is a uniform of its own name, declared for you unless the GLSL declares it.
  * Pure module (no GPU): the renderer compiles and runs what it describes.
  */
-import { bakeCurves } from "../curves.ts";
+import { bakeCurves, CURVE_SIZE, periodicTable } from "../curves.ts";
 import { isParam, paramAt, parseHex } from "../keyframes.ts";
 import type { EffectInstance } from "../types.ts";
 
-export type EffectGroup = "Colour" | "Keying" | "Blur & Sharpen" | "Distort" | "Stylize" | "Light" | "Generate" | "Transform";
-export const EFFECT_GROUPS: EffectGroup[] = ["Colour", "Keying", "Blur & Sharpen", "Distort", "Stylize", "Light", "Generate", "Transform"];
+export type EffectGroup = "Colour" | "Keying" | "Blur & Sharpen" | "Distort" | "Stylize" | "Light" | "Generate" | "Transform" | "Film" | "Lens" | "Clean-up";
+/** The original eight, then the wave-3 groups (Film, Lens, Clean-up). */
+export const EFFECT_GROUPS: EffectGroup[] = ["Colour", "Keying", "Blur & Sharpen", "Distort", "Stylize", "Light", "Generate", "Transform", "Film", "Lens", "Clean-up"];
 
 export type ParamType = "float" | "int" | "bool" | "angle" | "color" | "rgba" | "rgb" | "vec2" | "point" | "enum" | "curve" | "image" | "string" | "matrix3";
 
@@ -27,6 +28,8 @@ export interface EffectParamDef {
   /** A unit shown next to the control ("px", "%", "°"). Pixel values are composition pixels. */
   unit?: string;
   description?: string;
+  /** curve: the x axis wraps (hue curves: 0 and 1 are the same hue). */
+  periodic?: boolean;
 }
 
 export type ParamValues = Record<string, unknown>;
@@ -45,6 +48,8 @@ export interface EffectPass {
   uniforms?: (p: ParamValues, c: PassContext) => UniformMap;
   /** Sample the input with nearest-neighbour filtering (pixel-art effects). */
   nearest?: boolean;
+  /** A fixed target size in pixels instead of `scale` (reductions: [1, 1] for one value). */
+  size?: [number, number];
 }
 
 /** What a built-in effect's `render` gets from the renderer (opaque handles to GPU images). */
@@ -73,6 +78,14 @@ export interface EffectDef {
   gpuOnly?: boolean;
   /** Runtime-registered (custom GLSL). */
   custom?: boolean;
+  /** Keeps a picture across frames for this effect instance: the output of pass `pass` (default the last) comes back
+   *  on the next frame of the same clip as `uHistory` (`uHistoryValid` = 1 when it is from one or two frames before,
+   *  else 0; a redraw of the same frame gets the same history). */
+  temporal?: { pass?: number };
+  /** Needs a person mask of its input (MediaPipe selfie segmentation) as `uMask` (r: 1 = person). */
+  segmentation?: boolean;
+  /** Called by load() before a composition that uses the effect draws (loads a model). Errors become warnings. */
+  prepare?: () => Promise<void>;
 }
 
 export interface EffectInfo {
@@ -80,6 +93,8 @@ export interface EffectInfo {
   description?: string; author?: string; license?: string; source?: string;
   /** The parameter names (the first listEffects() shape). */
   keys: string[];
+  /** Uses the previous frame (temporal effects) / a person mask (MediaPipe). */
+  temporal?: boolean; segmentation?: boolean;
 }
 
 const registry = new Map<string, EffectDef>();
@@ -101,7 +116,7 @@ export function listEffectInfos(): EffectInfo[] {
   return effectDefs().map((d) => ({
     id: d.id, label: d.label, group: d.group, params: d.params.map((p) => ({ ...p, options: p.options?.map((o) => ({ ...o })) })),
     gpuOnly: d.gpuOnly !== false, custom: !!d.custom, description: d.description, author: d.author, license: d.license, source: d.source,
-    keys: d.params.map((p) => p.name),
+    keys: d.params.map((p) => p.name), temporal: d.temporal ? true : undefined, segmentation: d.segmentation || undefined,
   }));
 }
 
@@ -171,10 +186,15 @@ export function paramUniforms(def: EffectDef, v: ParamValues): UniformMap {
   return u;
 }
 
-/** A curve parameter baked for its sampler (256×1 RGBA float: the same curve on r, g, b). */
-export function curveTexels(points: unknown): Float32Array {
+/** A curve parameter baked for its sampler (256×1 RGBA float: the same curve on r, g, b). `periodic`: the x axis
+ *  wraps (hue curves), so both ends join smoothly. */
+export function curveTexels(points: unknown, periodic = false): Float32Array {
   const pts: [number, number][] = Array.isArray(points) ? (points as [number, number][]) : [[0, 0], [1, 1]];
-  return bakeCurves({ master: pts });
+  if (!periodic) return bakeCurves({ master: pts });
+  const t = periodicTable(pts);
+  const out = new Float32Array(CURVE_SIZE * 4);
+  for (let i = 0; i < CURVE_SIZE; i++) { out[i * 4] = out[i * 4 + 1] = out[i * 4 + 2] = t[i]; out[i * 4 + 3] = 1; }
+  return out;
 }
 
 export const EFFECT_PRELUDE = `#version 300 es
@@ -205,6 +225,8 @@ export function effectSource(def: EffectDef, glsl: string): string {
     decl.push(`uniform ${ty} ${p.name};`);
   }
   for (const k of [0, 1, 2]) if (glsl.includes(`uPass${k}`) && !new RegExp(`uniform\\s+sampler2D\\s+uPass${k}\\b`).test(glsl)) decl.push(`uniform sampler2D uPass${k};`);
+  for (const [n, ty] of [["uHistory", "sampler2D"], ["uHistoryValid", "float"], ["uMask", "sampler2D"]] as const)
+    if (new RegExp(`\\b${n}\\b`).test(glsl) && !new RegExp(`uniform\\s+\\w+\\s+${n}\\b`).test(glsl)) decl.push(`uniform ${ty} ${n};`);
   return `${EFFECT_PRELUDE}${decl.join("\n")}\n#line 1\n${glsl}\nvoid main() { o_color = effect(v_uv); }\n`;
 }
 

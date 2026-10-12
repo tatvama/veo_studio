@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { editorBridge } from "../lib/desktop";
 import { addMedia } from "./actions";
 import { forDisk } from "./model/serialize";
+import { rampedSoundNote } from "./motionActions";
 import type { EditProject, MediaItem } from "./model/types";
 import { program } from "./playback/transport";
 import { ed, exec, isDirty, project, replaceProject, setSaveState, setUrls } from "./store";
@@ -179,6 +180,7 @@ export async function exportSequence(opts: { preset: string; range: "all" | "ino
   const st = ed();
   if (!b || !st.path) { toast.message("Exporting needs Tatvam Desktop"); return null; }
   if (isDirty() && !(await save())) return null;
+  { const note = rampedSoundNote(); if (note) toast.warning(note); }  // editor-motion: the export mix plays ramps at their base speed
   try {
     const id = await b.export(st.path, project().activeSequenceId, opts);
     toast.success("Export started — follow it in the Render queue");

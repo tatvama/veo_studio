@@ -3,7 +3,7 @@
  * property moves between the keyframes that set it and holds before the first / after the last; with no keyframe it
  * keeps the clip's own value. Optional per-segment easing (the keyframe that starts the segment names it).
  */
-import { ease } from "./easing.ts";
+import { cubicBezier, ease } from "./easing.ts";
 import type { KeyEase, Keyframe, KfKey, Param, ParamKey, Transform } from "./types.ts";
 
 export const KF_KEYS: KfKey[] = ["x", "y", "scale", "opacity", "rotation"];
@@ -59,6 +59,32 @@ export function lerpValue<T>(a: T, b: T, k: number): T {
 
 const keyTime = (k: ParamKey, fps: number) => (typeof k.t === "number" ? k.t : (k.frame ?? 0) / (fps || 24));
 const shape = (e: KeyEase | undefined, x: number) => (e === "hold" ? 0 : ease(e, x));
+const pair = (v: unknown): [number, number] | null =>
+  Array.isArray(v) && v.length >= 2 && Number.isFinite(Number(v[0])) && Number.isFinite(Number(v[1])) ? [Number(v[0]), Number(v[1])] : null;
+
+/** The eased position 0..1 (or beyond, for bezier overshoot) of a segment from key `a` to key `b` at x (0..1). */
+export function segmentEase(a: ParamKey, b: ParamKey, x: number): number {
+  if (a.ease === "bezier") {
+    const o = pair(a.out) ?? [1 / 3, 1 / 3], i = pair(b.in) ?? [2 / 3, 2 / 3];
+    return cubicBezier(o[0], o[1], i[0], i[1], x);
+  }
+  return shape(a.ease, x);
+}
+
+/** A segment between two values at eased position k: numbers and arrays linearly, or along the spatial cubic when
+ *  the keys carry tangents (number arrays of the same length). */
+function segmentValue<T>(a: ParamKey<T>, b: ParamKey<T>, k: number): T {
+  const va = a.value, vb = b.value;
+  const to = a.tangentOut, ti = b.tangentIn;
+  if ((to || ti) && Array.isArray(va) && Array.isArray(vb) && va.length === vb.length && va.every((x) => typeof x === "number") && vb.every((x) => typeof x === "number")) {
+    const u = Math.min(1, Math.max(0, k)), w = 1 - u;
+    return va.map((p0, j) => {
+      const p3 = vb[j] as number, p1 = (p0 as number) + (Number(to?.[j]) || 0), p2 = p3 + (Number(ti?.[j]) || 0);
+      return w * w * w * (p0 as number) + 3 * w * w * u * p1 + 3 * w * u * u * p2 + u * u * u * p3;
+    }) as T;
+  }
+  return lerpValue(va, vb, k);
+}
 
 /** The value of a parameter `t` seconds into its clip (held before the first key and after the last). */
 export function paramAt<T>(p: Param<T> | T | undefined, t: number, fps = 24): T | undefined {
@@ -72,7 +98,7 @@ export function paramAt<T>(p: Param<T> | T | undefined, t: number, fps = 24): T 
     const a = order[j - 1], b = order[j];
     if (t < ts[b]) {
       const span = ts[b] - ts[a];
-      return span <= 1e-9 ? (ks[b].value as T) : lerpValue(ks[a].value as T, ks[b].value as T, shape(ks[a].ease, (t - ts[a]) / span));
+      return span <= 1e-9 ? (ks[b].value as T) : segmentValue(ks[a] as ParamKey<T>, ks[b] as ParamKey<T>, segmentEase(ks[a], ks[b], (t - ts[a]) / span));
     }
   }
   return ks[order[order.length - 1]].value as T;

@@ -7,6 +7,8 @@
 import { baseClip, mediaSpan, newSequence, newTrack } from "./defaults.ts";
 import { uid } from "./ids.ts";
 import { mapParams, shiftParam, sliceParam, scaleParam, valueAt, withParam } from "./params.ts";
+import { clipRampAt, clipSpan } from "./remap.ts";
+import { hasWords, scaleWords, shiftWords, splitWords } from "./captions.ts";
 import { convertFrames, fpsExact } from "./time.ts";
 import type {
   ClipSource, EditProject, EffectInstance, Marker, MediaItem, Param, Sequence, TimelineClip, Track, Transition,
@@ -69,32 +71,37 @@ export function handles(c: TimelineClip, seq: Sequence, ctx: Ctx): { head: numbe
   if (!Number.isFinite(total) || (c.source.type !== "media" && c.source.type !== "nested")) return { head: Infinity, tail: Infinity };
   const r = sourceRate(c, seq, ctx);
   const inF = c.source.in;
-  const used = c.duration * r;
+  // a speed ramp uses its integral; past the ends the handles run at the ramp's first / last speed
+  const used = clipSpan(c, 0, c.duration) * r;
+  const r0 = r * Math.max(0.05, clipRampAt(c, 0)), r1 = r * Math.max(0.05, clipRampAt(c, c.duration));
   const srcHead = Math.max(0, inF), srcTail = Math.max(0, total - (inF + used));
-  const a = Math.floor((c.reverse ? srcTail : srcHead) / r + 1e-6), b = Math.floor((c.reverse ? srcHead : srcTail) / r + 1e-6);
+  const a = Math.floor((c.reverse ? srcTail : srcHead) / r0 + 1e-6), b = Math.floor((c.reverse ? srcHead : srcTail) / r1 + 1e-6);
   return { head: Math.max(0, a), tail: Math.max(0, b) };
 }
 
 const hasIn = (s: ClipSource): s is Extract<ClipSource, { in: number }> => s.type === "media" || s.type === "nested";
 
-/** Moves the clip's start edge by d (d > 0 shortens it), keeping the source under the rest of the clip in place. */
-export function trimStartBy(c: TimelineClip, d: number, r: number): TimelineClip {
-  const source = hasIn(c.source) && !c.reverse ? { ...c.source, in: R3(c.source.in + d * r) } : c.source;
-  return mapParams({ ...c, start: c.start + d, duration: c.duration - d, source }, (p) => shiftParam(p, -d));
+/** Moves the clip's start edge by d (d > 0 shortens it), keeping the source under the rest of the clip in place.
+ *  With the sequence's `fps`, a caption's karaoke word times move with it (captions.ts). */
+export function trimStartBy(c: TimelineClip, d: number, r: number, fps?: number): TimelineClip {
+  const source = hasIn(c.source) && !c.reverse ? { ...c.source, in: R3(c.source.in + clipSpan(c, 0, d) * r) } : c.source;
+  const x = mapParams({ ...c, start: c.start + d, duration: c.duration - d, source }, (p) => shiftParam(p, -d));
+  return fps && hasWords(x) ? shiftWords(x, -d / fps) : x;
 }
 /** Moves the clip's end edge by d (d > 0 lengthens it). */
 export function trimEndBy(c: TimelineClip, d: number, r: number): TimelineClip {
-  const source = hasIn(c.source) && c.reverse ? { ...c.source, in: R3(c.source.in - d * r) } : c.source;
+  const source = hasIn(c.source) && c.reverse ? { ...c.source, in: R3(c.source.in - clipSpan(c, c.duration, c.duration + d) * r) } : c.source;
   return { ...c, duration: c.duration + d, source };
 }
 
-/** Splits a clip `k` frames after its start into two (the right half gets a new id; keyframes keep their look). */
-export function splitClip(c: TimelineClip, k: number, r: number, rightLink?: string): [TimelineClip, TimelineClip] {
+/** Splits a clip `k` frames after its start into two (the right half gets a new id; keyframes keep their look; with
+ *  `fps`, a caption's karaoke words go to the half that holds them). */
+export function splitClip(c: TimelineClip, k: number, r: number, rightLink?: string, fps?: number): [TimelineClip, TimelineClip] {
   const D = c.duration;
   let lsrc = c.source, rsrc = c.source;
   if (hasIn(c.source)) {
-    if (c.reverse) lsrc = { ...c.source, in: R3(c.source.in + (D - k) * r) };
-    else rsrc = { ...c.source, in: R3(c.source.in + k * r) };
+    if (c.reverse) lsrc = { ...c.source, in: R3(c.source.in + clipSpan(c, k, D) * r) };
+    else rsrc = { ...c.source, in: R3(c.source.in + clipSpan(c, 0, k) * r) };
   }
   let left: TimelineClip = mapParams({ ...c, duration: k, source: lsrc }, (p) => sliceParam(p, 0, k));
   let right: TimelineClip = mapParams({ ...c, id: uid("c"), start: c.start + k, duration: D - k, source: rsrc }, (p) => sliceParam(p, k, D));
@@ -104,6 +111,7 @@ export function splitClip(c: TimelineClip, k: number, r: number, rightLink?: str
   }
   if (c.linkId) right = { ...right, linkId: rightLink };
   if (!right.linkId) delete right.linkId;
+  if (fps && hasWords(c)) { left = splitWords(left, k / fps, "left"); right = splitWords(right, k / fps, "right"); }
   return [left, right];
 }
 
@@ -221,12 +229,12 @@ export function clearRange(seq: Sequence, ctx: Ctx, trackId: string, from: numbe
     if (s >= from && e <= to) continue;
     if (s < from && e > to) {
       const rl = c.linkId ? links.get(c.linkId) ?? (links.set(c.linkId, uid("l")), links.get(c.linkId)!) : undefined;
-      const [left, rest] = splitClip(c, from - s, r, rl);
-      const right = trimStartBy(rest, to - from, r);
+      const [left, rest] = splitClip(c, from - s, r, rl, seq.fps);
+      const right = trimStartBy(rest, to - from, r, seq.fps);
       out.push(left, right);
       moved.set(c.id, right.id);
     } else if (s < from) out.push(trimEndBy(c, -(e - from), r));
-    else out.push(trimStartBy(c, to - s, r));
+    else out.push(trimStartBy(c, to - s, r, seq.fps));
   }
   const transitions = seq.transitions.map((t) => (t.fromClipId && moved.has(t.fromClipId) ? { ...t, fromClipId: moved.get(t.fromClipId) } : t));
   return { ...seq, clips: out, transitions };
@@ -241,7 +249,7 @@ export function splitAt(seq: Sequence, ctx: Ctx, trackIds: Iterable<string>, at:
   for (const c of seq.clips) {
     if (!set.has(c.trackId) || (only && !only.has(c.id)) || !(c.start < at && at < clipEnd(c)) || isLocked(seq, c.trackId)) { clips.push(c); continue; }
     const rl = c.linkId ? links.get(c.linkId) ?? (links.set(c.linkId, uid("l")), links.get(c.linkId)!) : undefined;
-    const [l, r] = splitClip(c, at - c.start, sourceRate(c, seq, ctx), rl);
+    const [l, r] = splitClip(c, at - c.start, sourceRate(c, seq, ctx), rl, seq.fps);
     clips.push(l, r);
     moved.set(c.id, r.id);
   }
@@ -646,7 +654,7 @@ export function trimClip(seq: Sequence, ctx: Ctx, id: string, edge: "start" | "e
   }
   if (!d) return seq;
   if (!opts.ripple) {
-    return normalize({ ...seq, clips: seq.clips.map((c) => (ids.has(c.id) ? (edge === "start" ? trimStartBy(c, d, sourceRate(c, seq, ctx)) : trimEndBy(c, d, sourceRate(c, seq, ctx))) : c)) }, ctx);
+    return normalize({ ...seq, clips: seq.clips.map((c) => (ids.has(c.id) ? (edge === "start" ? trimStartBy(c, d, sourceRate(c, seq, ctx), seq.fps) : trimEndBy(c, d, sourceRate(c, seq, ctx))) : c)) }, ctx);
   }
   // ripple: the clip keeps its start; what comes after its (old) end on its tracks and the sync-locked tracks moves
   // by the change in length. Shrinking is limited by the room the other tracks have.
@@ -662,7 +670,7 @@ export function trimClip(seq: Sequence, ctx: Ctx, id: string, edge: "start" | "e
     if (ids.has(c.id)) {
       const r = sourceRate(c, seq, ctx);
       if (edge === "end") return trimEndBy(c, d, r);
-      return { ...trimStartBy(c, d, r), start: c.start };
+      return { ...trimStartBy(c, d, r, seq.fps), start: c.start };
     }
     if (!tracks.includes(c.trackId) || c.start < (pivots.get(c.trackId) ?? pivot)) return c;
     return { ...c, start: c.start + change };
@@ -687,12 +695,16 @@ export function rollEdit(seq: Sequence, ctx: Ctx, leftId: string, rightId: strin
   }
   if (!d) return seq;
   const ls = new Set(pairs.map((p) => p[0].id)), rs = new Set(pairs.map((p) => p[1].id));
-  return normalize({ ...seq, clips: seq.clips.map((c) => (ls.has(c.id) ? trimEndBy(c, d, sourceRate(c, seq, ctx)) : rs.has(c.id) ? trimStartBy(c, d, sourceRate(c, seq, ctx)) : c)) }, ctx);
+  return normalize({ ...seq, clips: seq.clips.map((c) => (ls.has(c.id) ? trimEndBy(c, d, sourceRate(c, seq, ctx)) : rs.has(c.id) ? trimStartBy(c, d, sourceRate(c, seq, ctx), seq.fps) : c)) }, ctx);
 }
 
-/** Slip (Y): shows earlier (negative) or later (positive) source frames in the same place, within the handles. */
+/** Slip (Y): shows earlier (negative) or later (positive) source frames in the same place, within the handles. On a
+ *  karaoke caption it slides the word timings (later = the words come earlier). */
 export function slipClip(seq: Sequence, ctx: Ctx, id: string, delta: number, opts: { linked?: boolean } = {}): Sequence {
   const c0 = clipById(seq, id);
+  if (c0 && !isLocked(seq, c0.trackId) && hasWords(c0) && Math.round(delta)) {
+    return normalize({ ...seq, clips: seq.clips.map((c) => (c.id === c0.id ? shiftWords(c, -Math.round(delta) / seq.fps) : c)) }, ctx);
+  }
   if (!c0 || isLocked(seq, c0.trackId) || !hasIn(c0.source)) return seq;
   const group = (opts.linked ?? true) && c0.linkId ? seq.clips.filter((x) => x.linkId === c0.linkId && x.start === c0.start && hasIn(x.source)) : [c0];
   let d = Math.round(delta);
@@ -734,7 +746,7 @@ export function slideClip(seq: Sequence, ctx: Ctx, id: string, delta: number, op
   for (const { c, prev, next } of plan) {
     map.set(c.id, { ...c, start: c.start + d });
     if (prev) map.set(prev.id, trimEndBy(prev, d, sourceRate(prev, seq, ctx)));
-    if (next) map.set(next.id, trimStartBy(next, d, sourceRate(next, seq, ctx)));
+    if (next) map.set(next.id, trimStartBy(next, d, sourceRate(next, seq, ctx), seq.fps));
   }
   return normalize({ ...seq, clips: seq.clips.map((c) => map.get(c.id) ?? c) }, ctx);
 }
@@ -767,7 +779,7 @@ export function rateStretch(seq: Sequence, ctx: Ctx, id: string, edge: "start" |
     const nd = edge === "end" ? c.duration + d : c.duration - d;
     const speed = R3((c.duration * c.speed) / nd);
     const k = nd / c.duration;
-    const x = mapParams({ ...c, duration: nd, speed, start: edge === "end" ? c.start : c.start + d }, (p) => scaleParam(p, k));
+    const x = scaleWords(mapParams({ ...c, duration: nd, speed, start: edge === "end" ? c.start : c.start + d }, (p) => scaleParam(p, k)), k);
     return x;
   }) }, ctx);
 }
@@ -788,7 +800,7 @@ export function setSpeed(seq: Sequence, ctx: Ctx, ids: Iterable<string>, speed: 
       nd = Math.min(nd, neighbours(s, c).nextStart - c.start);
     }
     const k = nd / c.duration;
-    s = { ...s, clips: s.clips.map((x) => (x.id === c.id ? mapParams({ ...x, duration: nd, speed: sp, reverse: opts.reverse ?? x.reverse }, (p) => scaleParam(p, k)) : x)) };
+    s = { ...s, clips: s.clips.map((x) => (x.id === c.id ? scaleWords(mapParams({ ...x, duration: nd, speed: sp, reverse: opts.reverse ?? x.reverse }, (p) => scaleParam(p, k)), k) : x)) };
   }
   return normalize(s, ctx);
 }
@@ -815,9 +827,18 @@ export function link(seq: Sequence, ctx: Ctx, ids: string[]): Sequence {
   return updateClips(seq, ctx, ids, (c) => ({ ...c, linkId: l }));
 }
 
-/** Updates one animatable parameter of a clip (see params.ts paths). */
+/** The clip and its linked halves of the same media at the same place (they share a speed ramp: audio follows). */
+export function rampGroup(seq: Sequence, clipId: string): string[] {
+  const c = clipById(seq, clipId);
+  if (!c) return [];
+  const key = (x: TimelineClip) => (x.source.type === "media" ? x.source.mediaId : x.source.type === "nested" ? x.source.sequenceId : x.id);
+  return c.linkId ? seq.clips.filter((x) => x.id === c.id || (x.linkId === c.linkId && x.start === c.start && x.duration === c.duration && key(x) === key(c))).map((x) => x.id) : [c.id];
+}
+
+/** Updates one animatable parameter of a clip (see params.ts paths); a speed ramp ("timeRemap") changes on its
+ *  linked halves too. */
 export function updateParam(seq: Sequence, ctx: Ctx, clipId: string, path: string, fn: (p: Param<unknown>) => Param<unknown>): Sequence {
-  return updateClips(seq, ctx, [clipId], (c) => withParam(c, path, fn));
+  return updateClips(seq, ctx, path === "timeRemap" ? rampGroup(seq, clipId) : [clipId], (c) => withParam(c, path, fn));
 }
 
 export function addEffect(seq: Sequence, ctx: Ctx, ids: string[], make: () => EffectInstance): Sequence {
@@ -1109,7 +1130,7 @@ export function sourceFrameAt(c: TimelineClip, seq: Sequence, ctx: Ctx, frame: n
   if (!hasIn(c.source)) return 0;
   const r = sourceRate(c, seq, ctx);
   const k = Math.max(0, Math.min(c.duration - 1, frame - c.start));
-  return c.reverse ? c.source.in + (c.duration - 1 - k) * r : c.source.in + k * r;
+  return c.reverse ? c.source.in + clipSpan(c, k + 1, c.duration) * r : c.source.in + clipSpan(c, 0, k) * r;
 }
 
 /** Media frames → sequence frames for a media item (for the source monitor's range). */

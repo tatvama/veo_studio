@@ -1,27 +1,59 @@
 /**
- * Audio Mixer (docs/EDITOR.md §3): a strip per audio track (fader, pan, mute, solo, peak meter from its AnalyserNode)
- * and the master. Faders and pans are the tracks' own values (undoable; a drag is one step); the master level is the
- * preview's monitoring level.
+ * Audio Mixer (docs/EDITOR.md §3, §11): a strip per audio track (insert slots, fader, pan, mute, solo, peak meter from
+ * its AnalyserNode) and the master (its insert slots, the monitoring level, loudness M / S / I, true peak and phase
+ * correlation). Faders and pans are the tracks' own values (undoable; a drag is one step); the master level is the
+ * preview's monitoring level. The insert slots show a stack's first three effects; a click opens Audio Effects on it.
+ * "Match loudness" sets the selected clips' levels to one LUFS target (measured, one undo step).
  */
+import "../audiofx/audiofx.css";
 import { clsx } from "clsx";
 import { useEffect, useRef, useState } from "react";
 import * as A from "../actions";
+import { matchLoudness, selectedAudioClips } from "../audiofx/actions";
+import { audioFxDef } from "../audiofx/registry";
+import { audioStack, type FxTarget } from "../audiofx/stack";
 import { tracksOf } from "../model/ops";
-import type { Track } from "../model/types";
+import type { EffectInstance, Track } from "../model/types";
 import { mixer } from "../playback/audio";
-import { setFocus, useSequence } from "../store";
+import { setFocus, useEditor, useSequence } from "../store";
 import { ScrubNumber } from "../ui";
+import { showAudioEffects } from "./AudioEffects";
+import { LoudnessReadout } from "./LoudnessMeter";
 
 const toDb = (lin: number) => (lin <= 1e-5 ? -Infinity : 20 * Math.log10(lin));
 const DB_MIN = -60, DB_MAX = 6;
 const meterFrac = (db: number) => Math.max(0, Math.min(1, (db - DB_MIN) / (DB_MAX - DB_MIN)));
+const SLOTS = 3;
+const MATCH_TARGETS = [-14, -16, -18, -20, -23, -24];
+
+/** The first three effects of a stack, and an empty slot to add. */
+function Inserts({ list, target }: { list: EffectInstance[]; target: FxTarget }) {
+  const shown = list.slice(0, SLOTS);
+  return (
+    <div className="afx-slots" aria-label="Insert effects">
+      {shown.map((e) => {
+        const d = audioFxDef(e.type);
+        return (
+          <button key={e.id} type="button" className={clsx("afx-slot", !e.enabled && "off")} title={`${d?.label ?? e.type}${e.enabled ? "" : " (bypassed)"}: open in Audio Effects`}
+            onClick={() => showAudioEffects(target)}>{d?.label ?? e.type}</button>
+        );
+      })}
+      {list.length > SLOTS && <button type="button" className="afx-slot" onClick={() => showAudioEffects(target)}>+{list.length - SLOTS} more</button>}
+      {list.length < SLOTS && <button type="button" className="afx-slot empty" title="Add an effect (Audio Effects)" onClick={() => showAudioEffects(target)}>+ insert</button>}
+    </div>
+  );
+}
 
 export default function AudioMixer() {
   const s = useSequence();
   const ats = tracksOf(s, "audio");
+  const sel = useEditor((x) => x.selection);
   const meters = useRef<Record<string, HTMLCanvasElement | null>>({});
   const holds = useRef<Record<string, { db: number; at: number }>>({});
   const [master, setMaster] = useState(mixer.masterDb);
+  const [target, setTarget] = useState(-16);
+  const [busy, setBusy] = useState(false);
+  const nSel = selectedAudioClips(s).filter((c) => c.source.type === "media").length;
   useEffect(() => {
     let raf = 0;
     const draw = () => {
@@ -55,12 +87,15 @@ export default function AudioMixer() {
     return () => cancelAnimationFrame(raf);
   }, [ats.map((t) => t.id).join()]);
 
+  const match = async () => { setBusy(true); try { await matchLoudness(selectedAudioClips(), target); } finally { setBusy(false); } };
+
   return (
     <div className="pn" onPointerDown={() => setFocus("mixer")}>
       <div className="flex min-h-0 flex-1 overflow-x-auto">
-        {ats.map((t) => <Strip key={t.id} t={t} meterRef={(el) => { meters.current[t.id] = el; }} />)}
-        <div className="mx-strip border-l border-line bg-raised/40">
+        {ats.map((t) => <Strip key={t.id} t={t} fx={audioStack(s, { kind: "track", trackId: t.id })} meterRef={(el) => { meters.current[t.id] = el; }} />)}
+        <div className="mx-strip !w-[112px] border-l border-line bg-raised/40">
           <span className="text-2xs font-semibold text-mute">Master</span>
+          <Inserts list={audioStack(s, { kind: "master" })} target={{ kind: "master" }} />
           <div className="flex min-h-0 flex-1 items-stretch gap-1.5">
             <input type="range" className="mx-fader" min={-40} max={6} step={0.1} value={master} aria-label="Master level"
               onChange={(e) => { const v = Number(e.target.value); setMaster(v); mixer.setMaster(v); }} onDoubleClick={() => { setMaster(0); mixer.setMaster(0); }} />
@@ -68,18 +103,31 @@ export default function AudioMixer() {
           </div>
           <span className="mono text-2xs text-mute">{master > 0 ? "+" : ""}{master.toFixed(1)} dB</span>
           <span className="text-[10px] text-dim">monitoring</span>
+          <LoudnessReadout compact />
         </div>
       </div>
-      <div className="ed-bar bottom text-2xs text-dim">Double-click a fader to reset it · the master sets only what you hear here</div>
+      <div className="ed-bar bottom gap-2 text-2xs text-dim">
+        <span className="min-w-0 truncate">Double-click a fader to reset it · the master sets only what you hear here</span>
+        <span className="ml-auto flex shrink-0 items-center gap-1">
+          <select className="ed-field !h-5 !text-2xs" value={target} onChange={(e) => setTarget(Number(e.target.value))} aria-label="Match loudness target">
+            {MATCH_TARGETS.map((v) => <option key={v} value={v}>{v} LUFS</option>)}
+          </select>
+          <button type="button" className="ed-menubtn !h-5 !text-2xs" disabled={!nSel || busy} onClick={() => void match()}
+            title={nSel ? `Set the ${nSel} selected clip${nSel > 1 ? "s" : ""} to ${target} LUFS` : "Select audio clips on the timeline"}>
+            {busy ? "Measuring…" : `Match loudness${sel.length && nSel ? ` (${nSel})` : ""}`}
+          </button>
+        </span>
+      </div>
     </div>
   );
 }
 
-function Strip({ t, meterRef }: { t: Track; meterRef: (el: HTMLCanvasElement | null) => void }) {
+function Strip({ t, fx, meterRef }: { t: Track; fx: EffectInstance[]; meterRef: (el: HTMLCanvasElement | null) => void }) {
   const set = (patch: Partial<Track>, label: string, key?: string) => A.updateTrack(t.id, patch, label, key);
   return (
-    <div className="mx-strip">
+    <div className="mx-strip !w-[84px]">
       <span className="w-full truncate text-center text-2xs font-semibold text-mute" title={t.name}>{t.name}</span>
+      <Inserts list={fx} target={{ kind: "track", trackId: t.id }} />
       <div className="flex w-full items-center justify-center gap-1">
         <span className="text-[10px] text-dim">L</span>
         <input type="range" min={-1} max={1} step={0.01} value={t.pan} aria-label="Pan" className="w-12 accent-[var(--color-accent)]"

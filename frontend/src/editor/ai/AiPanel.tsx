@@ -3,7 +3,7 @@
  * jobs, budgets and approvals; free tools run on this PC. Everything reaches the edit through the EditorHost.
  */
 import {
-  AudioWaveform, Bot, Captions, ChevronDown, Clapperboard, Expand, Film, Gauge, Languages, Mic, Music2, ScanSearch, Scissors,
+  AudioWaveform, Bot, Captions, Clapperboard, Expand, Film, Gauge, Languages, Mic, Music2, ScanSearch, Scissors,
   Sparkles, Volume2, Wand2, X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -15,7 +15,7 @@ import { XFADE_IDS } from "../../engine/transitions/xfade";
 import { clipById, ctxOf, seqEnd, trackById } from "../model/ops";
 import { framesToSeconds, shortDuration, toTimecode } from "../model/time";
 import { DUB_LANGUAGES, SILENCE_DEFAULTS } from "./actions";
-import { cancelJob, ensureStudioProject, estimate, toolsInfo, voicesFor } from "./api";
+import { cancelJob, ensureStudioProject, toolsInfo, voicesFor } from "./api";
 import { canAnalyze } from "./bridge";
 import { sequenceDigest, soundParts, videoParts, type CaptionStyle } from "./commands";
 import { ensureDialogs } from "./dialogs";
@@ -26,10 +26,11 @@ import {
   extendClip, findScenes, findSilences, getLastCaptions, inOutRange, measureLoudness, music, normaliseLoudness, soundEffect, suggestSounds,
   translateCaptions, upscale, voiceOver, type CaptionSet, type LoudnessRow,
 } from "./tools";
-import type { AiCommandRow, ToolCall, ToolsInfo, VoiceRef, VoicesInfo } from "./types";
+import { errMsg, Go, knownKey, Note, Row, Section, usePrice } from "./parts";
+import type { AiCommandRow, ToolsInfo, VoiceRef, VoicesInfo } from "./types";
+import { MoodSelect, moodMusic, useMoodNames, Wave3Sections } from "./Wave3Sections";
 
 const LANGS: [string, string][] = [["en", "English"], ["hi", "Hindi"], ["kn", "Kannada"], ["te", "Telugu"], ["ta", "Tamil"]];
-const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 // ── reading the editor ───────────────────────────────────────────────────────
 
@@ -48,82 +49,11 @@ function useHostTick(host: EditorHost): string {
   return key;
 }
 
-/** The studio key of media already sent (no upload just to show a price). */
-function knownKey(host: EditorHost, mediaId: string): string | null {
-  const m = host.project().media.find((x) => x.id === mediaId);
-  if (!m) return null;
-  return m.path.startsWith("studio:") ? m.path.slice(7) : m.studioKey ?? null;
-}
-
-interface Price { usd: number | null; ok: boolean; loading: boolean }
-
-/** The price of `calls` while the section is open and the edit is connected to the studio (null calls: the media
- *  must be sent first, so the price comes in the confirm dialog). */
-function usePrice(host: EditorHost, open: boolean, make: () => ToolCall[] | null, deps: unknown[]): Price {
-  const [st, setSt] = useState<Price>({ usd: null, ok: true, loading: false });
-  const pid = host.studioProjectId();
-  useEffect(() => {
-    const calls = pid && open ? make() : null;
-    if (!pid || !calls?.length) { setSt({ usd: null, ok: true, loading: false }); return; }
-    let alive = true;
-    setSt((s) => ({ ...s, loading: true }));
-    const t = setTimeout(() => {
-      Promise.all(calls.map((c) => estimate(pid, c)))
-        .then((es) => alive && setSt({ usd: es.reduce((s, e) => s + e.total_usd, 0), ok: es.every((e) => e.budget.ok), loading: false }))
-        .catch(() => alive && setSt({ usd: null, ok: true, loading: false }));
-    }, 450);
-    return () => { alive = false; clearTimeout(t); };
-  }, [pid, open, ...deps]);  // eslint-disable-line react-hooks/exhaustive-deps
-  return st;
-}
-
 /** A stable key for parts and their studio keys (prices refetch when what they cover changes or its media reaches the
  *  studio, not on every tick). */
 let keyHost: EditorHost | null = null;
 const partsKey = (parts: { mediaId: string; srcStart: number; srcEnd: number }[]) =>
   parts.map((x) => `${x.mediaId}:${x.srcStart}:${x.srcEnd}:${keyHost ? knownKey(keyHost, x.mediaId) ?? "" : ""}`).join("|");
-
-const priceText = (p: Price) => (p.loading ? "…" : p.usd === null ? "see price" : p.usd > 0 ? `~${usd(p.usd)}${p.ok ? "" : " · approval"}` : p.ok ? "free" : "approval");
-
-// ── building blocks ──────────────────────────────────────────────────────────
-
-function Section({ id, open, onToggle, icon, title, free, children, hint }: {
-  id: string; open: boolean; onToggle: (id: string) => void; icon: ReactNode; title: string; free?: boolean; children: ReactNode; hint?: string;
-}) {
-  return (
-    <div className="border-b border-line">
-      <button className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-hover" onClick={() => onToggle(id)} aria-expanded={open}>
-        <span className="text-mute">{icon}</span>
-        <span className="min-w-0 flex-1 truncate font-medium">{title}</span>
-        {hint && !open && <span className="truncate text-2xs text-dim">{hint}</span>}
-        <Badge tone={free ? "ok" : "money"}>{free ? "free" : "paid"}</Badge>
-        <ChevronDown className={`size-4 shrink-0 text-dim transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
-      {open && <div className="space-y-2.5 px-3 pb-3 pt-1">{children}</div>}
-    </div>
-  );
-}
-
-function Row({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <label className="flex items-center gap-2 text-xs">
-      <span className="w-20 shrink-0 text-mute">{label}</span>
-      <div className="min-w-0 flex-1">{children}</div>
-    </label>
-  );
-}
-
-function Go({ label, price, onClick, disabled, busy }: { label: string; price?: Price; onClick: () => unknown; disabled?: boolean; busy?: boolean }) {
-  const [running, setRunning] = useState(false);
-  return (
-    <Button variant="primary" size="sm" block disabled={disabled} loading={running || busy}
-      onClick={async () => { setRunning(true); try { await onClick(); } finally { setRunning(false); } }}>
-      {label}{price && <span className="opacity-70">· {priceText(price)}</span>}
-    </Button>
-  );
-}
-
-const Note = ({ children }: { children: ReactNode }) => <p className="text-2xs leading-snug text-dim">{children}</p>;
 
 function LangSelect({ value, onChange, auto }: { value: string; onChange: (v: string) => void; auto?: boolean }) {
   return (
@@ -265,6 +195,7 @@ export function AiPanel({ host }: { host: EditorHost }) {
         </Section>
         <LoudnessSection host={host} ctx={ctx} open={open === "loudness"} onToggle={toggle} local={local} />
         <AssistantSection host={host} open={open === "assistant"} onToggle={toggle} />
+        <Wave3Sections host={host} open={open} onToggle={toggle} tick={tick} />
       </div>
     </div>
   );
@@ -403,6 +334,11 @@ function MusicSection({ host, ctx, open, onToggle }: SectionProps & { ctx: Ctx }
   const [len, setLen] = useState<"range" | "selection" | "custom">("custom");
   const [custom, setCustom] = useState(30);
   const [volume, setVolume] = useState(-18);
+  const [mood, setMood] = useState("");
+  const [bpm, setBpm] = useState<number | null>(null);
+  const moods = useMoodNames();
+  // with no words of your own, a mood the editor knows brings its music prompt
+  const words = prompt.trim() || moodMusic(moods, mood);
   const selSpan = ctx.clips.length ? (() => {
     const cs = ctx.sel.map((id) => clipById(ctx.seq, id)!).filter(Boolean);
     return [Math.min(...cs.map((c) => c.start)), Math.max(...cs.map((c) => c.start + c.duration))] as [number, number];
@@ -410,18 +346,29 @@ function MusicSection({ host, ctx, open, onToggle }: SectionProps & { ctx: Ctx }
   const span: [number, number] | null = len === "range" ? ctx.range : len === "selection" ? selSpan : null;
   const seconds = span ? framesToSeconds(span[1] - span[0], ctx.fps) : custom;
   const at = span ? span[0] : host.playhead();
-  const price = usePrice(host, open, () => (prompt.trim().length > 1 ? [{ tool: "music", params: { prompt, seconds: Math.max(5, Math.min(300, seconds)) } }] : null), [prompt, Math.round(seconds)]);
+  const described = words.length > 1 || !!mood;
+  const price = usePrice(host, open, () => (described ? [{ tool: "music", params: { prompt: words, seconds: Math.max(5, Math.min(300, seconds)),
+    ...(mood ? { mood } : {}), ...(bpm ? { bpm } : {}) } }] : null), [prompt, Math.round(seconds), mood, bpm]);
   return (
     <Section id="music" open={open} onToggle={onToggle} icon={<Music2 className="size-4" />} title="Music">
-      <Textarea rows={2} value={prompt} placeholder="Gentle santoor and strings, hopeful, no vocals" onChange={(e) => setPrompt(e.target.value)} />
+      <Textarea rows={2} value={prompt} placeholder="Gentle santoor and strings, hopeful (or just pick a mood)" onChange={(e) => setPrompt(e.target.value)} />
       <Row label="Length">
         <Segmented size="sm" value={len} onChange={setLen} options={[{ value: "range", label: "In / out" }, { value: "selection", label: "Selection" }, { value: "custom", label: "Seconds" }]} />
       </Row>
       {len === "custom" && <Row label="Seconds"><Input className="h-7 text-xs" type="number" min={5} max={300} value={custom} onChange={(e) => setCustom(Math.max(5, Math.min(300, Number(e.target.value) || 30)))} /></Row>}
       {span === null && len !== "custom" && <Note>{len === "range" ? "Set in and out first." : "Select clips first."}</Note>}
+      <Row label="Mood"><MoodSelect value={mood} onChange={setMood} /></Row>
+      {!prompt.trim() && moodMusic(moods, mood) && <Note>{moodMusic(moods, mood)}</Note>}
+      <Row label="Tempo">
+        <div className="flex items-center gap-2">
+          <Input className="h-7 w-20 text-xs" type="number" min={40} max={220} placeholder="BPM" value={bpm ?? ""}
+            onChange={(e) => { const v = Number(e.target.value); setBpm(e.target.value === "" || !v ? null : Math.max(40, Math.min(220, Math.round(v)))); }} />
+          <span className="text-2xs text-dim">{bpm ? `${bpm} BPM` : "any tempo"}</span>
+        </div>
+      </Row>
       <Row label={`Volume ${volume} dB`}><input type="range" min={-30} max={0} value={volume} onChange={(e) => setVolume(Number(e.target.value))} className="w-full" /></Row>
       <Note>Placed on a new audio track at {toTimecode(at, ctx.fps)}, {Math.round(seconds)} s, under the dialogue at {volume} dB.</Note>
-      <Go label="Make music" price={price} disabled={prompt.trim().length < 2 || (len !== "custom" && !span)} onClick={() => music(host, { prompt, seconds, at, volumeDb: volume })} />
+      <Go label="Make music" price={price} disabled={!described || (len !== "custom" && !span)} onClick={() => music(host, { prompt: words, seconds, at, volumeDb: volume, mood, bpm })} />
     </Section>
   );
 }

@@ -50,7 +50,8 @@ test("the three steps' arguments", () => {
     ["-i", "a", "-o", "b", "-n", "realesr-animevideov3", "-s", "2", "-g", "0", "-f", "jpg", "-j", "1:2:2"]);
   const enc = encodeArgs({ framesDir: "o", fps: 24, source: "in.mp4", out: "up.mp4", w: 3840, h: 2160, enc: ["-c:v", "hevc_nvenc"] });
   assert.deepEqual(enc.slice(0, 10), ["-framerate", "24", "-i", path.join("o", "%06d.jpg"), "-i", "in.mp4", "-map", "0:v:0", "-map", "1:a:0?"]);
-  assert.ok(enc.includes("scale=3840:2160:flags=lanczos:in_range=pc:out_range=tv:in_color_matrix=bt601:out_color_matrix=bt709,format=yuv420p"));
+  assert.ok(enc.includes("scale=3840:2160:flags=lanczos:in_range=pc:out_range=tv:in_color_matrix=bt601:out_color_matrix=bt709,format=yuv420p,"
+    + "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv"));
   assert.ok(enc.includes("hevc_nvenc") && enc.at(-1) === "up.mp4");
   assert.deepEqual(enc.slice(enc.indexOf("-colorspace"), enc.indexOf("-colorspace") + 8),
     ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"]);

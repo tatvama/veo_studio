@@ -1,7 +1,11 @@
 /**
  * The application menu and its shortcuts. Actions the UI handles are sent to the focused window as
  * `app.onMenu(action)` (e.g. "open-settings", "machine-check", "about", and "open-editor" / "open-edit" for the Tatvam
- * Editor: the page goes to /editor, and "open-edit" shows its Open dialog).
+ * Editor: the page goes to /editor, and "open-edit" shows its Open dialog; the desktop shell adds "command-palette",
+ * "notifications", "shortcuts" and "whats-new").
+ *
+ * Windows with the custom title bar hide the native menu bar: their title bar shows these menus as buttons
+ * (shell.popupMenu pops the submenu of the same name), and the accelerators keep working.
  */
 import { app, Menu, type MenuItemConstructorOptions } from "electron";
 import type { PanelId } from "../shared/types.ts";
@@ -22,23 +26,34 @@ export interface MenuDeps {
   sendMenu(action: string): void;
   revealLogs(): void;
   checkForUpdates(): void;
+  /** additive (desktop shell): the Settings window, the Start page, the first-run steps and the UI scale */
+  shell?: {
+    openSettings(section?: string): void;
+    openStart(): void;
+    openWelcome(): void;
+    /** +1 / −1 step of 10 %, 0 = 100 % */
+    uiScale(step: number): void;
+  };
 }
 
 const POP: [PanelId, string][] = [["program", "Program monitor"], ["source", "Source monitor"], ["timeline", "Timeline"], ["scopes", "Scopes"],
   ["mixer", "Mixer"], ["notes", "Review notes"], ["media", "Media"], ["renders", "Renders"]];
 
 export function buildMenu(d: MenuDeps): void {
+  const sh = d.shell;
   const tpl: MenuItemConstructorOptions[] = [
     { label: "&File", submenu: [
       { label: "New edit…", click: () => d.sendMenu("open-editor") },
       { label: "Open edit…", click: () => d.sendMenu("open-edit") },
+      ...(sh ? [{ label: "Start", accelerator: "CmdOrCtrl+Shift+H", click: () => sh.openStart() } as MenuItemConstructorOptions] : []),
       { type: "separator" },
       { label: "Open project folder", accelerator: "CmdOrCtrl+Shift+O", click: () => d.openProjectFolder() },
       { label: "Choose library folder…", click: () => d.chooseLibrary() },
       { label: "Studio server…", click: () => d.openConnection() },
       { label: "Sync now", accelerator: "CmdOrCtrl+Shift+S", click: () => d.syncNow() },
       { type: "separator" },
-      { label: "Settings…", accelerator: "CmdOrCtrl+,", click: () => d.sendMenu("open-settings") },
+      { label: "Settings…", accelerator: "CmdOrCtrl+,", click: () => (sh ? sh.openSettings() : d.sendMenu("open-settings")) },
+      ...(sh ? [{ label: "Finishing room settings", click: () => d.sendMenu("open-settings") } as MenuItemConstructorOptions] : []),
       { type: "separator" },
       { label: "Quit", accelerator: "CmdOrCtrl+Q", click: () => app.quit() },
     ] },
@@ -47,9 +62,18 @@ export function buildMenu(d: MenuDeps): void {
       { role: "pasteAndMatchStyle" }, { role: "delete" }, { role: "selectAll" },
     ] },
     { label: "&View", submenu: [
+      ...(sh ? [{ label: "Command palette…", accelerator: "CmdOrCtrl+Shift+P", click: () => d.sendMenu("command-palette") },
+        { label: "Notifications", click: () => d.sendMenu("notifications") },
+        { label: "Appearance…", click: () => sh.openSettings("appearance") },
+        { type: "separator" }] as MenuItemConstructorOptions[] : []),
       { role: "reload" }, { role: "togglefullscreen" },
       { label: "Proxy mode", type: "checkbox", checked: d.proxyMode(), click: (item) => d.setProxyMode(item.checked) },
-      { type: "separator" }, { role: "resetZoom" }, { role: "zoomIn" }, { role: "zoomOut" },
+      { type: "separator" },
+      ...(sh ? [
+        { label: "Actual size", accelerator: "CmdOrCtrl+0", click: () => sh.uiScale(0) },
+        { label: "Zoom in", accelerator: "CmdOrCtrl+Plus", click: () => sh.uiScale(1) },
+        { label: "Zoom out", accelerator: "CmdOrCtrl+-", click: () => sh.uiScale(-1) },
+      ] as MenuItemConstructorOptions[] : [{ role: "resetZoom" }, { role: "zoomIn" }, { role: "zoomOut" }] as MenuItemConstructorOptions[]),
       ...(d.isPackaged ? [] : [{ type: "separator" } as MenuItemConstructorOptions, { role: "toggleDevTools" } as MenuItemConstructorOptions]),
     ] },
     { label: "&Window", submenu: [
@@ -63,6 +87,10 @@ export function buildMenu(d: MenuDeps): void {
       { type: "separator" }, { role: "minimize" },
     ] },
     { label: "&Help", submenu: [
+      ...(sh ? [{ label: "Keyboard shortcuts", click: () => d.sendMenu("shortcuts") },
+        { label: "What's new", click: () => d.sendMenu("whats-new") },
+        { label: "Getting started…", click: () => sh.openWelcome() },
+        { type: "separator" }] as MenuItemConstructorOptions[] : []),
       { label: "Machine check", click: () => d.sendMenu("machine-check") },
       { label: "Open logs folder", click: () => d.revealLogs() },
       { label: "Check for updates", click: () => d.checkForUpdates() },

@@ -34,6 +34,10 @@ test("scenes: the scene score on a small copy, cut times from showinfo", () => {
 
 test("loudness: the ebur128 summary", () => {
   assert.deepEqual(loudnessArgs("a.wav"), ["-nostats", "-i", "a.wav", "-vn", "-af", "ebur128=peak=true", "-f", "null", "-"]);
+  // a clip's range: a fast seek a second before, then a sample-accurate atrim
+  assert.deepEqual(loudnessArgs("a.mp4", 12.5, 20.25), ["-nostats", "-ss", "11.5", "-i", "a.mp4", "-vn", "-af",
+    "atrim=start=1:duration=7.75,asetpts=PTS-STARTPTS,ebur128=peak=true", "-f", "null", "-"]);
+  assert.deepEqual(loudnessArgs("a.mp4", 0.4, 3), ["-nostats", "-i", "a.mp4", "-vn", "-af", "atrim=start=0.4:duration=2.6,asetpts=PTS-STARTPTS,ebur128=peak=true", "-f", "null", "-"]);
   const lines = `[Parsed_ebur128_0 @ 0000] t: 4.9      TARGET:-23 LUFS    M: -18.1 S: -18.0     I: -18.0 LUFS       LRA:   0.0 LU  FTPK: -15.0 dBFS  TPK: -15.0 dBFS
 [Parsed_ebur128_0 @ 0000] Summary:
 

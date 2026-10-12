@@ -88,6 +88,8 @@ export class WebGL2Backend implements Backend {
   private pool = new Map<string, GLTarget[]>();
   private all = new Set<GLTarget>();
   private vao!: WebGLVertexArrayObject;
+  /** No attributes: point clouds index their data by gl_VertexID (scopes). */
+  private emptyVao!: WebGLVertexArrayObject;
   private dummy2d!: WebGLTexture;
   private dummy3d!: WebGLTexture;
   lost = false;
@@ -134,6 +136,7 @@ export class WebGL2Backend implements Backend {
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
     gl.bindVertexArray(null);
+    this.emptyVao = gl.createVertexArray()!;
     this.dummy2d = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, this.dummy2d);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
@@ -164,6 +167,19 @@ export class WebGL2Backend implements Backend {
     gl.bindTexture(gl.TEXTURE_2D, t.tex);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, src);
     t.w = w; t.h = h;
+    if (t.mips) { t.mips = false; gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); }
+  }
+
+  /** Updates part of an uploaded texture (same size as `src`) from the same part of `src`: x, y, w, h in pixels. */
+  uploadSub(tex: Texture, src: TexImageSource, x: number, y: number, w: number, h: number): void {
+    if (w <= 0 || h <= 0) return;
+    const gl = this.gl, t = tex as GLTex;
+    gl.bindTexture(gl.TEXTURE_2D, t.tex);
+    gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, x);
+    gl.pixelStorei(gl.UNPACK_SKIP_ROWS, y);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, w, h, gl.RGBA, gl.UNSIGNED_BYTE, src);
+    gl.pixelStorei(gl.UNPACK_SKIP_PIXELS, 0);
+    gl.pixelStorei(gl.UNPACK_SKIP_ROWS, 0);
     if (t.mips) { t.mips = false; gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); }
   }
 
@@ -283,6 +299,51 @@ export class WebGL2Backend implements Backend {
     gl.viewport(0, 0, rt ? rt.w : gl.drawingBufferWidth, rt ? rt.h : gl.drawingBufferHeight);
     gl.clearColor(rgba[0], rgba[1], rgba[2], rgba[3]);
     gl.clear(gl.COLOR_BUFFER_BIT);
+  }
+
+  /** A program with its own vertex shader (GLSL ES 3.00), for point clouds drawn with drawPoints(). Cached by source. */
+  pointProgram(name: string, vertex: string, fragment: string): Program {
+    const key = hash(vertex + "\u0001" + fragment);
+    const hit = this.programs.get(key);
+    if (hit) return hit;
+    const gl = this.gl;
+    const mk = (type: number, src: string) => { const sh = gl.createShader(type)!; gl.shaderSource(sh, src); gl.compileShader(sh); return sh; };
+    const vs = mk(gl.VERTEX_SHADER, vertex), fs = mk(gl.FRAGMENT_SHADER, fragment);
+    const prog = gl.createProgram()!;
+    gl.attachShader(prog, vs); gl.attachShader(prog, fs);
+    gl.linkProgram(prog);
+    const p = new GLProgram(gl, name, prog, vs, fs, false);
+    (p as GLProgram & { src: string }).src = fragment;
+    this.programs.set(key, p);
+    return p;
+  }
+
+  /** `count` points (gl_VertexID 0..count−1) into a target, added together (ONE, ONE blending): scopes. */
+  drawPoints(call: { program: Program; target: RenderTarget; count: number; uniforms?: Record<string, UniformValue>; textures?: Record<string, Texture | Texture3D> }): void {
+    const gl = this.gl;
+    const p = call.program as GLProgram;
+    this.check(p);
+    const rt = call.target as GLTarget;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, rt.fbo);
+    gl.viewport(0, 0, rt.w, rt.h);
+    gl.useProgram(p.prog);
+    let unit = 0;
+    for (const sm of p.samplers) {
+      const tex = call.textures?.[sm.name] as GLTex | GLTex3D | undefined;
+      const is3d = sm.type === gl.SAMPLER_3D;
+      gl.activeTexture(gl.TEXTURE0 + unit);
+      gl.bindTexture(is3d ? gl.TEXTURE_3D : gl.TEXTURE_2D, tex ? tex.tex : is3d ? this.dummy3d : this.dummy2d);
+      gl.uniform1i(p.uniforms.get(sm.name)!.loc, unit);
+      unit++;
+    }
+    for (const k in call.uniforms) this.set(p, k, call.uniforms[k]);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ONE, gl.ONE);
+    gl.bindVertexArray(this.emptyVao);
+    gl.drawArrays(gl.POINTS, 0, Math.max(0, Math.floor(call.count)));
+    gl.bindVertexArray(null);
+    gl.disable(gl.BLEND);
+    rt.mips = false;
   }
 
   program(name: string, fragment: string, opts: { glsl1?: boolean } = {}): Program {

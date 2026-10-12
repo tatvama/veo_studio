@@ -135,3 +135,47 @@ export function basis(from: Matrix, to: Matrix): number[] {
 }
 /** A row-major 3×3 as a GLSL mat3 (column-major). */
 export const glslMat3 = (m: number[]) => [m[0], m[3], m[6], m[1], m[4], m[7], m[2], m[5], m[8]];
+
+// ── 10-bit read-back (readYuv420p10): planar 4:2:0, 10-bit codes in little-endian 16-bit words ─────────────────────
+/**
+ * The same idea as the 8-bit layout with two samples per RGBA8 texel (low byte, high byte, low, high), so one
+ * readPixels viewed as a Uint16Array is yuv420p10le:
+ *   rows [0, H)                Y: texel (i, r) holds Y(2i, 2i+1, r)                                → W/2 texels wide
+ *   rows [H, H + H/4)          U: texel (i, r) holds U row 2r (i < W/4) or 2r+1 (i ≥ W/4)
+ *   rows [H + H/4, H + H/2)    V: the same
+ * W must be a multiple of 4 and H/2 even for that; other sizes are padded on the GPU and cropped by `repack10()`.
+ */
+export interface Yuv10Layout { w: number; h: number; padW: number; cw: number; ch: number; texW: number; texH: number; cRows: number; direct: boolean; samples: number }
+
+export function yuv10Layout(w: number, h: number): Yuv10Layout {
+  if (!(w >= 2 && h >= 2) || w % 2 || h % 2) throw new Error(`YUV 4:2:0 needs even dimensions (got ${w}×${h})`);
+  const padW = Math.ceil(w / 4) * 4, cw = w / 2, ch = h / 2, cRows = Math.ceil(ch / 2);
+  return { w, h, padW, cw, ch, texW: padW / 2, texH: h + 2 * cRows, cRows, direct: padW === w && ch % 2 === 0, samples: w * h * 1.5 };
+}
+
+/** For a target texel: which plane, and the (x, y) of its first sample (the second follows in x). */
+export function texelSource10(L: Yuv10Layout, i: number, r: number): { plane: "y" | "u" | "v"; x: number; y: number } {
+  if (r < L.h) return { plane: "y", x: 2 * i, y: r };
+  const plane = r < L.h + L.cRows ? "u" : "v";
+  const rr = r - L.h - (plane === "v" ? L.cRows : 0);
+  const half = L.texW / 2;
+  return i < half ? { plane, x: 2 * i, y: 2 * rr } : { plane, x: 2 * (i - half), y: 2 * rr + 1 };
+}
+
+/** The read-back bytes → planar 4:2:0 16-bit words (w·h Y, then U, then V). A view of `buf` when direct. */
+export function repack10(L: Yuv10Layout, buf: Uint8Array, out?: Uint16Array): Uint16Array {
+  const words = new Uint16Array(buf.buffer, buf.byteOffset, buf.byteLength >> 1);
+  if (L.direct && !out) return words.subarray(0, L.samples);
+  const dst = out ?? new Uint16Array(L.samples);
+  const stride = L.padW;  // words per target row
+  for (let y = 0; y < L.h; y++) dst.set(words.subarray(y * stride, y * stride + L.w), y * L.w);
+  const plane = (base: number, off: number) => {
+    for (let cy = 0; cy < L.ch; cy++) {
+      const s = (base + (cy >> 1)) * stride + (cy & 1) * (L.padW / 2);
+      dst.set(words.subarray(s, s + L.cw), off + cy * L.cw);
+    }
+  };
+  plane(L.h, L.w * L.h);
+  plane(L.h + L.cRows, L.w * L.h + L.cw * L.ch);
+  return dst;
+}

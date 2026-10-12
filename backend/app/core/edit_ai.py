@@ -17,11 +17,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Callable, Literal, Union
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError, model_validator
 from sqlalchemy.orm import Session
 
 from .. import catalog, settings_store
-from ..models import AIModel, Project, VoiceProfile
+from ..db import utcnow
+from ..models import AIModel, Consent, Project, VoiceProfile
 from ..pipeline import ffmpeg as ff
 from ..providers import mock
 from ..providers.base import ProviderNotConfigured, RetryableProviderError, Usage
@@ -195,8 +196,18 @@ class SfxSuggestIn(_Params):
 
 
 class MusicIn(_Params):
-    prompt: str = Field(min_length=2, max_length=800)
+    """Music to a length. `mood` is any mood name (the editor's moods: known ones become musical words, others are used
+    as they are); `bpm` asks for a tempo."""
+    prompt: str = Field("", max_length=800)
     seconds: float = Field(30.0, ge=5, le=300)
+    mood: str = Field("", max_length=60)
+    bpm: int | None = Field(None, ge=40, le=220)
+
+    @model_validator(mode="after")
+    def _something(self):
+        if len(self.prompt.strip()) < 2 and not self.mood.strip():
+            raise ValueError("describe the music or pick a mood")
+        return self
 
 
 Quality = Literal["saver", "balanced", "hero"]
@@ -281,6 +292,74 @@ class AssistantIn(_Params):
     instruction: str = Field(min_length=1, max_length=4000)
     sequence_digest: Digest
     history: list[Turn] = Field(default_factory=list, max_length=20)
+
+
+# wave 3 (docs/EDITOR.md §10): ideas from the transcript, highlights, thumbnails, voice cloning, moods
+
+class BrollSuggestIn(_Params):
+    segments: list[Segment] = Field(min_length=1, max_length=3000)  # the transcript (or captions), seconds
+    style: str = Field("", max_length=300)
+    count: int = Field(6, ge=1, le=12)
+
+
+Platform = Literal["shorts", "reels", "tiktok", "any"]
+
+
+class HighlightsIn(_Params):
+    segments: list[Segment] = Field(min_length=1, max_length=3000)
+    target_seconds: float = Field(30.0, ge=15, le=90)
+    count: int = Field(3, ge=1, le=5)
+    platform: Platform = "shorts"
+
+
+class ThumbnailIn(_Params):
+    """A frame of a video (`key` + `at`) or a still (`frame_key`, or `key` of an image) → `count` thumbnails in each
+    aspect asked for."""
+    key: str | None = Field(None, min_length=3, max_length=500)
+    at: Seconds | None = None
+    frame_key: str | None = Field(None, min_length=3, max_length=500)
+    title: str = Field("", max_length=120)
+    style: str = Field("", max_length=300)
+    count: int = Field(2, ge=1, le=4)
+    aspects: list[Literal["16:9", "9:16"]] = Field(default_factory=lambda: ["16:9"], min_length=1, max_length=2)
+    route: str | None = Field(None, max_length=200)  # a Model Hub image engine (None = the team's chain, Google first)
+
+    @model_validator(mode="after")
+    def _source(self):
+        if bool(self.key) == bool(self.frame_key):
+            raise ValueError("give the frame: key (+ at) or frame_key")
+        self.aspects = list(dict.fromkeys(self.aspects))
+        return self
+
+
+class VoiceCloneIn(_Params):
+    sample_key: str = Field(min_length=3, max_length=500)  # speech of the voice (audio, or a video with sound)
+    start: Seconds | None = None
+    end: Seconds | None = None
+    name: str = Field(min_length=1, max_length=80)
+    consent_id: int = Field(ge=1)  # the speaker's signed consent record (kind voice_replication)
+    languages: list[str] = Field(default_factory=list, max_length=20)  # [] = every studio language
+    remove_noise: bool = True
+
+
+class MoodScene(BaseModel):
+    id: str = Field(min_length=1, max_length=80)
+    title: str = Field("", max_length=200)
+    emotion: str = Field("", max_length=200)
+    summary: str = Field("", max_length=2000)
+
+
+class MoodOption(BaseModel):
+    """One of the editor's moods: its id, its name and the words in a scene's emotion that point to it."""
+    id: str = Field(min_length=1, max_length=60)
+    label: str = Field("", max_length=80)
+    words: list[Annotated[str, Field(max_length=40)]] = Field(default_factory=list, max_length=40)
+
+
+class MoodSuggestIn(_Params):
+    scenes: list[MoodScene] = Field(min_length=1, max_length=200)
+    # the moods to pick from: names, or the editor's moods with their emotion words ([] = MOODS)
+    moods: list[Union[MoodOption, Annotated[str, Field(min_length=1, max_length=60)]]] = Field(default_factory=list, max_length=100)
 
 
 def _check_lang(code: str, auto: bool = False) -> None:
@@ -915,6 +994,368 @@ def mock_assistant(instruction: str, d: Digest) -> dict:
     return {"reply": reply, "commands": cmds}
 
 
+# ── moods (music words, and a mood for a scene from its emotion) ─────────────
+
+# Known mood names (the editor's Moods share these names; any other name still works): the words a music prompt
+# gets, and the words in a scene's emotion, title or summary that point to the mood.
+MOODS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "warm": ("warm, intimate, gentle acoustic", ("warm", "tender", "family", "home", "love", "gentle", "kind")),
+    "romantic": ("romantic, tender strings, soft piano", ("romance", "romantic", "kiss", "longing", "wedding", "couple", "date")),
+    "joyful": ("joyful, bright, uplifting, light percussion", ("joy", "happy", "fun", "laugh", "celebrat", "delight", "cheer")),
+    "festive": ("festive, celebratory, dhol and brass", ("festival", "festive", "party", "dance", "diwali", "holi", "wedding")),
+    "playful": ("playful, quirky, pizzicato", ("playful", "comic", "comedy", "silly", "prank", "mischief", "cute")),
+    "hopeful": ("hopeful, rising, warm strings", ("hope", "hopeful", "dream", "begin", "new start", "promise", "inspire")),
+    "calm": ("calm, peaceful, ambient pads", ("calm", "peace", "quiet", "serene", "still", "rest", "meditat", "morning")),
+    "dreamy": ("dreamy, airy, soft synth pads", ("dream", "dreamy", "memory", "fantasy", "magic", "wonder", "float")),
+    "nostalgic": ("nostalgic, vintage, warm tape tone", ("nostalg", "childhood", "remember", "past", "old days", "flashback", "vintage")),
+    "melancholy": ("melancholic, slow, solo piano", ("sad", "grief", "loss", "lonely", "melanchol", "regret", "tears", "funeral", "goodbye")),
+    "tense": ("tense, pulsing, low strings", ("tense", "tension", "anxious", "nervous", "argument", "conflict", "pressure", "angry", "anger")),
+    "suspense": ("suspenseful, sparse, ticking, low drones", ("suspense", "secret", "hidden", "sneak", "investigat", "clue", "waiting")),
+    "mysterious": ("mysterious, eerie, sparse", ("mystery", "mysterious", "strange", "unknown", "night", "shadow", "puzzle")),
+    "horror": ("dark, unsettling, dissonant", ("horror", "fear", "scared", "terror", "ghost", "haunt", "scream", "blood")),
+    "action": ("driving, energetic, big drums", ("action", "fight", "chase", "race", "battle", "escape", "run", "attack")),
+    "epic": ("epic, orchestral, heroic brass", ("epic", "hero", "victory", "triumph", "war", "legend", "glory", "climax")),
+    "energetic": ("energetic, upbeat, electronic", ("energy", "energetic", "upbeat", "sport", "workout", "hype", "fast")),
+    "dramatic": ("dramatic, cinematic, swelling strings", ("drama", "dramatic", "confront", "reveal", "betray", "shock", "decision")),
+    "devotional": ("devotional, serene, bansuri and tanpura", ("devotion", "prayer", "temple", "god", "spiritual", "faith", "ritual")),
+    "noir": ("noir, smoky, muted jazz trumpet", ("noir", "crime", "detective", "smoke", "rain", "city night")),
+    "gritty": ("gritty, raw, distorted bass", ("gritty", "street", "struggle", "poverty", "rough", "violence", "dirt")),
+    # the editor's own mood names (frontend/src/lib/moods.ts) where they differ from the ones above
+    "thriller": ("tense, pulsing synth bass, ticking percussion", ("thrill", "danger", "chase", "threat", "paranoid", "suspense")),
+    "festival": ("festive dhol and shehnai, celebratory", ("festival", "festive", "celebrat", "diwali", "holi", "utsav")),
+    "monsoon": ("rain ambience, soft sitar and bansuri", ("rain", "monsoon", "storm", "baarish", "grey")),
+    "comedy": ("quirky, playful pizzicato and ukulele", ("funny", "comedy", "comic", "humour", "humor", "silly", "hilarious")),
+    "documentary": ("understated piano and strings, thoughtful", ("documentary", "informative", "explain", "interview", "reflective")),
+    "summer": ("sunny upbeat indie pop, acoustic guitar", ("summer", "sunny", "beach", "holiday", "carefree")),
+    "cyberpunk": ("dark synthwave, pulsing arpeggios", ("futuristic", "neon", "cyber", "dystopia", "hacker", "robot")),
+    "mystery": ("mysterious celesta and low pizzicato, hushed", ("mystery", "mysterious", "secret", "riddle", "unknown", "curious")),
+    "inspiring": ("uplifting piano build with strings and drums", ("inspire", "inspiring", "hope", "determined", "motivation")),
+    "cinematic": ("cinematic, emotive, orchestral", ()),
+}
+NEUTRAL_MOODS = ("cinematic", "documentary", "calm", "warm")  # for a scene whose words point to no mood
+
+
+def mood_key(name: str) -> str:
+    return re.sub(r"[\s\-]+", "_", (name or "").strip().lower())[:60]
+
+
+def mood_words(name: str) -> str:
+    """The musical words for a mood ("" for none): a known mood's words, else the name as it is."""
+    k = mood_key(name)
+    if not k:
+        return ""
+    return MOODS[k][0] if k in MOODS else f"{name.strip()} mood"
+
+
+def music_prompt(p: MusicIn) -> str:
+    """The prompt the music engine gets: the words, the mood's musical words and the tempo."""
+    parts = [p.prompt.strip().rstrip(".")] if p.prompt.strip() else []
+    if p.mood.strip():
+        parts.append(f"Mood: {mood_words(p.mood)}")
+    if p.bpm:
+        parts.append(f"Tempo about {p.bpm} BPM")
+    if not re.search(r"\bvocal|\bsing|\blyric", p.prompt, re.I):
+        parts.append("Instrumental, no vocals")
+    return ". ".join(parts)[:1000]
+
+
+def pick_mood(scene: MoodScene, allowed: list[str], words_of: dict[str, list[str]] | None = None) -> tuple[str, str]:
+    """A mood for a scene from the words of its emotion (counted 3×), title and summary → (mood, why). A mood's words:
+    those the editor sent with it, else this table's, plus its own name."""
+    emo, rest = scene.emotion.lower(), f"{scene.title} {scene.summary}".lower()
+    best, score, hit = "", 0.0, ""
+    for m in allowed:
+        k = mood_key(m)
+        given = tuple(w.strip().lower() for w in (words_of or {}).get(k, []) if len(w.strip()) > 1)
+        words = (given or (MOODS[k][1] if k in MOODS else ())) + tuple(w for w in k.split("_") if len(w) > 2)
+        s, first = 0.0, ""
+        for w in words:
+            n = 3 * emo.count(w) + rest.count(w)
+            if n and not first:
+                first = w
+            s += n
+        if s > score:
+            best, score, hit = m, s, first
+    if not best:  # nothing points anywhere: the most neutral mood there is
+        fallback = next((m for k in NEUTRAL_MOODS for m in allowed if mood_key(m) == k), allowed[0])
+        return fallback, f"No strong emotion in the scene: {fallback} as a neutral look"
+    src = f"its emotion “{scene.emotion.strip()}”" if hit and hit in emo else f"“{hit}” in the scene"
+    return best, f"Matches {src}"[:300]
+
+
+def allowed_moods(p: MoodSuggestIn) -> list[str]:
+    """The mood ids to pick from (each once)."""
+    seen: dict[str, str] = {}
+    for m in p.moods or list(MOODS):
+        name = (m.id if isinstance(m, MoodOption) else m).strip()
+        if mood_key(name) and mood_key(name) not in seen:
+            seen[mood_key(name)] = name
+    return list(seen.values()) or list(MOODS)
+
+
+def mood_words_of(p: MoodSuggestIn) -> dict[str, list[str]]:
+    """The emotion words the editor sent per mood (by mood_key)."""
+    return {mood_key(m.id): list(m.words) for m in p.moods if isinstance(m, MoodOption) and m.words}
+
+
+def mood_labels(p: MoodSuggestIn) -> dict[str, str]:
+    return {mood_key(m.id): m.label for m in p.moods if isinstance(m, MoodOption) and m.label}
+
+
+class _MoodPick(BaseModel):
+    scene_id: str = ""
+    mood: str = Field("", description="one of the mood names given")
+    why: str = Field("", description="one short sentence")
+
+
+class MoodOut(BaseModel):
+    picks: list[_MoodPick] = Field(default_factory=list)
+
+
+MOOD_SYSTEM = ("You are a film colourist and music supervisor. For each scene you pick the one mood (a colour look and "
+               "a music feel) that serves its emotion best, from the list you are given.")
+
+
+def mood_prompt(p: MoodSuggestIn, allowed: list[str]) -> str:
+    labels, words = mood_labels(p), mood_words_of(p)
+    opts = "\n".join(f"- {m}" + (f" ({labels[mood_key(m)]})" if mood_key(m) in labels else "")
+                     + (f": {', '.join(words[mood_key(m)][:12])}" if mood_key(m) in words else "") for m in allowed)
+    rows = "\n".join(f"- id {s.id}: {s.title or 'untitled'}" + (f" · emotion: {s.emotion}" if s.emotion else "")
+                     + (f" · {s.summary[:400]}" if s.summary else "") for s in p.scenes)
+    return f"Moods to pick from (answer with the id):\n{opts}\n\nScenes:\n{rows}\n\nGive every scene id its mood and why."
+
+
+def mock_moods(p: MoodSuggestIn, allowed: list[str]) -> dict:
+    """The deterministic mapping (used when the text route is mock): each scene's words → a mood."""
+    picks, words = [], mood_words_of(p)
+    for s in p.scenes:
+        m, why = pick_mood(s, allowed, words)
+        picks.append({"scene_id": s.id, "mood": m, "why": why})
+    return {"picks": picks}
+
+
+def finish_moods(picks: list[dict], p: MoodSuggestIn, allowed: list[str]) -> list[dict]:
+    """One pick per scene, in scene order, each a mood from `allowed` (a missing or unknown pick is made from the
+    scene's words)."""
+    by_key = {mood_key(m): m for m in allowed}
+    labels = mood_labels(p)
+    by_key.update({mood_key(labels[mood_key(m)]): m for m in allowed if mood_key(m) in labels})  # a label for its id
+    got = {str(x.get("scene_id")): x for x in picks}
+    words = mood_words_of(p)
+    out = []
+    for s in p.scenes:
+        x = got.get(s.id) or {}
+        mood = by_key.get(mood_key(str(x.get("mood") or "")))
+        if mood:
+            out.append({"scene_id": s.id, "mood": mood, "why": str(x.get("why") or "").strip()[:300]})
+        else:
+            m, why = pick_mood(s, allowed, words)
+            out.append({"scene_id": s.id, "mood": m, "why": why})
+    return out
+
+
+# ── the transcript: B-roll ideas and highlights ──────────────────────────────
+
+def transcript_text(segments: list[Segment], limit: int = 60000) -> str:
+    out, n = [], 0
+    for s in segments:
+        line = f"[{s.start:.1f}–{s.end:.1f}] " + re.sub(r"\s+", " ", s.text).strip()
+        n += len(line) + 1
+        if n > limit:
+            break
+        out.append(line)
+    return "\n".join(out)
+
+
+def transcript_span(segments: list[Segment]) -> tuple[float, float]:
+    return min(s.start for s in segments), max(s.end for s in segments)
+
+
+class _BrollIdea(BaseModel):
+    start: float = Field(0.0, description="seconds, where the B-roll starts (inside the transcript)")
+    end: float = Field(0.0, description="seconds, where it ends (2 to 10 seconds later)")
+    prompt: str = Field("", description="a concrete shot for a video generator: subject, place, light, camera")
+    reason: str = Field("", description="which words it illustrates and why, one sentence")
+
+
+class BrollOut(BaseModel):
+    ideas: list[_BrollIdea] = Field(default_factory=list)
+
+
+BROLL_SYSTEM = ("You are a documentary and YouTube editor. You read a transcript with timings and suggest B-roll: "
+                "cutaway shots that illustrate what is being said at that moment. Each idea is one concrete, filmable shot "
+                "a video generator can make (no text on screen, no real brands or real people's faces).")
+
+
+def broll_prompt(p: BrollSuggestIn) -> str:
+    return (f"Suggest {p.count} B-roll shots for this transcript (times in seconds)."
+            + (f" Visual style: {p.style}." if p.style.strip() else "")
+            + " Spread them over the moments where a picture helps most.\n\n" + transcript_text(p.segments))
+
+
+def _words(text: str, n: int) -> str:
+    w = re.sub(r"\s+", " ", text).strip().split(" ")
+    return " ".join(w[:n]) + ("…" if len(w) > n else "")
+
+
+def mock_broll(p: BrollSuggestIn) -> dict:
+    """Deterministic ideas (MOCK mode): lines spread over the transcript, each illustrated as it is."""
+    segs = sorted(p.segments, key=lambda s: s.start)
+    step = max(len(segs) / p.count, 1.0)
+    picks = list(dict.fromkeys(min(int(i * step), len(segs) - 1) for i in range(min(p.count, len(segs)))))
+    style = f", {p.style.strip()}" if p.style.strip() else ""
+    ideas = []
+    for i in picks:
+        s = segs[i]
+        ideas.append({"start": s.start, "end": max(min(s.end, s.start + 6), s.start + 2),
+                      "prompt": f"Cinematic cutaway illustrating “{_words(s.text, 12)}”, natural light, slow push in{style}",
+                      "reason": f"MOCK: illustrates the line at {s.start:.1f} s"})
+    return {"ideas": ideas}
+
+
+def finish_broll(ideas: list[dict], p: BrollSuggestIn) -> list[dict]:
+    """Ideas inside the transcript, 1–30 s long, in time order, at most `count`, no two starting together."""
+    a, b = transcript_span(p.segments)
+    out: list[dict] = []
+    for x in sorted(ideas, key=lambda i: float(i.get("start") or 0)):
+        prompt = re.sub(r"\s+", " ", str(x.get("prompt") or "")).strip()[:1000]
+        if len(prompt) < 3:
+            continue
+        s = min(max(float(x.get("start") or 0), a), b)
+        e = min(max(float(x.get("end") or 0), s + 1.0), s + 30.0)
+        if out and s - out[-1]["start"] < 0.5:
+            continue
+        out.append({"start": round(s, 3), "end": round(e, 3), "prompt": prompt,
+                    "reason": re.sub(r"\s+", " ", str(x.get("reason") or "")).strip()[:300]})
+    return out[:p.count]
+
+
+class _Highlight(BaseModel):
+    start: float = Field(0.0, description="seconds: where the clip starts (the start of a line)")
+    end: float = Field(0.0, description="seconds: where it ends (the end of a line)")
+    title: str = Field("", description="a short catchy title for the clip")
+    hook: str = Field("", description="the opening line or idea that grabs attention in the first 2 seconds")
+    why: str = Field("", description="why this part works on its own, one sentence")
+
+
+class HighlightsOut(BaseModel):
+    highlights: list[_Highlight] = Field(default_factory=list)
+
+
+PLATFORM_NAMES = {"shorts": "YouTube Shorts", "reels": "Instagram Reels", "tiktok": "TikTok", "any": "short vertical video"}
+HIGHLIGHTS_SYSTEM = ("You are a social video editor who cuts long videos into Shorts and Reels. You pick self-contained "
+                     "moments with a strong hook in the first seconds, a clear point and a satisfying end, using only "
+                     "whole lines of the transcript.")
+
+
+def highlights_prompt(p: HighlightsIn) -> str:
+    return (f"Pick the {p.count} best clips of about {p.target_seconds:.0f} seconds each for {PLATFORM_NAMES[p.platform]} "
+            "from this transcript (times in seconds). The clips must not overlap. Best first.\n\n" + transcript_text(p.segments))
+
+
+def highlight_bounds(target: float) -> tuple[float, float]:
+    """The shortest and longest a highlight may be for a target length."""
+    return max(8.0, target * 0.5), min(target * 1.34, 180.0)
+
+
+def mock_highlights(p: HighlightsIn) -> dict:
+    """Deterministic picks (MOCK mode): windows of whole lines up to the target length with the most speech."""
+    segs = sorted(p.segments, key=lambda s: s.start)
+    lo, _ = highlight_bounds(p.target_seconds)
+    lo = min(lo, segs[-1].end - segs[0].start)
+    windows = []
+    for i, s in enumerate(segs):
+        chars, j = 0, i
+        while j < len(segs) and segs[j].end - s.start <= p.target_seconds + 0.01:
+            chars += len(segs[j].text)
+            j += 1
+        if j > i and segs[j - 1].end - s.start >= lo - 0.01:
+            windows.append((chars / max(segs[j - 1].end - s.start, 1.0), s.start, segs[j - 1].end, s.text))
+    picks: list[dict] = []
+    for _, a, b, text in sorted(windows, key=lambda w: (-w[0], w[1])):
+        if any(a < x["end"] and x["start"] < b for x in picks):
+            continue
+        picks.append({"start": a, "end": b, "title": _words(text, 6), "hook": _words(text, 14),
+                      "why": "MOCK: the densest stretch of speech"})
+        if len(picks) >= p.count:
+            break
+    return {"highlights": picks}
+
+
+def finish_highlights(raw: list[dict], p: HighlightsIn) -> list[dict]:
+    """Highlights on whole lines (from a line's start to a line's end) close to the asked length, inside the
+    transcript, not overlapping, best first, at most `count`."""
+    segs = sorted(p.segments, key=lambda s: s.start)
+    a0, b0 = transcript_span(segs)
+    lo, hi = highlight_bounds(p.target_seconds)
+    lo = min(lo, b0 - a0)
+    out: list[dict] = []
+    for x in raw:
+        s = min(max(float(x.get("start") or 0), a0), b0)
+        want = float(x.get("end") or 0)
+        first = next((g for g in segs if g.end > s + 0.05), None)  # the line the clip starts in
+        if first is None:
+            continue
+        s = min(s, first.start) if s - first.start < 2.0 else s
+        ends = [g.end for g in segs if s + lo - 0.01 <= g.end <= s + hi + 0.01]
+        if not ends:
+            continue
+        aim = want if s + lo <= want <= s + hi else s + p.target_seconds
+        e = min(ends, key=lambda t: abs(t - aim))
+        if any(s < y["end"] - 0.05 and y["start"] < e - 0.05 for y in out):
+            continue
+        out.append({"start": round(s, 3), "end": round(e, 3), "title": str(x.get("title") or "").strip()[:100] or "Highlight",
+                    "hook": str(x.get("hook") or "").strip()[:200], "why": str(x.get("why") or "").strip()[:400]})
+        if len(out) >= p.count:
+            break
+    return out
+
+
+# ── thumbnails ───────────────────────────────────────────────────────────────
+
+THUMB_VARIANTS = ("a tight crop on the main subject's face or the key object, expressive",
+                  "a wider frame with clear empty space for the title",
+                  "bold colour pop and dramatic contrast lighting",
+                  "a clean, minimal background with the subject standing out")
+
+
+def thumbnail_prompt(p: ThumbnailIn, aspect: str, i: int) -> str:
+    where = "YouTube video thumbnail" if aspect == "16:9" else "vertical Shorts/Reels cover"
+    text = (f"Put the title “{p.title.strip()}” on it in large, bold, clean lettering that reads at a small size, "
+            "never covering the subject's face." if p.title.strip() else "Put no text on it.")
+    return (f"Design an eye-catching {where} ({aspect}) from this frame of the video. Keep the people, place and look of "
+            f"the frame recognisable; make it sharp, bright and high contrast. {text}"
+            + (f" Style: {p.style.strip()}." if p.style.strip() else "")
+            + f" Variation: {THUMB_VARIANTS[i % len(THUMB_VARIANTS)]}.")
+
+
+# ── voice cloning (only with the speaker's consent) ──────────────────────────
+
+CLONE_MIN_S, CLONE_MAX_S = 10.0, 180.0
+
+
+def check_consent(db: Session, consent_id: int) -> Consent:
+    """The speaker's consent record for a cloned voice, or ToolError: it must exist, be for voice replication and not
+    have expired."""
+    c = db.get(Consent, consent_id)
+    how = ("Record the speaker's signed consent first (Team → Consent records, kind “Voice replication”), then pick it "
+           "here.")
+    if c is None:
+        raise ToolError(f"Voice cloning needs the speaker's consent record, and there is none with id {consent_id}. {how}", 403)
+    if c.kind != "voice_replication":
+        raise ToolError(f"Consent record {consent_id} ({c.subject_name}) is for {c.kind.replace('_', ' ')}, not for "
+                        f"cloning a voice. {how}", 403)
+    if c.expires_on and c.expires_on < utcnow().date().isoformat():
+        raise ToolError(f"The consent of {c.subject_name} expired on {c.expires_on}. Record a new one to clone the voice.", 403)
+    return c
+
+
+def clone_languages(langs: list[str]) -> list[str]:
+    for code in langs:
+        _check_lang(code)
+    return list(dict.fromkeys(langs)) or list(LANGS)
+
+
 # ── the tools: label, job type, price ────────────────────────────────────────
 
 @dataclass
@@ -923,7 +1364,7 @@ class Tool:
     label: str
     job: str  # job type (workers/handlers_edit.py)
     params: type[BaseModel]
-    group: str  # captions | voice | sound | picture | assistant
+    group: str  # captions | voice | sound | picture | assistant | looks
 
 
 def _ln(label: str, usd: float) -> dict:
@@ -933,7 +1374,7 @@ def _ln(label: str, usd: float) -> dict:
 def engine_choice(db: Session, chain: str, modes: list[str], route: str | None) -> tuple[AIModel, str]:
     """The engine a video tool runs on: the team's chain (Google first), or a route picked from the Model Hub's enabled
     engines that can do this."""
-    task = "edit" if chain == "edit" else "video"
+    task = {"edit": "edit", "image": "image"}.get(chain, "video")
     if route:
         m = db.get(AIModel, route)
         caps = (m.capabilities or {}) if m else {}
@@ -1001,8 +1442,46 @@ def price(db: Session, project: Project, tool: str, p: Any) -> tuple[list[dict],
         extra["engine"] = text_engine(svc)
         return [_ln(f"Ideas from the picture ({extra['engine']})", est.text(1500, 600))], extra
     if tool == "music":
-        extra["engine"] = "Lyria"
-        return [_ln(f"Music · {p.seconds:.0f} s (Lyria)", est.music(p.seconds))], extra
+        extra.update(engine="Lyria", prompt=music_prompt(p))
+        mood = f" · {p.mood.strip()}" if p.mood.strip() else ""
+        return [_ln(f"Music · {p.seconds:.0f} s{mood} (Lyria)", est.music(p.seconds))], extra
+    if tool == "broll_suggest":
+        extra["engine"] = text_engine(svc)
+        chars = len(broll_prompt(p)) + len(BROLL_SYSTEM)
+        return [_ln(f"B-roll ideas · {len(p.segments)} lines ({extra['engine']})", est.text(chars, 260 * p.count))], extra
+    if tool == "highlights":
+        extra["engine"] = text_engine(svc)
+        chars = len(highlights_prompt(p)) + len(HIGHLIGHTS_SYSTEM)
+        return [_ln(f"Highlights · {p.count} × ~{p.target_seconds:.0f} s ({extra['engine']})", est.text(chars, 350 * p.count))], extra
+    if tool == "thumbnail":
+        src = asset_path(pid, p.frame_key or p.key or "")
+        k = kind_of_ext(src.suffix)
+        if k != "image" and (p.frame_key or k != "video"):
+            raise ToolError("A thumbnail starts from a frame of a video or from an image")
+        m, _ = engine_choice(db, "image", ["i2i"], p.route)
+        n = p.count * len(p.aspects)
+        extra.update(engine=m.display_name, engine_id=m.id, images=n)
+        return [_ln(f"Thumbnails · {n} image{'s' if n != 1 else ''} ({m.display_name})", est.image_engine(m, n))], extra
+    if tool == "voice_clone":
+        check_consent(db, p.consent_id)
+        clone_languages(p.languages)
+        if provider_mode("elevenlabs") == "missing":
+            raise ToolError("Voice cloning needs the ElevenLabs key on the studio (Admin → Settings)")
+        src = asset_path(pid, p.sample_key)
+        if kind_of_ext(src.suffix) == "image" or not ff.has_audio(src):
+            raise ToolError("The voice sample has no sound")
+        _, secs = span(src, p.start, p.end)
+        if secs < CLONE_MIN_S:
+            raise ToolError(f"Use at least {CLONE_MIN_S:.0f} seconds of clean speech for a cloned voice")
+        secs = min(secs, CLONE_MAX_S)
+        extra.update(engine="ElevenLabs", seconds=round(secs, 3))
+        return [_ln(f"Instant voice clone · {secs:.0f} s of speech (ElevenLabs)", est.voice_clone("elevenlabs"))], extra
+    if tool == "mood_suggest":
+        allowed = allowed_moods(p)
+        extra["engine"] = text_engine(svc)
+        chars = len(mood_prompt(p, allowed)) + len(MOOD_SYSTEM)
+        return [_ln(f"Mood per scene · {len(p.scenes)} scene{'s' if len(p.scenes) != 1 else ''} ({extra['engine']})",
+                    est.text(chars, 120 * len(p.scenes)))], extra
     if tool in ("video", "extend"):
         if tool == "video" and p.first_frame_key:
             if kind_of_ext(asset_path(pid, p.first_frame_key).suffix) not in ("video", "image"):
@@ -1074,7 +1553,13 @@ TOOLS: dict[str, Tool] = {t.id: t for t in (
     Tool("edit_words", "Edit with words", "edit_words", EditWordsIn, "picture"),
     Tool("upscale", "AI upscale", "edit_upscale", UpscaleIn, "picture"),
     Tool("assistant", "Edit assistant", "edit_assistant", AssistantIn, "assistant"),
+    Tool("broll_suggest", "B-roll ideas", "edit_broll_suggest", BrollSuggestIn, "picture"),
+    Tool("highlights", "Highlights for Shorts", "edit_highlights", HighlightsIn, "assistant"),
+    Tool("thumbnail", "Thumbnail", "edit_thumbnail", ThumbnailIn, "picture"),
+    Tool("voice_clone", "Clone a voice", "edit_voice_clone", VoiceCloneIn, "voice"),
+    Tool("mood_suggest", "Mood per scene", "edit_mood_suggest", MoodSuggestIn, "looks"),
 )}
+PRODUCER_TOOLS = {"voice_clone"}  # like the studio's voice cloning: a producer's step (it needs a consent record)
 
 
 def parse(tool: str, params: dict | None) -> tuple[Tool, BaseModel]:
@@ -1108,9 +1593,9 @@ def tools_status(db: Session) -> list[dict[str, Any]]:
     for t in TOOLS.values():
         if t.id == "transcribe":
             prov = "gemini"
-        elif t.id in ("translate", "assistant", "sfx_suggest"):
+        elif t.id in ("translate", "assistant", "sfx_suggest", "broll_suggest", "highlights", "mood_suggest"):
             prov = route
-        elif t.id in ("clean_voice", "sfx"):
+        elif t.id in ("clean_voice", "sfx", "voice_clone"):
             prov = "elevenlabs"
         elif t.id == "music":
             prov = "gemini"
@@ -1119,7 +1604,7 @@ def tools_status(db: Session) -> list[dict[str, Any]]:
         elif t.id in ("tts", "dub"):
             prov = (settings_store.get_setting(db, "tts_provider_by_language") or {}).get("en", "gemini")
         else:
-            chain, modes = ("edit", ["edit"]) if t.id == "edit_words" else ("video.saver", ["t2v", "i2v"])
+            chain, modes = {"edit_words": ("edit", ["edit"]), "thumbnail": ("image", ["i2i"])}.get(t.id, ("video.saver", ["t2v", "i2v"]))
             c = model_hub.first_choice(db, chain, modes)
             prov = c[0].provider if c else ""
         mode = provider_mode(prov) if prov else "missing"

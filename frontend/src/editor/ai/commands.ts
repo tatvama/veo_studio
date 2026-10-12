@@ -12,7 +12,7 @@ import {
   withLinked, type Ctx,
 } from "../model/ops.ts";
 import { fpsExact, framesToSeconds, secondsToFrames } from "../model/time.ts";
-import type { EditProject, Sequence, TimelineClip, TitleSpec } from "../model/types.ts";
+import type { EditProject, Marker, Sequence, TimelineClip, TitleSpec } from "../model/types.ts";
 import type { AiCommand, AiCommandRow, Digest, Segment } from "./types.ts";
 
 const r3 = (v: number) => Math.round(v * 1000) / 1000;
@@ -389,11 +389,12 @@ export function splitClipAt(p: EditProject, seqId: string, clipId: string, frame
   return withSeq(p, seqId, s);
 }
 
-export function addSequenceMarkers(p: EditProject, seqId: string, frames: number[], name: string, color: string): EditProject {
+/** Markers at frames (`{n}` in the name counts them); `kind` tells snapping what they are (beat, scene …). */
+export function addSequenceMarkers(p: EditProject, seqId: string, frames: number[], name: string, color: string, kind?: Marker["kind"]): EditProject {
   const seq = seqOf(p, seqId);
   if (!seq) return p;
   let markers = seq.markers;
-  frames.forEach((f, i) => { markers = addMarker(markers, f, { name: name.includes("{n}") ? name.replace("{n}", String(i + 1)) : name, color }); });
+  frames.forEach((f, i) => { markers = addMarker(markers, f, { name: name.includes("{n}") ? name.replace("{n}", String(i + 1)) : name, color, ...(kind ? { kind } : {}) }); });
   return withSeq(p, seqId, { ...seq, markers });
 }
 

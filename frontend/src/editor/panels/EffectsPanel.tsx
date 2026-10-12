@@ -4,7 +4,7 @@
  * double-click to apply to the selection, and right-click to set the default transition.
  */
 import { clsx } from "clsx";
-import { AudioLines, Blend, ChevronDown, ChevronRight, FileCode2, Sparkles, Star } from "lucide-react";
+import { AudioLines, AudioWaveform, Blend, ChevronDown, ChevronRight, FileCode2, Sparkles, Star } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { SearchField } from "../../components/ui";
@@ -17,11 +17,16 @@ import { IBtn } from "../ui";
 import { AUDIO_TRANSITIONS, kindOf } from "../model/ops";
 import { ed, seq, setFocus } from "../store";
 import { openMenu } from "../ui";
+import { addGenerator, GEN_MIME, installGeneratorDrop } from "../audiofx/actions";
+import { AUDIO_TRANSITION_DEFS, GENERATORS, type GeneratorKind } from "../audiofx/registry";
+
+// generators (tone, noise, DTMF) dragged from here land on an audio track as a new clip
+installGeneratorDrop();
 
 const LS_FAV = "tatvam-editor:fx-favourites";
 const readFav = (): string[] => { try { return JSON.parse(localStorage.getItem(LS_FAV) || "[]"); } catch { return []; } };
 
-interface Item { key: string; id: string; label: string; kind: "vt" | "ve" | "ae" | "at"; group: string; hint?: string; info?: TransitionInfo; def?: EffectDef }
+interface Item { key: string; id: string; label: string; kind: "vt" | "ve" | "ae" | "at" | "gen"; group: string; hint?: string; info?: TransitionInfo; def?: EffectDef }
 
 export default function EffectsPanel() {
   const [q, setQ] = useState("");
@@ -38,7 +43,7 @@ export default function EffectsPanel() {
   const hoverTimer = useRef(0);
   const hoverOn = (i: Item, el: HTMLElement) => {
     window.clearTimeout(hoverTimer.current);
-    if (i.kind === "ae" || i.kind === "at") return;
+    if (i.kind === "ae" || i.kind === "at" || i.kind === "gen") return;
     hoverTimer.current = window.setTimeout(() => setHover({ item: i, rect: el.getBoundingClientRect() }), 260);
   };
   const hoverOff = () => { window.clearTimeout(hoverTimer.current); setHover(null); };
@@ -47,13 +52,16 @@ export default function EffectsPanel() {
   const all = useMemo<Item[]>(() => [
     ...trans.map((t) => ({ key: `vt:${t.id}`, id: t.id, label: t.label, kind: "vt" as const, group: t.group, hint: t.kind === "gl" ? "GL" : undefined, info: t })),
     ...vfx.map((d) => ({ key: `ve:${d.id}`, id: d.id, label: d.label, kind: "ve" as const, group: d.custom ? "Custom" : d.group, hint: d.custom ? "custom" : d.gpuOnly ? "GPU" : undefined, def: d })),
-    ...audioEffects().map((d) => ({ key: `ae:${d.id}`, id: d.id, label: d.label, kind: "ae" as const, group: "Audio", def: d })),
+    ...audioEffects().map((d) => ({ key: `ae:${d.id}`, id: d.id, label: d.label, kind: "ae" as const, group: d.group, def: d })),
     ...AUDIO_TRANSITIONS.map((t) => ({ key: `at:${t.id}`, id: t.id, label: t.label, kind: "at" as const, group: "Crossfade" })),
+    ...AUDIO_TRANSITION_DEFS.filter((t) => !AUDIO_TRANSITIONS.some((x) => x.id === t.id)).map((t) => ({ key: `at:${t.id}`, id: t.id, label: t.label, kind: "at" as const, group: "Crossfade", hint: t.curve })),
+    ...GENERATORS.map((g) => ({ key: `gen:${g.kind}`, id: g.kind, label: g.label, kind: "gen" as const, group: "Generate", hint: "clip" })),
   ], [trans, vfx]);
   const ql = q.trim().toLowerCase();
   const shown = ql ? all.filter((i) => i.label.toLowerCase().includes(ql) || i.group.toLowerCase().includes(ql) || (i.info?.tags ?? []).some((t) => t.includes(ql))) : all;
 
   const apply = (i: Item) => {
+    if (i.kind === "gen") { addGenerator(i.id as GeneratorKind); return; }
     if (i.kind === "vt" || i.kind === "at") {
       A.applyTransition(i.kind === "vt" ? "video" : "audio", i.id, `Apply ${i.label}`);
       return;
@@ -69,7 +77,7 @@ export default function EffectsPanel() {
   const row = (i: Item) => (
     <div key={i.key} draggable className="pn-row group cursor-grab pl-6"
       onMouseEnter={(e) => hoverOn(i, e.currentTarget)} onMouseLeave={hoverOff} onDragStartCapture={hoverOff}
-      onDragStart={(e) => startDrag(e, i.kind === "vt" || i.kind === "at"
+      onDragStart={(e) => i.kind === "gen" ? (e.dataTransfer.setData(GEN_MIME, i.id), e.dataTransfer.setData("text/plain", i.label), e.dataTransfer.effectAllowed = "copy") : startDrag(e, i.kind === "vt" || i.kind === "at"
         ? { kind: "transition", transition: i.id, media: i.kind === "vt" ? "video" : "audio" }
         : { kind: "effect", effect: i.id, media: i.kind === "ve" ? "video" : "audio" }, i.label)}
       onDoubleClick={() => apply(i)}
@@ -79,7 +87,7 @@ export default function EffectsPanel() {
         { label: fav.includes(i.key) ? "Remove from favourites" : "Add to favourites", onClick: () => toggleFav(i.key) },
       ]); }}
       title={i.info?.description ?? i.def?.note ?? (i.info?.author ? `by ${i.info.author}` : undefined)}>
-      {i.kind === "vt" ? <Blend className="size-3.5 shrink-0 text-accent-ink" /> : i.kind === "ve" ? <Sparkles className="size-3.5 shrink-0 text-ai" /> : <AudioLines className="size-3.5 shrink-0 text-ok" />}
+      {i.kind === "vt" ? <Blend className="size-3.5 shrink-0 text-accent-ink" /> : i.kind === "ve" ? <Sparkles className="size-3.5 shrink-0 text-ai" /> : i.kind === "gen" ? <AudioWaveform className="size-3.5 shrink-0 text-ok" /> : <AudioLines className="size-3.5 shrink-0 text-ok" />}
       <span className="min-w-0 flex-1 truncate">{i.label}</span>
       {(i.kind === "vt" && i.id === A.defaultVideoTransition()) || (i.kind === "at" && i.id === A.defaultAudioTransition()) ? <span className="text-2xs text-accent-ink">default</span> : null}
       {i.hint && <span className="mono text-[10px] text-dim">{i.hint}</span>}
@@ -129,8 +137,9 @@ export default function EffectsPanel() {
         {section("Favourites", shown.filter((i) => fav.includes(i.key)), false)}
         {section("Video transitions", shown.filter((i) => i.kind === "vt"))}
         {section("Video effects", shown.filter((i) => i.kind === "ve"))}
-        {section("Audio effects", shown.filter((i) => i.kind === "ae"), false)}
+        {section("Audio effects", shown.filter((i) => i.kind === "ae"))}
         {section("Audio transitions", shown.filter((i) => i.kind === "at"), false)}
+        {section("Generate", shown.filter((i) => i.kind === "gen"), false)}
         {!shown.length && <div className="p-4 text-center text-xs text-dim">{all.length ? "Nothing matches" : "Loading the catalogue…"}</div>}
       </div>
       <div className="ed-bar bottom text-2xs text-dim">Drag onto a clip or a cut · double-click applies to the selection</div>

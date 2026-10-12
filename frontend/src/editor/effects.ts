@@ -8,6 +8,7 @@ import { ADJUST_INFO, MOVE_LABELS, type AdjustKey, type MoveKind } from "../lib/
 import { uid } from "./model/ids";
 import type { EffectInstance, Param } from "./model/types";
 import { effectGroups, listEffects, onCatalog, type EngineEffect, type EngineParam } from "./engine";
+import { AUDIO_FX, audioFxType, type AudioParamDef } from "./audiofx/registry";
 
 /** An engine-declared parameter as an editor control (image / matrix parameters aren't editable here). */
 function fromEngineParam(p: EngineParam): ParamDef | null {
@@ -81,6 +82,18 @@ export const EFFECT_DEFS: Record<string, EffectDef> = {
   "audio:gate": { id: "audio:gate", label: "Noise gate", group: "Audio", kind: "audio", note: "Applied in the export (not in the preview)", params: [n("threshold", "Threshold", -50, -90, 0, 0.5, "dB")] },
 };
 
+// audio effects (docs/EDITOR.md §11): the shared registry (audiofx/registry.ts) as "audio:<id>"; the preview plays them
+// in WebAudio or from the desktop's render of the export graph. "audio:eq" above stays for documents that use it.
+const audioParam = (p: AudioParamDef): ParamDef => (p.type === "number"
+  ? { name: p.name, label: p.label, type: "number", default: p.default, min: p.min, max: p.max, step: p.step, unit: p.unit, animatable: true }
+  : p.type === "select" ? { name: p.name, label: p.label, type: "select", default: p.default, options: p.options }
+  : { name: p.name, label: p.label, type: "text", default: p.default });
+for (const d of AUDIO_FX) {
+  const id = audioFxType(d.id);
+  EFFECT_DEFS[id] = { id, label: d.label, group: d.group, kind: "audio", params: d.params.map(audioParam),
+    note: d.preview === "cache" ? `${d.note ? `${d.note}. ` : ""}Previewed from the export's own render (Tatvam Desktop)` : d.note };
+}
+
 /** Effects the editor handles elsewhere: speed (Time) and fades (transitions / Opacity). */
 const HIDDEN = new Set(["speed", "fade"]);
 
@@ -114,7 +127,7 @@ export function videoEffects(): Promise<EffectDef[]> {
   });
   return videoP;
 }
-export const audioEffects = (): EffectDef[] => Object.values(EFFECT_DEFS).filter((d) => d.kind === "audio");
+export const audioEffects = (): EffectDef[] => Object.values(EFFECT_DEFS).filter((d) => d.kind === "audio" && d.id !== "audio:eq");
 
 export const effectDef = (type: string): EffectDef | undefined => EFFECT_DEFS[type];
 

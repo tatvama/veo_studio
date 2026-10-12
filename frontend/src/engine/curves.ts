@@ -55,6 +55,20 @@ export function curveTable(points: unknown): Float32Array {
   return out;
 }
 
+/** A curve whose x axis wraps (hue curves: x = 0 and x = 1 are the same hue) as a 256-entry table: the points are
+ *  repeated one period to each side, so the monotone cubic joins both ends smoothly. Flat 0.5 when invalid. */
+export function periodicTable(points: unknown): Float32Array {
+  const pts = cleanPoints(points);
+  const out = new Float32Array(CURVE_SIZE);
+  if (!pts) { out.fill(0.5); return out; }
+  // one point per hue: x = 1 is x = 0 again (keep the first)
+  const base = pts.filter((p, i) => !(p[0] >= 1 && pts[0][0] <= 0 && i === pts.length - 1));
+  const ext: CurvePoints = [...base.map(([x, y]) => [x - 1, y] as [number, number]), ...base, ...base.map(([x, y]) => [x + 1, y] as [number, number])];
+  const f = monotone(ext);
+  for (let i = 0; i < CURVE_SIZE; i++) out[i] = f(i / CURVE_SIZE);
+  return out;
+}
+
 /** True when fx.curves changes anything. */
 export const hasCurves = (c: Curves | undefined) => !!c && (["master", "r", "g", "b"] as const).some((k) => cleanPoints(c[k]));
 

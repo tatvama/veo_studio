@@ -18,7 +18,11 @@ import { hasAi, loadAi, type AiModule } from "./aiLoader";
 import { Dialogs, openDialog } from "./dialogs";
 import { EpisodePicker } from "./EpisodePicker";
 import { useEditorHost } from "./host";
+import { interopFileItems } from "./interop/menu";
 import { handleKey, SHORTCUTS } from "./keymap";
+import * as M from "./motionActions";
+import { ShortcutEditor } from "./ShortcutEditor";
+import { currentWorkspace, deleteWorkspace, listWorkspaces, rememberWorkspace, resetWorkspace, restoreWorkspace, saveWorkspaceAs, switchWorkspace } from "./workspaces";
 import { seqEnd } from "./model/ops";
 import { playProgram } from "./playback/control";
 import { program } from "./playback/transport";
@@ -27,6 +31,9 @@ import { canRedoNow, canUndoNow, ed, isDirty, redo, setFocus, toggleLinked, togg
 import { useShallow } from "zustand/react/shallow";
 import { Fragment } from "react";
 import { kbd, MenuHost, openMenu, type MenuItem } from "./ui";
+import { DesktopEditorHooks, DesktopStatusSlot } from "../desktop/editorHooks"; // desktop shell: palette, guard, drops, status (additive)
+import { AssistantBanner, AssistantExecutor, AutoEditDialog, openAutoEdit } from "../automation"; // desktop-mcp: AI assistants and auto edit (additive)
+import { startLutMigration } from "./moods/matchLuts";
 
 const Timeline = lazy(() => import("./timeline/Timeline"));
 const ProgramMonitor = lazy(() => import("./panels/ProgramMonitor"));
@@ -39,6 +46,22 @@ const TextPanel = lazy(() => import("./panels/TextPanel"));
 const MarkersPanel = lazy(() => import("./panels/small").then((m) => ({ default: m.MarkersPanel })));
 const HistoryPanel = lazy(() => import("./panels/small").then((m) => ({ default: m.HistoryPanel })));
 const InfoPanel = lazy(() => import("./panels/small").then((m) => ({ default: m.InfoPanel })));
+// wave 3 (editor-motion)
+const GraphEditor = lazy(() => import("./panels/GraphEditor"));
+// wave 3 (editor-looks)
+const MoodsPanel = lazy(() => import("./panels/Moods"));
+const LutBrowser = lazy(() => import("./panels/LutBrowser"));
+const ScopesPanel = lazy(() => import("./panels/Scopes"));
+const TemplatesPanel = lazy(() => import("./panels/Templates"));
+const TranscriptPanel = lazy(() => import("./panels/Transcript"));
+const CommentsPanel = lazy(() => import("./panels/Comments"));
+const VersionsPanel = lazy(() => import("./panels/Versions"));
+const ExportFormatsDialog = lazy(() => import("./panels/ExportFormats").then((m) => ({ default: m.ExportFormatsDialog })));
+// wave 3 (editor-audio)
+const AudioEffectsPanel = lazy(() => import("./panels/AudioEffects"));
+const EssentialSoundPanel = lazy(() => import("./panels/EssentialSound"));
+const LoudnessPanel = lazy(() => import("./panels/LoudnessMeter"));
+const SpectrumPanel = lazy(() => import("./panels/Spectrum"));
 
 const THEME: DockviewTheme = { name: "veo", className: "dockview-theme-veo", gap: 5, dndOverlayMounting: "absolute" };
 const LAYOUT_KEY = "tatvam-editor:layout:v1";
@@ -56,6 +79,18 @@ const PANELS: { id: string; title: string; focus: Focus; C: ComponentType }[] = 
   { id: "history", title: "History", focus: "other", C: HistoryPanel },
   { id: "info", title: "Info", focus: "other", C: InfoPanel },
   { id: "ai", title: "AI", focus: "other", C: AiTab },
+  { id: "graph", title: "Graph Editor", focus: "graph", C: GraphEditor },
+  { id: "moods", title: "Moods", focus: "other", C: MoodsPanel },
+  { id: "luts", title: "LUT Browser", focus: "other", C: LutBrowser },
+  { id: "scopes", title: "Scopes", focus: "other", C: ScopesPanel },
+  { id: "templates", title: "Templates", focus: "other", C: TemplatesPanel },
+  { id: "transcript", title: "Transcript", focus: "other", C: TranscriptPanel },
+  { id: "comments", title: "Comments", focus: "other", C: CommentsPanel },
+  { id: "versions", title: "Versions", focus: "other", C: VersionsPanel },
+  { id: "audiofx", title: "Audio Effects", focus: "other", C: AudioEffectsPanel },
+  { id: "essential", title: "Essential Sound", focus: "other", C: EssentialSoundPanel },
+  { id: "loudness", title: "Loudness", focus: "mixer", C: LoudnessPanel },
+  { id: "spectrum", title: "Spectrum", focus: "mixer", C: SpectrumPanel },
 ];
 
 /** The AI panel from editor/ai (lazily, only when that module exists). */
@@ -80,10 +115,13 @@ function defaultLayout(api: DockviewApi) {
   api.addPanel({ id: "controls", component: "controls", title: P("controls").title, position: { referencePanel: "source", direction: "within" }, inactive: true });
   api.addPanel({ id: "mixer", component: "mixer", title: P("mixer").title, position: { referencePanel: "source", direction: "within" }, inactive: true });
   api.addPanel({ id: "text", component: "text", title: P("text").title, position: { referencePanel: "source", direction: "within" }, inactive: true });
+  for (const id of ["moods", "templates", "luts", "scopes"]) api.addPanel({ id, component: id, title: P(id).title, position: { referencePanel: "source", direction: "within" }, inactive: true });
+  api.addPanel({ id: "graph", component: "graph", title: P("graph").title, position: { referencePanel: "source", direction: "within" }, inactive: true });
+  for (const id of ["audiofx", "essential", "loudness", "spectrum"]) api.addPanel({ id, component: id, title: P(id).title, position: { referencePanel: "source", direction: "within" }, inactive: true });
   api.addPanel({ id: "program", component: "program", title: P("program").title, position: { referencePanel: "source", direction: "right" } });
   api.addPanel({ id: "project", component: "project", title: P("project").title, position: { direction: "below" } });
   api.addPanel({ id: "timeline", component: "timeline", title: P("timeline").title, position: { referencePanel: "project", direction: "right" } });
-  for (const id of ["effects", "markers", "history", "info", ...(hasAi() ? ["ai"] : [])]) {
+  for (const id of ["effects", "markers", "history", "info", ...(hasAi() ? ["ai"] : []), "transcript", "comments", "versions"]) {
     api.addPanel({ id, component: id, title: P(id).title, position: { referencePanel: "project", direction: "within" }, inactive: true });
   }
   requestAnimationFrame(() => {
@@ -103,19 +141,22 @@ export default function EditorApp() {
   const st = useEditor(useShallow((x) => ({ saving: x.saving, savedAt: x.savedAt, saveError: x.saveError, demo: x.demo, path: x.path })));
   const apiRef = useRef<DockviewApi | null>(null);
   const [shortcuts, setShortcuts] = useState(false);
+  const [keysOpen, setKeysOpen] = useState(false);
   const [epOpen, setEpOpen] = useState(false);
   const [epBusy, setEpBusy] = useState(false);
   const bridge = editorBridge();
 
   useEffect(() => { document.title = `${dirty ? "● " : ""}${p.name} — Tatvam Editor`; }, [p.name, dirty]);
   useEffect(() => startAutosave(), []);
+  // shot-match LUTs kept as data: URLs (older desktop builds) move into the edit's LUTs folder after a save
+  useEffect(() => startLutMigration(), []);
   // automation (QA drivers over CDP): opt-in per browser profile
   useEffect(() => {
     let on = false;
     try { on = localStorage.getItem("tatvam-editor:debug") === "1"; } catch { /* blocked */ }
     if (!on) return;
     void Promise.all([import("./store"), import("./model/ops"), import("./session"), import("./dialogs"), import("./model/params"), import("./effects"), import("./engine")]).then(([store, ops, session, dialogs, params, effects, engine]) => {
-      (window as unknown as Record<string, unknown>).__tatvamEditor = { store, ops, actions: A, session, dialogs, params, effects, engine, program, showPanel: (id: string) => window.dispatchEvent(new CustomEvent("ed:panel", { detail: id })) };
+      (window as unknown as Record<string, unknown>).__tatvamEditor = { store, ops, actions: A, motion: M, session, dialogs, params, effects, engine, program, showPanel: (id: string) => window.dispatchEvent(new CustomEvent("ed:panel", { detail: id })) };
     });
   }, []);
   // the playhead starts where the sequence was left
@@ -138,6 +179,7 @@ export default function EditorApp() {
     importMedia: () => void importFiles(),
     exportSeq: () => openDialog({ kind: "export" }),
     shortcuts: () => setShortcuts(true),
+    shortcutEditor: () => setKeysOpen(true),
     laneWidth: () => Math.max(200, (document.querySelector(".tl-body")?.clientWidth ?? 900) - 196),
   };
   const hRef = useRef(handlers);
@@ -168,21 +210,31 @@ export default function EditorApp() {
     return () => window.removeEventListener("ed:desktop-menu", menu);
   }, []);
   useEffect(() => {
-    const show = (e: Event) => apiRef.current?.getPanel((e as CustomEvent<string>).detail)?.api.setActive();
+    const open = () => setKeysOpen(true);
+    window.addEventListener("ed:shortcut-editor", open);
+    return () => window.removeEventListener("ed:shortcut-editor", open);
+  }, []);
+  useEffect(() => {
+    const show = (e: Event) => {
+      const id = (e as CustomEvent<string>).detail, api = apiRef.current;
+      const have = api?.getPanel(id);
+      if (have) { have.api.setActive(); return; }
+      // a panel the saved layout doesn't have yet (added in a later version): open it beside the Source monitor
+      const P = PANELS.find((x) => x.id === id);
+      if (api && P) api.addPanel({ id, component: id, title: P.title, position: api.getPanel("source") ? { referencePanel: "source", direction: "within" } : undefined });
+    };
     window.addEventListener("ed:panel", show);
     return () => window.removeEventListener("ed:panel", show);
   }, []);
 
   const onReady = (e: DockviewReadyEvent) => {
     apiRef.current = e.api;
-    let restored = false;
-    try {
-      const saved = localStorage.getItem(LAYOUT_KEY);
-      if (saved) { e.api.fromJSON(JSON.parse(saved)); restored = e.api.panels.length > 0 && !!e.api.getPanel("timeline") && !!e.api.getPanel("program"); }
-    } catch { restored = false; }
-    if (!restored) defaultLayout(e.api);
+    // the current workspace as it was left (editor-motion: workspaces.ts); the pre-workspace layout counts as Editing
+    let legacy: unknown;
+    try { const saved = localStorage.getItem(LAYOUT_KEY); if (saved) legacy = JSON.parse(saved); } catch { legacy = undefined; }
+    restoreWorkspace(e.api, PANELS, defaultLayout, legacy);
     if (hasAi() && !e.api.getPanel("ai") && e.api.getPanel("project")) e.api.addPanel({ id: "ai", component: "ai", title: "AI", position: { referencePanel: "project", direction: "within" }, inactive: true });
-    e.api.onDidLayoutChange(() => { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(e.api.toJSON())); } catch { /* blocked */ } });
+    e.api.onDidLayoutChange(() => { try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(e.api.toJSON())); } catch { /* blocked */ } rememberWorkspace(e.api); });
     e.api.onDidActivePanelChange((ev) => { const f = PANELS.find((x) => x.id === ev.panel?.id)?.focus; if (f) setFocus(f); });
   };
   const showPanel = (id: string) => {
@@ -205,7 +257,10 @@ export default function EditorApp() {
       { label: "Import studio episode…", disabled: !bridge, onClick: () => setEpOpen(true) },
       { label: "Import LUT…", disabled: !bridge, onClick: () => void importLut() },
       { label: "New sequence…", separator: true, onClick: () => openDialog({ kind: "newSequence" }) },
+      { label: "Auto edit…", disabled: !bridge, onClick: () => openAutoEdit() },
       { label: "Export…", shortcut: kbd("Ctrl+M"), separator: true, onClick: handlers.exportSeq },
+      { label: "Export multiple formats…", onClick: () => window.dispatchEvent(new CustomEvent("ed:export-formats")) },
+      ...interopFileItems((path) => guard(() => nav(`/editor/edit?path=${encodeURIComponent(path)}`))),
       { label: "Rename edit…", separator: true, onClick: () => openDialog({ kind: "prompt", title: "Rename edit", label: "Name", value: p.name, ok: "Rename", onOk: A.renameProject }) },
       { label: "Project settings…", onClick: () => openDialog({ kind: "settings" }) },
       { label: "Close edit", onClick: () => guard(() => nav("/editor")) },
@@ -229,7 +284,12 @@ export default function EditorApp() {
       { label: "Link / unlink", shortcut: kbd("Ctrl+L"), onClick: A.linkSelection },
       { label: "Group", shortcut: kbd("Ctrl+G"), onClick: A.groupSelection },
       { label: "Swap two clips", onClick: A.swapSelection },
-      { label: "Nest…", shortcut: kbd("Ctrl+Shift+N"), onClick: A.nest },
+      { label: "Nest into a compound clip…", shortcut: kbd("Ctrl+Shift+N"), onClick: M.nestNamed },
+      { label: "Un-nest (break apart)", onClick: () => M.unnest() },
+      { label: "Insert frame hold at playhead", separator: true, onClick: () => M.insertFreezeAt() },
+      { label: "Frame hold (whole clip)", onClick: M.holdFrameAt },
+      { label: "Make multicam clip (sync by sound)", separator: true, onClick: () => void M.createMulticam("audio") },
+      { label: "Flatten multicam", onClick: () => M.flattenMulticam() },
       { label: "Insert from Source", shortcut: ",", separator: true, onClick: () => A.sourceEdit("insert") },
       { label: "Overwrite from Source", shortcut: ".", onClick: () => A.sourceEdit("overwrite") },
       { label: "New title", shortcut: kbd("Ctrl+T"), separator: true, onClick: () => A.newTitle() },
@@ -245,6 +305,7 @@ export default function EditorApp() {
       { label: "Ripple trim next edit to playhead", shortcut: "W", onClick: () => A.rippleTrimTo("next") },
       { label: "Apply video transition", shortcut: kbd("Ctrl+D"), separator: true, onClick: () => A.defaultTransitions("video") },
       { label: "Apply audio crossfade", shortcut: kbd("Ctrl+Shift+D"), onClick: () => A.defaultTransitions("audio") },
+      { label: "Magnetic timeline", separator: true, checked: !!s.magnetic, onClick: M.toggleMagnetic },
       { label: "Add video track", separator: true, onClick: () => A.addTrack("video") },
       { label: "Add audio track", onClick: () => A.addTrack("audio") },
       { label: "Zoom in", shortcut: "=", separator: true, onClick: () => A.zoomBy(1.5, program.frame, handlers.laneWidth()) },
@@ -265,10 +326,16 @@ export default function EditorApp() {
     ] },
     { label: "Window", items: () => [
       ...PANELS.filter((x) => x.id !== "ai" || hasAi()).map((x) => ({ label: x.title, checked: !!apiRef.current?.getPanel(x.id), onClick: () => showPanel(x.id) })),
-      { label: "Reset to the Editing layout", separator: true, onClick: () => { if (apiRef.current) defaultLayout(apiRef.current); } },
+      { label: "Workspaces", separator: true, items: [
+        ...listWorkspaces().map((w) => ({ label: w.name, checked: currentWorkspace() === w.id, onClick: () => { if (apiRef.current) switchWorkspace(apiRef.current, w.id, PANELS, defaultLayout); } })),
+        { label: "Save as new workspace…", separator: true, onClick: () => openDialog({ kind: "prompt", title: "Save workspace", label: "Name", value: "My workspace", ok: "Save", onOk: (v) => { if (apiRef.current) { saveWorkspaceAs(apiRef.current, v || "My workspace"); toast.success(`Workspace "${v}" saved`); } } }) },
+        ...listWorkspaces().filter((w) => w.custom).map((w) => ({ label: `Delete "${w.name}"`, danger: true, onClick: () => { if (apiRef.current) deleteWorkspace(apiRef.current, w.id, PANELS, defaultLayout); } })),
+      ] },
+      { label: "Reset this workspace", onClick: () => { if (apiRef.current) resetWorkspace(apiRef.current, PANELS, defaultLayout); } },
     ] },
     { label: "Help", items: () => [
       { label: "Keyboard shortcuts", shortcut: "?", onClick: () => setShortcuts(true) },
+      { label: "Keyboard shortcut editor…", shortcut: kbd("Ctrl+Alt+K"), onClick: () => setKeysOpen(true) },
       { label: "Back to the studio", separator: true, onClick: () => guard(() => nav("/")) },
     ] },
   ];
@@ -294,7 +361,13 @@ export default function EditorApp() {
       </div>
       <StatusStrip />
       <MenuHost />
+      <DesktopEditorHooks panels={PANELS} showPanel={showPanel} isDirty={isDirty} save={save} name={p.name} />
       <Dialogs />
+      <ShortcutEditor open={keysOpen} onClose={() => setKeysOpen(false)} />
+      <Suspense fallback={null}><ExportFormatsDialog /></Suspense>
+      <AssistantExecutor />
+      <AssistantBanner />
+      <AutoEditDialog />
       <EpisodePicker open={epOpen} busy={epBusy} onClose={() => setEpOpen(false)} onPick={async (pid, eid) => {
         setEpBusy(true);
         const ok = await importEpisode(pid, eid);
@@ -335,6 +408,7 @@ function StatusStrip() {
       <span>Linked {linked ? "on" : "off"}</span>
       <span>{selection ? `${selection} selected` : "Nothing selected"}</span>
       <span className="ml-auto mono">{s.clips.length} clips · {s.tracks.length} tracks</span>
+      <DesktopStatusSlot />
     </footer>
   );
 }

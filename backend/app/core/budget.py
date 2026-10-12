@@ -173,6 +173,15 @@ class Estimator:
             return 0.0
         return float(self.prices["isolation_per_minute"].get("elevenlabs", 0.3)) * max(seconds, 0.0) / 60
 
+    def image_engine(self, m: Any, n: int = 1) -> float:
+        """`n` images on a Model Hub image engine (models.AIModel; Google's Nano Banana first in the team's chain)."""
+        from . import model_hub
+        return model_hub.price_for(m, units=max(n, 0))
+
+    def voice_clone(self, provider: str = "elevenlabs") -> float:
+        """An instant voice clone (prices.voice_clone_each; ElevenLabs includes it in the plan, so 0 by default)."""
+        return float((self.prices.get("voice_clone_each") or {}).get(provider, 0.0)) if self._live(provider) else 0.0
+
     @staticmethod
     def needs_lipsync(shot: Shot, project: Project, lang: str) -> bool:
         if not shot_lines(shot, lang):

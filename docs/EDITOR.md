@@ -287,37 +287,305 @@ interface EditorHost {
 //   aiClipActions(host: EditorHost, clipIds: string[]): { id: string; label: string; group: string; run(): void; paid: boolean }[]
 ```
 
-## 9. Status (12 October 2026)
+## 9. Status (13 October 2026)
 
-Phases 1 and 2 are built, plus most of 3, together with the §8 AI tools. All of it runs in Tatvam Desktop with the
+Phases 1–3 are built, together with the §8 AI tools and wave 3 (§10–§13). All of it runs in Tatvam Desktop with the
 real bridge, and GPU exports work.
 
-**Checks:** frontend `test:editor` 49 tests and `test:engine` 28 tests, desktop 81 tests, backend full suite with
-12 tests for the AI tools.
+**Checks:** frontend `test:editor` and `test:engine`, desktop `npm test`, backend full suite (see the PR for the
+counts). The GPU self-test passes 472 of 472.
 
-**Measured in Electron:**
+**Measured in Electron (phases 1–3):**
 - Import of real files (thumbnails, filmstrips, peaks) in about 1 s.
-- Save and reopen keeps every clip, marker and piece of media.
+- Save and reopen keeps every clip, marker and piece of media, and every optional field (a round-trip test covers
+  all of them, and unknown future fields survive too).
 - Smooth with 254 clips (a drag step averages 26 ms, a scroll step 17 ms).
 - A V2 wipe between picture-in-picture clips, V1 motion keyframes, and pixelate inside a feathered ellipse mask.
-- ½-resolution playback with no dropped frames.
+- ½-resolution playback with no dropped frames, and speed ramps in real time (62 frames in 2.5 s, none dropped).
 - A custom shader imported, applied and exported.
-- GPU export of edits on NVENC with the full audio mix.
+- GPU export of edits on NVENC with the full audio mix; 10-bit frames for HEVC Main10 and ProRes.
 
-**Free analysis tools on test media:** silence detection (exact gaps), scene detection (the cut at 2 s), beats
-(120.1 BPM), loudness (−21.8 LUFS).
+**Free tools on this PC (GTX 1660 Ti):**
+- Silence, scene, beat (120.1 BPM) and loudness analysis. Loudness can measure one clip's range.
+- Audio sync to the sample (confidence 0.99).
+- RIFE slow motion: 1080p 24→96 fps at 15 fps, ×4 slow motion of 2 s in 19 s.
+- Whisper captions on 60 s of speech:
+  - large-v3-turbo on CUDA 12.4: 8.5 s; on the CPU: 93 s (about 11× faster);
+  - base: 3 s on CUDA, 9 s on the CPU.
+- Export loudness within 0.1 LU of each preset (YouTube −14, EBU −23, Apple −16, OTT −24); ducking 4.2 dB under
+  speech.
 
-**AI tools (mock mode):** captions, voice-over, the assistant applied in one undo step, and remove-silences with
-ripple.
+**AI tools (mock mode):** captions, voice-over, the assistant in one undo step, remove silences with ripple,
+highlights into a 9:16 Short, B-roll ideas, thumbnails, mood per scene, backups with restore, frame comments.
 
 **Not done yet:**
-- Mask keyframes.
-- Mixing the sound of nested sequences.
-- The noise gate in preview.
-- Export progress inside the editor (it shows in the desktop's render queue).
+- Mask keyframes and tracked masks (wave 4).
+- Export progress inside the editor (it shows in the desktop's render queue and the status bar).
 - Sarvam speech-to-text (there's no provider for it).
-- Karaoke word highlight.
-- Sidechain ducking for AI music.
-- Free Real-ESRGAN upscaling for edit media (edit media upscales in the cloud).
-- Multicam, speed ramps, track groups and OTIO export (phase 4).
 - Live runs of the paid AI providers.
+- Real Premiere / Audition checks of the XML details listed in §12.
+- Packaged-installer checks of the assistants' stdio relay.
+
+## 10. Wave 3: more looks, transitions and workflow (started 12 October 2026)
+
+Asked for: more transitions, filters, colour profiles, moods, a smoother workflow and more features. Each area below
+has one owner, so there are five builders working in parallel. The shared interfaces come after the table, and each
+owner keeps its edits to other people's files small and additive.
+
+| Owner | What |
+| --- | --- |
+| **engine-pack** (`frontend/src/engine/**`) | **Transitions** (+~110): a procedural luma-matte library (60+ patterns: clock, iris shapes, brush, ink, smoke, burn, blinds, mosaic …); light leaks and film burns; whip pan, zoom-through, spin and stretch with motion blur; glitch and retro (VHS, RGB split, datamosh, static, scan lines); 3D (flip, fold, page roll, cube variants, doors). **Effects** (+~40): film (grain types, halation, gate weave, scratches and dust, flicker); lens (anamorphic flare, chromatic aberration, distortion, bokeh, prism); retro and stylize (VHS, 8 mm, cartoon, sketch, watercolour, posterize, duotone); clean-up (temporal denoise, deflicker, skin smoothing). **Colour:** camera log inputs (S-Log3, LogC3/LogC4, V-Log, C-Log3, D-Log, BMD Film Gen 5, from the published curves); outputs (Rec.709, sRGB, HLG, PQ); hue-vs-sat, hue-vs-hue and luma-vs-sat curves. **Analysis:** auto white balance, shot match and grade-from-a-reference (Reinhard transfer in Lab, which outputs effect params). **APIs:** GPU scopes, clip-frame thumbnails for the LUT and Mood browsers, 10-bit read-back (`readYuv420p10`), and MediaPipe (Apache-2.0) background blur/replace effects and a face tracker for auto-reframe |
+| **editor-motion** (`editor/model/**`, `editor/timeline/**`, `editor/panels/EffectControls*`, a new `editor/panels/GraphEditor*`, `editor/keymap.ts`; owns `types.ts`, `ops.ts`, `store.ts`) | Speed ramps (a `timeRemap` curve), a keyframe graph editor (bezier handles), motion paths in the program monitor, a magnetic timeline mode, snapping to beats, freeze frame, compound clips, multicam (angles synced by audio), a keyboard shortcut editor (Premiere / Resolve / Final Cut presets), saved workspaces |
+| **editor-looks** (new `editor/panels/{Moods,LutBrowser,Scopes,Templates,Transcript,Comments,Versions}*`, `editor/moods/**`, `editor/templates/**`, `editor/render/title.ts`) | Moods (one click, an intensity slider, a mood per scene from the studio's scene emotions); a LUT browser with live thumbnails; a scopes panel; colour profile UI with auto WB, shot match and reference grade; animated title templates (~100), karaoke captions, lower thirds, stickers, shapes, an Indic font picker; a templates library (intros, outros, subscribe, social); multi-format export (16:9, 9:16 and 1:1 in one go, with face-tracked auto-reframe); edit by transcript; timeline review comments; a version history UI |
+| **desktop-tools** (`desktop/**`) | Tool installs (RIFE, whisper.cpp CPU/CUDA plus models), RIFE slow motion, local Whisper transcription with word timings, audio EQ / compressor / limiter / noise removal / sidechain ducking / loudness presets in the export mix, multicam sync analysis, automatic proxies, a batch multi-format export queue, 10-bit GPU frames, the version-history and backup bridge |
+| **backend-ai2** (`backend/**`, `frontend/src/editor/ai/**`) | Edit backups and versions on the server, timeline review comments on edits, and new AI tools: B-roll suggestions from the transcript, auto highlights into Shorts, a thumbnail generator, music to length and mood, voice cloning with a consent record, mood suggestions per scene. All of them show in the AI panel |
+
+**Shared interfaces:**
+- **engine → editor:**
+  - `computeScopes(kind, frame?)`
+  - `analyzeColor(url, t)` returns `{wb: {temperature, tint}, stats}`
+  - `matchColor(source, reference)` returns adjust/wheels params
+  - `renderThumbnail(id, width, kind, {source?: {url, t}})`
+  - `trackFaces(url, from, to)` returns `[{t, x, y, w, h}]`
+  - effect ids `input_profile`, `output_transform`, `bg_blur`, `bg_replace`
+- **desktop → editor:**
+  - `tools.status()` / `tools.install(id)` for `"rife"`, `"whisper"`, `"whisper-cuda"`, `"whisper-model:<name>"`
+  - `editor.transcribeLocal(path, mediaId, {language, model})` returns `{language, segments: [{start, end, text, words}]}`
+  - `editor.interpolate(path, mediaId, {factor | fps, in?, out?})` returns a MediaItem
+  - `editor.analyze(path, mediaId, "sync", {against})` returns `{offset}`
+  - `editor.versions(path)` / `editor.restoreVersion(path, id)`
+  - `editor.exportBatch(path, sequenceId, [{preset, aspect, reframe}])`
+- **server:**
+  - `POST/GET /api/edits/{pid}/backups` and `/backups/{bid}/restore`
+  - comments with `target_type = "edit"`, carrying `sequence_id` and a frame
+  - new AI tools `broll_suggest`, `highlights`, `thumbnail`, `voice_clone`, `mood_suggest`
+
+**Result (13 October 2026):**
+- **engine-pack:** 120 `tv:` transitions (304 in all), 40 effects (107 in all), the camera log profiles, HDR and 10-bit
+  read-back, GPU scopes, colour analysis and match, MediaPipe background blur and replace and face tracking, time
+  maps, native eases and title sub-rect uploads (docs/ENGINE.md §7).
+- **editor-motion:** speed ramps (one clip with a time map) and freeze frames, the graph editor, motion overlay and
+  paths, magnetic mode, snapping to beats and transients, compound clips with tabs, multicam (2–9 angles), the
+  shortcut editor (Premiere / Resolve / Final Cut), and 5 workspaces.
+- **editor-looks:** 18 moods, the LUT browser with user LUT folders, scopes and colour tools, 106 title templates,
+  42 stickers, 7 caption styles, karaoke captions, 11 template sequences, multi-format export with reframe, edit by
+  transcript, comments, and versions (local plus cloud).
+- **desktop-tools:** tool installs (RIFE, whisper.cpp CPU and CUDA 12.4, the models), slow motion, local
+  transcription, the full audio export graph (§11), sync, proxies, batch and 10-bit export, auto backups, sidecars,
+  and `writeLut`.
+- **backend-ai2:** edit backups, frame comments, and the AI tools broll_suggest, highlights, thumbnail, music by
+  mood/BPM, voice_clone (consent required, producer role) and mood_suggest.
+
+## 11. Audio effects (wave 3, added 12 October 2026)
+
+The audio effects are `EffectInstance`s on audio clips (or on a track's or the master's effect list). Every parameter
+is a keyframeable `Param`. One list of ids and parameters is shared by:
+- **Preview** (`frontend/src/editor/audiofx/**`, owned by **editor-audio**): WebAudio in realtime. Effects that
+  WebAudio can't do the same way play from an **audio render cache**: the desktop renders that clip's sound with the
+  export's own FFmpeg graph, so preview and export always match.
+- **Export** (`desktop/src/main/editor-audio.ts`, owned by **desktop-tools**): FFmpeg filters.
+
+| Group | Effect ids (FFmpeg in export) |
+| --- | --- |
+| Dynamics | `gain` (volume), `compressor` (acompressor), `multiband` (3 bands, mcompand), `limiter` (alimiter), `gate` (agate), `expander` (compand), `deesser` (deesser), `auto_level` (dynaudnorm), `speech_level` (speechnorm) |
+| EQ & filters | `eq3` (bass/equalizer/treble), `eq_graphic` (10-band equalizer chain), `eq_param` (up to 6 biquad bands), `highpass`, `lowpass`, `bandpass`, `notch`, `dehum` (50/60 Hz + harmonics), `tilt` (tiltshelf), `virtual_bass` (virtualbass), `exciter` (aexciter), `crystalizer` |
+| Clean-up | `denoise` (afftdn), `denoise_wavelet` (afwtdn), `denoise_nl` (anlmdn), `declick` (adeclick), `declip` (adeclip), `dialogue_enhance` (dialoguenhance), `voice_enhance` (highpass + presence EQ + deesser), `trim_silence` (silenceremove at the edges) |
+| Time & pitch | `pitch_shift` (rubberband pitch, formants kept), `time_stretch` (rubberband tempo), voice presets `chipmunk`, `deep_voice`, `robot` (afreqshift + comb), `alien` |
+| Space | `reverb` (afir with built-in impulse responses: room, studio, hall, plate, church, cathedral, stage, bathroom, stairwell), `echo` (aecho), `stereo_widen` (stereowiden), `haas`, `mono`, `auto_pan` (apulsator) |
+| Modulation & creative | `chorus`, `flanger`, `phaser` (aphaser), `tremolo`, `vibrato`, `distortion` (asoftclip types), `bitcrusher` (acrusher), `lofi`, `telephone`, `radio`, `megaphone`, `walkie_talkie`, `underwater`, `next_room`, `vinyl` (crackle + wow) |
+| Utility | `channel_swap`, `left_only`, `right_only` (channelmap/pan), `invert_polarity`, `mono_to_stereo`, `delay_sync` (compensationdelay, ms) |
+
+**Impulse responses** are generated by a shared, deterministic recipe: early reflections, then exponentially
+decaying filtered noise, with these parameters per preset: size, decay, damping, pre-delay and stereo width. Both
+sides use the same WAV files. The desktop writes them to `userData/irs/<preset>.wav` and serves them at
+`/__media/irs/…`; the preview's ConvolverNode loads them.
+
+**Meters and analysis** (editor-audio):
+- In the mixer and on the master: a LUFS meter (momentary, short-term, integrated), true peak and a phase
+  correlation meter.
+- A spectrum analyser panel.
+- "Match loudness": every selected clip is set to the same LUFS, measured with `editor.analyze(…, "loudness")`.
+
+**Bridge (desktop-tools):** `editor.renderAudioPreview(path, sequenceId, clipId)` renders that clip with its trims,
+speed and effects through the export graph into `Cache\audio\<hash>.wav` and returns `{url, duration}`. It is cached
+by a hash of the source, the trims and the effect parameters.
+
+**Result (13 October 2026):**
+- **Catalogue:** 75 effect ids. 49 play live in WebAudio; 26 play from the desktop's render of that clip. There are
+  also 3 generator clip types, 20 audio transitions and 11 chain presets.
+- **Preview vs export:** registry and export agree on every id, parameter name and default (checked by a script),
+  and the impulse-response recipe is byte-identical on both sides. Of 48 measured cases on FFmpeg 7.1, 44 null below
+  −56 dB (most below −75 dB), and vinyl matches in level (its crackle is random). The four compressor-type effects
+  are within 0.6 dB RMS, because the preview uses Chrome's DynamicsCompressor.
+- **FFmpeg 7.1 quirks** worked around in the export:
+  - `bass`/`treble` aren't the RBJ shelf; we use `lowshelf`/`highshelf`.
+  - `tiltshelf` gain is inverted.
+  - `chorus` ignores its base delay; we use `flanger`.
+  - `vibrato` emits NaN at the start, so a guard follows it.
+  - `haas` is a comb; we use `adelay` on one channel.
+  - `acrusher` only downsamples on the mix side, so it runs in two passes.
+- **Meters:** a −23 dBFS tone reads −23.00 LUFS (BS.1770-4, EBU 3341 levels in the tests).
+
+### 11.1 Audition and Premiere parity (added 12 October 2026)
+
+Checked against Adobe's public effect lists for Audition and Premiere Pro. We write everything ourselves; no Adobe
+code, presets, impulse responses or LUTs are copied or bundled. These are additions to the table above:
+
+| Group | Effect ids (FFmpeg in export) |
+| --- | --- |
+| Dynamics | `tube_compressor` (acompressor + asoftclip tanh), `loudness_maximizer` (gain + alimiter), `mastering` (eq_param + exciter + stereo_widen + limiter, one panel), `dc_offset` (highpass 5 Hz / dcshift) |
+| Clean-up | `noise_print` (afftdn: learn the noise from a marked range, `sample_noise`, then reduce), `hiss_reduction` (afftdn, high bands only), `dereverb` (afftdn + gate on the tail; marked "basic"), `center_extract` (keep or remove the centre: vocals out for karaoke, or dialogue only; pan/stereotools) |
+| Time & pitch | `pitch_bend` (keyframed rubberband pitch through sendcmd) |
+| Space | `doppler` (keyframed pitch + pan + level from a path), `surround_reverb` → the stereo `reverb` with width |
+| Creative | `guitar_amp` (EQ + asoftclip + cabinet IR through afir), `invert` (= `invert_polarity`), `silence` |
+| Generate (new clip types) | `tone` (sine, square, sawtooth, sweeps), `noise` (white, pink, brown, blue, violet, velvet: anoisesrc), `dtmf` |
+
+**Audio transitions** (on an audio cut, like video transitions): `constant_power` (acrossfade qsin, the default),
+`constant_gain` (tri) and `exponential` (exp), plus the other acrossfade curves by name.
+
+**Essential Sound style panel** (editor-audio): tag a clip as **Dialogue, Music, SFX or Ambience** and get one-click,
+role-based controls:
+- **Dialogue:** loudness to target; repair (noise, rumble, hum, de-ess, reverb); clarity (dynamics, EQ preset, voice
+  enhance); creative reverb.
+- **Music:** loudness; auto-duck under dialogue; **remix to length** (cut on the beats from `editor.analyze(…, "beats")`
+  so the music ends with the sequence).
+- **SFX:** loudness and reverb.
+- **Ambience:** loudness, stereo width and duck.
+
+Every control writes ordinary effect instances, so nothing is hidden.
+
+**Not doing:**
+- Automatic pitch correction (auto-tune).
+- Spectral (frequency) editing with a healing brush. This one is a later phase.
+- Hosting third-party VST3 plug-ins. That needs a native host; it's a later phase, and only for the user's own
+  plug-ins.
+
+## 12. Interchange with Premiere Pro and Audition (added 12 October 2026)
+
+Owner: **editor-interop**. Pure converters live in `frontend/src/editor/interop/**`; disk access and launching the
+apps live in `desktop/src/main/editor-interop.ts`. It works without Adobe installed: the exchange files are open
+formats.
+
+| Format | Export | Import | Opens in |
+| --- | --- | --- | --- |
+| **FCP 7 XML** (`xmeml` v4) | Sequence → tracks, clips (in/out, speed, enabled), transitions (cross dissolve, dip), markers, audio levels and pan keyframes, nested sequences | Premiere's File → Export → Final Cut Pro XML: the same features; unknown effects become markers with their name | Premiere Pro (File → Import), Audition (open the XML as a multitrack session), DaVinci Resolve, Final Cut Pro 7 |
+| **EDL** (CMX 3600) | V1 + A1–A4, dissolves, clip names in comments | Yes | Everything |
+| **OpenTimelineIO** (`.otio` JSON) | Full timeline with markers and metadata | Yes | Resolve, OTIO tools |
+| **Audio stems + AAF-free handoff** | "Send to Audition": each audio track rendered to a WAV (with or without effects) + an FCP XML that places them | — | Audition |
+| **Markers CSV** | Premiere's marker CSV layout | Yes | Premiere and YouTube chapters |
+
+Media paths in exported files are the local absolute paths (`file://localhost/D:/…`), so the other app finds them.
+Clips that only exist on the server are made local first, as the desktop already does for exports.
+
+**Open in Premiere / Audition:** the desktop looks for the apps (registry App Paths and
+`Program Files\Adobe\Adobe Premiere Pro *\Adobe Premiere Pro.exe`, `…\Adobe Audition *\Adobe Audition.exe`). When
+it finds one, the button writes the XML and opens it in that app. Otherwise it saves the file and opens the
+folder.
+
+**User LUTs and looks:** the LUT browser (editor-looks) can add any folder of `.cube` / `.3dl` files the user
+chooses. We never scan or ship other apps' installed LUTs.
+
+**Result (13 October 2026):**
+- **Export and import:**
+  - FCP 7 XML, EDL, OTIO and markers CSV all export and import, and so do YouTube chapters.
+  - Re-importing XML, EDL and OTIO in Electron gave identical clip lists. EDL keeps V1 and the audio only.
+  - Anything XML can't carry is kept as a "Tatvam: …" marker with its data and restored on import.
+  - Network (UNC) paths in imported files are never opened.
+- **Still to check in real Premiere / Audition:**
+  - keyframe `<when>` timing;
+  - marker colours;
+  - the Dip to Color parameter;
+  - the audio cross-fade ids;
+  - Time Remap on audio;
+  - the Text/Color generators;
+  - how Audition opens the stems XML.
+
+## 13. AI assistants and auto edit (added 12 October 2026)
+
+Owner: **desktop-mcp**. Main-process code is in `desktop/src/main/mcp/**` and `desktop/src/main/autowatch.ts`.
+Renderer code (planner, executor, UI) is in `frontend/src/automation/**`. With this, Claude Desktop, Claude Code,
+Codex or any other MCP app can drive the **local** editor. The studio's own MCP server (docs/MCP.md) stays as it is,
+for the server side.
+
+### 13.1 Local MCP server
+- **Transport.** Streamable HTTP on `127.0.0.1:<port>/mcp`. The default port is 18110, set in Settings or with
+  `TATVAM_MCP_PORT`. It listens on loopback only.
+  - A stdio relay serves apps that can only start a command: `"Tatvam Studio.exe" --mcp-stdio`. It starts the app if
+    it isn't running, then relays to the HTTP server, and never opens a window of its own.
+- **Off by default.** Turn it on in Settings → AI assistants ("Allow AI assistants to control Tatvam").
+- **Tokens.** Each assistant has its own token: a name, scopes, created and last-used dates, and Revoke. Tokens are
+  kept with `safeStorage`. Requests carry `Authorization: Bearer tvd_…`.
+  - The Host header must be the loopback address and port.
+  - A request with a browser `Origin` header is refused, which blocks web pages and DNS rebinding.
+  - CORS is never answered.
+- **Scopes:**
+  - `read`: look at edits, media, timelines and frames.
+  - `edit`: change edits.
+  - `export`: render files.
+  - `spend`: approve paid AI work; budgets still apply. Without it, paid tools only **propose**, and the user
+    approves in the app.
+- **Folders.** An assistant can use the library root and the folders listed in Settings → AI assistants → Folders.
+  Any other folder gets an in-app prompt ("Claude Desktop wants to use D:\Shoots\Day1"): Allow once, Always or Deny.
+  Exports go only to the library's export folders. Only media and interchange file types are read.
+- **Visible and undoable.** Every change runs in the open editor window as an ordinary command labelled
+  "Assistant: <tool>", so it can be seen and Ctrl+Z works. A banner shows "<client name> is editing — Pause / Stop".
+  Pause makes further tool calls wait; Stop ends the session. Every call goes into a log (Settings → AI assistants →
+  Activity).
+
+### 13.2 Tools (one JSON schema each, short descriptions, results summarised for a model)
+| Group | Tools |
+| --- | --- |
+| Project | `status`, `list_edits`, `open_edit`, `create_edit` (name, format preset, optional `from_folder`), `save_edit`, `list_formats` |
+| Media | `import_media` (paths or a folder, recursive, type filter, series order), `list_media`, `analyze_media` (scenes, silence, beats, loudness, transcript through local Whisper, black, freeze and blur detection) |
+| Timeline | `get_timeline` (tracks and clips in seconds and timecode, concise), `add_clip`, `move_clip`, `trim_clip`, `split_at`, `delete_clips` (ripple optional), `set_speed`, `add_transition`, `add_effect` / `set_effect_param` (video and audio, including keyframes), `apply_mood`, `add_title`, `add_captions`, `add_marker`, `set_audio` (gain, pan, role, ducking), `undo`, `redo` |
+| See it | `get_frame` (the program monitor at time t as a PNG image, at most 1280 px), `get_waveform_summary` |
+| Auto edit | `auto_edit` (see 13.3; `dry_run` returns the plan without applying it), `list_auto_edit_styles` |
+| Export | `list_presets`, `export` (preset, range, name), `render_status`, `cancel_render` |
+| AI tools | The editor's existing AI tools (docs/EDITOR.md §8 and §10) through the same estimate → approve → job path. With `spend`, the assistant can approve within budgets |
+
+### 13.3 Auto edit (`frontend/src/automation/autoedit/**`, a pure planner plus an executor)
+- **Input:** a folder or media items.
+- **Order:** by series name (the default; natural sort, follows docs/DESKTOP.md §3.1), by date taken, by timecode,
+  or by content (transcript).
+- **Analysis:** silences, scenes, beats, loudness, transcript, and bad takes (black, frozen, blurred, too short, or
+  clipped sound).
+- **Styles:**
+  - **Talking head / vlog:** cut silences and bad takes, jump-cut punch-ins, captions, voice clean-up and loudness.
+  - **Montage / music video:** cuts and transitions on the beats of a chosen or generated music track, speed
+    ramps, and a mood.
+  - **Documentary:** scene order, J/L cuts, ambience bed, lower thirds.
+  - **Highlights / Short:** 9:16, the best moments by speech, loudness and motion, a hook title, captions.
+  - **Slideshow:** stills with Ken Burns to music.
+- **Options:** target length, format, music (a file, the library, or AI music through approval), caption language,
+  mood or look, transition style, titles.
+- **Output:** a new sequence "Auto edit · <folder> · <style>" as ONE undoable command, plus a summary (clips used,
+  silence removed, length).
+- **Where it appears:** the same planner backs the `auto_edit` tool, the **Auto edit** button (Start window "New
+  edit from folder", the editor's File menu and the Project panel), and watch folders.
+
+### 13.4 Watch folders (`desktop/src/main/autowatch.ts`)
+- **Settings:** each watch folder has a style, a target edit and a mode: "append to the edit" or "rebuild the auto
+  edit".
+- **Trigger:** a new file is used once its size has stayed the same for 5 s.
+- **Result:** a notification ("3 new clips added to Lighthouse auto edit"). Nothing renders or spends unless the
+  user has set that up.
+
+### 13.5 Connecting (Settings → AI assistants shows these, ready to copy, with the token filled in)
+- **Claude Code:** `claude mcp add --transport http tatvam-desktop http://127.0.0.1:18110/mcp --header "Authorization: Bearer tvd_…"`
+- **Claude Desktop** (`claude_desktop_config.json`):
+  `{"mcpServers": {"tatvam-desktop": {"command": "<app exe>", "args": ["--mcp-stdio"], "env": {"TATVAM_MCP_TOKEN": "tvd_…"}}}}`
+- **Codex** (`~/.codex/config.toml`):
+  `[mcp_servers.tatvam-desktop]`, `command = "<app exe>"`, `args = ["--mcp-stdio"]`, `env = { TATVAM_MCP_TOKEN = "tvd_…" }`
+- **Other apps:** the HTTP address plus a bearer token.
+
+**Result (13 October 2026):**
+- **Tools:** 40 tools, each limited by its scope.
+- **Live test:** the end-to-end test is `desktop/test/mcp-e2e.test.ts`; run it with `TATVAM_E2E_MCP=1`.
+  - Folder prompt, then auto edit: 5 clips in, a black take and a 0.7 s take dropped, 5.2 s of silence removed,
+    25.8 s out.
+  - get_frame, a transition, an effect and an undo.
+  - A draft export, checked with ffprobe.
+- **Relay:** works through `ELECTRON_RUN_AS_NODE` with `dist/mcp-relay.cjs`, because Electron's main process can't read
+  stdin on Windows. The packaged build must keep the runAsNode fuse on.
+- **Watch folders:** added a new clip 7.7 s after it was copied.
+- **SDK:** `@modelcontextprotocol/sdk` 1.30.1 and `zod` 4.6.5, bundled.

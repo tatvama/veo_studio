@@ -23,6 +23,8 @@ export interface ProbeInfo {
   channels: number;
   sampleRate: number;
   rotation: number;
+  /** additive (probeFile): the video stream's codec, pixel format, bit depth and colour tags */
+  codec?: string; pixFmt?: string; bits?: number; matrix?: string | null; range?: "tv" | "pc" | null;
 }
 
 const CHANNEL_WORDS: Record<string, number> = { mono: 1, stereo: 2, "2.1": 3, "3.0": 3, quad: 4, "4.0": 4, "5.0": 5, "5.1": 6, "6.1": 7, "7.1": 8 };
@@ -69,9 +71,42 @@ export function probeFile(ff: string, file: string): Promise<ProbeInfo> {
         reject(new Error(`${path.basename(file)} isn't a media file FFmpeg can read${/No such file/.test(s) ? " (not found)" : ""}`));
         return;
       }
-      resolve(parseProbe(s, file));
+      const info = parseProbe(s, file);
+      if (info.hasVideo) {
+        const f = parseVideoFormat(s);
+        Object.assign(info, { codec: f.codec, pixFmt: f.pixFmt, bits: f.bits, matrix: f.matrix, range: f.range });
+      }
+      resolve(info);
     });
   });
+}
+
+/** Colour tags of a video stream from `ffmpeg -i`: "yuv420p10le(tv, bt709, progressive)" → codec, pixel format, bits, matrix, range. */
+export function parseVideoFormat(stderr: string): { codec: string; pixFmt: string; bits: number; matrix: string | null; range: "tv" | "pc" | null; profile: string } {
+  const line = stderr.split(/\r?\n/).find((l) => /Stream #.*Video:/.test(l) && !/attached pic/.test(l)) ?? "";
+  const m = /Video:\s*([a-z0-9_]+)(?:\s*\(([^)]*)\))?/i.exec(line);
+  const codec = m?.[1]?.toLowerCase() ?? "";
+  const profile = m?.[2] ?? "";
+  const pf = /,\s*([a-z0-9_]+)(?:\(([^)]*)\))?,\s*\d{1,5}x\d{1,5}/i.exec(line);
+  const pixFmt = pf?.[1]?.toLowerCase() ?? "";
+  const tags = (pf?.[2] ?? "").split(/,\s*/).map((s) => s.trim().toLowerCase());
+  const range = tags.includes("tv") ? "tv" : tags.includes("pc") ? "pc" : pixFmt.startsWith("yuvj") ? "pc" : null;
+  const matrix = tags.find((t) => /^(bt709|bt470bg|smpte170m|bt2020nc|bt2020c|bt601)/.test(t))?.split("/")[0] ?? null;
+  const bitsM = /p(9|10|12|14|16)(le|be)?$/.exec(pixFmt) ?? /^(?:gray|yuv|yuva)\d*p?(10|12)/.exec(pixFmt);
+  const bits = bitsM ? Number(bitsM[1]) : pixFmt ? 8 : 0;
+  return { codec, pixFmt, bits, matrix, range, profile };
+}
+
+/**
+ * Whether a clip gets an automatic proxy (project setting proxy "auto"): above 1080p on its short side, or a format
+ * the editor's decoder struggles with (HEVC 10-bit and up, ProRes, DNxHD/HR, CineForm).
+ */
+export function needsProxy(info: Pick<ProbeInfo, "kind" | "width" | "height" | "codec" | "bits">): boolean {
+  if (info.kind !== "video") return false;
+  if (Math.min(info.width || 0, info.height || 0) > 1080) return true;
+  const c = (info.codec ?? "").toLowerCase();
+  if (/^(prores|dnxhd|dnxhr|cfhd)/.test(c)) return true;
+  return c === "hevc" && (info.bits ?? 8) >= 10;
 }
 
 // ── cache files ──

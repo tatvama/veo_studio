@@ -4,7 +4,7 @@
  * the in-memory demo.
  */
 import "./editor.css";
-import { ArrowLeft, Clapperboard, Download, Film, FolderOpen, MonitorPlay, Plus, Sparkles } from "lucide-react";
+import { ArrowLeft, Clapperboard, Download, FileInput, Film, FolderOpen, MonitorPlay, Plus, Sparkles } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
@@ -65,6 +65,17 @@ function Home() {
     setBusy("open");
     try { const r = await b.open(); if (r) nav(editUrl(r.path)); } catch (e) { toast.error(msg(e)); } finally { setBusy(null); }
   };
+  // a Premiere / Resolve / OTIO timeline as a new edit (editor-interop, docs/EDITOR.md §12)
+  const importTimeline = async () => {
+    setBusy("xml");
+    try {
+      const r = await b.interop?.importFile();
+      if (!r) return;
+      if (r.kind === "markers") { toast.message("A markers CSV goes into an edit: open one, then File → Import markers CSV"); return; }
+      for (const w of r.warnings.slice(0, 4)) toast.warning(w);
+      nav(editUrl(r.path));
+    } catch (e) { toast.error(`Import failed: ${msg(e)}`); } finally { setBusy(null); }
+  };
   const importEp = async (pid: number, eid: number, label: string) => {
     setBusy("ep");
     try {
@@ -101,6 +112,7 @@ function Home() {
               <Button loading={busy === "open"} onClick={() => void open()} icon={<FolderOpen className="size-4" />}>Open an edit…</Button>
               <Button loading={busy === "ep"} onClick={() => setEp(true)} icon={<Clapperboard className="size-4" />}>Import a studio episode…</Button>
               <p className="text-2xs text-dim">An episode's cut becomes a new edit: shots, trims, transitions and effects, with its media synced to this PC.</p>
+              {b.interop && <Button loading={busy === "xml"} onClick={() => void importTimeline()} icon={<FileInput className="size-4" />}>Import Premiere XML, EDL or OTIO…</Button>}
             </div>
           </Panel>
         </div>

@@ -1,6 +1,7 @@
 /**
  * Licences of the effect ports (each port's header names its source; these are the full notices the MIT licence asks
- * to keep with them). Shown by the lab page and available to an About box.
+ * to keep with them), and of MediaPipe (Apache-2.0: the background effects and the face tracker; its models' sources
+ * and checksums are in frontend/public/models/mediapipe/NOTICE.md). Shown by the lab page and available to an About box.
  */
 export const LICENSES: { name: string; version: string; url: string; text: string }[] = [
   {
@@ -48,5 +49,22 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.`,
+  },
+  {
+    name: "MediaPipe Tasks Vision (@mediapipe/tasks-vision) and its selfie segmenter / BlazeFace models", version: "1.1.0",
+    url: "https://github.com/google-ai-edge/mediapipe",
+    text: `Copyright The MediaPipe Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.`,
   },
 ];

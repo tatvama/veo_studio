@@ -9,8 +9,8 @@
  * 1.3 frames a second from 1080p to 4K (a 6 s shot in about 2 minutes); x4plus about 20 s a frame.
  */
 import { spawn } from "node:child_process";
-import { createHash, randomUUID } from "node:crypto";
-import { createWriteStream, existsSync, openAsBlob, promises as fsp, readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, openAsBlob, promises as fsp, readFileSync } from "node:fs";
 import path from "node:path";
 import type { LocalUpscaleEstimate, UpscaleJob, UpscaleModel, UpscaleState, UpscaleTool } from "../shared/types.ts";
 import { writeFileAtomic } from "./config.ts";
@@ -19,6 +19,7 @@ import { killTree, probeMedia, runFfmpeg, type FfmpegInfo } from "./ffmpeg.ts";
 import type { Library } from "./library.ts";
 import { safePart } from "./naming.ts";
 import { finalEncoder, type PresetDef } from "./render-args.ts";
+import type { ToolManager } from "./tools.ts";
 import { UpstreamError, type Upstream } from "./upstream.ts";
 
 /** The pinned engine build (verified before use). */
@@ -88,11 +89,13 @@ export function esrganArgs(o: { inDir: string; outDir: string; model: UpscaleMod
  */
 export const FRAMES_TO_VIDEO = "in_range=pc:out_range=tv:in_color_matrix=bt601:out_color_matrix=bt709";
 export const BT709_TAGS = ["-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv"];
+/** FFmpeg 7 takes the frames' own colour properties over the -color_* options: tag the frames too (else primaries / transfer read "unknown"). */
+export const BT709_FRAMES = "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv";
 
 /** Frames back into a clip at the exact target size with the original sound (if any), on the given encoder. */
 export function encodeArgs(o: { framesDir: string; fps: number; source: string; out: string; w: number; h: number; enc: string[] }): string[] {
   return ["-framerate", String(o.fps), "-i", path.join(o.framesDir, "%06d.jpg"), "-i", o.source, "-map", "0:v:0", "-map", "1:a:0?",
-    "-vf", `scale=${o.w}:${o.h}:flags=lanczos:${FRAMES_TO_VIDEO},format=yuv420p`, ...o.enc, ...BT709_TAGS,
+    "-vf", `scale=${o.w}:${o.h}:flags=lanczos:${FRAMES_TO_VIDEO},format=yuv420p,${BT709_FRAMES}`, ...o.enc, ...BT709_TAGS,
     "-c:a", "copy", "-shortest", "-movflags", "+faststart", o.out];
 }
 
@@ -119,6 +122,8 @@ export interface UpscalerDeps {
   prefer(): "auto" | "nvenc" | "qsv" | "amf" | "software";
   broadcast(j: UpscaleJob): void;
   broadcastTool(t: UpscaleTool): void;
+  /** The local tool installer (tools.ts): Real-ESRGAN is its "realesrgan". */
+  tools: ToolManager;
   log(msg: string): void;
 }
 
@@ -132,8 +137,6 @@ export class LocalUpscaler {
   private queue: string[] = [];
   private running: { id: string; abort: AbortController } | null = null;
   private keys = new Map<string, { key: string; url: string }>();
-  private installing: Promise<UpscaleTool> | null = null;
-  private toolState: Partial<UpscaleTool> = {};
   private gpus: { index: number; name: string }[] | null = null;
   private lastEmit = new Map<string, number>();
 
@@ -152,69 +155,18 @@ export class LocalUpscaler {
   async tool(): Promise<UpscaleTool> {
     const installed = this.installed();
     if (installed && this.gpus === null) this.gpus = await this.listGpus().catch(() => []);
+    const st = this.deps.tools.progressOf("realesrgan");
     return { installed, version: ESRGAN.version, sizeBytes: ESRGAN.size, platformSupported: process.platform === "win32",
-      gpus: this.gpus ?? undefined, gpu: this.gpus ? pickGpu(this.gpus) : undefined, ...this.toolState };
+      gpus: this.gpus ?? undefined, gpu: this.gpus ? pickGpu(this.gpus) : undefined,
+      ...(st.installing ? { installing: true, progress: st.progress } : {}), ...(st.error ? { error: st.error } : {}) };
   }
 
-  /** Download the pinned build, check it, unpack it into userData/tools. */
-  install(): Promise<UpscaleTool> {
+  /** Download the pinned build, check it, unpack it into userData/tools (tools.ts does it for every local tool). */
+  async install(): Promise<UpscaleTool> {
     if (this.installed()) return this.tool();
-    if (process.platform !== "win32") return Promise.reject(new Error("Local AI upscale runs on Windows for now"));
-    this.installing ??= this.doInstall().finally(() => { this.installing = null; });
-    return this.installing;
-  }
-
-  private async doInstall(): Promise<UpscaleTool> {
-    const setState = async (patch: Partial<UpscaleTool>) => {
-      this.toolState = { ...this.toolState, ...patch };
-      this.deps.broadcastTool(await this.tool());
-    };
-    const dl = path.join(this.deps.userData, "tools", "_download");
-    const zip = path.join(dl, ESRGAN.file);
-    try {
-      await setState({ installing: true, progress: 0, error: undefined });
-      await fsp.mkdir(dl, { recursive: true });
-      const r = await fetch(ESRGAN.url, { redirect: "follow" });
-      if (!r.ok || !r.body) throw new Error(`Download failed: HTTP ${r.status}`);
-      // unchecked bytes stay in a .part file, capped at the pinned size; only a file whose SHA-256 matches becomes the zip
-      const hash = createHash("sha256");
-      const part = `${zip}.part`;
-      const out = createWriteStream(part);
-      let got = 0;
-      let last = 0;
-      try {
-        for await (const chunk of r.body as unknown as AsyncIterable<Uint8Array>) {
-          got += chunk.byteLength;
-          if (got > ESRGAN.size) throw new Error("The download is bigger than the expected file, so it was stopped");
-          hash.update(chunk);
-          if (!out.write(chunk)) await new Promise<void>((res) => out.once("drain", () => res()));
-          if (got - last > 1_000_000) { last = got; void setState({ progress: Math.min(0.95, got / ESRGAN.size) }); }
-        }
-      } finally {
-        await new Promise<void>((res, rej) => out.end((e?: Error | null) => (e ? rej(e) : res())));
-      }
-      const sum = hash.digest("hex");
-      if (got !== ESRGAN.size || sum !== ESRGAN.sha256) throw new Error("The download didn't match the expected file, so it wasn't installed");
-      await fsp.rename(part, zip);
-      await fsp.rm(this.dir, { recursive: true, force: true });
-      await fsp.mkdir(this.dir, { recursive: true });
-      const tar = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe");
-      await new Promise<void>((res, rej) => {
-        const p = spawn(tar, ["-xf", zip, "-C", this.dir], { windowsHide: true, stdio: "ignore" });
-        p.on("error", rej);
-        p.on("close", (code) => (code === 0 ? res() : rej(new Error(`Unpacking failed (${code})`))));
-      });
-      if (!existsSync(this.exe)) throw new Error("The upscaler wasn't in the download");
-      writeFileAtomic(path.join(this.dir, "tool.json"), JSON.stringify({ version: ESRGAN.version, sha256: sum, installedAt: nowIso() }));
-      this.gpus = null;
-      this.deps.log(`Real-ESRGAN ${ESRGAN.version} installed in ${this.dir}`);
-      await setState({ installing: false, progress: 1 });
-    } catch (e) {
-      await setState({ installing: false, error: (e as Error).message });
-      throw e;
-    } finally {
-      await fsp.rm(dl, { recursive: true, force: true }).catch(() => undefined);
-    }
+    if (process.platform !== "win32") throw new Error("Local AI upscale runs on Windows for now");
+    await this.deps.tools.install("realesrgan");
+    this.gpus = null;
     return this.tool();
   }
 

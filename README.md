@@ -353,6 +353,8 @@ Team, personal and project budgets are set in the app (**Settings → Budget**).
 | lucide-react | Icons |
 | sonner | Toasts |
 | @fontsource / @fontsource-variable | Bundled fonts incl. Devanagari, Kannada, Telugu and Tamil display faces |
+| gl-transitions, mp4box.js | GPU transitions (MIT) and the MP4 demuxer for frame-exact export |
+| @mediapipe/tasks-vision | Background segmentation and face detection for background blur and auto-reframe (Apache-2.0) |
 
 ### Desktop app (TypeScript, [desktop/package.json](desktop/package.json))
 
@@ -364,6 +366,8 @@ Team, personal and project budgets are set in the app (**Settings → Budget**).
 | ws | The main process's event socket to the server |
 | FFmpeg 7.1 (bundled), ffmpeg-static (dev fallback) | Local renders with NVENC / Quick Sync / AMF, proxies, the machine check |
 | Real-ESRGAN ncnn-vulkan 0.2.5.0 (BSD-3, downloaded on demand, SHA-256 pinned) | AI upscale on the editor's graphics card |
+| RIFE ncnn-vulkan 20221029 (MIT), whisper.cpp b5454 (MIT, CPU and CUDA 12.4) and ggml models (downloaded on demand, SHA-256 pinned) | Slow motion and captions on the PC |
+| @modelcontextprotocol/sdk, zod | The local MCP server for AI assistants |
 
 ### Runtime and infrastructure
 
@@ -457,19 +461,37 @@ markers, and a multi-track timeline with drag and drop, the Premiere tools and s
 Controls has keyframes, and there's an audio mixer, titles, and an **AI panel**:
 - Paid, priced first: captions, translation, voice-over, dubbing, voice clean-up, sound effects, music, B-roll,
   extend, edit with words, upscale, and an edit assistant.
-- Free, on the PC: remove silences, scene detection, beat markers, loudness.
+- Paid, priced first, added in wave 3: B-roll ideas, highlights into Shorts, thumbnails, music by mood and BPM,
+  voice cloning (needs a consent record), and a mood per scene.
+- Free, on the PC: remove silences, scene detection, beat markers, loudness, audio sync, RIFE slow motion, and Whisper
+  captions (CUDA on NVIDIA cards, otherwise the CPU).
+
+Other parts of the editor:
+- **Motion:** speed ramps and freeze frames, a graph editor, motion paths, a magnetic timeline, compound clips,
+  multicam (up to 9 angles), and Premiere / Resolve / Final Cut shortcut sets.
+- **Looks:** 18 moods, a LUT browser (with your own LUT folders), scopes, auto white balance and shot match, 106
+  title templates, karaoke captions, multi-format export with reframe, edit by transcript, comments, and versions.
+- **Sound:** 75 audio effects whose preview matches the export, Essential Sound roles, LUFS / true-peak / phase
+  meters, a spectrum analyser, match loudness, and auto-ducking.
+- **Interchange:** Final Cut Pro XML for Premiere Pro and Audition, EDL, OpenTimelineIO, markers CSV, Open in
+  Premiere and Send to Audition.
+- **AI assistants:** Claude Desktop, Claude Code or Codex can drive the editor through a local MCP server. It is off
+  by default and uses tokens. Assistants can auto edit a folder (5 styles), and watch folders can add new clips on
+  their own.
 
 Edits are local project folders (`Tatvam Projects\Edits\`). Details: [docs/EDITOR.md](docs/EDITOR.md).
 
 Both the editor and the finishing room draw with the **GPU render engine** (WebGL2, [docs/ENGINE.md](docs/ENGINE.md)):
-- 183 transitions (the 58 FFmpeg ones redrawn, plus gl-transitions)
-- 67 effects (pixi-filters and glfx.js ports, colour wheels, curves, keys, masks, glow …) and your own GLSL
-- titles, adjustment layers and nested sequences
+- 304 transitions (the 58 FFmpeg ones redrawn, 125 gl-transitions and 120 of our own)
+- 107 effects (pixi-filters and glfx.js ports, camera log profiles, HDR output, film and lens looks, keys, masks,
+  background blur …) and your own GLSL
+- titles, adjustment layers, nested sequences, speed ramps, and 10-bit HDR export
 
 Exports render frame by frame on the GPU and are encoded on NVENC, Quick Sync or AMF.
 
-File → **Studio server…** sets the server address (default `http://localhost:8100`). Releases attach the installer to
-the GitHub Release, and installed apps update from there.
+File → **Studio server…** sets the server address (default `http://localhost:8100`). By default the app loads its
+screens from your server, keeps a checked offline copy, and asks before switching to a new build. Releases attach
+the installer to the GitHub Release, and installed apps update from there.
 
 ## Deployment
 

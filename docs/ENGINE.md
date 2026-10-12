@@ -75,8 +75,14 @@ interface Clip {
   transform?: Transform;                                  // layers: x, y (centre 0..1), scale, rotation, opacity + keyframes
   fx: ShotFx;                                             // §2 (look, adjust, wheels, curves, chroma, mask, glow, flips, fades)
   transitionIn?: { type: string; duration: number; params?: Record<string, unknown>; easing?: Easing };
+  timeMap?: { t: number; s: number }[];  // speed ramps: local seconds → source seconds (overrides in/speed/reverse); speed 0 = freeze
 }
 ```
+
+Also optional: `Composition.output` (`{transfer: "sdr" | "hlg" | "pq"; primaries: "bt709" | "bt2020"}`, used by the 10-bit
+read-back), `Composition.lutUrls` (`{id: url}`: LUTs any window can load, so the export window has the same ones),
+and keyframes with `ease: "bezier" | "bounce" | "elastic"`, CSS cubic-bezier handles `out` / `in`, and spatial
+handles `tangentOut` / `tangentIn` (a cubic Bézier path; timing still follows the ease).
 
 Two builders produce a Composition:
 - `fromEpisode(episode, layers, {width, height, lang})` uses the same maths as `layoutClips()` and `assembler.timeline()`.
@@ -90,9 +96,18 @@ await eng.load(comp, { mode: "live" | "exact" });   // live = <video> elements; 
 eng.drawLive(t);                                     // realtime preview: draws what the sources show now
 await eng.renderExact(t);                            // export: waits for exactly the frame at t on every clip
 eng.readYuv420(): Uint8Array;                        // the frame as planar YUV 4:2:0, BT.709 limited range (W·H·1.5 bytes)
+eng.readYuv420p10(): Uint16Array;                    // 10-bit yuv420p10le per Composition.output (HEVC Main10, ProRes)
+eng.computeScopes(kind, opts?);                      // waveform, parade, vectorscope, histogram as an ImageBitmap
+eng.renderThumbnail(id, width?, kind?, {source?, params?, progress?, lutUrl?});
 eng.resize(w, h); eng.dispose();
 listTransitions(); listEffects();                    // the catalogue the UI shows
+analyzeColor(src, t?); matchColor(source, reference); trackFaces(url, from, to);   // colour tools, auto-reframe
+registerEffect(def); registerTransition(def); registerLut(id, lut);                 // custom shaders and LUTs
 ```
+
+Effects can declare `temporal` (the renderer keeps per-clip history, e.g. temporal denoise), `segmentation`
+(a person mask from MediaPipe's selfie segmenter, for background blur and replace) and `prepare()`. A generated
+source (titles) can give `version(t)` and `bounds(t)`, so only a changed box is uploaded again.
 
 A frame is drawn in this order:
 1. **Each clip:** sample its source at its own time (in, speed, reverse), fit or crop and Ken Burns, flips.
@@ -138,7 +153,7 @@ cached.
 - **Parity:** a desktop GPU render of a cut with fades and xfade transitions against the FFmpeg render of the same
   cut (PSNR, frame by frame).
 
-## 7. Status (12 October 2026)
+## 7. Status (13 October 2026)
 
 Built and verified on the reference laptop (GTX 1660 Ti, Electron 44, D3D11 through ANGLE). The desktop app passes
 `force_high_performance_gpu`, so laptops with two GPUs use the dedicated one; set `TATVAM_INTEGRATED_GPU=1` to
@@ -146,11 +161,13 @@ opt out.
 
 | Area | Result |
 | --- | --- |
-| Catalogue | 183 transitions: 58 xfade redrawn plus 125 gl-transitions, none excluded (`luma` and `displacement` get a generated noise texture), plus custom ones through `registerTransition`. 67 registry effects in 8 groups (Colour 18, Keying 7, Blur & Sharpen 11, Distort 7, Stylize 13, Light 5, Generate 2, Transform 4): pixi-filters 6.1.5 ports (MIT) except backdrop-blur, glfx.js ports (MIT), and our own. Custom effects come through `registerEffect`. Credits are in `effects/licenses.ts` |
-| Self-test | `/dev/engine?selftest=1`: 301 of 301 pass (every transition and effect compiles, renders and visibly changes the picture; plus cut transitions, nested sequences, titles, adjustment layers, incremental load, ½ resolution, thumbnails, and context loss/restore) |
+| Catalogue | **304 transitions:** 58 xfade redrawn, 125 gl-transitions (none excluded; `luma` and `displacement` get a generated noise texture) and 120 of our own `tv:` ones (68 luma mattes generated on the GPU and equalised so they sweep evenly, 14 light, 17 motion, 8 glitch and retro, 13 3D), plus custom ones through `registerTransition`. **107 effects in 11 groups** (Colour, Keying, Blur & Sharpen, Distort, Stylize, Light, Film, Lens, Clean-up, Generate, Transform): pixi-filters 6.1.5 ports (MIT) except backdrop-blur, glfx.js ports (MIT), and our own, including camera log inputs (S-Log3, LogC3/LogC4, V-Log, C-Log3, D-Log, BMD Film Gen 5), output transforms (Rec.709, sRGB, HLG, PQ), hue/luma curves, split toning, film grain and halation, lens flares, temporal denoise, and MediaPipe background blur and replace. Custom effects come through `registerEffect`. Credits are in `effects/licenses.ts` |
+| Self-test | `/dev/engine?selftest=1`: 472 of 472 pass (every transition and effect compiles, renders and visibly changes the picture, and every `tv:` one differs from both pictures; plus cut transitions, nested sequences, titles, adjustment layers, incremental load, ½ resolution, thumbnails, context loss/restore, time maps and freezes, title sub-rect uploads, LUTs by URL and the 10-bit read-back) |
 | Fidelity vs FFmpeg | A plain clip is bit-exact (99 dB Y/U/V). xfade transitions are ≥ 50 dB luma for 55 of 58. Preset looks run as their FFmpeg filters (teal_orange 51 dB); the 6 curves-based presets use the baked .cube |
 | Desktop GPU export | 1080p cut on the GPU: 46 dB Y and 48.7 dB U/V against the server's own FFmpeg export, 368 of 368 frames (the desktop FFmpeg path gets 48 dB; the gap is the encoder). 1080p in 15–18 s against 51 s through FFmpeg; 4K with a `gl:cube` transition in 70 s on NVENC |
-| Speed | Studio cut 1.0–2.3 ms a frame at 1080p. Editor scene (2 tracks, transition, 4 effects per clip, title) 5.9 ms on average at 1080p and 20–23 ms at 4K. Exact export with read-back runs at 3.4× realtime at 4K |
+| Speed | Studio cut 1.0–2.3 ms a frame at 1080p. Editor scene (2 tracks, transition, 4 effects per clip, title) 6–7 ms on average at 1080p and 21–27 ms at 4K. Exact export with read-back runs at 3.4× realtime at 4K. `tv:` transitions 0.9–1.5 ms; the heavy effects: bokeh 2.9, oil paint 5.4, watercolour 2.2, temporal denoise 1.1, background blur 24 ms (16 ms of it is the CPU segmenter; 6.5 ms when paused). Scopes ≤ 9.7 ms each |
+| Colour tools | Auto white balance (near-neutral light estimate, shades-of-grey fallback, low-confidence results halved; temperature > 0 makes the picture warmer), shot match and grade from a reference (Reinhard transfer, giving wheels, adjust and a 17-point LUT) |
+| Models | MediaPipe tasks-vision 1.1.0 (Apache-2.0), loaded on demand: `selfie_segmenter.tflite` and `blaze_face_short_range.tflite` in `frontend/public/models/mediapipe` (sources and SHA-256 in its NOTICE.md). It runs on the CPU delegate (the GPU delegate stalled on early frames); small faces fall back to the person's head from the segmenter |
 
 **Measuring against FFmpeg.** FFmpeg 7 negotiates colour tags between filter inputs. The GPU export is tagged
 BT.709 limited range and most AI clips aren't tagged, so `psnr` silently converts one side. Put
@@ -163,3 +180,8 @@ correct render reads as about 27 dB.
 - Edge-fade dips on upper tracks darken the whole frame (xfade semantics).
 - A blend mode falls back to normal inside a transition.
 - Masks aren't keyframed yet.
+- Time maps only run forwards, so reversed speed ramps are split into pieces.
+- Spatial tangents have no arc-length reparameterisation, and temporal effects start again after a seek.
+- `pixel_sort` is an approximation. The FFmpeg server render can't draw the `tv:` transitions or the new
+  effects; the studio doesn't offer them, and the desktop editor renders them on the GPU.
+- DJI publishes no D-Log M curve, so `dlogm` uses the D-Log white-paper curve and says so.

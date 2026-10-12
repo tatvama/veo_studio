@@ -6,6 +6,7 @@
  * colorbalance / vibrance / curves / LUTs on RGB. Like FFmpeg, a YUV filter only clips code values: its RGB result may
  * leave 0..1 (half-float targets keep it, the YUV read-back writes the same codes); an RGB filter clips its input.
  */
+import { OUTPUT_GLSL } from "../colour.ts";
 import { YUV_GLSL } from "../yuv.ts";
 
 export const HEADER = `#version 300 es
@@ -549,3 +550,49 @@ void main() {
   }
   o_color = o;
 }`;
+
+/** Packs the frame into the 10-bit 4:2:0 layout of yuv.ts (yuv10Layout: two 16-bit samples per RGBA8 texel), through
+ *  the output's transfer and primaries (colour.ts encodeOutput, BT.709 or BT.2020 non-constant-luminance matrix). */
+export const YUV10_PACK = HEADER + OUTPUT_GLSL + `
+uniform sampler2D u_in;
+uniform ivec2 u_size;
+uniform int u_texW;
+uniform int u_cRows;
+uniform vec2 u_out;
+vec3 sig(ivec2 p) { return encodeOut(texelFetch(u_in, clamp(p, ivec2(0), u_size - 1), 0).rgb, u_out); }
+vec4 bytes2(float a, float b) {
+  a = clamp(floor(a + 0.5), 0.0, 1023.0); b = clamp(floor(b + 0.5), 0.0, 1023.0);
+  return vec4(mod(a, 256.0), floor(a / 256.0), mod(b, 256.0), floor(b / 256.0)) / 255.0;
+}
+void main() {
+  ivec2 t = ivec2(gl_FragCoord.xy);
+  int h = u_size.y;
+  if (t.y < h) {
+    int x = t.x * 2;
+    o_color = bytes2(ycc10(sig(ivec2(x, t.y)), u_out).x, ycc10(sig(ivec2(x + 1, t.y)), u_out).x);
+    return;
+  }
+  int rr = t.y - h;
+  int plane = 0;
+  if (rr >= u_cRows) { rr -= u_cRows; plane = 1; }
+  int half_ = u_texW / 2;
+  int cy = t.x < half_ ? 2 * rr : 2 * rr + 1;
+  int cx = 2 * (t.x < half_ ? t.x : t.x - half_);
+  ivec2 cs = u_size / 2;
+  if (cy >= cs.y) { o_color = bytes2(512.0, 512.0); return; }
+  float v0 = 512.0, v1 = 512.0;
+  for (int k = 0; k < 2; k++) {
+    ivec2 p = ivec2(min(cx + k, cs.x - 1), cy) * 2;
+    vec3 s = (sig(p) + sig(p + ivec2(1, 0)) + sig(p + ivec2(0, 1)) + sig(p + ivec2(1, 1))) * 0.25;
+    vec3 y = ycc10(s, u_out);
+    float v = plane == 0 ? y.y : y.z;
+    if (k == 0) v0 = v; else v1 = v;
+  }
+  o_color = bytes2(v0, v1);
+}`;
+
+/** A picture cropped to fill the target (cover), for thumbnails of a user's own frame. */
+export const COVER = HEADER + `
+uniform sampler2D u_in;
+uniform vec2 u_scale;
+void main() { o_color = texture(u_in, (v_uv - 0.5) * u_scale + 0.5); }`;

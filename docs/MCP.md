@@ -6,6 +6,10 @@ The MCP server lets Claude Code, Claude Desktop, claude.ai or any other MCP app 
 script, plan scenes, storyboard, and make the videos scene by scene with continuity carried forward. It runs inside
 the app, on the same port: **`<PUBLIC_BASE_URL>/mcp`** (for example `http://localhost:8100/mcp`).
 
+**Editing on the PC:** Tatvam Desktop has its own local MCP server, for driving Tatvam Editor (open edits,
+import folders, auto edit, effects, export). It is off by default and listens on `127.0.0.1:18110/mcp`, with its own
+tokens, plus a `--mcp-stdio` relay for Claude Desktop and Codex. See [EDITOR.md §13](EDITOR.md).
+
 ## Connect
 
 1. In Tatvam: **Settings → MCP access → Create a token**. Pick the scopes:

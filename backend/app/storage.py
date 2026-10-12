@@ -64,6 +64,11 @@ class LocalStorage:
     def exists(self, rel: str) -> bool:
         return bool(rel) and self.abs(rel).exists()
 
+    def delete(self, rel: str) -> None:
+        """Removes a file (no error when it is already gone)."""
+        if rel:
+            self._local(rel).unlink(missing_ok=True)
+
     def url(self, rel: str) -> str:
         return f"/media/{rel}" if rel else ""
 
@@ -161,6 +166,20 @@ class S3Storage(LocalStorage):
                 print(f"[storage] upload to bucket failed for {rel}: {e}")
 
         threading.Thread(target=upload, daemon=True).start()
+
+    def delete(self, rel: str) -> None:
+        super().delete(rel)
+        if not rel:
+            return
+        key = self._key(rel)
+
+        def remove():
+            try:
+                self.client.delete_object(Bucket=self.bucket, Key=key)
+            except Exception as e:  # a copy left in the bucket is harmless (lifecycle rules clean up)
+                print(f"[storage] delete from bucket failed for {rel}: {e}")
+
+        threading.Thread(target=remove, daemon=True).start()
 
     def public_url(self, path: Path, expires_s: int = 6 * 3600) -> str | None:
         """Copy the file to share/<sha1> in the bucket (once; same content, same key) and return a presigned link.

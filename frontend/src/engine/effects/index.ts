@@ -1,6 +1,7 @@
 /**
- * The built-in effects (docs/EDITOR.md §4): 67 in eight groups, registered on import. Ports keep their
- * authors' MIT notices (each file's header; full text in licenses.ts).
+ * The built-in effects (docs/EDITOR.md §4, §10): the first 67 in eight groups, then the 40 of wave 3 (Film, Lens,
+ * Clean-up, more Colour, Stylize, Keying, Light and Transform), registered on import. Ports keep their authors' MIT
+ * notices (each file's header; full text in licenses.ts); the wave-3 effects are our own.
  */
 import { registerEffect, type EffectDef } from "./registry.ts";
 import colour_adjust from "./colour/adjust.ts";
@@ -70,6 +71,42 @@ import transform_crop from "./transform/crop.ts";
 import transform_flip from "./transform/flip.ts";
 import transform_move from "./transform/move.ts";
 import transform_perspective from "./transform/perspective.ts";
+import film_grain from "./film/film_grain.ts";
+import film_halation from "./film/halation.ts";
+import film_gate_weave from "./film/gate_weave.ts";
+import film_scratches_dust from "./film/scratches_dust.ts";
+import film_light_flicker from "./film/light_flicker.ts";
+import film_damage from "./film/film_damage.ts";
+import film_print from "./film/film_print.ts";
+import lens_anamorphic_flare from "./lens/anamorphic_flare.ts";
+import lens_chromatic_aberration from "./lens/chromatic_aberration.ts";
+import lens_distortion from "./lens/lens_distortion.ts";
+import lens_bokeh_blur from "./lens/bokeh_blur.ts";
+import lens_prism from "./lens/prism.ts";
+import lens_vignette_pro from "./lens/vignette_pro.ts";
+import lens_diffusion from "./lens/diffusion.ts";
+import stylize_vhs from "./stylize/vhs.ts";
+import stylize_film_8mm from "./stylize/film_8mm.ts";
+import stylize_toon from "./stylize/toon.ts";
+import stylize_sketch from "./stylize/sketch.ts";
+import stylize_watercolour from "./stylize/watercolour.ts";
+import stylize_oil_paint from "./stylize/oil_paint.ts";
+import stylize_posterize from "./stylize/posterize.ts";
+import stylize_duotone from "./stylize/duotone.ts";
+import stylize_tritone from "./stylize/tritone.ts";
+import stylize_halftone_pro from "./stylize/halftone_pro.ts";
+import stylize_neon_edges from "./stylize/neon_edges.ts";
+import stylize_pixel_sort from "./stylize/pixel_sort.ts";
+import cleanup_temporal_denoise from "./cleanup/temporal_denoise.ts";
+import cleanup_deflicker from "./cleanup/deflicker.ts";
+import cleanup_skin_smoothing from "./cleanup/skin_smoothing.ts";
+import cleanup_dehaze from "./cleanup/dehaze.ts";
+import colour_input_profile from "./colour/input_profile.ts";
+import colour_output_transform from "./colour/output_transform.ts";
+import { hueVsHue, hueVsSat, lumaVsSat, splitToning } from "./colour/hue_curves.ts";
+import { bgBlurDef, bgReplaceDef } from "./keying/background.ts";
+import light_leak from "./light/light_leak.ts";
+import transform_letterbox from "./transform/letterbox.ts";
 
 export const BUILTIN_EFFECTS: EffectDef[] = [
   colour_adjust, colour_brightness_contrast, colour_channel_mixer, colour_color_balance, colour_color_map,
@@ -85,5 +122,17 @@ export const BUILTIN_EFFECTS: EffectDef[] = [
   light_advanced_bloom, light_bloom, light_glow, light_godray, light_simple_lightmap, generate_color_gradient,
   generate_simplex_noise, transform_crop, transform_flip, transform_move, transform_perspective,
 ];
+
+/** Wave 3 (docs/EDITOR.md §10): 40 more. */
+export const WAVE3_EFFECTS: EffectDef[] = [
+  film_grain, film_halation, film_gate_weave, film_scratches_dust, film_light_flicker, film_damage, film_print,
+  lens_anamorphic_flare, lens_chromatic_aberration, lens_distortion, lens_bokeh_blur, lens_prism, lens_vignette_pro, lens_diffusion,
+  stylize_vhs, stylize_film_8mm, stylize_toon, stylize_sketch, stylize_watercolour, stylize_oil_paint, stylize_posterize,
+  stylize_duotone, stylize_tritone, stylize_halftone_pro, stylize_neon_edges, stylize_pixel_sort,
+  cleanup_temporal_denoise, cleanup_deflicker, cleanup_skin_smoothing, cleanup_dehaze,
+  colour_input_profile, colour_output_transform, hueVsSat, hueVsHue, lumaVsSat, splitToning,
+  bgBlurDef, bgReplaceDef, light_leak, transform_letterbox,
+];
+BUILTIN_EFFECTS.push(...WAVE3_EFFECTS);
 
 for (const d of BUILTIN_EFFECTS) registerEffect(d);

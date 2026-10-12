@@ -4,7 +4,7 @@
  * Its transport counts the media's own frames (sequence frames for sound and stills).
  */
 import { clsx } from "clsx";
-import { AudioLines, Bookmark, Film, FolderOpen, ListPlus, Replace } from "lucide-react";
+import { AudioLines, Bookmark, Film, FolderOpen, Grid2x2, ListPlus, Replace } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as A from "../actions";
 import { customSource } from "../demoSources";
@@ -17,17 +17,23 @@ import { peaksFor } from "../timeline/draw";
 import { audioUrlFor, setFocus, urlFor, useEditor, useProject } from "../store";
 import { IBtn, TimecodeField } from "../ui";
 import { fitSize, ScrubBar, TransportButtons } from "./monitor";
+import { MulticamGrid } from "./MulticamGrid";
+import { setMulticamView, useSequence } from "../store";
 
 
 export default function SourceMonitor() {
   const id = useEditor((x) => x.sourceId);
   useEditor((x) => x.urls);
+  const multicam = useEditor((x) => x.multicamView);
+  const hasMulticam = useSequence().clips.some((c) => c.multicam);
   const p = useProject();
   const m = id ? p.media.find((x) => x.id === id) : undefined;
+  if (multicam) return <MulticamGrid />;
   if (!m) {
     return (
       <div className="mon" onPointerDown={() => setFocus("source")}>
-        <div className="pn-empty"><div><FolderOpen className="mx-auto mb-2 size-7 text-dim" />Double-click a clip in the Project panel (or on the timeline) to open it here.<br />Mark in and out with I and O, then insert (,) or overwrite (.).</div></div>
+        <div className="pn-empty"><div><FolderOpen className="mx-auto mb-2 size-7 text-dim" />Double-click a clip in the Project panel (or on the timeline) to open it here.<br />Mark in and out with I and O, then insert (,) or overwrite (.).
+          {hasMulticam && <><br /><button type="button" className="mt-2 text-accent-ink hover:underline" onClick={() => setMulticamView(true)}>Show the multicam angles</button></>}</div></div>
       </div>
     );
   }
@@ -127,6 +133,7 @@ function SourceView({ m }: { m: MediaItem }) {
           {(m.kind === "audio" || m.hasAudio) && (
             <span draggable onDragStart={(e) => { e.stopPropagation(); dragBoth(e, false, true); }} title="Drag the sound only" className="ed-ibtn cursor-grab"><AudioLines className="size-3.5" /></span>
           )}
+          <IBtn title="Multicam angles of the clip under the playhead" side="top" onClick={() => setMulticamView(true)}><Grid2x2 className="size-3.5" /></IBtn>
           <IBtn title="Insert at the playhead" shortcut="," side="top" onClick={() => A.sourceEdit("insert")}><ListPlus className="size-3.5" /></IBtn>
           <IBtn title="Overwrite at the playhead" shortcut="." side="top" onClick={() => A.sourceEdit("overwrite")}><Replace className="size-3.5" /></IBtn>
         </div>

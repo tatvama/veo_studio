@@ -15,6 +15,9 @@ import type { Easing, Transition } from "./model/types";
 import { ctx, exec as execDoc, project, seq, seqExec, useProject as useProjectDoc, useSequence } from "./store";
 import { ScrubNumber } from "./ui";
 import { updateTransition, removeTransitions } from "./model/ops";
+import { AUDIO_TRANSITION_DEFS } from "./audiofx/registry";
+/** Every audio transition: the model's two, then the other acrossfade curves (editor-audio, docs/EDITOR.md §11.1). */
+const ALL_AUDIO_TRANSITIONS: { id: string; label: string }[] = [...AUDIO_TRANSITIONS, ...AUDIO_TRANSITION_DEFS.filter((d) => !AUDIO_TRANSITIONS.some((x) => x.id === d.id))];
 
 export type DialogSpec =
   | { kind: "transition"; id: string }
@@ -57,7 +60,7 @@ loadCatalog();
 onCatalog(loadCatalog);
 /** A transition's display name ("gl:cube" → "Cube"). */
 export function transitionLabel(type: string): string {
-  const a = AUDIO_TRANSITIONS.find((x) => x.id === type);
+  const a = ALL_AUDIO_TRANSITIONS.find((x) => x.id === type);
   if (a) return a.label;
   const t = catalog.find((x) => x.id === type);
   if (t) return t.label;
@@ -88,7 +91,7 @@ function TransitionDialog({ id }: { id: string }) {
         <Field label="Type">
           {audio ? (
             <Select value={tr.type} onChange={(e) => set({ type: e.target.value }, "Change transition")}>
-              {AUDIO_TRANSITIONS.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
+              {ALL_AUDIO_TRANSITIONS.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}
             </Select>
           ) : (
             <Select value={tr.type} onChange={(e) => set({ type: e.target.value, params: undefined }, "Change transition")}>

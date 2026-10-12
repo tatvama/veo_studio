@@ -60,6 +60,19 @@ export function parseCube(text: string): Lut3D {
 }
 
 /** An identity LUT (tests and the lab's fallback). `f` maps each grid colour, e.g. to make a test grade. */
+/** A LUT as .cube text (Adobe / Resolve: LUT_3D_SIZE, red fastest), e.g. to save next to an edit so any window can
+ *  load it by URL. */
+export function lutToCube(lut: Lut3D, title = lut.title): string {
+  const out: string[] = [];
+  if (title) out.push(`TITLE "${title.replace(/"/g, "'")}"`);
+  out.push(`LUT_3D_SIZE ${lut.size}`);
+  if (lut.domainMin.some((v) => v !== 0)) out.push(`DOMAIN_MIN ${lut.domainMin.join(" ")}`);
+  if (lut.domainMax.some((v) => v !== 1)) out.push(`DOMAIN_MAX ${lut.domainMax.join(" ")}`);
+  const f = (v: number) => (Number.isFinite(v) ? v.toFixed(6) : "0.000000");
+  for (let i = 0; i < lut.data.length; i += 3) out.push(`${f(lut.data[i])} ${f(lut.data[i + 1])} ${f(lut.data[i + 2])}`);
+  return out.join("\n") + "\n";
+}
+
 export function makeLut(size: number, f: (r: number, g: number, b: number) => [number, number, number] = (r, g, b) => [r, g, b]): Lut3D {
   const data = new Float32Array(size * size * size * 3);
   let i = 0;

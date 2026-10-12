@@ -20,6 +20,8 @@ import { importDropped, importFiles, makeProxy, relink } from "../session";
 import { setFocus, urlFor, useEditor, useProject } from "../store";
 import { IBtn, openMenu, type MenuItem } from "../ui";
 import { loadImage } from "../timeline/draw";
+import { GeneratorRows } from "../audiofx/GeneratorRows";
+import { openAutoEdit } from "../../automation/api"; // desktop-mcp: the Auto edit dialog (additive)
 
 type View = "list" | "icon";
 const LS_VIEW = "tatvam-editor:project-view";
@@ -146,6 +148,7 @@ export default function ProjectPanel() {
           { label: "Title", shortcut: "T", onClick: () => A.newTitle() },
           { label: "Colour matte", onClick: () => A.newMatte("color") },
           { label: "Adjustment layer", onClick: () => A.newMatte("adjustment") },
+          { label: "Auto edit…", separator: true, onClick: () => openAutoEdit() },
         ])}><Plus className="size-3.5" /></IBtn>
         <SearchField ref={searchRef} value={q} onChange={setQ} placeholder="Search" className="mx-1 min-w-0 flex-1 [&_input]:h-6 [&_input]:text-xs" />
         <div className="ed-seg">
@@ -178,6 +181,7 @@ export default function ProjectPanel() {
             )}
           </>
         )}
+        <GeneratorRows filter={q} />
       </div>
       {first && <Metadata m={first} count={selected.length} />}
     </div>

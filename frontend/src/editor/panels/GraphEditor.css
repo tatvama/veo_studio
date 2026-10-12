@@ -1,0 +1,28 @@
+/* Graph editor (editor-motion): the value / speed graph, its keyframes and bezier handles. Tokens only. */
+.ge-view { position: relative; width: 100%; border-radius: 6px; background: color-mix(in srgb, var(--color-bg) 75%, var(--color-panel)); outline: none; overflow: hidden; }
+.ge-view:focus-visible { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 60%, transparent); }
+.ge-view.compact { border-radius: 0; }
+.ge-view svg { display: block; cursor: crosshair; }
+.ge-grid { stroke: color-mix(in srgb, var(--color-line) 70%, transparent); stroke-width: 1; }
+.ge-zero { stroke: color-mix(in srgb, var(--color-mute) 60%, transparent); stroke-dasharray: 3 3; }
+.ge-label { fill: var(--color-dim); font-size: 9.5px; font-family: var(--font-mono, ui-monospace, monospace); pointer-events: none; }
+.ge-head { stroke: var(--ed-playhead, var(--color-bad)); stroke-width: 1; pointer-events: none; }
+.ge-key { cursor: move; }
+.ge-key > * { fill: var(--color-mute); stroke: var(--color-panel); stroke-width: 1.2; }
+.ge-key:hover > * { fill: var(--color-ink); }
+.ge-key.on > * { fill: var(--color-warn); stroke: black; }
+.ge-hline { stroke: color-mix(in srgb, var(--color-warn) 70%, transparent); stroke-width: 1; pointer-events: none; }
+.ge-handle { fill: var(--color-panel); stroke: var(--color-warn); stroke-width: 1.5; cursor: grab; }
+.ge-handle:hover { fill: var(--color-warn); }
+.ge-marquee { fill: color-mix(in srgb, var(--color-accent) 12%, transparent); stroke: var(--color-accent); stroke-width: 1; pointer-events: none; }
+.ge-hint { position: absolute; inset: auto 0 6px 0; text-align: center; font-size: 10.5px; color: var(--color-dim); pointer-events: none; }
+.ge-empty { display: grid; place-items: center; font-size: 11px; color: var(--color-dim); }
+.ge-list { width: 172px; flex-shrink: 0; overflow: auto; border-right: 1px solid var(--color-line); padding: 4px 0; scrollbar-width: thin; }
+.ge-item { display: flex; width: 100%; align-items: center; gap: 6px; padding: 4px 8px; font-size: 11px; color: var(--color-mute); text-align: left; }
+.ge-item:hover { background: var(--color-hover); color: var(--color-ink); }
+.ge-item.on { background: color-mix(in srgb, var(--color-accent) 14%, transparent); color: var(--color-ink); }
+.ge-preset { height: 22px; padding: 0 6px; border-radius: 5px; font-size: 10.5px; color: var(--color-mute); border: 1px solid transparent; white-space: nowrap; }
+.ge-preset:hover { background: var(--color-hover); color: var(--color-ink); border-color: var(--color-line); }
+.ec-graph { grid-column: span 2; border-bottom: 1px solid var(--color-line); background: var(--ed-lane); }
+.ec-btn { height: 20px; padding: 0 6px; border-radius: 5px; border: 1px solid var(--color-line); font-size: 10.5px; color: var(--color-mute); white-space: nowrap; }
+.ec-btn:hover { background: var(--color-hover); color: var(--color-ink); }

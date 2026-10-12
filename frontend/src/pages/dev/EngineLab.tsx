@@ -6,7 +6,9 @@
  * `?selftest=1` renders every transition and effect (window.__engineSelfTest + a contact sheet), `?yuvtest=1`
  * checks the YUV read-back (window.__engineYuvTest), `?bench=1` times 1080p / 4K frames (window.__engineBench);
  * window.__engineParity(ref) / __engineFxParity(ref) compare the xfade transitions / adjust effects with FFmpeg frames.
- * Not linked from the app.
+ * `?fxbench=1` times the heavy wave-3 effects and transitions at 1080p (window.__engineFxBench). The wave-3 panel shows
+ * GPU scopes of the frame, auto white balance and shot matching, the camera log profiles, HDR output with the 10-bit
+ * read-back, and MediaPipe's status. Not linked from the app.
  */
 import { useQuery } from "@tanstack/react-query";
 import { ArrowUp, Cpu, Pause, Play, Trash2, Upload } from "lucide-react";
@@ -24,7 +26,7 @@ import type { Lut3D } from "../../engine/cube";
 type EngineMod = typeof import("../../engine");
 type LabMod = typeof import("../../engine/lab/selftest");
 declare global {
-  interface Window { __engineSelfTest?: unknown; __engineYuvTest?: unknown; __engineBench?: unknown; __engineParity?: (ref: unknown) => Promise<unknown>; __engineFxParity?: (ref: unknown) => Promise<unknown>; __engineMod?: EngineMod; __engineProbe?: (url: string, k: number, o?: { hardware?: boolean }) => Promise<unknown>; __engine?: Engine }
+  interface Window { __engineSelfTest?: unknown; __engineYuvTest?: unknown; __engineBench?: unknown; __engineFxBench?: unknown; __engineMlBench?: unknown; __engineParity?: (ref: unknown) => Promise<unknown>; __engineFxParity?: (ref: unknown) => Promise<unknown>; __engineMod?: EngineMod; __engineProbe?: (url: string, k: number, o?: { hardware?: boolean }) => Promise<unknown>; __engine?: Engine }
 }
 
 const q = new URLSearchParams(location.search);
@@ -60,6 +62,11 @@ export default function EngineLab() {
   const [fxSearch, setFxSearch] = useState("");
   const [res, setRes] = useState(1);
   const [demo, setDemo] = useState<typeof import("../../engine/lab/demo") | null>(null);
+  const [scope, setScope] = useState<"off" | "waveform" | "parade" | "vectorscope" | "histogram">("off");
+  const [hdr, setHdr] = useState<"sdr" | "hlg" | "pq">("sdr");
+  const [prim, setPrim] = useState<"bt709" | "bt2020">("bt709");
+  const [w3, setW3] = useState("");
+  const scopeCanvas = useRef<HTMLCanvasElement>(null);
   const tRef = useRef(t);
   tRef.current = t;
 
@@ -87,6 +94,8 @@ export default function EngineLab() {
         if (q.get("selftest")) { setReport("Running the self-test…"); const r = await lab.runSelfTest(sheet.current ?? undefined); window.__engineSelfTest = r; setReport(JSON.stringify({ ...r, items: undefined }, null, 1)); }
         if (q.get("yuvtest")) { const r = await lab.runYuvTest(); window.__engineYuvTest = r; setReport((s) => s + "\n" + JSON.stringify(r, null, 1)); }
         if (q.get("bench")) { const r = await lab.runBench(); window.__engineBench = r; setReport((s) => s + "\n" + JSON.stringify(r, null, 1)); }
+        if (q.get("fxbench")) { const r = await lab.runFxBench(); window.__engineFxBench = r; setReport((s) => s + "\n" + JSON.stringify(r, null, 1)); }
+        if (q.get("mlbench")) { const r = await lab.runMlBench(); window.__engineMlBench = r; setReport((s) => s + "\n" + JSON.stringify(r, null, 1)); }
       } catch (e) { setErr((e as Error).message); }
     })();
     return () => { dead = true; made?.dispose(); };
@@ -101,21 +110,62 @@ export default function EngineLab() {
       return mod.fromEpisode(ep, layersDoc ?? null, { aspect: project.aspect, height: 540, pixelScale: 0.5 });
     }
     const clipFx: ShotFx = { ...fx, ...(lut ? { look: "lab:lut" } : {}) };
+    const output = hdr !== "sdr" || prim !== "bt709" ? { output: { transfer: hdr, primaries: prim } } : {};
     if (scene === "editor") {
       if (!demo) return null;
       const c = demo.editorDemo({ transition: tr, duration: dur, chain });
       for (const cl of c.tracks[0].clips) cl.fx = clipFx;
       if (c.tracks[0].transitions?.[0]) Object.assign(c.tracks[0].transitions[0], { params, easing });
-      return c;
+      return { ...c, ...output };
     }
     const a: Clip = { id: "a", media: { url: "lab:a", kind: "video" }, start: 0, duration: 4, in: 0, speed: 1, fit: "cover", fx: clipFx, label: "A", effects: chain };
     const b: Clip = { id: "b", media: { url: "lab:b", kind: "video" }, start: 4 - dur, duration: 4, in: 0, speed: 1, fit: "cover", fx: clipFx, label: "B", effects: chain,
       transitionIn: { type: tr, duration: dur, params: params as Record<string, number>, easing } };
     const logo: Clip = { id: "logo", media: { url: "lab:logo", kind: "image" }, start: 0.5, duration: 6.5, in: 0, speed: 1, fit: "contain", fx: { fade_in: 0.5 },
       transform: { x: 0.5, y: 0.5, scale: 0.18, rotation: 0, opacity: 0.95, keyframes: [{ t: 0, x: 0.15, y: 0.2, rotation: -20 }, { t: 6.5, x: 0.85, y: 0.25, rotation: 25, easing: "ease_in_out" }] } };
-    return { width: 1920, height: 1080, fps: 24, duration: 8 - dur,
+    return { width: 1920, height: 1080, fps: 24, duration: 8 - dur, ...output,
       tracks: [{ id: "main", kind: "main", clips: [a, b] }, ...(layer ? [{ id: "l", kind: "layer" as const, blend, clips: [logo] }] : [])] };
-  }, [mod, ep, project, layersDoc, fx, lut, tr, dur, params, easing, layer, blend, scene, chain, demo]);
+  }, [mod, ep, project, layersDoc, fx, lut, tr, dur, params, easing, layer, blend, scene, chain, demo, hdr, prim]);
+
+  // GPU scopes of the frame, about 10 times a second
+  useEffect(() => {
+    if (!eng || scope === "off") return;
+    let dead = false, busy = false;
+    const id = window.setInterval(() => {
+      if (busy || dead || !scopeCanvas.current) return;
+      busy = true;
+      eng.computeScopes(scope, { canvas: scopeCanvas.current }).then((b) => b.close()).catch(() => undefined).finally(() => { busy = false; });
+    }, 100);
+    return () => { dead = true; window.clearInterval(id); };
+  }, [eng, scope]);
+
+  const frameImage = async () => {
+    const px = eng!.readRgba();
+    return new ImageData(Uint8ClampedArray.from(px), eng!.renderer.frame!.w, eng!.renderer.frame!.h);
+  };
+  const autoWb = async () => {
+    if (!eng || !mod) return;
+    const r = await mod.analyzeColor({ image: await frameImage() });
+    setW3(`Auto white balance: temperature ${r.wb.temperature}, tint ${r.wb.tint} (wheels gain ${r.wb.gain.join(", ")}); Lab mean ${r.stats.mean.map((v) => v.toFixed(1)).join(" / ")}, spread ${r.stats.std.map((v) => v.toFixed(1)).join(" / ")}`);
+    setChain((c) => [...c, { id: `adjust-${Date.now().toString(36)}`, type: "adjust", enabled: true, params: { temperature: r.wb.temperature, tint: r.wb.tint } }]);
+  };
+  const matchToB = async () => {
+    if (!mod || !sources.current) return;
+    const img = (k: string) => { const cv = sources.current![k].draw(1) as HTMLCanvasElement; return createImageBitmap(cv); };
+    const m = await mod.matchColor({ image: await img("lab:a") }, { image: await img("lab:b") });
+    setW3(`Shot match A → B: adjust saturation ${m.adjust.saturation}, wheels lift ${m.wheels.lift.join(", ")} / gamma ${m.wheels.gamma.join(", ")} / gain ${m.wheels.gain.join(", ")}; LUT ${m.lut.id} (Lab distance ${m.source.mean.map((v) => v.toFixed(0)).join("/")} → ${m.result.mean.map((v) => v.toFixed(0)).join("/")}, reference ${m.reference.mean.map((v) => v.toFixed(0)).join("/")})`);
+    setChain((c) => [...c, { id: `look-${Date.now().toString(36)}`, type: "look", enabled: true, params: { look: m.lut.id, lut_strength: 1 } }]);
+  };
+  const read10 = () => {
+    if (!eng) return;
+    const t0 = performance.now();
+    const y = eng.readYuv420p10();
+    const ms = performance.now() - t0;
+    const n = eng.renderer.frame!.w * eng.renderer.frame!.h;
+    let lo = 1023, hi = 0;
+    for (let i = 0; i < n; i++) { lo = Math.min(lo, y[i]); hi = Math.max(hi, y[i]); }
+    setW3(`readYuv420p10 (${hdr}, ${prim}): ${y.length} samples, Y codes ${lo}..${hi}, ${ms.toFixed(1)} ms`);
+  };
 
   useEffect(() => {
     if (!eng || !comp) return;
@@ -156,7 +206,7 @@ export default function EngineLab() {
     const out = new Map<string, TransitionInfo[]>();
     for (const x of list) {
       if (s && !`${x.id} ${x.label} ${x.tags.join(" ")}`.toLowerCase().includes(s)) continue;
-      const g = (x.kind === "gl" ? "GL · " : "") + x.group;
+      const g = (x.kind === "gl" ? "GL · " : x.kind === "tv" ? "Pack · " : "") + x.group;
       out.set(g, [...(out.get(g) ?? []), x]);
     }
     return [...out.entries()];
@@ -213,7 +263,7 @@ export default function EngineLab() {
           <canvas ref={sheet} width={0} height={0} className="block max-w-full rounded-lg" data-engine-sheet />
         </div>
         <div className="space-y-4">
-          <Section title={`Transition · ${info?.label ?? tr}`} description={info?.kind === "gl" ? `${info.author ?? ""} · ${info.license ?? ""} — ${info.description ?? ""}` : "FFmpeg xfade, drawn on the GPU"}>
+          <Section title={`Transition · ${info?.label ?? tr}`} description={info?.kind === "gl" ? `${info.author ?? ""} · ${info.license ?? ""} — ${info.description ?? ""}` : info?.kind === "tv" ? `Tatvam pack (${info.group})` : "FFmpeg xfade, drawn on the GPU"}>
             <SearchField value={search} onChange={setSearch} placeholder={`Search ${list.length} transitions`} />
             <div className="mt-2 max-h-72 overflow-y-auto rounded-lg border border-line p-2">
               {groups.map(([g, items]) => (
@@ -290,6 +340,25 @@ export default function EngineLab() {
                 );
               })}
             </div>
+          </Section>
+          <Section title="Wave 3 · scopes, analysis, HDR, MediaPipe" description="GPU scopes of the frame, auto white balance and shot matching (added to the chain), camera log profiles (the input_profile effect), HDR output with the 10-bit read-back">
+            <div className="flex flex-wrap items-center gap-2">
+              <Select value={scope} onChange={(e) => setScope(e.target.value as typeof scope)} aria-label="Scope" className="w-36">
+                {["off", "waveform", "parade", "vectorscope", "histogram"].map((k) => <option key={k} value={k}>{k === "off" ? "No scope" : k}</option>)}
+              </Select>
+              <Button size="sm" onClick={() => void autoWb().catch((e) => setErr((e as Error).message))}>Auto white balance</Button>
+              <Button size="sm" onClick={() => void matchToB().catch((e) => setErr((e as Error).message))}>Match A to B</Button>
+              <Select value={hdr} onChange={(e) => setHdr(e.target.value as typeof hdr)} aria-label="Output transfer" className="w-28">
+                <option value="sdr">SDR</option><option value="hlg">HLG</option><option value="pq">PQ</option>
+              </Select>
+              <Select value={prim} onChange={(e) => setPrim(e.target.value as typeof prim)} aria-label="Output primaries" className="w-28">
+                <option value="bt709">BT.709</option><option value="bt2020">BT.2020</option>
+              </Select>
+              <Button size="sm" onClick={read10}>Read 10-bit</Button>
+            </div>
+            {scope !== "off" && <canvas ref={scopeCanvas} className="mt-2 block w-full rounded-md border border-line bg-black" data-engine-scope />}
+            {w3 && <p className="mt-2 text-xs text-mute" data-engine-w3>{w3}</p>}
+            {mod && <p className="mt-2 text-2xs text-dim">Camera profiles: {mod.LOG_PROFILES.map((p) => p.label).join(" · ")}. MediaPipe: {JSON.stringify(mod.mediaPipeStatus())}</p>}
           </Section>
           <Section title="Adjust">
             <div className="grid grid-cols-2 gap-x-4 gap-y-2">

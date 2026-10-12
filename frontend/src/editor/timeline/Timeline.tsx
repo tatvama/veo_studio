@@ -7,8 +7,11 @@
 import { clsx } from "clsx";
 import {
   ArrowLeftRight, Blend, Bookmark, Columns2, Hand, Link2, Magnet, MousePointer2, MoveHorizontal, PenTool, Scissors, SquareSplitHorizontal, StretchHorizontal,
-  Type, ZoomIn, ChevronsRight, ChevronsLeft, Plus,
+  Type, ZoomIn, ChevronsRight, ChevronsLeft, Plus, ChevronRight, Rows3, X,
 } from "lucide-react";
+import * as M from "../motionActions";
+import { audioTransients } from "../model/snapping";
+import "./motion.css";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useShallow } from "zustand/react/shallow";
@@ -26,10 +29,10 @@ import { program, useFrame } from "../playback/transport";
 import { importDropped } from "../session";
 import {
   clearSelection, ctx as getCtx, ed, gesture, select, selectTransition, seq as getSeq, setFocus, setSnapLine, setSource, setTool, setView,
-  toggleLinked, toggleSnapping, TOOLS, urlFor, useEditor, useProject, useSequence, type Tool,
+  toggleLinked, toggleSnapBeats, toggleSnapping, toggleSnapTransients, TOOLS, urlFor, useEditor, useProject, useSequence, type Tool,
 } from "../store";
 import { IBtn, openMenu, TimecodeField } from "../ui";
-import { bandOf, ClipView, NAME_H } from "./Clip";
+import { bandOf, ClipView, NAME_H, SPEED_BAND } from "./Clip";
 import { EDGE_PX, HEADER_W, layoutRows, rowAt, SPLIT_H, type Layout } from "./geometry";
 import { clipMenu, gapMenu, transitionMenu } from "./menus";
 import { MiniMap } from "./MiniMap";
@@ -129,7 +132,12 @@ export default function TimelinePanel() {
     window.addEventListener("keydown", key, true);
     drag.current = { move, up, cancel };
   };
-  const points = (exclude: string[]) => (ed().snapping ? snapPoints(getSeq(), { playhead: program.frame, exclude }) : [] as SnapPoint[]);
+  const points = (exclude: string[]) => {
+    const st0 = ed();
+    if (!st0.snapping) return [] as SnapPoint[];
+    const sq = getSeq();
+    return snapPoints(sq, { playhead: program.frame, exclude, beats: st0.snapBeats, transients: st0.snapTransients ? audioTransients(sq, getCtx(), { exclude }) : undefined });
+  };
   const snapEdge = (f: number, pts: SnapPoint[], ev: PointerEvent) => {
     if (!pts.length || ev.shiftKey) { setSnapLine(null); return f; }
     const sn = snapFrame(f, pts, live.current.zoom);
@@ -156,7 +164,9 @@ export default function TimelinePanel() {
         const row = rowOf(ev.clientY, kind);
         const d = row ? row.track.index - anchor.index : 0;
         const tracks = kind === "video" ? { video: d, audio: 0 } : { video: 0, audio: d };
-        const rearr = ev.ctrlKey && ev.altKey, ins = ev.ctrlKey && !ev.altKey, dup = ev.altKey && !ev.ctrlKey;
+        // magnetic: moving storyline (V1) clips along V1 rearranges them (the storyline stays closed up)
+        const storyline = !!base.magnetic && kind === "video" && d === 0 && moving.some((x) => x.trackId === O.tracksOf(base, "video")[0]?.id);
+        const rearr = (ev.ctrlKey && ev.altKey) || (storyline && !ev.altKey), ins = ev.ctrlKey && !ev.altKey && !storyline, dup = ev.altKey && !ev.ctrlKey;
         label = rearr ? "Rearrange clips" : ins ? "Insert clips" : dup ? "Duplicate clips" : "Move clips";
         gesture.previewSeq((sq, cx) => (rearr ? O.rearrange(sq, cx, ids, a + df, tracks) : O.moveClips(sq, cx, ids, df, tracks, { mode: ins ? "insert" : "overwrite", duplicate: dup })));
       },
@@ -257,7 +267,7 @@ export default function TimelinePanel() {
   /** Pen / keyframe line: drag a keyframe (frame and value), click the line to add one, drag a line without keyframes to set the level. */
   function startBand(e: React.PointerEvent, c: TimelineClip, path: string, kfFrame: number | null, addKf: boolean) {
     const audio = path === "audio.gain";
-    const b = bandOf(audio);
+    const b = path === "timeRemap" ? SPEED_BAND : bandOf(audio);
     const clipEl = (e.target as Element).closest("[data-clip]") as HTMLElement;
     const r = clipEl.getBoundingClientRect();
     const top = r.top + NAME_H + 2, bh = r.height - NAME_H - 6;
@@ -267,7 +277,7 @@ export default function TimelinePanel() {
     if (!p0) return;
     let frame = kfFrame;
     const f0 = Math.max(0, Math.min(c.duration - 1, Math.round(frameAt(e.clientX) - c.start)));
-    gesture.begin(kfFrame !== null ? "Move keyframe" : addKf ? "Add keyframe" : audio ? "Volume" : "Opacity");
+    gesture.begin(kfFrame !== null ? "Move keyframe" : addKf ? "Add keyframe" : b.speed ? "Speed ramp" : audio ? "Volume" : "Opacity");
     if (frame === null && addKf) {
       frame = f0;
       const v = valAt(e.clientY);
@@ -291,7 +301,7 @@ export default function TimelinePanel() {
           const dv = valAt(ev.clientY) - valAt(y0);
           gesture.previewSeq((sq, cx) => O.updateParam(sq, cx, c.id, path, (pp) => {
             const q = p0;
-            const lo = audio ? -96 : 0, hi = audio ? 6 : 100;
+            const lo = b.lo, hi = b.hi;
             const cl = (v: number) => Math.round(Math.max(lo, Math.min(hi, v)) * 10) / 10;
             if (!q.keyframes?.length) return { value: cl(q.value + dv) };
             return { ...q, keyframes: q.keyframes.map((k) => ({ ...k, value: cl(k.value + dv) })) };
@@ -404,7 +414,7 @@ export default function TimelinePanel() {
     if (!c) return;
     if (c.source.type === "media") A.openInSource(c.source.mediaId, c.source.in);
     else if (c.source.type === "title") window.dispatchEvent(new CustomEvent("ed:panel", { detail: "text" }));
-    else if (c.source.type === "nested") A.openSequence(c.source.sequenceId);
+    else if (c.source.type === "nested") M.openTab(c.source.sequenceId, { fromParent: true });
   };
 
   const onHoverMove = (e: React.PointerEvent) => {
@@ -563,7 +573,8 @@ export default function TimelinePanel() {
   const inout = O.markedRange(s);
   const totalH = layout.height;
   return (
-    <div ref={root} tabIndex={-1} className="tl" onFocus={() => setFocus("timeline")} onPointerDown={() => setFocus("timeline")}>
+    <div ref={root} tabIndex={-1} className={clsx("tl", s.magnetic && "magnetic")} onFocus={() => setFocus("timeline")} onPointerDown={() => setFocus("timeline")}>
+      <SequenceTabs />
       <TimelineBar seq={s} laneW={laneW} />
       <div className="relative flex min-h-0 flex-1 flex-col">
         <div className="flex shrink-0">
@@ -580,7 +591,7 @@ export default function TimelinePanel() {
               const cs = byTrack.get(t.id) ?? [];
               const audio = t.kind === "audio";
               return (
-                <div key={t.id} className={clsx("tl-row absolute inset-x-0", i % 2 && "alt", t.locked && "locked")} style={{ top: r.top, height: r.height + 1 }}>
+                <div key={t.id} className={clsx("tl-row absolute inset-x-0", i % 2 && "alt", t.locked && "locked", s.magnetic && t.kind === "video" && t.index === 0 && "storyline")} style={{ top: r.top, height: r.height + 1 }}>
                   <TrackHeader track={t} width={HEADER_W} clips={cs.length} />
                   <div className="tl-lane" data-track={t.id} style={{ height: r.height }}>
                     {cs.map((c) => {
@@ -639,6 +650,41 @@ export default function TimelinePanel() {
   );
 }
 
+/** Sequences open as tabs, and the way back up from a nested sequence (breadcrumbs). */
+function SequenceTabs() {
+  const p = useProject();
+  const { tabs, crumbs } = useEditor(useShallow((x) => ({ tabs: x.tabs, crumbs: x.crumbs })));
+  const active = p.activeSequenceId;
+  const list = [...new Set([...tabs.filter((id) => p.sequences.some((s) => s.id === id)), active])];
+  const name = (id: string) => p.sequences.find((s) => s.id === id)?.name ?? "?";
+  // the trail is only shown while it still leads here (each step nests the next)
+  const trail = crumbs.filter((id) => p.sequences.some((s) => s.id === id));
+  const valid = trail.length > 0 && trail.every((id, i) => {
+    const next = trail[i + 1] ?? active;
+    return p.sequences.find((s) => s.id === id)?.clips.some((c) => c.source.type === "nested" && c.source.sequenceId === next);
+  });
+  if (list.length < 2 && !valid) return null;
+  return (
+    <div className="tl-tabs">
+      {list.map((id) => (
+        <div key={id} className={clsx("tl-tab", id === active && "on")} onClick={() => M.openTab(id)} title={name(id)}>
+          {p.sequences.find((s) => s.id === id)?.multicam ? <Rows3 className="size-3 shrink-0 opacity-70" /> : null}
+          <span className="truncate">{name(id)}</span>
+          {list.length > 1 && <button type="button" className="x" title="Close this tab" onClick={(e) => { e.stopPropagation(); M.closeTab(id); }}><X className="size-3" /></button>}
+        </div>
+      ))}
+      {valid && (
+        <div className="tl-crumbs" title="Nested sequences: click to go back up">
+          {trail.map((id) => (
+            <span key={id} className="flex items-center gap-1"><button type="button" onClick={() => M.openTab(id)}>{name(id)}</button><ChevronRight className="size-3 opacity-50" /></span>
+          ))}
+          <span className="text-ink">{name(active)}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function PlayheadTimecode({ fps }: { fps: number }) {
   const f = useFrame(program);
   return <TimecodeField frame={f} fps={fps} size="lg" className="text-accent-ink" onChange={(v) => program.seek(v)} />;
@@ -646,13 +692,13 @@ function PlayheadTimecode({ fps }: { fps: number }) {
 
 /** The timeline's tool strip: tools, snapping, linked selection, add marker, sequence switcher and zoom. */
 function TimelineBar({ seq: s, laneW }: { seq: Sequence; laneW: number }) {
-  const { tool, snapping, linked, zoom } = useEditor(useShallow((x) => ({ tool: x.tool, snapping: x.snapping, linked: x.linked, zoom: x.zoom })));
+  const { tool, snapping, linked, zoom, snapBeats, snapTransients } = useEditor(useShallow((x) => ({ tool: x.tool, snapping: x.snapping, linked: x.linked, zoom: x.zoom, snapBeats: x.snapBeats, snapTransients: x.snapTransients })));
   const p = useProject();
   const slider = (z: number) => Math.round((Math.log(z / 0.002) / Math.log(60 / 0.002)) * 1000);
   const fromSlider = (v: number) => 0.002 * Math.pow(60 / 0.002, v / 1000);
   return (
     <div className="ed-bar gap-1">
-      <select className="ed-field max-w-[11rem] truncate" value={s.id} onChange={(e) => A.openSequence(e.target.value)} title="Sequence">
+      <select className="ed-field max-w-[11rem] truncate" value={s.id} onChange={(e) => M.openTab(e.target.value)} title="Sequence">
         {p.sequences.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
       </select>
       <span className="mx-1 h-4 w-px bg-line" />
@@ -661,7 +707,16 @@ function TimelineBar({ seq: s, laneW }: { seq: Sequence; laneW: number }) {
         return <IBtn key={t.id} title={t.label} shortcut={t.key} on={tool === t.id} onClick={() => setTool(t.id)}><I className="size-3.5" /></IBtn>;
       })}
       <span className="mx-1 h-4 w-px bg-line" />
-      <IBtn title={snapping ? "Snapping on" : "Snapping off"} shortcut="S" on={snapping} onClick={toggleSnapping}><Magnet className="size-3.5" /></IBtn>
+      <IBtn title={`${snapping ? "Snapping on" : "Snapping off"} (right-click: beats, audio transients)`} shortcut="S" on={snapping} onClick={toggleSnapping}
+        onContextMenu={(e) => { e.preventDefault(); openMenu(e, [
+          { label: "Snapping", shortcut: "S", checked: snapping, onClick: toggleSnapping },
+          { label: "Snap to beat markers", checked: snapBeats, separator: true, onClick: toggleSnapBeats },
+          { label: "Snap to audio transients", checked: snapTransients, onClick: toggleSnapTransients },
+        ]); }}><Magnet className="size-3.5" /></IBtn>
+      <button type="button" className={clsx("tl-mag", s.magnetic && "on")} onClick={M.toggleMagnetic}
+        title={s.magnetic ? "Magnetic timeline: V1 is the storyline — gaps close and clips above ride along (click for position mode)" : "Position mode: clips stay where you put them (click for the magnetic timeline)"}>
+        {s.magnetic ? "Magnetic" : "Position"}
+      </button>
       <IBtn title={linked ? "Linked selection on" : "Linked selection off"} on={linked} onClick={toggleLinked}><Link2 className="size-3.5" /></IBtn>
       <IBtn title="Add marker" shortcut="M" onClick={() => A.addSeqMarker()}><Bookmark className="size-3.5" /></IBtn>
       <IBtn title="Apply default transition" shortcut="Ctrl+D" onClick={() => A.defaultTransitions("video")}><Blend className="size-3.5" /></IBtn>

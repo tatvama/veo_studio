@@ -1,0 +1,96 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   Tatvam Desktop shell: the custom title bar, the status bar, the palette and the drop overlay, plus the appearance
+   switches (density, high contrast, a dark accent). Tokens only, so every theme and accent applies.
+   The main process puts the base strip CSS into each window (desktop/src/main/shell-appearance.ts chromeCss).
+   ════════════════════════════════════════════════════════════════════════════ */
+
+:root { --desk-status-h: 0px; --desk-statusbar: 24px; }
+
+/* density: compact is a touch smaller everywhere (rem-based sizes follow the root size) */
+:root[data-density="compact"] { font-size: 15px; --desk-statusbar: 22px; }
+
+/* high contrast: stronger lines and secondary text, thick focus rings */
+:root[data-contrast="high"] {
+  --color-line: color-mix(in srgb, var(--color-ink) 42%, var(--color-panel));
+  --color-mute: color-mix(in srgb, var(--color-ink) 88%, var(--color-panel));
+  --color-dim: color-mix(in srgb, var(--color-ink) 74%, var(--color-panel));
+}
+:root[data-contrast="high"] :focus-visible { outline: 3px solid var(--color-accent) !important; outline-offset: 2px !important; }
+
+/* a chosen accent repaints the primary buttons (their brand gradient is fixed cyan otherwise) */
+:root[data-accent-custom] .btn-primary {
+  background-image: linear-gradient(180deg, color-mix(in srgb, var(--color-accent) 62%, white) 0%, var(--color-accent) 52%, color-mix(in srgb, var(--color-accent) 82%, black) 100%);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.35) inset, 0 0 0 1px color-mix(in srgb, var(--color-accent) 50%, transparent), 0 8px 22px -8px color-mix(in srgb, var(--color-accent) 60%, transparent);
+}
+:root[data-accent-custom] .btn-primary:hover:not(:disabled) { filter: brightness(1.08); }
+/* a dark accent (e.g. the Windows default blue) gets light text on primary buttons */
+:root[data-accent-dark] .btn-primary { color: #fff !important; }
+
+/* ── shared focus ring for everything the shell draws ─────────────────────── */
+.desk-ui :focus-visible { outline: 2px solid color-mix(in srgb, var(--color-accent) 80%, transparent); outline-offset: 1px; border-radius: 6px; }
+/* fields draw their own focus ring */
+.desk-ui :is(input, textarea, select):focus-visible { outline: none; }
+
+/* ── title bar ─────────────────────────────────────────────────────────────── */
+.desk-titlebar {
+  position: fixed; z-index: 45; top: 0; height: var(--desk-title-h, 32px);
+  left: env(titlebar-area-x, 0px); width: env(titlebar-area-width, calc(100% - 140px));
+  display: flex; align-items: center; gap: 2px; padding: 0 6px 0 8px;
+  -webkit-app-region: drag; user-select: none; -webkit-user-select: none;
+  color: var(--color-mute); font-size: 12px;
+  background: color-mix(in srgb, var(--color-panel) 92%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--color-line) 70%, transparent);
+}
+:root[data-material="mica"] .desk-titlebar, :root[data-material="acrylic"] .desk-titlebar {
+  background: color-mix(in srgb, var(--color-panel) 62%, transparent);
+}
+.desk-titlebar :is(button, a, input, [role="button"]) { -webkit-app-region: no-drag; }
+.desk-titlebar .tb-menu { height: calc(var(--desk-title-h, 32px) - 8px); padding: 0 8px; border-radius: 6px; color: var(--color-mute); }
+.desk-titlebar .tb-menu:hover, .desk-titlebar .tb-menu[aria-expanded="true"] { background: var(--color-hover); color: var(--color-ink); }
+.desk-titlebar .tb-title { flex: 1; min-width: 0; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-mute); padding: 0 8px; }
+.desk-titlebar .tb-search {
+  display: inline-flex; align-items: center; gap: 8px; height: calc(var(--desk-title-h, 32px) - 9px); min-width: 0; width: clamp(160px, 26vw, 360px);
+  padding: 0 6px 0 9px; border-radius: 7px; border: 1px solid var(--color-line); background: color-mix(in srgb, var(--color-raised) 80%, transparent);
+  color: var(--color-dim); font-size: 12px;
+}
+.desk-titlebar .tb-search:hover { border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-line)); color: var(--color-mute); }
+.desk-titlebar .tb-pill { height: 22px; padding: 0 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+.desk-titlebar.blurred { color: var(--color-dim); }
+.desk-titlebar.blurred .tb-title { opacity: .75; }
+
+/* ── status bar ────────────────────────────────────────────────────────────── */
+.desk-statusbar {
+  position: fixed; z-index: 44; left: 0; right: 0; bottom: 0; height: var(--desk-statusbar);
+  display: flex; align-items: center; gap: 2px; padding: 0 6px;
+  font: 11px/1 var(--font-mono); color: var(--color-dim);
+  background: color-mix(in srgb, var(--color-panel) 94%, transparent); border-top: 1px solid var(--color-line);
+}
+:root[data-material="mica"] .desk-statusbar, :root[data-material="acrylic"] .desk-statusbar { background: color-mix(in srgb, var(--color-panel) 86%, transparent); }
+.desk-statusbar.slot { position: static; height: auto; border: 0; background: none; padding: 0; }
+.desk-sb-item { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 7px; border-radius: 5px; white-space: nowrap; color: inherit; }
+button.desk-sb-item:hover { background: var(--color-hover); color: var(--color-ink); }
+.desk-sb-item .dot { width: 7px; height: 7px; border-radius: 999px; background: var(--color-ok); box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-ok) 22%, transparent); }
+.desk-sb-item .dot.off { background: var(--color-bad); box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-bad) 22%, transparent); }
+.desk-sb-item .dot.warn { background: var(--color-warn); box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-warn) 22%, transparent); }
+.desk-sb-item .dot.info { background: var(--color-info); box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-info) 22%, transparent); }
+.desk-sb-sep { width: 1px; height: 12px; background: var(--color-line); margin: 0 2px; }
+.desk-sb-bar { width: 46px; height: 4px; border-radius: 3px; background: var(--color-line); overflow: hidden; }
+.desk-sb-bar > i { display: block; height: 100%; background: var(--color-accent); transition: width .3s var(--ease-out-expo); }
+:root[data-motion="reduced"] .desk-sb-bar > i { transition: none; }
+
+/* ── drop overlay (visual only: drops still reach the page first) ─────────── */
+.desk-drop {
+  position: fixed; inset: calc(var(--desk-title-h, 0px) + 8px) 8px calc(var(--desk-status-h, 0px) + 8px); z-index: 80; pointer-events: none;
+  border: 2px dashed color-mix(in srgb, var(--color-accent) 70%, transparent); border-radius: 14px;
+  background: color-mix(in srgb, var(--color-accent) 7%, transparent); display: grid; place-items: center;
+}
+.desk-drop > div { padding: 14px 18px; border-radius: 12px; background: var(--color-raised); box-shadow: var(--shadow-pop); text-align: center; max-width: 420px; }
+
+/* ── palette ───────────────────────────────────────────────────────────────── */
+.desk-palette mark { background: none; color: var(--color-accent-ink); font-weight: 600; }
+.desk-palette [aria-selected="true"] { background: var(--color-hover); }
+.desk-palette [aria-selected="true"] .row-enter { opacity: 1; }
+.desk-palette .row-enter { opacity: 0; }
+
+/* toasts sit above the status bar */
+:root[data-desktop] [data-sonner-toaster][data-y-position="bottom"] { bottom: calc(var(--desk-status-h, 0px) + 14px) !important; }

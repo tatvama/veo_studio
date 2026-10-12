@@ -6,9 +6,12 @@
  * merge into one undo step.
  */
 import { clsx } from "clsx";
-import { ArrowDown, ArrowUp, ChevronDown, ChevronLeft, ChevronRight, Diamond, RotateCcw, Timer, Trash2, Type, VenetianMask } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { ArrowDown, ArrowUp, ChevronDown, ChevronLeft, ChevronRight, Diamond, LineChart, RotateCcw, Timer, Trash2, Type, VenetianMask } from "lucide-react";
+import { Fragment, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import * as A from "../actions";
+import * as M from "../motionActions";
+import { RAMP_PRESETS } from "../model/remap";
+import { GraphView } from "./GraphEditor";
 import { effectDef, effectDefaults, videoEffects, type EffectDef, type ParamDef } from "../effects";
 import { kindOf, MAX_SPEED, MIN_SPEED, updateClips, updateEffect, updateParam, moveEffect, removeEffect } from "../model/ops";
 import { addKeyframe, isAnimated, moveKeyframe, nextKeyframe, prevKeyframe, removeKeyframe, setKeyframeEase, setParam, toggleStopwatch, valueAt } from "../model/params";
@@ -21,7 +24,8 @@ import { IBtn, openMenu, ScrubNumber } from "../ui";
 const BLENDS: BlendMode[] = ["normal", "add", "multiply", "screen", "overlay", "lighten", "darken"];
 const EASES: { value: Easing; label: string }[] = [
   { value: "linear", label: "Linear" }, { value: "ease_in", label: "Ease in" }, { value: "ease_out", label: "Ease out" },
-  { value: "ease_in_out", label: "Ease in and out" }, { value: "hold", label: "Hold" },
+  { value: "ease_in_out", label: "Ease in and out" }, { value: "bezier", label: "Bezier (graph editor handles)" }, { value: "bounce", label: "Bounce" },
+  { value: "elastic", label: "Elastic" }, { value: "hold", label: "Hold" },
 ];
 
 /** The program frame, at most ~12 times a second (values follow the playhead without re-rendering every frame). */
@@ -103,6 +107,11 @@ function Controls({ c, s, defs }: { c: TimelineClip; s: Sequence; defs: EffectDe
   }, [c.start, c.duration, laneW]);
 
   const toggle = (k: string) => setClosed((o) => ({ ...o, [k]: !o[k] }));
+  // properties showing their graph inline (editor-motion)
+  const [graphs, setGraphs] = useState<Record<string, boolean>>({});
+  const [fit, setFit] = useState(M.rampFit());
+  const [freezeS, setFreezeS] = useState(M.freezeSeconds());
+  const retimable = c.source.type === "media";
   const sec = (key: string, title: React.ReactNode, actions?: React.ReactNode) => (
     <div className="col-span-2 flex h-7 items-center gap-1.5 border-b border-line bg-raised/60 px-1.5 text-2xs font-semibold text-mute">
       <button type="button" className="flex flex-1 items-center gap-1 text-left" onClick={() => toggle(key)}>
@@ -111,7 +120,12 @@ function Controls({ c, s, defs }: { c: TimelineClip; s: Sequence; defs: EffectDe
       {actions}
     </div>
   );
-  const row = (props: Omit<RowProps, "c" | "local" | "laneW">) => <PRow key={props.path} {...props} c={c} local={local} laneW={laneW} />;
+  const row = (props: Omit<RowProps, "c" | "local" | "laneW">) => (
+    <Fragment key={props.path}>
+      <PRow {...props} c={c} local={local} laneW={laneW} graph={!!graphs[props.path]} onGraph={() => setGraphs((g) => ({ ...g, [props.path]: !g[props.path] }))} />
+      {graphs[props.path] && <div className="ec-graph"><InlineGraph c={c} path={props.path} fps={s.fps} /></div>}
+    </Fragment>
+  );
   return (
     <div className="pn" onPointerDown={() => setFocus("controls")}>
       <div className="ed-bar">
@@ -165,6 +179,25 @@ function Controls({ c, s, defs }: { c: TimelineClip; s: Sequence; defs: EffectDe
               <label className="ml-2 flex items-center gap-1 text-2xs text-mute"><input type="checkbox" checked={c.reverse} onChange={(e) => A.setSpeed([c.id], c.speed, { reverse: e.target.checked })} />Reverse</label>
             </Plain>
             <Plain label="Duration"><span className="mono text-2xs text-mute">{toTimecode(c.duration, s.fps)}</span></Plain>
+            {retimable && c.timeRemap && row({ label: "Speed ramp", path: "timeRemap", param: c.timeRemap as Param<unknown>, def: 100, step: 1, min: 0, max: 1000, unit: "%" })}
+            {retimable && (
+              <Plain label="Time remapping"><div className="flex flex-wrap items-center gap-1 py-0.5">
+                {!c.timeRemap && <button type="button" className="ec-btn" onClick={() => M.enableRamp(c.id)} title="A speed curve you put keyframes on">Turn on</button>}
+                <button type="button" className="ec-btn" onClick={(e) => openMenu(e.currentTarget.getBoundingClientRect(), RAMP_PRESETS.map((pr) => ({ label: pr.label, hint: pr.hint, onClick: () => M.applyRamp([c.id], pr.id, fit) })))}>Presets</button>
+                {c.timeRemap && <button type="button" className="ec-btn" onClick={() => M.removeRamp([c.id], fit)}>Remove</button>}
+                <select className="ed-field !h-5 text-2xs" value={fit} title="What a ramp changes" onChange={(e) => { const v = e.target.value as "length" | "content"; setFit(v); M.setRampFit(v); }}>
+                  <option value="length">Keep length</option><option value="content">Keep every frame (ripple)</option>
+                </select>
+              </div></Plain>
+            )}
+            {retimable && !audio && (
+              <Plain label="Freeze frame"><div className="flex flex-wrap items-center gap-1 py-0.5">
+                <ScrubNumber value={freezeS} min={0.1} max={60} step={0.1} unit="s" onChange={(v) => { setFreezeS(v); M.setFreezeSeconds(v); }} />
+                <button type="button" className="ec-btn" title="Insert a frame hold at the playhead (what follows moves later)" onClick={() => M.insertFreezeAt(freezeS)}>Insert</button>
+                <button type="button" className="ec-btn" title="Hold the last frame for that long" onClick={() => M.freezeLast(c.id, freezeS)}>End</button>
+                <button type="button" className="ec-btn" title="The whole clip shows the frame at the playhead" onClick={() => M.holdFrameAt()}>Hold</button>
+              </div></Plain>
+            )}
           </>}
           {c.effects.map((e, i) => {
             const d = defs.find((x) => x.id === e.type) ?? effectDef(e.type);
@@ -220,6 +253,21 @@ function Controls({ c, s, defs }: { c: TimelineClip; s: Sequence; defs: EffectDe
 
 const EffectBlock = ({ children }: { children: React.ReactNode }) => <>{children}</>;
 
+/** A property's graph under its row (its own keyframe selection). */
+function InlineGraph({ c, path, fps }: { c: TimelineClip; path: string; fps: number }) {
+  const [sel, setSel] = useState<number[]>([]);
+  const [mode, setMode] = useState<"value" | "speed">("value");
+  return (
+    <div className="relative">
+      <div className="ed-seg absolute right-1 top-1 z-10 bg-panel/80">
+        <button type="button" aria-pressed={mode === "value"} onClick={() => setMode("value")}>Value</button>
+        <button type="button" aria-pressed={mode === "speed"} onClick={() => setMode("speed")}>Speed</button>
+      </div>
+      <GraphView clip={c} path={path} fps={fps} mode={mode} sel={sel} onSel={setSel} height={130} compact />
+    </div>
+  );
+}
+
 function Plain({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="ec-row">
@@ -241,12 +289,14 @@ function StaticParam({ pd, value, onChange }: { pd: ParamDef; value: unknown; on
 interface RowProps {
   c: TimelineClip; local: number; laneW: number; label: string; path: string; param: Param<unknown>; def: unknown;
   step: number; min?: number; max?: number; unit?: string;
+  /** The inline graph is open; toggles it. */
+  graph?: boolean; onGraph?: () => void;
   /** An effect param missing from the instance (added with its default on first edit). */
   ensure?: { effectId: string; name: string; value: unknown };
 }
 
 /** One animatable parameter: stopwatch, value(s), keyframe navigation, reset | its keyframe lane. */
-function PRow({ c, local, laneW, label, path, param, def, step, min, max, unit, ensure }: RowProps) {
+function PRow({ c, local, laneW, label, path, param, def, step, min, max, unit, ensure, graph, onGraph }: RowProps) {
   const animated = isAnimated(param);
   const v = valueAt(param, local);
   const kfHere = !!param.keyframes?.some((k) => k.frame === local);
@@ -281,6 +331,7 @@ function PRow({ c, local, laneW, label, path, param, def, step, min, max, unit, 
             <button type="button" className="grid size-4 place-items-center text-dim hover:text-ink" title="Next keyframe" onClick={() => { const f = nextKeyframe(param, local); if (f !== null) program.seek(c.start + f); }}><ChevronRight className="size-3" /></button>
           </div>
         )}
+        {onGraph && <button type="button" className={clsx("grid size-4 shrink-0 place-items-center", graph ? "text-accent-ink" : "text-dim hover:text-ink")} title={graph ? "Hide the graph" : "Show the value graph (bezier handles)"} onClick={onGraph}><LineChart className="size-3" /></button>}
         <button type="button" className="grid size-4 shrink-0 place-items-center text-dim hover:text-ink" title="Reset" onClick={() => edit((p) => setParam(p, def, local), `Reset ${label}`)}><RotateCcw className="size-3" /></button>
       </div>
       <KfLane c={c} path={path} param={param} laneW={laneW} />

@@ -6,11 +6,12 @@
  */
 import { create } from "zustand";
 import * as H from "./model/commands";
+import { magnetizeProject } from "./model/magnetic";
 import { activeSequence, ctxOf, updateSequence, withLinked, type Clipboard, type Ctx } from "./model/ops";
 import type { EditProject, MediaItem, Sequence } from "./model/types";
 
 export type Tool = "select" | "trackFwd" | "trackBack" | "ripple" | "roll" | "rate" | "razor" | "slip" | "slide" | "pen" | "hand" | "zoom" | "text";
-export type Focus = "timeline" | "program" | "source" | "project" | "effects" | "controls" | "mixer" | "text" | "other";
+export type Focus = "timeline" | "program" | "source" | "project" | "effects" | "controls" | "mixer" | "text" | "graph" | "other";
 
 export const TOOLS: { id: Tool; label: string; key: string }[] = [
   { id: "select", label: "Selection", key: "V" },
@@ -53,12 +54,19 @@ export interface EditorState {
   focus: Focus;
   /** A frame the timeline shows a snap line at while dragging. */
   snapLine: number | null;
+  /** Additive (editor-motion): snap to beat markers / to audio transients (with snapping on). */
+  snapBeats: boolean; snapTransients: boolean;
+  /** Additive (editor-motion): sequences open as timeline tabs, and the nesting path to the active one (breadcrumbs). */
+  tabs: string[]; crumbs: string[];
+  /** Additive (editor-motion): the Source monitor shows the multicam angles of the clip under the playhead. */
+  multicamView: boolean;
 }
 
 const empty = (p: EditProject): EditorState => ({
   h: H.initHistory(p), path: null, demo: false, saved: p, saving: false, savedAt: null, saveError: null, urls: {},
   selection: [], selTransition: null, selMarker: null, tool: "select", snapping: true, linked: true, zoom: 2, scroll: 0,
   clipboard: null, sourceId: null, focus: "timeline", snapLine: null,
+  snapBeats: true, snapTransients: false, tabs: p.activeSequenceId ? [p.activeSequenceId] : [], crumbs: [], multicamView: false,
 });
 
 export const useEditor = create<EditorState>(() => empty({
@@ -114,10 +122,16 @@ function pruneSelection(s: EditorState, p: EditProject): Partial<EditorState> {
   return sel.length === s.selection.length && tr === s.selTransition && mk === s.selMarker ? {} : { selection: sel, selTransition: tr, selMarker: mk };
 }
 
+/** A command that leaves magnetic sequences magnetic (V1 closed up, connected clips riding along: model/magnetic.ts). */
+const magnetic = (run: (p: EditProject) => EditProject) => (p: EditProject) => {
+  const n = run(p);
+  return n === p ? n : magnetizeProject(p, n, ctxOf(n));
+};
+
 /** Runs one undoable command on the whole project. */
 export function exec(label: string, run: (p: EditProject) => EditProject, coalesce?: string) {
   set((s) => {
-    const h = H.exec(s.h, H.command(label, run, coalesce));
+    const h = H.exec(s.h, H.command(label, magnetic(run), coalesce));
     return h === s.h ? {} : { h, ...pruneSelection(s, h.present) };
   });
 }
@@ -131,7 +145,7 @@ export function seqExec(label: string, fn: (s: Sequence, c: Ctx) => Sequence, co
 /** A drag: begin, then preview(fn) on every move (fn starts from the document as the drag began), then commit. */
 export const gesture = {
   begin(label: string) { set((s) => ({ h: H.begin(s.h, label) })); },
-  preview(fn: (p: EditProject) => EditProject) { set((s) => { const h = H.preview(s.h, fn); return h === s.h ? {} : { h }; }); },
+  preview(fn: (p: EditProject) => EditProject) { set((s) => { const h = H.preview(s.h, magnetic(fn)); return h === s.h ? {} : { h }; }); },
   previewSeq(fn: (s: Sequence, c: Ctx) => Sequence) {
     const id = project().activeSequenceId;
     gesture.preview((p) => updateSequence(p, id, fn));
@@ -189,3 +203,11 @@ export const setClipboard = (clipboard: Clipboard | null) => set({ clipboard });
 export const setSource = (id: string | null) => set({ sourceId: id });
 export const setUrls = (urls: Record<string, string>) => set((s) => ({ urls: { ...s.urls, ...urls } }));
 export const setSaveState = (patch: Partial<Pick<EditorState, "saving" | "savedAt" | "saveError" | "saved" | "path">>) => set(patch);
+
+// ── editor-motion view state ─────────────────────────────────────────────────
+
+export const toggleSnapBeats = () => set((s) => ({ snapBeats: !s.snapBeats }));
+export const toggleSnapTransients = () => set((s) => ({ snapTransients: !s.snapTransients }));
+export const setMulticamView = (on: boolean) => set({ multicamView: on });
+/** Timeline tabs and breadcrumbs (actions.openSequence keeps them in step). */
+export const setTabs = (tabs: string[], crumbs?: string[]) => set((s) => ({ tabs, crumbs: crumbs ?? s.crumbs }));

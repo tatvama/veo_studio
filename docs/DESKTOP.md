@@ -294,7 +294,7 @@ three takes (`…_001_SC02_SH001…`, `…_002_SC01_SH002…`, `…_003_SC01_SH0
 | Module | Job |
 | --- | --- |
 | `main/index.ts` | Lifecycle, single instance, the `tatvam://` deep link, wiring |
-| `main/config.ts` | `settings.json` in userData: `serverUrl`, `gatewayPort`, `uiSource` ("bundled" or "server"), `libraryRoot`, `projectFolders {pid: path}`, `naming {folder: template}`, `pullScope`, `proxyMode`, `encoder` preferences, `workspaces`, `windowState` |
+| `main/config.ts` | `settings.json` in userData: `serverUrl`, `gatewayPort`, `uiSource` ("auto", "bundled" or "server", §4.3), `appearance`, `assistants`, `lutFolders`, `editorBackups`, `libraryRoot`, `projectFolders {pid: path}`, `naming {folder: template}`, `pullScope`, `proxyMode`, `encoder` preferences, `workspaces`, `windowState` |
 | `main/gateway.ts` | The local HTTP gateway (§1): static UI with SPA fallback; `/api` and `/media` forwarded with streaming and Range; WebSocket upgrade forwarded; local-first `/media` (with a proxy file in proxy mode); offline cache and write queue |
 | `main/upstream.ts` | Server calls from the main process (session cookie and `X-Requested-With` added), plus the WebSocket listener that triggers re-syncs |
 | `main/library.ts` | Library root, project folders, folder skeleton, move, open, disk usage, clean |
@@ -319,6 +319,11 @@ three takes (`…_001_SC02_SH001…`, `…_002_SC01_SH002…`, `…_003_SC01_SH0
 | `main/menu.ts` | The application menu and its shortcuts |
 | `main/updater.ts` | `electron-updater` on GitHub Releases, used only when the app is packaged |
 | `main/log.ts` | A rolling log file in `userData/logs`, plus local crash dumps |
+| `main/uicache.ts` | **Screens from the server** (§4.3): manifest check, sha256-verified downloads, atomic build swap, offline copy |
+| `main/notify.ts`, `main/taskbar.ts`, `main/tray.ts`, `main/shell*.ts` | Native toasts and the notification centre, taskbar progress / overlay / thumbnail buttons / Jump List, the tray, appearance (Mica, accent, theme, scale), Start, Settings, onboarding, splash and crash recovery |
+| `main/tools.ts` | Installs the PC's own tools on demand, each pinned by SHA-256: Real-ESRGAN, RIFE, whisper.cpp (CPU and CUDA 12.4) and its models |
+| `main/editor*.ts` | Tatvam Editor's side (docs/EDITOR.md §5): projects, media, analysis, the audio export graph and effects (`editor-audio.ts`, `editor-audiofx.ts`, `editor-irs.ts`), Whisper, RIFE, sync, jobs, versions, interchange (`editor-interop.ts`) |
+| `main/mcp/**`, `main/autowatch.ts` | The local MCP server for AI assistants, the `--mcp-stdio` relay, and watch folders (docs/EDITOR.md §13) |
 | `preload/index.ts` | `window.tatvamDesktop`, the typed bridge (§5) |
 | `preload/connect.ts` | `window.tatvamConnect`, only in the Studio server window |
 
@@ -366,6 +371,48 @@ Finishing room → AI upscale → **This PC · free** (the cloud Topaz route sta
   from these numbers and then uses what this PC actually managed (`upscale-speed.json`, output megapixels a second).
 - Compared on a 1080p still at 4K: plain Lanczos is soft, the video model gives clearly sharper edges and texture
   (a little crisp), x4plus the most natural detail.
+
+### 4.3 Screens from the server, with an offline copy (added 12 October 2026)
+
+`uiSource` gains **`"auto"`**, the new default. `"bundled"` and `"server"` stay as choices in File → Studio
+server…. Settings that only had the old default `"bundled"` (the user never chose it) move to `"auto"`.
+
+**Picking the screens.** In `auto`, the gateway serves the UI from, in this order:
+1. **The server's build**, if it's reachable, allowed and compatible.
+2. **The last good copy of that server's build**, saved on this PC.
+3. **The copy inside the app.**
+
+Every build is served from disk (`userData/ui-cache/<server-hash>/<build>/`), so an `index.html` and its `assets/`
+always come from the same build.
+
+**Server manifest.** `GET /api/ui/manifest` (no sign-in needed) returns:
+- `build`: the sha256 of `index.html`, 12 hex characters.
+- `version`: the app version.
+- `built_at`.
+- `requires_desktop`: the lowest desktop app version the screens need, from `frontend/package.json` →
+  `tatvam.requiresDesktop`.
+- `files`: `[{path, size, sha256}]`.
+
+The server computes it once from `frontend/dist` and caches it until `index.html` changes.
+
+**Fetching a new build.**
+- When: at start, every 10 minutes, and whenever the connection comes back.
+- How: the desktop compares `build` with its active copy, downloads only the files it doesn't already have (it
+  checks every sha256), and builds the new folder under a temporary name before renaming it into place. It keeps the
+  last 2 builds per server.
+- It never fetches from a different origin than `serverUrl`. It only fetches over HTTPS, or from loopback or a
+  private-network address (10/8, 172.16/12, 192.168/16, fc00::/7, `*.local`). Anything else stays on the copy
+  inside the app, and the Studio server window says why.
+- If `requires_desktop` is newer than the app, it keeps the current copy and shows "Update Tatvam Desktop to get the
+  newest screens".
+
+**Switching builds.** Never in the middle of work. When a new build is ready, every window shows the toast "New
+screens are ready" with **Reload** and **Later**. The editor saves first, and windows with unsaved work ask before
+reloading. Windows opened after that use the new build.
+
+**Status.** The Studio server window, Help → About and the status bar show which screens are running ("Server build
+3f2a9c, 12 Oct", "Offline copy of server build 3f2a9c" or "Built into the app 3.1.0"), plus the last check and any
+error. The bridge has `app.uiStatus()` and `app.onUiStatus(cb)`.
 
 ## 5. Bridge: `window.tatvamDesktop` (preload)
 
@@ -426,6 +473,15 @@ interface TatvamDesktop {
   offline: { status(): Promise<{ online: boolean; queued: number; lastError?: string }>; onChange(cb): () => void; flush(): Promise<void> };
   upscale: { tool(); install(); onTool(cb); estimate({pid, eid, targetH, model: "fast" | "best", shotIds?}); start(same);
              list(); cancel(id); onProgress(cb) };   // AI upscale on this PC (§4.2)
+  // added 12–13 October (all optional; older builds lack them, so pages feature-detect):
+  engine?: { job(id); frame(id, i, Uint8Array | Uint16Array); done(id); fail(id, msg) };  // GPU render window; bits 10 → yuv420p10le
+  editor?: EditorBridge;         // Tatvam Editor: docs/EDITOR.md §5, plus interop, writeLut, sidecars, versions, analyze …
+  tools?: { status(); install(id); remove(id); onProgress(cb) };   // RIFE, whisper.cpp (CPU / CUDA 12.4), models, Real-ESRGAN
+  appearance?: { get(); set(patch); onChange(cb) };                // theme, accent, density, scale, reduce motion, contrast
+  shell?: { state(); setPrefs(p); open(what); dropped(files); jobs(); disk(); storage(); clearStorage(id); … };
+  notifications?: { list(); onChange(cb); show(n); markRead(id); clear(); open(id) };
+  assistants?: AssistantsBridge;  // local MCP server for AI assistants: docs/EDITOR.md §13
+  // app also gains uiStatus(), onUiStatus(cb), checkUi(), updateState(), installUpdate(), releaseNotes()
 }
 type PanelId = "program" | "source" | "timeline" | "scopes" | "mixer" | "notes" | "media" | "renders" | "bible";
 ```
@@ -465,7 +521,30 @@ npm run dist       # Windows installer (NSIS) in desktop/release, with the built
   optional `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` secrets; without them the installer is unsigned and Windows
   SmartScreen warns on first run.
 
-## 7. Status (11 October 2026)
+## 7. Status (13 October 2026)
+
+Built and tested on the reference laptop (GTX 1660 Ti 6 GB, i7-9750H, 32 GB, NVMe), against throwaway servers with
+mock providers. Part 1 (the finishing room, 11 October) is below this list.
+
+Part 2 (12–13 October):
+- **The GPU render engine** (docs/ENGINE.md) and **Tatvam Editor** (docs/EDITOR.md), with its free tools on this
+  PC and the AI tools.
+- **Screens from the server** with an offline copy (§4.3). Tested live:
+  - (a) The server's build is served.
+  - (b) With the server stopped, the offline copy is served and labelled.
+  - (c) A new build arrives with Reload / Later.
+  - (d) A damaged cached file is caught and downloaded again.
+- **Desktop UI and UX:**
+  - Windows 11 title bar with Mica, appearance settings, the command palette (Ctrl+Shift+P).
+  - Native notifications and a notification centre.
+  - Taskbar progress and Jump List, the tray.
+  - Drag and drop from Explorer.
+  - The Start window, the Settings window (11 sections, searchable) and onboarding.
+  - The status bar, the update pill and crash recovery.
+- **AI assistants** (docs/EDITOR.md §13): a local MCP server with 40 tools, auto edit and watch folders.
+- **Not seen live:** the tray, the taskbar buttons, the Jump List and native toasts, because CDP can't see them; and
+  the stdio relay in a packaged build.
+
 
 Built and tested on the reference laptop (GTX 1660 Ti 6 GB, i7-9750H, 32 GB, NVMe), against a throwaway server
 with mock providers:
@@ -482,6 +561,5 @@ replay from the real UI (covered by unit tests), and the paid fal upscale (mock 
 price before relying on `upscale_price_per_s`). Kenburns stills are slow at 4K, captions need the caption font
 installed on the PC for Indic shaping, and there is no app icon yet.
 
-**Next part of Phase 9:** the GPU render engine (WebGPU, WebGL fallback) for shader transitions beyond FFmpeg's 58,
-keyframes, masks, chroma key and colour tools, previewing in the browser and the desktop and rendering headless in
-the desktop (TATVAM_PLAN.md §8.2, §16.5).
+**Next:** wave 4 of the editor (preview render, smart render, network render, trim monitor, masks and tracking,
+node grading, motion graphics and broadcast graphics, QC, recording, subtitles, media management).
