@@ -13,6 +13,7 @@ import { WipeCompare, type CompareSource } from "../../components/review/WipeCom
 import { RoomEmpty, RoomHeader, RoomPage } from "../../components/room/kit";
 import { Alert, Badge, Button, Menu, Panel, Segmented, Skeleton, StatusDot, Tooltip } from "../../components/ui";
 import { api } from "../../lib/api";
+import { renderPresetLabel, renderTag } from "../../lib/desktop";
 import { LANG_NAMES, LANG_SHORT, secs } from "../../lib/format";
 import { tr, useT } from "../../lib/i18n";
 import { useAuthStatus, useEpisode, useSettings } from "../../lib/queries";
@@ -105,8 +106,8 @@ export default function ReviewPage() {
 
   const kindLabel = (x: ExportRow) => (x.kind === "final" ? t("Final") : t("Animatic"));
   const label = (x: ExportRow) =>
-    `#${x.id} · ${kindLabel(x)} · ${LANG_SHORT[x.language] ?? x.language} · ${presets[x.preset]?.label ?? x.preset} · ${secs(x.duration_s)}`;
-  const short = (x: ExportRow) => `${kindLabel(x)} ${LANG_SHORT[x.language] ?? x.language} · ${presets[x.preset]?.aspect ?? x.preset} · #${x.id}`;
+    `${renderTag(x)} · ${kindLabel(x)} · ${LANG_SHORT[x.language] ?? x.language} · ${renderPresetLabel(x.preset, presets)} · ${secs(x.duration_s)}`;
+  const short = (x: ExportRow) => `${kindLabel(x)} ${LANG_SHORT[x.language] ?? x.language} · ${presets[x.preset]?.aspect ?? renderPresetLabel(x.preset, presets)} · ${renderTag(x)}`;
 
   const { data: rawComments, isLoading: loadingComments, isError: commentsError, refetch: refetchComments } = useExportComments(project.id, current?.id);
   const comments = useMemo(() => (current ? (rawComments ?? []).filter((c) => c.target_type === "export" && c.target_id === current.id).map(toRComment) : []),

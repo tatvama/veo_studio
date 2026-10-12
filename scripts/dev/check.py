@@ -1,8 +1,9 @@
 """Run the same checks as CI on this machine, before you push.
 
-    python scripts/dev/check.py              # backend lint + tests, frontend typecheck + build
+    python scripts/dev/check.py              # backend lint + tests, frontend typecheck + build, desktop typecheck + tests
     python scripts/dev/check.py --backend    # only the backend
     python scripts/dev/check.py --frontend   # only the frontend
+    python scripts/dev/check.py --desktop    # only the desktop app (desktop/)
     python scripts/dev/check.py --fast       # lint + typecheck only (no tests, no vite build): a few seconds
 
 Finds the backend venv in this checkout, or in the main checkout when run from a worktree (the venv is shared).
@@ -47,9 +48,10 @@ def main() -> None:
     p = argparse.ArgumentParser(description="Run CI checks locally")
     p.add_argument("--backend", action="store_true", help="only backend checks")
     p.add_argument("--frontend", action="store_true", help="only frontend checks")
+    p.add_argument("--desktop", action="store_true", help="only desktop app checks")
     p.add_argument("--fast", action="store_true", help="lint + typecheck only")
     a = p.parse_args()
-    both = not a.backend and not a.frontend
+    both = not a.backend and not a.frontend and not a.desktop
     results: list[tuple[str, bool]] = []
 
     if a.backend or both:
@@ -72,6 +74,17 @@ def main() -> None:
         tsc = [npm, "exec", "--", "tsc", "-b"] if a.fast else [npm, "run", "build"]
         title = "Frontend typecheck (tsc -b)" if a.fast else "Frontend typecheck + build (tsc -b && vite build)"
         results.append(("frontend", step(title, tsc, fe)))
+
+    if (a.desktop or both) and (HERE / "desktop" / "package.json").exists():
+        npm = shutil.which("npm")
+        dk = HERE / "desktop"
+        if not npm:
+            sys.exit("npm not found: install Node.js 24+")
+        if not (dk / "node_modules").exists():
+            results.append(("desktop npm ci", step("Desktop install (npm ci)", [npm, "ci", "--no-audit", "--no-fund"], dk)))
+        results.append(("desktop typecheck", step("Desktop typecheck (tsc --noEmit)", [npm, "run", "typecheck"], dk)))
+        if not a.fast:
+            results.append(("desktop tests", step("Desktop tests (node --test)", [npm, "test"], dk)))
 
     print("\n" + "═" * 78)
     for name, ok in results:

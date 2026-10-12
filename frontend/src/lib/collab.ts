@@ -91,6 +91,6 @@ export function useEditLock(target: string | null, active: boolean): { held: boo
 
 const VIEW_LABELS: Record<string, string> = {
   studio: "Studio", shots: "Shot list", storyboard: "Storyboard", timeline: "Timeline", export: "Export", bible: "Characters",
-  brief: "Brief", story: "Story", scenes: "Scenes", review: "Review", activity: "Activity",
+  brief: "Brief", story: "Story", scenes: "Scenes", review: "Review", activity: "Activity", finish: "Finishing room",
 };
 export const viewLabel = (v: string) => VIEW_LABELS[v] ?? v;

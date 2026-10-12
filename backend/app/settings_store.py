@@ -100,6 +100,11 @@ DEFAULTS: dict[str, Any] = {
     "auto_reframe": True,
     "sfx_auto": False,
     "ui_default_language": "en",
+    # Desktop finishing room (docs/DESKTOP.md): the largest render it may upload, and the AI upscale step (fal)
+    "desktop_upload_max_mb": 8000,
+    "upscale_fal_endpoint": "fal-ai/topaz/upscale/video",
+    "upscale_model": "Proteus",
+    "upscale_price_per_s": 0.08,
 }
 
 # byteplus_iam is the BytePlus access key and secret, saved together as "ACCESS_KEY:SECRET" (asset library only)

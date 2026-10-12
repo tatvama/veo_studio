@@ -7,10 +7,10 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..core import collab, dependencies, generation, jobs, studio
+from ..core import collab, dependencies, desktop, generation, jobs, studio
 from ..db import get_db
 from ..events import emit
-from ..models import Episode, Project, Shot, Take, User
+from ..models import Episode, Project, Revision, Shot, Take, User
 from ..pipeline import approved_stills, scene_look
 from ..pipeline.prompting import compile_keyframe_prompt, compile_video_prompt, dialogue_warnings, keyframe_refs, video_refs
 from ..pipeline.selection import current, select
@@ -130,6 +130,7 @@ def patch_shot(sid: int, body: ShotPatch, user: User = Depends(require("creator"
         if ti + to > length - 0.5:
             raise HTTPException(400, f"Trims leave less than half a second of this {length:.1f}s clip")
         data["trim_in"], data["trim_out"] = round(ti, 3), round(to, 3)
+    desktop.check_cut_fields(db, s, user, data)  # trims / include are cut edits: refused while someone has the cut out
     if "continuity_mode" in data and data["continuity_mode"] not in ("last_frame", "extend"):
         raise HTTPException(400, "continuity_mode must be last_frame or extend")
     if data.get("continuity_from_shot_id"):
@@ -156,6 +157,10 @@ def patch_shot(sid: int, body: ShotPatch, user: User = Depends(require("creator"
 def undo_shot(sid: int, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
     s = get_or_404(db, Shot, sid)
     collab.check_shot(user, s)
+    rev = (db.query(Revision).filter(Revision.entity_type == "shot", Revision.entity_id == s.id)
+           .order_by(Revision.id.desc()).first())
+    if rev:
+        desktop.check_cut_fields(db, s, user, rev.data or {})
     if not studio.undo(db, "shot", s):
         raise HTTPException(400, "Nothing to undo")
     p = _project(db, s)
@@ -167,6 +172,7 @@ def undo_shot(sid: int, user: User = Depends(require("creator")), db: Session = 
 def delete_shot(sid: int, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
     s = get_or_404(db, Shot, sid)
     collab.check_shot(user, s)
+    desktop.check_cut(db, s.episode_id, user)
     e = db.get(Episode, s.episode_id)
     if db.query(Take).filter(Take.shot_id == sid).count():
         s.include = False  # keep paid media; just drop it from the cut
@@ -266,6 +272,7 @@ class ReorderIn(BaseModel):
 @router.post("/episodes/{eid}/shots/reorder")
 def reorder(eid: int, body: ReorderIn, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
     e = get_or_404(db, Episode, eid)
+    desktop.check_cut(db, eid, user)
     rows = {s.id: s for s in db.query(Shot).filter(Shot.episode_id == eid).all()}
     for i, sid in enumerate(body.shot_ids, 1):
         if sid in rows:

@@ -31,8 +31,24 @@ class Segment:
     audio_override: Path | None = None
     keep_src_audio: bool = True
     src_gain_db: float = 0.0
-    extra_audio: list[tuple] = field(default_factory=list)
+    extra_audio: list[tuple] = field(default_factory=list)  # (file, offset s, gain dB, storage key)
     cues: list[Cue] = field(default_factory=list)
+    source_key: str = ""  # storage keys of source / audio_override ("" = a placeholder made for this render)
+    audio_key: str = ""
+
+
+@dataclass
+class Timed:
+    """A segment placed on the finished cut: its effects, speed, length, transition in and start time."""
+    sg: Segment
+    fx: dict
+    speed: float
+    seg_len: float
+    start: float
+    transition: tuple[str, float] | None
+
+
+END_CARD_FADE = ("fade", 0.4)  # how the brand end card comes in after a cut that has transitions
 
 
 def project_luts(project: Project) -> dict[str, str]:
@@ -84,18 +100,20 @@ def plan(db: Session, episode: Episode, lang: str, kind: str, tmp: Path) -> tupl
         voice = current(db, shot.id, "voice", lang)
         narr = current(db, shot.id, "narration", lang)
         voice_path = st.abs(voice.path) if voice and voice.path else None
+        voice_key = voice.path if voice_path else ""
         cues: list[Cue] = _spans_cues((voice.params or {}).get("spans", [])) if voice else []
-        extra: list[tuple[Path, float]] = []
+        extra: list[tuple] = []
         if narr and narr.path:
-            extra.append((st.abs(narr.path), 0.0))
+            extra.append((st.abs(narr.path), 0.0, 0.0, narr.path))
             cues += _spans_cues((narr.params or {}).get("spans", []))
         elif (shot.narration or {}).get(lang):
             warnings.append(f"{shot.code}: narration in {lang} not voiced yet")
 
         if kind == "animatic" or not video:
             kf = current(db, shot.id, "keyframe")
+            img_key = ""
             if kf and kf.path and st.exists(kf.path):
-                img = st.abs(kf.path)
+                img, img_key = st.abs(kf.path), kf.path
             else:
                 img = tmp / f"ph_{shot.id}.png"
                 img.write_bytes(mock.image(f"{shot.code}: {shot.action}", project.aspect, f"{shot.code} — no keyframe yet"))
@@ -107,7 +125,8 @@ def plan(db: Session, episode: Episode, lang: str, kind: str, tmp: Path) -> tupl
                 warnings.append(f"{shot.code}: no video yet — still image used")
             if lines and not voice:
                 cues += _even_cues(lines, dur)
-            segs.append(Segment(shot, img, "still", dur, audio_override=voice_path, extra_audio=extra, cues=cues))
+            segs.append(Segment(shot, img, "still", dur, audio_override=voice_path, extra_audio=extra, cues=cues,
+                                source_key=img_key, audio_key=voice_key))
             continue
 
         if (video.params or {}).get("mock"):
@@ -115,25 +134,90 @@ def plan(db: Session, episode: Episode, lang: str, kind: str, tmp: Path) -> tupl
         vdur = max(video.duration_s or ff.duration(st.abs(video.path)), 0.5)
         trim_in = max(shot.trim_in or 0.0, 0.0)
         dur = max(vdur - trim_in - max(shot.trim_out or 0.0, 0.0), 0.5)
+        vid = {"source": st.abs(video.path), "source_key": video.path}
         if lines and lips and lips.path:
-            segs.append(Segment(shot, st.abs(lips.path), "lipsync", dur, trim_in, extra_audio=extra, cues=cues or _even_cues(lines, dur)))
+            segs.append(Segment(shot, st.abs(lips.path), "lipsync", dur, trim_in, extra_audio=extra, cues=cues or _even_cues(lines, dur),
+                                source_key=lips.path))
         elif lines and vlock and vlock.path:
             segs.append(Segment(shot, st.abs(vlock.path), "voicelock", dur, trim_in, extra_audio=extra,
-                                cues=cues or _even_cues(lines, dur)))
+                                cues=cues or _even_cues(lines, dur), source_key=vlock.path))
         elif lines and vm == "native" and lang == project.primary_language:
-            segs.append(Segment(shot, st.abs(video.path), "video", dur, trim_in, extra_audio=extra, cues=cues or _even_cues(lines, dur)))
+            segs.append(Segment(shot, source_kind="video", duration=dur, trim_in=trim_in, extra_audio=extra,
+                                cues=cues or _even_cues(lines, dur), **vid))
         elif lines:
             if voice_path:
                 warnings.append(f"{shot.code}: lip-sync for {lang} not done yet — voice laid over video (lips won't match)")
-                segs.append(Segment(shot, st.abs(video.path), "video", dur, trim_in, audio_override=voice_path,
-                                    extra_audio=extra, cues=cues))
+                segs.append(Segment(shot, source_kind="video", duration=dur, trim_in=trim_in, audio_override=voice_path,
+                                    extra_audio=extra, cues=cues, audio_key=voice_key, **vid))
             else:
                 warnings.append(f"{shot.code}: no {lang} voice yet — original audio used")
-                segs.append(Segment(shot, st.abs(video.path), "video", dur, trim_in, extra_audio=extra, cues=_even_cues(lines, dur)))
+                segs.append(Segment(shot, source_kind="video", duration=dur, trim_in=trim_in, extra_audio=extra,
+                                    cues=_even_cues(lines, dur), **vid))
         else:
             gain = -6.0 if vm == "narration" else 0.0
-            segs.append(Segment(shot, st.abs(video.path), "video", dur, trim_in, src_gain_db=gain, extra_audio=extra, cues=cues))
+            segs.append(Segment(shot, source_kind="video", duration=dur, trim_in=trim_in, src_gain_db=gain, extra_audio=extra,
+                                cues=cues, **vid))
     return segs, warnings
+
+
+def render_options(db: Session, episode: Episode, options: dict[str, Any]) -> dict[str, Any]:
+    """Caption style, auto-reframe and sound effects for a render: the render's options, then the episode, then the
+    team setting."""
+    from .. import settings_store
+    team = settings_store.all_settings(db)
+    ep = episode.settings or {}  # None = "use the team setting"
+    return {"caption_style": options.get("caption_style") or ep.get("caption_style") or team.get("caption_style", "karaoke"),
+            "auto_reframe": options.get("auto_reframe", team.get("auto_reframe", True) if ep.get("auto_reframe") is None
+                                        else ep.get("auto_reframe")),
+            "sfx": options.get("sfx", True if ep.get("sfx") is None else ep.get("sfx"))}
+
+
+def timeline(segs: list[Segment], effects: bool, use_sfx: bool) -> tuple[list[Timed], list[Cue], list[dict]]:
+    """The cut's timing, shared by the server render and the desktop render plan: each segment's speed and length,
+    its transition (never longer than half of either clip, so it starts that much earlier) and its start on the
+    finished cut; the caption cues and titles moved onto that timeline. Adds each shot's sound effect to its audio."""
+    st = get_storage()
+    out: list[Timed] = []
+    cues: list[Cue] = []
+    overlays: list[dict] = []
+    t = 0.0
+    for i, sg in enumerate(segs):
+        sfx = sg.shot.sfx_track or {}
+        if sfx.get("path") and st.exists(sfx["path"]) and use_sfx:
+            sg.extra_audio.append((st.abs(sfx["path"]), float(sfx.get("start", 0)), float(sfx.get("volume_db", -8)), sfx["path"]))
+        fx = dict(sg.shot.fx or {}) if effects else {}
+        speed = float(fx.get("speed") or 1.0) if sg.source_kind != "still" else 1.0
+        seg_len = sg.duration / speed
+        # a transition blends this clip over the end of the previous one, so it starts that much earlier
+        tr = fxlib.transition_of(fx) if i > 0 else None
+        if tr:
+            d = max(0.1, min(tr[1], seg_len / 2, out[-1].seg_len / 2))
+            tr = (tr[0], d)
+            t -= d
+        out.append(Timed(sg, fx, speed, seg_len, t, tr))
+        cues += [(s / speed + t, e / speed + t, txt) for s, e, txt in sg.cues if e > s]
+        for ov in sg.shot.overlays or []:
+            if ov.get("text"):
+                overlays.append({**ov, "start": t + float(ov.get("start", 0)), "end": t + float(ov.get("end") or seg_len)})
+        t += seg_len
+    return out, cues, overlays
+
+
+def music_track(db: Session, episode: Episode) -> AudioAsset | None:
+    """The episode's music bed: the picked track, else the newest."""
+    return (db.query(AudioAsset).filter(AudioAsset.episode_id == episode.id, AudioAsset.kind == "music")
+            .order_by(AudioAsset.selected.desc(), AudioAsset.id.desc()).first())
+
+
+def caption_files(cues: list[Cue], overlays: list[dict], burn: bool, caption_style: str, w: int, h: int,
+                  tmp: Path) -> tuple[Path | None, Path | None]:
+    """(captions.srt when there are cues, captions.ass to burn in when captions are burned or there are titles)."""
+    srt = write_srt(cues, tmp / "captions.srt") if cues else None
+    ass = None
+    if (cues and burn) or overlays:
+        ass = write_ass(cues if burn else [], tmp / "captions.ass", w, h, get_settings().caption_font,
+                        "shorts" if h >= w else "standard", caption_style=caption_style, overlays=overlays)
+    return srt, ass
 
 
 def _even_cues(lines: list[dict], dur: float) -> list[Cue]:
@@ -193,17 +277,11 @@ def _end_card(project: Project, db: Session, w: int, h: int, tmp: Path) -> tuple
 def render(db: Session, episode: Episode, lang: str, preset: str, kind: str, options: dict[str, Any],
            out_rel_base: str) -> dict[str, Any]:
     """Render to storage. Returns {path, srt_path, thumbnail_path, duration, warnings, peaks}."""
-    from .. import settings_store
     st = get_storage()
     project = db.get(Project, episode.project_id)
     w, h = export_dims(project, preset)
-    team = settings_store.all_settings(db)
-    caption_style = (options.get("caption_style") or (episode.settings or {}).get("caption_style")
-                     or team.get("caption_style", "karaoke"))
-    ep_settings = episode.settings or {}  # None = "use the team setting"
-    ep_reframe, ep_sfx = ep_settings.get("auto_reframe"), ep_settings.get("sfx")
-    auto_reframe = options.get("auto_reframe", team.get("auto_reframe", True) if ep_reframe is None else ep_reframe)
-    use_sfx = options.get("sfx", True if ep_sfx is None else ep_sfx)
+    ro = render_options(db, episode, options)
+    caption_style, auto_reframe = ro["caption_style"], ro["auto_reframe"]
     tmp = st.tmp_dir()
     try:
         segs, warnings = plan(db, episode, lang, kind, tmp)
@@ -211,20 +289,13 @@ def render(db: Session, episode: Episode, lang: str, preset: str, kind: str, opt
             raise ValueError("This episode has no shots to render")
         luts = project_luts(project)
         effects = options.get("effects", True) is not False  # transitions, looks and moves (off = plain cut)
-        lengths: list[float] = []
-        transitions: list[tuple[str, float] | None] = []
+        timed, cues, overlays = timeline(segs, effects, ro["sfx"])
+        lengths = [tm.seg_len for tm in timed]
+        transitions: list[tuple[str, float] | None] = [tm.transition for tm in timed]
         clips: list[Path] = []
-        cues: list[Cue] = []
-        overlays: list[dict] = []
-        t = 0.0
-        for i, sg in enumerate(segs):
+        for i, tm in enumerate(timed):
             out = tmp / f"seg_{i:03}.mp4"
-            sfx = sg.shot.sfx_track or {}
-            if sfx.get("path") and st.exists(sfx["path"]) and use_sfx:
-                sg.extra_audio.append((st.abs(sfx["path"]), float(sfx.get("start", 0)), float(sfx.get("volume_db", -8))))
-            fx = dict(sg.shot.fx or {}) if effects else {}
-            speed = float(fx.get("speed") or 1.0) if sg.source_kind != "still" else 1.0
-            seg_len = sg.duration / speed
+            sg, fx, seg_len = tm.sg, tm.fx, tm.seg_len
             if sg.source_kind == "still":
                 audio = sg.audio_override
                 if sg.extra_audio:
@@ -236,28 +307,14 @@ def render(db: Session, episode: Episode, lang: str, preset: str, kind: str, opt
                                   audio_override=sg.audio_override, mix_extra=sg.extra_audio,
                                   keep_src_audio=sg.keep_src_audio, src_audio_gain_db=sg.src_gain_db, center=center,
                                   fx=fx, luts=luts)
-            # a transition blends this clip over the end of the previous one, so it starts that much earlier
-            tr = fxlib.transition_of(fx) if i > 0 else None
-            if tr:
-                d = max(0.1, min(tr[1], seg_len / 2, lengths[-1] / 2))
-                tr = (tr[0], d)
-                t -= d
-            transitions.append(tr)
-            lengths.append(seg_len)
             clips.append(out)
-            cues += [(s / speed + t, e / speed + t, txt) for s, e, txt in sg.cues if e > s]
-            for ov in sg.shot.overlays or []:
-                if ov.get("text"):
-                    overlays.append({**ov, "start": t + float(ov.get("start", 0)),
-                                     "end": t + float(ov.get("end") or seg_len)})
-            t += seg_len
         card = _end_card(project, db, w, h, tmp) if kind == "final" else None
         if card:
             out = tmp / "seg_endcard.mp4"
             ff.still_to_video(card[0], out, card[1], w, h, kenburns=False)
             clips.append(out)
             lengths.append(card[1])
-            transitions.append(("fade", 0.4) if any(transitions) else None)
+            transitions.append(END_CARD_FADE if any(transitions) else None)
         body = ff.xfade_concat(clips, lengths, transitions, tmp / "body.mp4")
         total = ff.duration(body)
 
@@ -268,8 +325,7 @@ def render(db: Session, episode: Episode, lang: str, preset: str, kind: str, opt
         if effects and sounds:
             voice_mix = layerlib.mix(voice_mix, sounds, total, tmp / "voice_layers.wav")
         final_audio = voice_mix
-        music = (db.query(AudioAsset).filter(AudioAsset.episode_id == episode.id, AudioAsset.kind == "music")
-                 .order_by(AudioAsset.selected.desc(), AudioAsset.id.desc()).first())
+        music = music_track(db, episode)
         settings = episode.settings or {}
         if music and music.path and st.exists(music.path) and options.get("music", True):
             final_audio = ff.music_bed(st.abs(music.path), voice_mix, tmp / "mixed.wav", total,
@@ -277,15 +333,9 @@ def render(db: Session, episode: Episode, lang: str, preset: str, kind: str, opt
         elif options.get("music", True) and kind == "final":
             warnings.append("No music track yet")
 
-        ass = None
-        srt_rel = ""
-        if cues:
-            srt = write_srt(cues, tmp / "captions.srt")
-            srt_rel = st.save_file(f"{out_rel_base}.srt", srt)
         burn = bool(options.get("captions", kind == "final")) and caption_style != "none"
-        if (cues and burn) or overlays:
-            ass = write_ass(cues if burn else [], tmp / "captions.ass", w, h, get_settings().caption_font,
-                            "shorts" if h >= w else "standard", caption_style=caption_style, overlays=overlays)
+        srt, ass = caption_files(cues, overlays, burn, caption_style, w, h, tmp)
+        srt_rel = st.save_file(f"{out_rel_base}.srt", srt) if srt else ""
         final = ff.replace_audio_mix(body, final_audio, tmp / "final.mp4", loudnorm=True, subtitles_ass=ass)
         out_rel = st.save_file(f"{out_rel_base}.mp4", final)
         thumb = ff.thumbnail(final, tmp / "thumb.jpg", width=480)

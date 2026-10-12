@@ -143,6 +143,13 @@ def update_shot(c: AgentCtx, shot_code: str, changes: dict | None = None, **kw) 
     if not shots:
         return {"error": f"No shot {shot_code}"}
     s = shots[0]
+    if "include" in changes:  # in or out of the cut: not while someone else has the cut checked out
+        from fastapi import HTTPException
+        from ..core.desktop import check_cut_fields
+        try:
+            check_cut_fields(c.db, s, c.user, {"include": bool(changes["include"])})
+        except HTTPException as e:
+            return {"error": str(e.detail)}
     studio.save_revision(c.db, "shot", s, studio.SHOT_FIELDS, c.user)
     for k in ("framing", "camera", "action", "sfx", "music_cue", "mode", "quality_mode", "voice_mode", "notes"):
         if k in changes:

@@ -89,6 +89,8 @@ export interface ExportRow {
   thumb_url: string; duration_s: number; warnings: string[]; created_at: string; options: Record<string, any>; approved_by: number | null;
   peaks: number[]; published: Record<string, { status: string; url?: string; video_id?: string; title?: string; at?: string }>;
   ai_disclosure: boolean;
+  /** Render version, counted per episode (server and desktop renders share it). Older renders have none. */
+  version?: number | null;
 }
 
 export interface Episode {

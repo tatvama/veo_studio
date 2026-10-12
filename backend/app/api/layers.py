@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from ..core.desktop import check_cut
 from ..db import get_db
 from ..events import emit
 from ..models import Episode, User
@@ -53,6 +54,7 @@ class LayersIn(BaseModel):
 def put_layers(eid: int, body: LayersIn, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
     """Save the layers. `rev` must be the one you loaded: if a teammate saved in between, you get 409 and reload."""
     e = get_or_404(db, Episode, eid)
+    check_cut(db, eid, user)
     cur = dict(e.layers or {})
     if int(cur.get("rev") or 0) != body.rev:
         raise HTTPException(409, "The layers were changed by someone else since you loaded them. Reload to see their changes.")

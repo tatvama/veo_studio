@@ -178,8 +178,10 @@ class OverlayIn(BaseModel):
 
 @router.put("/shots/{sid}/overlays")
 def set_overlays(sid: int, body: OverlayIn, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
+    from ..core.desktop import check_cut
     from ..models import Shot
     s = get_or_404(db, Shot, sid)
+    check_cut(db, s.episode_id, user)
     s.overlays = [{"text": str(o.get("text", ""))[:120], "start": float(o.get("start", 0)), "end": float(o.get("end", 0) or 0),
                    "kind": o.get("kind", "title") if o.get("kind") in ("title", "lower_third") else "title"}
                   for o in body.overlays if o.get("text")]

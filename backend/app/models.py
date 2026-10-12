@@ -437,8 +437,9 @@ class Export(Base, Serializable):
     project_id: Mapped[int] = mapped_column(ForeignKey("projects.id"), index=True)
     episode_id: Mapped[int] = mapped_column(ForeignKey("episodes.id"), index=True)
     language: Mapped[str] = mapped_column(String(8), default="en")
-    preset: Mapped[str] = mapped_column(String(20), default="shorts")
+    preset: Mapped[str] = mapped_column(String(40), default="shorts")  # desktop renders: "desktop:<preset>"
     kind: Mapped[str] = mapped_column(String(20), default="final")  # final | animatic
+    version: Mapped[int | None] = mapped_column(Integer, nullable=True)  # render number per episode (1..n)
     options: Mapped[Any] = mapped_column(JSON, default=dict)
     status: Mapped[str] = mapped_column(String(20), default="queued")
     path: Mapped[str] = mapped_column(String(500), default="")
@@ -452,6 +453,36 @@ class Export(Base, Serializable):
     job_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
     approved_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+# ── Desktop finishing room (core/desktop.py, docs/DESKTOP.md) ────────────────
+
+class CutLock(Base, Serializable):
+    """One editor per cut: while it is checked out, cut edits by anyone else are refused (423). Never expires on its
+    own, so an editor can keep it through a long offline stretch; a producer can force it free."""
+    __tablename__ = "cut_locks"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    episode_id: Mapped[int] = mapped_column(Integer, unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(Integer)
+    client: Mapped[str] = mapped_column(String(20), default="desktop")  # desktop | web
+    machine: Mapped[str] = mapped_column(String(120), default="")
+    acquired_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    heartbeat_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class CutVersion(Base, Serializable):
+    """A saved state of an episode's cut (order, trims, effects, picked takes, settings, layers, music) to roll back to."""
+    __tablename__ = "cut_versions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    episode_id: Mapped[int] = mapped_column(Integer, index=True)
+    number: Mapped[int] = mapped_column(Integer, default=1)  # 1..n per episode
+    note: Mapped[str] = mapped_column(Text, default="")
+    snapshot: Mapped[Any] = mapped_column(JSON, default=dict)
+    stats: Mapped[Any] = mapped_column(JSON, default=dict)  # {shots, included, duration_s} when it was saved
+    client: Mapped[str] = mapped_column(String(20), default="web")
+    created_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    restored_from: Mapped[int | None] = mapped_column(Integer, nullable=True)  # the version number it brought back
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 

@@ -1,0 +1,40 @@
+# Tatvam Studio desktop installer (npm run dist → desktop/release). Code signing comes from the environment:
+#   CSC_LINK (path or base64 of the .pfx) and CSC_KEY_PASSWORD; without them the installer is built unsigned.
+appId: com.tatvam.studio
+productName: Tatvam Studio
+copyright: Copyright © 2026 Tatvam
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**/*
+  - "!dist/**/*.map"
+  - package.json
+  # ffmpeg-static is only a dev fallback: the app ships FFmpeg as resources/ffmpeg.exe
+  - "!**/node_modules/ffmpeg-static/**"
+asar: true
+# the built web UI and FFmpeg sit next to the app: resources/web and resources/ffmpeg.exe
+# (scripts/prepare-dist.mjs copies the UI and the best FFmpeg build into build/ first)
+extraResources:
+  - from: build/web
+    to: web
+  - from: build/ffmpeg/ffmpeg.exe
+    to: ffmpeg.exe
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: Tatvam-Studio-Setup-${version}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: Tatvam Studio
+protocols:
+  - name: Tatvam Studio
+    schemes: [tatvam]
+publish:
+  provider: github
+  owner: tatvama
+  repo: veo_studio

@@ -1,14 +1,15 @@
 """Tiny auto-migration: create new tables, add new columns, and relax NOT NULL where a column became optional
 (SQLite + Postgres). Runs on every start.
 
-Handled changes: new tables, new columns, and nullable-ness relaxed (e.g. comments.user_id became optional for
-guest review comments). SQLite can't drop NOT NULL in place, so that table is rebuilt with its data copied over.
+Handled changes: new tables, new columns, longer strings (Postgres; SQLite ignores lengths), and nullable-ness relaxed
+(e.g. comments.user_id became optional for guest review comments). SQLite can't drop NOT NULL in place, so that table
+is rebuilt with its data copied over.
 """
 from __future__ import annotations
 
 import json
 
-from sqlalchemy import JSON, Boolean, Float, Integer, MetaData, inspect, text
+from sqlalchemy import JSON, Boolean, Float, Integer, MetaData, String, inspect, text
 
 from .db import Base, engine, is_sqlite
 
@@ -84,6 +85,13 @@ def migrate() -> list[str]:
                 null = "" if col.nullable or default == "NULL" else " NOT NULL"
                 conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {ddl_type} DEFAULT {default}{null}'))
                 added.append(f"{table.name}.{col.name}")
+            if not is_sqlite():  # a longer String(n) in the model widens the column (SQLite ignores lengths)
+                for col in table.columns:
+                    have = getattr(info.get(col.name, {}).get("type"), "length", None)
+                    want = getattr(col.type, "length", None)
+                    if isinstance(col.type, String) and have and want and want > have:
+                        conn.execute(text(f'ALTER TABLE "{table.name}" ALTER COLUMN "{col.name}" TYPE VARCHAR({want})'))
+                        added.append(f"{table.name}.{col.name} → {want} chars")
             tighten = [c.name for c in table.columns
                        if c.name in info and c.nullable and not c.primary_key and not info[c.name]["nullable"]]
             if not tighten:

@@ -407,6 +407,35 @@ class Services:
         return MediaResult(data, "mp3", Usage("elevenlabs", "sound-generation", "sfx", seconds, "seconds", price),
                            duration_s=seconds)
 
+    # ── AI upscale (desktop finishing room) ──────────────────────────────────
+    def upscale_video(self, video: Path, w: int, h: int, factor: float, endpoint: str, model: str, price_per_s: float,
+                      on_tick: Callable[[float], bool] | None = None, on_request: Callable[[str], None] | None = None,
+                      resume: str | None = None) -> MediaResult:
+        """Upscale a clip on fal (Topaz by default) by `factor`, keeping its sound. Mock: an FFmpeg Lanczos scale to
+        w×h, free."""
+        seconds = ff.duration(video)
+        if _require("fal") == "mock":
+            out = _tmp() / "upscale.mp4"
+            ff.run(["-i", video, "-vf", f"scale={w}:{h}:flags=lanczos,setsar=1", "-c:v", "libx264", "-preset", "veryfast",
+                    "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "copy", out])
+            return MediaResult(out.read_bytes(), "mp4", Usage("fal", endpoint, "upscale", seconds, "seconds", 0.0, mock=True),
+                               duration_s=ff.duration(out), remote_ref="mock://upscale")
+        client = self.fal()
+        args = {"video_url": client.upload(video), "upscale_factor": round(factor, 3), "model": model, "H264_output": True}
+        res = client.run(endpoint, args, on_tick=on_tick, on_request=on_request, resume_request_id=resume, timeout_s=3600)
+        from .schema_map import extract_url
+        link = extract_url(res, "video")
+        if not link:
+            raise ProviderError(f"upscale returned no video: {str(res)[:200]}", provider="fal")
+        out = _tmp() / "upscale.mp4"
+        out.write_bytes(client.download(link))
+        if not ff.has_audio(out) and ff.has_audio(video):  # the upscaler returns picture only: put the clip's sound back
+            muxed = out.with_name("upscale_audio.mp4")
+            ff.run(["-i", out, "-i", video, "-map", "0:v", "-map", "1:a", "-c", "copy", "-shortest", muxed])
+            out = muxed
+        return MediaResult(out.read_bytes(), "mp4", Usage("fal", endpoint, "upscale", seconds, "seconds", round(seconds * price_per_s, 4)),
+                           duration_s=ff.duration(out), remote_ref=link)
+
     # ── Character identity (LoRA) ────────────────────────────────────────────
     def train_identity(self, trainer: str, zip_path: Path, trigger: str, steps: int,
                        on_tick: Callable[[float], bool] | None = None, on_request: Callable[[str], None] | None = None,

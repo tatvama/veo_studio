@@ -202,7 +202,11 @@ def patch_episode(eid: int, body: EpisodePatch, user: User = Depends(require("cr
     e = get_or_404(db, Episode, eid)
     data = body.model_dump(exclude_unset=True)
     if "settings" in data:
-        e.settings = {**(e.settings or {}), **data.pop("settings")}
+        merged = {**(e.settings or {}), **data.pop("settings")}
+        if merged != (e.settings or {}):  # timeline settings are part of the cut
+            from ..core.desktop import check_cut
+            check_cut(db, eid, user)
+        e.settings = merged
     old_script = dict(e.script or {})
     touched: list[dict] = []
     for k, v in data.items():
@@ -287,6 +291,9 @@ def approve_export(xid: int, user: User = Depends(require("producer")), db: Sess
 @router.post("/audio/{aid}/select")
 def select_audio(aid: int, user: User = Depends(require("reviewer")), db: Session = Depends(get_db)):
     a = get_or_404(db, AudioAsset, aid)
+    if a.kind == "music" and a.episode_id:  # the music bed is part of the cut
+        from ..core.desktop import check_cut
+        check_cut(db, a.episode_id, user)
     for other in db.query(AudioAsset).filter(AudioAsset.episode_id == a.episode_id, AudioAsset.kind == a.kind).all():
         other.selected = other.id == a.id
     db.commit()

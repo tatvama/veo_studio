@@ -18,6 +18,7 @@ How to use the studio day to day. For installing, configuring and deploying it, 
 | Cast (Bible) | 2 Cast › Characters & places | **Build from script** creates the cast, locations and style. Generate sheets and voices, approve images and **Lock**. **Train identity** gives a character a face model so every keyframe keeps the exact face. A consent record is asked for when a real person's face or voice is used |
 | Shots | 3 Shots › Storyboard · List · Studio | **Keyframes** (cents each), then **Videos**, then **Voice + lip-sync**, then **Music**. Click a shot to edit it, pick the **engine** (or Auto), run a **shootout** between 2–4 engines and pick the winner, compare takes, retake, extend, **Edit with words** or approve. Each take shows its engine and QC (face match, lip-sync score) |
 | Timeline | 4 Edit › Timeline | Zoom, snap, J/K/L shuttle, waveforms for dialogue, music and SFX, **Auto SFX**, title and lower-third track, caption preview, music volume and ducking |
+| Finishing room | 4 Edit › Finishing room | **Check out** the cut so the web timeline goes read-only for everyone else, **check in** with a note (every check-in is a version you can **restore**), **AI upscale** to 4K or 2K (free on the desktop's graphics card, or in the cloud with the price shown first), **review notes** from your renders as markers on the timeline, and **pop-out** program monitor, scopes, mixer and notes windows. In the **desktop app** it also has the project folder, file names in series, local 4K renders on your graphics card and the machine check (see below) |
 | Export | 5 Deliver › Export | **Animatic** (free preview), **Render** (Shorts / Reels / YouTube / Square, karaoke or clean captions, auto-reframe, brand-kit end card), **Dub**, **Cut into shorts**, **Marketing pack** (titles, descriptions, hashtags and thumbnails per platform and language), **Publish to YouTube** (or schedule it), **Client link** |
 | Review | 5 Deliver › Review | Frame-accurate player, timecoded comments, draw on the frame, A/B **wipe compare** between renders, approve the final. Clients get a link that works without an account, on phone or desktop |
 | Director | Right panel (`Ctrl+J`) | Ask in plain words, e.g. *"dub into Telugu"*, *"Ravi wears his wedding outfit in this episode"*, *"cut this into 3 shorts"*, *"freeze Ravi's look for episodes 1-3"*, *"what is stale?"*. In Co-pilot mode it proposes the work with a price and you click **Approve** |
@@ -81,12 +82,45 @@ The app is a fixed-viewport **production cockpit** (design system: [docs/DESIGN.
 - **Sign-in page:** a cinematic showreel of AI-made stills behind a glass sign-in card, with the engine lineup (Google, fal.ai, ElevenLabs, Sarvam, sync.so) scrolling along the bottom. Refresh the stills with `backend/.venv/Scripts/python scripts/showcase/generate.py` (Google Nano Banana, about $0.42), or `... generate.py fal --loops` for fal.ai FLUX stills plus two Kling motion loops (about $1.06; needs fal.ai credit).
 - **Rail:** a slim icon column for Command center, Search, Library, Model Hub, Brand kits and (by role) Approvals, Costs, Team, Audit and Settings. Labels are tooltips, so the work area never shifts. On phones it becomes a bottom tab bar.
 - **Command center (home):** greeting and a mission KPI strip, the new-production composer with templates, your productions as mission cards with progress, and a column with the live queue, what needs your attention, recent activity and engine health.
-- **Project workspace:** a project opens on its **Overview** (flight path, telemetry, shot map, spend, change impact, live queue, cast and seasons), then five numbered steps: **1 Story** (Brief · Hooks & script · Scenes), **2 Cast** (Characters & places · Props & wardrobe), **3 Shots** (Storyboard · List · Studio, three views of the same shots), **4 Edit** (Timeline) and **5 Deliver** (Export · Review · Ads & Reels · Posters). Each step page has a step bar with the next step; the Activity log is in the project's **⋯** menu. Model Hub, Brand kits, Team and Audit are under **More** in the sidebar.
+- **Project workspace:** a project opens on its **Overview** (flight path, telemetry, shot map, spend, change impact, live queue, cast and seasons), then five numbered steps: **1 Story** (Brief · Hooks & script · Scenes), **2 Cast** (Characters & places · Props & wardrobe), **3 Shots** (Storyboard · List · Studio, three views of the same shots), **4 Edit** (Timeline · Finishing room) and **5 Deliver** (Export · Review · Ads & Reels · Posters). Each step page has a step bar with the next step; the Activity log is in the project's **⋯** menu. Model Hub, Brand kits, Team and Audit are under **More** in the sidebar.
 - **Status strip (bottom):** connection, engine mode, a live job ticker and shortcut hints.
 - **Themes:** dark, light or follow the system: a one-click sun/moon button in the top bar, the full choice in the account menu or `Ctrl+K`.
 - **Interface language:** English is the maintained interface language. The account menu, login page and `Ctrl+K` still offer हिन्दी, ಕನ್ನಡ, తెలుగు and தமிழ் from earlier machine translations; they are not maintained, and untranslated strings show in English. Film terms (Shot, Scene, Take, Storyboard …) stay in English on purpose. Content languages (scripts, voices, captions, dubbing) are separate and fully supported.
 - **Motion:** smooth transitions throughout; respects the system's reduce-motion setting, or turn it off in the account menu.
 - **Install as an app:** in Chrome or Edge, use *Install Tatvam AI Studio* from the address bar (works on desktop and Android). The app shell loads offline; your work always comes live from the server.
+
+### Tatvam Studio desktop app (the finishing room)
+
+For the editors who finish a cut in 4K. It is the same studio in a Windows app, with these extras (design:
+[docs/DESKTOP.md](DESKTOP.md)):
+
+- **Connect:** File → **Studio server…** sets the server address (test it there), whether the interface comes with
+  the app (works offline) or from the server, and which FFmpeg to use. Sign in as usual.
+- **Project folder:** in 4 Edit › Finishing room › **Local folder**, pick the library folder (default
+  `Documents\Tatvam Projects`) or move this project to its own folder, choose what to pull (**Approved** or
+  **Everything in the cut**) and press **Sync now**. Files land in `Takes`, `Audio`, `Captions`, `Renders`, `Bible`,
+  `Media` …, and `Edits` holds an EDL and FCPXML of the cut for Premiere or DaVinci. Drop footage into `Imports` and it
+  uploads to the episode's media by itself.
+- **File names in series:** **File names** shows the template for each folder (tokens like `{cut:03}`, `{scene:02}`,
+  `{shot:03}`, `{take:02}`, `{lang}`) and the **Rename plan**. When the cut changes, a sync renames the files so the
+  folder always lists in cut order.
+- **AI upscale to 4K or 2K:** in **AI upscale**, choose **This PC · free** (Real-ESRGAN on your graphics card; press
+  **Install the upscaler** once, 45 MB) or **Cloud · paid** (Topaz, priced first). Pick **4K · 2160p** or **2K · 1440p**
+  and **Fast** (the default, about 2 minutes per 6-second shot on a GTX 1660 Ti) or **Best detail** (much slower, for a
+  hero shot), then **Estimate the time** and **Upscale**. Each finished shot uploads as its upscale take, so renders with
+  **Use AI upscales** and the rest of the team use it.
+- **Render:** pick a preset (YouTube 4K, Shorts / Reels 4K, YouTube 2K, Shorts / Reels 2K, ProRes master, broadcast 1080p25, review 1080p), turn on
+  **Use AI upscales** or **Local upscale**, and **Render**. It runs on the graphics card (NVENC, Quick Sync or AMF), shows
+  progress and time left, and with **Upload when done** the file appears in 5 Deliver › Export and Review as the
+  next version (v1, v2 …), ready for review links and phone approvals. No AI runs here, so nothing is charged.
+- **Windows & screens:** open the **Program** monitor, **Source**, **Timeline**, **Scopes**, **Mixer**, **Review notes**,
+  **Media**, **Renders** or **Bible** in their own windows (`Ctrl+Shift+1…8`), on any screen, full screen or as a
+  **clean feed** for a client monitor. `Ctrl+Shift+M` sends the program monitor to the next screen. **Workspaces**
+  (Edit, Colour, Audio, Review, Story, `Ctrl+1…5`) open a set of windows in one go; save your own and export them for
+  the team. Every window follows the same playhead.
+- **This machine:** **Run machine check** compares the PC with the editing baseline (RTX 3060, 32 GB RAM, NVMe SSD)
+  and lists the encoders that work. **Play 1080p proxies** keeps scrubbing smooth on slower PCs.
+- **Offline:** if the server can't be reached, keep cutting; the edits are queued and sent in order when it's back.
 
 ### Poster Studio
 

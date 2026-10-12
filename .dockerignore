@@ -16,3 +16,4 @@ frontend/dist
 .claude
 **/node_modules
 *.tsbuildinfo
+desktop

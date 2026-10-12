@@ -13,6 +13,7 @@ export function PresenceBar({ projectId, shotCode }: { projectId: number; shotCo
   if (!others.length) return null;
   const what = (target: string) => {
     const [kind, id] = target.split(":");
+    if (kind === "cut") return t("editing the cut on desktop");
     return kind === "shot" ? t("editing {code}", { code: shotCode(Number(id)) ?? t("a shot") }) : t("editing the shot list");
   };
   return (

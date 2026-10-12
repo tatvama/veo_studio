@@ -26,9 +26,13 @@ const STEPS = [1 / 24, 2 / 24, 6 / 24, 12 / 24, 1, 2, 5, 10, 15, 30, 60, 120, 30
 /** The spacing (seconds) of the ruler's labelled ticks at this zoom; the lanes' faint grid follows it. */
 export const rulerMajor = (pps: number) => STEPS.find((s) => s * pps >= 64) ?? 300;
 
-export function TimeRuler({ total, pps, view, clock, onScrub }: {
+/** A review note pinned to the ruler (finishing room: notes on a render of the current cut). */
+export interface RulerMark { id: number; t: number; label: string; resolved?: boolean }
+
+export function TimeRuler({ total, pps, view, clock, onScrub, marks, onMark }: {
   total: number; pps: number; view: { left: number; width: number }; clock: Clock;
   onScrub: (t: number, phase: "start" | "move" | "end") => void;
+  marks?: RulerMark[]; onMark?: (m: RulerMark) => void;
 }) {
   const t = useT();
   const ref = useRef<HTMLDivElement>(null);
@@ -81,6 +85,14 @@ export function TimeRuler({ total, pps, view, clock, onScrub }: {
             </div>
           );
         })}
+        {marks?.map((m) => (
+          <Tooltip key={m.id} content={m.label}>
+            <button type="button" aria-label={m.label} onPointerDown={(e) => e.stopPropagation()} onClick={() => onMark?.(m)}
+              className={clsx("absolute top-0.5 z-[2] size-2.5 -translate-x-1/2 rotate-45 rounded-[2px] border border-black/40 shadow-[0_0_6px_-1px_currentColor]",
+                m.resolved ? "bg-ok/70 text-ok" : "bg-warn text-warn")}
+              style={{ left: m.t * pps }} />
+          </Tooltip>
+        ))}
       </div>
     </div>
   );

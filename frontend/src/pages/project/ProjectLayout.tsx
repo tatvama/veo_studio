@@ -44,6 +44,7 @@ const PostersGallery = lazy(() => import("../posters/Gallery"));
 const BiblePage = lazy(() => import("./Bible"));
 const BriefPage = lazy(() => import("./Brief"));
 const ExportPage = lazy(() => import("./Export"));
+const FinishPage = lazy(() => import("./Finish"));
 const ReviewPage = lazy(() => import("./Review"));
 const ScenesPage = lazy(() => import("./Scenes"));
 const ShotListPage = lazy(() => import("./ShotList"));
@@ -236,6 +237,7 @@ export default function ProjectLayout() {
                       <Route path="studio" element={<StudioPage />} />
                       <Route path="storyboard" element={<Storyboard />} />
                       <Route path="timeline" element={<TimelinePage />} />
+                      <Route path="finish" element={<FinishPage />} />
                       <Route path="export" element={<ExportPage />} />
                       <Route path="review" element={<ReviewPage />} />
                       <Route path="activity" element={<ActivityPage />} />

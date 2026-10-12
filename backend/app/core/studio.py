@@ -262,6 +262,7 @@ def add_next_shot(db: Session, src: Shot, action: str = "", framing: str = "", c
 
 
 def renumber(db: Session, episode: Episode) -> None:
+    db.flush()  # sessions don't autoflush: sort by the orders just set, not the stored ones
     shots = db.query(Shot).filter(Shot.episode_id == episode.id).order_by(Shot.order, Shot.id).all()
     prefix = f"E{episode.number:02}" if episode.kind == "episode" else f"C{episode.id:02}"
     for i, s in enumerate(shots, 1):
