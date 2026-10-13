@@ -19,19 +19,13 @@ import { program, useFrame } from "../playback/transport";
 import { ed, setFocus, useEditor, useProject, useSequence } from "../store";
 import { addCaptionTrack, CAPTION_STYLES, captionTrackFromSegments } from "../templates/captions";
 import { captionWords, cutRanges, placeWords, wordRanges, wordsFromSegments, type PlacedWord, type Transcript } from "./TranscriptOps";
+import { readTranscriptStore, transcriptKey, writeTranscriptStore, type TranscriptStore } from "./transcriptStore";
 
-const LS = "tatvam-editor:transcripts:v1";
-type Store = Record<string, Transcript & { at: string; path: string }>;
-const readStore = (): Store => { try { return JSON.parse(localStorage.getItem(LS) || "{}"); } catch { return {}; } };
-function writeStore(s: Store) {
-  try { localStorage.setItem(LS, JSON.stringify(s)); } catch {
-    // full: keep the newest half
-    const keep = Object.entries(s).sort((a, b) => b[1].at.localeCompare(a[1].at)).slice(0, Math.max(1, Math.floor(Object.keys(s).length / 2)));
-    try { localStorage.setItem(LS, JSON.stringify(Object.fromEntries(keep))); } catch { /* blocked */ }
-  }
-}
+type Store = TranscriptStore;
+const readStore = readTranscriptStore;
+const writeStore = writeTranscriptStore;
 /** Transcripts by media file (a file transcribed once serves every edit it's in). */
-const keyOf = (m: MediaItem) => (m.path || m.id).toLowerCase();
+const keyOf = transcriptKey;
 
 const LANGS: [string, string][] = [["auto", "Detect"], ["en", "English"], ["hi", "Hindi"], ["kn", "Kannada"], ["te", "Telugu"], ["ta", "Tamil"], ["ml", "Malayalam"], ["mr", "Marathi"], ["bn", "Bengali"], ["gu", "Gujarati"], ["pa", "Punjabi"]];
 
