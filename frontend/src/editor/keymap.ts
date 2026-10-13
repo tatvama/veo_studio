@@ -14,8 +14,9 @@ import { seqEnd } from "./model/ops";
 import * as M from "./motionActions";
 import { playProgram, playSource, shuttleProgram } from "./playback/control";
 import { program, source } from "./playback/transport";
-import { clearSelection, ed, gesture, redo, select, seq, setTool, toggleSnapping, undo, type EditorState, type Tool } from "./store";
+import { clearSelection, ed, gesture, project, redo, select, seq, setTool, toggleSnapping, undo, type EditorState, type Tool } from "./store";
 import { closeMenu, typing } from "./ui";
+import { currentWorkspace } from "./workspaces";
 
 export interface KeyHandlers { save(): void; saveAs(): void; open(): void; newEdit(): void; importMedia(): void; exportSeq(): void; shortcuts(): void; laneWidth(): number; shortcutEditor?(): void }
 
@@ -124,12 +125,46 @@ export function handleKey(e: KeyboardEvent, h: KeyHandlers): boolean {
   // the "?" key: Shift+/ on most layouts
   const id = index.get(name) ?? (name === "?" || name === "Shift+?" ? index.get("Shift+/") : undefined);
   const run = id ? RUN[id] : undefined;
-  if (!run) return false;
+  if (!run) return newsKey(name, e);
   const st = ed();
   const src = st.focus === "source" && !!st.sourceId;
   if (run({ src, tr: src ? source : program, st, h }) === false) return false;
   e.preventDefault();
   return true;
+}
+
+// ── News Room quick keys (docs/EDITOR.md §16.8, additive) ────────────────────
+
+/**
+ * Graphics in one key: Alt + a letter that no preset, browser or the desktop menu uses (the desktop menu takes Alt+F,
+ * E, V, W and H), and the graphics playlist on F1–F12 (while the News Room workspace is open or the timeline or
+ * program monitor has focus, and only for keys with a graphic on them, so the browser's own F-keys still work). Any
+ * binding the user or a preset gives the same key wins. The room's code loads on first use.
+ */
+export const NEWS_QUICK_KEYS: { key: string; kind: "strap" | "ticker" | "breaking" | "layout" | "wipe"; label: string }[] = [
+  { key: "Alt+N", kind: "strap", label: "Add a name strap at the playhead" },
+  { key: "Alt+T", kind: "ticker", label: "Add a ticker at the playhead" },
+  { key: "Alt+B", kind: "breaking", label: "Add a breaking bar at the playhead" },
+  { key: "Alt+L", kind: "layout", label: "Add a screen layout at the playhead" },
+  { key: "Alt+S", kind: "wipe", label: "Add a wipe at the nearest cut" },
+];
+const room = () => import("./newsroom/room/actions");
+function newsKey(name: string, e: KeyboardEvent): boolean {
+  const q = NEWS_QUICK_KEYS.find((k) => k.key === name);
+  if (q) {
+    e.preventDefault();
+    void room().then((m) => m.quickAdd(q.kind));
+    return true;
+  }
+  if (/^F([1-9]|1[0-2])$/.test(name)) {
+    const st = ed();
+    if (st.focus !== "timeline" && st.focus !== "program" && currentWorkspace() !== "news") return false;
+    if (!project().newsroom?.playlist?.some((x) => x.key === name)) return false;
+    e.preventDefault();
+    void room().then((m) => m.fireKey(name));
+    return true;
+  }
+  return false;
 }
 
 /** The shortcut list for Help → Keyboard shortcuts (the keys in use, grouped). */
@@ -145,6 +180,8 @@ function rebuildList() {
   }
   const extra: [string, [string, string][]] = ["Mouse", [["Alt+wheel", "Zoom at the pointer"], ["Shift+wheel", "Scroll in time"], ["Drag with Ctrl", "Insert instead of overwrite"],
     ["Drag with Alt", "Duplicate (on an edge: trim one side only)"], ["Ctrl+Alt drag", "Rearrange"], ["Ctrl+edge drag", "Ripple trim"]]];
-  SHORTCUTS.splice(0, SHORTCUTS.length, ...groups.entries(), extra);
+  const news: [string, [string, string][]] = ["News Room", [...NEWS_QUICK_KEYS.filter((k) => !index.has(k.key)).map((k): [string, string] => [k.key, k.label]),
+    ["F1–F12", "Add that playlist graphic at the playhead (News Room)"]]];
+  SHORTCUTS.splice(0, SHORTCUTS.length, ...groups.entries(), news, extra);
 }
 rebuildList();

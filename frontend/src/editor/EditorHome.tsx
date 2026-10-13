@@ -4,8 +4,8 @@
  * the in-memory demo.
  */
 import "./editor.css";
-import { ArrowLeft, Clapperboard, Download, FileInput, Film, FolderOpen, MonitorPlay, Plus, Sparkles } from "lucide-react";
-import { useEffect, useState } from "react";
+import { ArrowLeft, Clapperboard, Download, FileInput, Film, FolderOpen, MonitorPlay, Newspaper, Plus, Sparkles } from "lucide-react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Button, Empty, Field, Input, Panel, Skeleton } from "../components/ui";
@@ -15,6 +15,18 @@ import { PresetPicker } from "./dialogs";
 import { EpisodePicker } from "./EpisodePicker";
 import { PRESET_SIZES } from "./model/defaults";
 import { MenuHost } from "./ui";
+
+// News Room (docs/EDITOR.md §16.8): the New news edit dialog, loaded when it's first opened (additive)
+const NewNewsEditDialog = lazy(() => import("./newsroom/room/NewNewsEdit").then((m) => ({ default: m.NewNewsEditDialog })));
+function NewsEditButton({ label = "New news edit…", primary }: { label?: string; primary?: boolean }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button variant={primary ? "primary" : "secondary"} onClick={() => setOpen(true)} icon={<Newspaper className="size-4" />}>{label}</Button>
+      {open && <Suspense fallback={null}><NewNewsEditDialog open={open} onClose={() => setOpen(false)} /></Suspense>}
+    </>
+  );
+}
 
 const msg = (e: unknown) => (e instanceof Error ? e.message : String(e)).replace(/^Error invoking remote method '[^']+':\s*(Error:\s*)?/, "");
 const editUrl = (path: string) => `/editor/edit?path=${encodeURIComponent(path)}`;
@@ -107,6 +119,12 @@ function Home() {
               <Button variant="primary" loading={busy === "new"} onClick={() => void create()} icon={<Film className="size-4" />}>Create edit</Button>
             </div>
           </Panel>
+          <Panel eyebrow="News Room" title="New news edit" icon={<Newspaper className="size-4" />}>
+            <div className="grid gap-2">
+              <p className="text-2xs text-dim">Tickers, name straps, boards and screen layouts in your channel's look, in 16:9 and 9:16, with a rundown that places them for you.</p>
+              <NewsEditButton />
+            </div>
+          </Panel>
           <Panel eyebrow="Or" title="Open or import" icon={<FolderOpen className="size-4" />}>
             <div className="grid gap-2">
               <Button loading={busy === "open"} onClick={() => void open()} icon={<FolderOpen className="size-4" />}>Open an edit…</Button>
@@ -157,6 +175,7 @@ export function DesktopOnly() {
             <div className="flex flex-wrap gap-2">
               <a href="tatvam://editor" className="inline-flex"><Button variant="primary" icon={<Download className="size-4" />}>Open in Tatvam Desktop</Button></a>
               <Link to="/editor/edit?demo=1"><Button icon={<Sparkles className="size-4" />}>Try the demo here</Button></Link>
+              <NewsEditButton label="Try the News Room demo" />
             </div>
             <p className="text-2xs text-dim">The demo is an in-memory edit with generated clips: everything works except importing, saving and exporting.</p>
           </div>
