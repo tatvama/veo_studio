@@ -5,6 +5,7 @@
  * Every snapshot was also run through FFmpeg 7.1 on this PC (scratch script, 81 variants, all clean).
  */
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -12,6 +13,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { AUDIO_FX, audioFxId, buildFx, echoFilter, layChain, pwlAt } from "../src/main/editor-audiofx.ts";
 import { CABINET_IRS, IR_NAMES, presetWav, REVERB_IRS } from "../src/main/editor-irs.ts";
+import { locateFfmpeg } from "../src/main/ffmpeg.ts";
 import { OVERRIDES, render, snapshots } from "./fixtures/audiofx-cases.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -53,7 +55,7 @@ test("the mappings the WebAudio preview matches", () => {
   assert.match(render("gate", { ratio: 4 }).graph, /agate=threshold=0\.003162:range=0\.01:ratio=4:attack=5:release=120:detection=peak:knee=2\.828/);
   // bitcrusher: FFmpeg's acrusher reduces the rate only on its mix side, so two passes (hold, then bits) and a dry mix
   assert.equal(render("bitcrusher", { bits: 6, samples: 8 }).graph,
-    "[0:a]acrusher=bits=64:samples=8:mix=1:aa=0:dc=1:mode=lin,acrusher=bits=6:samples=1:mix=0:aa=0:dc=1:mode=lin[out]");
+    "[0:a]acrusher=bits=64:samples=8:mix=1:aa=1:dc=1:mode=lin,aeval=exprs='round(val(ch)*63)/63':c=same[out]");
   assert.equal(render("bitcrusher", { mix: 0 }).graph, "[0:a]anull[out]");
   // echo: taps at k·delay, decays wet·feedback^(k−1) until −60 dB
   assert.equal(echoFilter(250, 0.5, 0.5), "aecho=in_gain=1:out_gain=1:delays=250|500|750|1000|1250|1500|1750|2000|2250:decays=0.5|0.25|0.125|0.0625|0.03125|0.015625|0.007813|0.003906|0.001953");
@@ -69,6 +71,46 @@ test("the mappings the WebAudio preview matches", () => {
   // haas: one channel delayed, the other untouched (FFmpeg's haas filter rebuilds both from the mid)
   assert.equal(render("haas", { delay: 12 }).graph, "[0:a]adelay=delays=0|12:all=0[out]");
   assert.ok(render("haas", {}).changesLength);
+});
+
+test("bitcrusher and lo-fi never run acrusher at aa 0, so they can't put NaN into the mix", () => {
+  // acrusher's anti-aliasing divides by aa: at aa 0 a sample whose float-rounded x·(2^bits − 1) lands past the half
+  // step comes out NaN (a NaN in amix or loudnorm silences the whole export)
+  const graphs = [...Object.values(snapshots()).flatMap((s) => [s.defaults, s.values ?? ""]),
+    render("bitcrusher", { bits: 11, samples: 2 }).graph, render("lofi", { bits: 4, samples: 1 }).graph, render("bitcrusher", { bits: 8.5 }).graph];
+  for (const g of graphs) {
+    for (const m of g.matchAll(/acrusher=[^,;[]*/g)) assert.match(m[0], /^acrusher=bits=64:samples=\d+:mix=1:aa=1:/, g);
+  }
+  assert.equal(render("lofi", { bits: 11, samples: 2 }).graph,
+    "[0:a]acrusher=bits=64:samples=2:mix=1:aa=1:dc=1:mode=lin,aeval=exprs='round(val(ch)*2047)/2047':c=same,lowpass=f=5000:t=q:w=0.707[out]");
+  assert.match(render("bitcrusher", { bits: 8.5 }).graph, /aeval=exprs='round\(val\(ch\)\*361\.038672\)\/361\.038672':c=same/);
+});
+
+const FF = locateFfmpeg({ appPath: path.join(here, ".."), packaged: false });
+
+test("bitcrusher and lo-fi stay finite in FFmpeg on the inputs that made acrusher return NaN", { skip: !FF && "FFmpeg not found" }, () => {
+  // with the old aa 0 passes: the constant ±0.13947239518165588 (float) gave NaN on every sample at 11 bits, and double
+  // input (after any aeval) gave NaN on most samples of the 64-bit hold pass
+  const cases: [string, string, string, Record<string, unknown>][] = [
+    ["aevalsrc=0.13947239518165588|-0.13947239518165588:s=48000:d=0.25", "", "lofi", { bits: 11, samples: 1 }],
+    ["aevalsrc=0.13947239518165588|-0.13947239518165588:s=48000:d=0.25", "", "bitcrusher", { bits: 11, samples: 2, mix: 0.5 }],
+    ["aevalsrc=0.8*sin(2*PI*997*t)|0.6*sin(2*PI*1499*t):s=48000:d=0.25", "aeval=exprs='val(ch)*0.7':c=same", "lofi", { bits: 10, samples: 3 }],
+    ["aevalsrc=0.8*sin(2*PI*997*t)|0.6*sin(2*PI*1499*t):s=48000:d=0.25", "aeval=exprs='val(ch)*0.7':c=same", "bitcrusher", { bits: 6, samples: 8 }],
+  ];
+  for (const [src, pre, id, values] of cases) {
+    const params = Object.fromEntries(Object.entries(values).map(([k, v]) => [k, { value: v }]));
+    const fx = buildFx([{ id: "e", type: `audio:${id}`, enabled: true, params }], { uid: "c0", duration: 0.25, fps: 25, shift: 0, irFile: (n) => n, warn: () => undefined });
+    const head = ["aformat=sample_fmts=fltp:channel_layouts=stereo", ...(pre ? [pre] : [])];
+    const graph = layChain("0:a", head, fx.steps, ["aformat=sample_fmts=flt"], "out", "c0").join(";");
+    const r = spawnSync(FF!.path, ["-hide_banner", "-nostdin", "-loglevel", "error", "-f", "lavfi", "-i", src, "-filter_complex", graph, "-map", "[out]", "-f", "f32le", "-"],
+      { maxBuffer: 1 << 24, windowsHide: true });
+    assert.equal(r.status, 0, `${id}: ${String(r.stderr)}`);
+    const n = r.stdout.length / 4;
+    assert.equal(n, 0.25 * 48000 * 2, `${id} ${JSON.stringify(values)}: samples`);
+    let bad = 0;
+    for (let i = 0; i < n; i++) if (!Number.isFinite(r.stdout.readFloatLE(i * 4))) bad++;
+    assert.equal(bad, 0, `${id} ${JSON.stringify(values)} after "${pre || "fltp"}": ${bad} of ${n} samples aren't finite`);
+  }
 });
 
 test("noise print learns from the marked source range (amovie seek), then reduces; without a source it uses chain seconds", () => {
