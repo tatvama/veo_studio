@@ -166,9 +166,12 @@ export function shownBy(when: string | undefined, values: Record<string, GfxValu
 }
 
 /** Layers with this graphic's overrides merged in (by layer id; `p` merges key by key). */
-export function applyOverrides(layers: GfxLayer[], ov?: Record<string, Partial<GfxLayer>>): GfxLayer[] {
+/** A graphic's own changes by layer id, then the ones for one ratio only ("<layerId>@<ratio>": positions, sizes,
+ *  shown in one ratio) when `ratio` is given. */
+export function applyOverrides(layers: GfxLayer[], ov?: Record<string, Partial<GfxLayer>>, ratio?: GfxRatio): GfxLayer[] {
   if (!ov || !Object.keys(ov).length) return layers;
-  return layers.map((l) => { const o = ov[l.id]; return o ? { ...l, ...o, p: { ...l.p, ...(o.p ?? {}) } } : l; });
+  const one = (l: GfxLayer, o?: Partial<GfxLayer>): GfxLayer => (o ? { ...l, ...o, p: { ...l.p, ...(o.p ?? {}) } } : l);
+  return layers.map((l) => one(one(l, ov[l.id]), ratio ? ov[`${l.id}@${ratio}`] : undefined));
 }
 
 // ── collisions ───────────────────────────────────────────────────────────────
@@ -224,7 +227,7 @@ export function planOf(input: GfxRenderInput, W: number, H: number, dur: number,
   const t = input.template;
   const ds = designSpace(t, W, H, input.ratio);
   const values = valuesOf(t, input.values);
-  const layers = applyOverrides(ds.layers, input.overrides).filter((l) => !l.hidden && shownBy(l.when, values));
+  const layers = applyOverrides(ds.layers, input.overrides, ds.ratio).filter((l) => !l.hidden && shownBy(l.when, values));
   const plans: LayerPlan[] = layers.map((layer) => {
     const timing = layerTiming(t, layer, dur);
     const txt = layer.kind === "text" ? roughText(layer, values) : "";

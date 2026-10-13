@@ -209,7 +209,8 @@ export interface GfxInstance {
   look?: string;
   /** Both-ratio edits: show it only in these ratios (default: all). */
   ratios?: GfxRatio[];
-  /** Changes to this graphic only, by layer id ("Change only this one" in the Designer). */
+  /** Changes to this graphic only ("Change only this one" in the Designer): by layer id, or "<layerId>@<ratio>" for
+   *  one ratio only (positions, sizes, shown in one ratio). */
   overrides?: Record<string, Partial<GfxLayer>>;
   /** Values that come from a data source (frozen in `newsroom.data`), by field id. */
   bind?: Record<string, { source: string; path?: string }>;
