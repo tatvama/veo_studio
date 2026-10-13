@@ -362,7 +362,7 @@ Team, personal and project budgets are set in the app (**Settings → Budget**).
 |---|---|
 | Electron 44 | The desktop shell (Chromium 152, Node 24 with built-in `node:sqlite` for the project mirror) |
 | esbuild, TypeScript 7 | Bundling the main process and preloads, type checking |
-| electron-builder, electron-updater | Windows installer (NSIS) and updates from GitHub Releases |
+| electron-builder, electron-updater | Windows installer (NSIS) and updates from the public, releases-only repository's GitHub Releases |
 | ws | The main process's event socket to the server |
 | FFmpeg 7.1 (bundled), ffmpeg-static (dev fallback) | Local renders with NVENC / Quick Sync / AMF, proxies, the machine check |
 | Real-ESRGAN ncnn-vulkan 0.2.5.0 (BSD-3, downloaded on demand, SHA-256 pinned) | AI upscale on the editor's graphics card |
@@ -491,7 +491,8 @@ Exports render frame by frame on the GPU and are encoded on NVENC, Quick Sync or
 
 File → **Studio server…** sets the server address (default `http://localhost:8100`). By default the app loads its
 screens from your server, keeps a checked offline copy, and asks before switching to a new build. Releases attach
-the installer to the GitHub Release, and installed apps update from there.
+the installer to the GitHub Release and publish it to the public, releases-only repository [tatvama/tatvam-desktop-releases](https://github.com/tatvama/tatvam-desktop-releases). Installed apps
+update from there without a token, even if this repository is private (docs/DESKTOP.md §6).
 
 ## Deployment
 

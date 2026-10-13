@@ -5,16 +5,23 @@
 # 2. Merging that pull request tags vX.Y.Z and publishes a GitHub Release with the changelog.
 # 3. The release's Docker image is pushed to ghcr.io/<owner>/<repo> (tags X.Y.Z, X.Y, X, latest).
 # 4. If the COOLIFY_WEBHOOK_URL secret is set, the "production" environment is redeployed and checked.
-# 5. The Windows desktop installer (desktop/, Electron) is built and attached to the same GitHub Release; installed
-#    apps update themselves from there. Optional secrets WIN_CSC_LINK + WIN_CSC_KEY_PASSWORD sign it.
+# 5. The Windows desktop installer (desktop/, Electron) is built, attached to the same GitHub Release, and published
+#    to the public, releases-only repository tatvama/tatvam-desktop-releases (no source code). Installed apps update
+#    themselves from there, so they need no token even when this repository is private. Optional secrets
+#    WIN_CSC_LINK + WIN_CSC_KEY_PASSWORD sign it.
 #
 # Optional secrets (Settings → Secrets and variables → Actions):
 #   RELEASE_PLEASE_TOKEN  fine-grained PAT (contents + pull requests: read/write). Without it the release PR is
 #                         opened by GITHUB_TOKEN, and GitHub does not run CI on PRs opened by that token.
 #   COOLIFY_WEBHOOK_URL   Coolify → your app → Webhooks → "Deploy webhook" URL
 #   COOLIFY_TOKEN         Coolify → Keys & Tokens → API token (deploy permission)
-# Optional variable:
+#   DESKTOP_RELEASES_TOKEN  fine-grained PAT for tatvama/tatvam-desktop-releases only (Contents: read and write).
+#                         Required for desktop updates: without it the installer stays on this repository's release
+#                         only, the job fails with a clear message, and installed apps don't see the new version.
+# Optional variables:
 #   PRODUCTION_URL        e.g. https://studio.example.com — after deploying, waits until /api/health/live reports the new version
+#   DESKTOP_RELEASES_REPO the releases-only repository (default tatvama/tatvam-desktop-releases); it must match
+#                         `publish` in desktop/electron-builder.yml
 #
 # Manual run (Actions → Release → Run workflow) with "publish_tag" = an existing tag such as v3.0.0: builds and
 # publishes that tag's image and deploys it, without release-please. Also the way to roll back to an older release
@@ -125,6 +132,8 @@ jobs:
     env:
       TAG: ${{ inputs.publish_tag || needs.release-please.outputs.tag_name }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      RELEASES_REPO: ${{ vars.DESKTOP_RELEASES_REPO || 'tatvama/tatvam-desktop-releases' }}
+      RELEASES_TOKEN: ${{ secrets.DESKTOP_RELEASES_TOKEN }}
       # Optional code signing (avoids SmartScreen warnings): a base64 .pfx in WIN_CSC_LINK + its password
       CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
       CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
@@ -153,6 +162,26 @@ jobs:
         working-directory: desktop
         shell: bash
         run: gh release upload "$TAG" release/*.exe release/*.blockmap release/latest.yml --clobber
+
+      # Installed apps read latest.yml from the releases-only repository (electron-builder.yml `publish`).
+      - name: Publish to the releases-only repository (where installed apps update from)
+        working-directory: desktop
+        shell: bash
+        run: |
+          if [ -z "$RELEASES_TOKEN" ]; then
+            echo "::error::DESKTOP_RELEASES_TOKEN is not set, so $TAG was not published to $RELEASES_REPO and installed apps won't see it. Add the secret, then run this workflow with publish_tag=$TAG."
+            exit 1
+          fi
+          # the same release notes as this repository's release (the app shows them as "What's new")
+          gh release view "$TAG" --json body --jq .body > notes.md || echo "Tatvam Studio $TAG" > notes.md
+          export GH_TOKEN="$RELEASES_TOKEN"
+          if gh release view "$TAG" --repo "$RELEASES_REPO" > /dev/null 2>&1; then
+            gh release edit "$TAG" --repo "$RELEASES_REPO" --notes-file notes.md --latest
+          else
+            gh release create "$TAG" --repo "$RELEASES_REPO" --title "Tatvam Studio ${TAG#v}" --notes-file notes.md --latest
+          fi
+          gh release upload "$TAG" --repo "$RELEASES_REPO" release/*.exe release/*.blockmap release/latest.yml --clobber
+          echo "Published $TAG to https://github.com/$RELEASES_REPO/releases/tag/$TAG"
 
   deploy:
     name: Deploy to production

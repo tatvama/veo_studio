@@ -34,7 +34,10 @@ nsis:
 protocols:
   - name: Tatvam Studio
     schemes: [tatvam]
+# Updates come from a public, releases-only repository (no source code), so installed apps can update without a
+# token even when the code repository is private. The release workflow publishes there (.github/workflows/release.yml).
 publish:
   provider: github
   owner: tatvama
-  repo: veo_studio
+  repo: tatvam-desktop-releases
+  releaseType: release
