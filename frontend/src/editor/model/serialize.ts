@@ -122,6 +122,16 @@ function source(s: Obj): ClipSource | null {
   if (s.type === "nested" && isStr(s.sequenceId)) return { ...s, type: "nested", sequenceId: s.sequenceId, in: num(s.in, 0) } as ClipSource;
   // editor-audio: a generated sound (tone, noise, DTMF …) with its params
   if (s.type === "generate" && isStr(s.generator)) return { ...s, type: "generate", generator: s.generator, params: params(s.params) } as ClipSource;
+  // audio-tools2: an audio-reactive visualiser (its settings are clamped where it is drawn; malformed optional ones go)
+  if (s.type === "visualizer" && (isStr(s.audioClipId) || isStr(s.mediaId))) {
+    const x: Obj = { ...s, type: "visualizer", style: str(s.style, "bars"),
+      colors: Array.isArray(s.colors) && s.colors.length && s.colors.every(isStr) ? [...s.colors] : ["#22d3ee", "#a78bfa", "#f0abfc"] };
+    for (const k of ["audioClipId", "mediaId", "background"]) opt(x, k, isStr(s[k]) ? s[k] : undefined);
+    for (const k of ["glow", "smoothing", "freqMin", "freqMax", "sensitivity", "bars", "thickness", "offset", "bands"]) opt(x, k, isNum(s[k]) ? s[k] : undefined);
+    opt(x, "gradient", typeof s.gradient === "boolean" ? s.gradient : undefined);
+    opt(x, "box", Array.isArray(s.box) && s.box.length === 4 && s.box.every(isNum) ? [...s.box] : undefined);
+    return x as unknown as ClipSource;
+  }
   return null;
 }
 
@@ -161,6 +171,10 @@ function clip(v: unknown, seq: Sequence, warn: (s: string) => void): TimelineCli
   } else delete c.multicam;
   // editor-audio: the clip's Essential Sound role
   opt(c, "role", ROLES.includes(v.role as string) ? v.role : undefined);
+  // audio-tools2: room tone placed by Room-tone fill
+  opt(c, "roomTone", v.roomTone === true ? true : undefined);
+  // auto-sfx: what placed this sound (a re-run replaces it)
+  opt(c, "autoSfx", isObj(v.autoSfx) && isStr(v.autoSfx.rule) && isStr(v.autoSfx.sourceId) ? { ...v.autoSfx } : undefined);
   return c as unknown as TimelineClip;
 }
 

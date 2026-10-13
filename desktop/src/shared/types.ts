@@ -343,7 +343,9 @@ export type ClipSource =
   | { type: "adjustment" }
   | { type: "nested"; sequenceId: string; in: number }
   /** additive: a generated sound (tone, noise, DTMF), see GeneratorSpec */
-  | ({ type: "generate" } & GeneratorSpec);
+  | ({ type: "generate" } & GeneratorSpec)
+  /** additive (audio-tools2): an audio-reactive visualiser on a video track (frontend model/types.ts; settings in audiotools/visualizer.ts) */
+  | { type: "visualizer"; audioClipId?: string; mediaId?: string; style: string; colors: string[]; bands?: number; [setting: string]: unknown };
 export interface Motion {
   /** Pixels in the sequence frame (centre = [width/2, height/2]). */
   position: Param<[number, number]>;
@@ -362,6 +364,8 @@ export interface TimelineClip {
   motion: Motion; effects: EffectInstance[]; audio?: ClipAudio; timeRemap?: Param<number>;
   /** additive: the Essential Sound tag (wins over the track's role for ducking) */
   role?: AudioRole;
+  /** additive (audio-tools2): room tone placed by Room-tone fill (a normal clip) */
+  roomTone?: boolean;
   /** additive (editor-motion): magnetic timeline: the V1 clip this one is connected to, and its start minus that clip's */
   connectedTo?: string; connectOffset?: number;
   /** additive (editor-motion): a multicam clip (nested clip of a multicam sequence): the angle shown and the angle heard (default `angle`) */
@@ -433,6 +437,33 @@ export type AnalyzeResult =
    * clear match of the same sound); additive `margin` (0..1) is how far the peak stands above the next best one.
    */
   | { kind: "sync"; offset: number; confidence: number; margin?: number; against?: string };
+
+/** additive (audio-tools2, docs/EDITOR.md §15.4): local analysis for the audio tools (main/editor-audiotools.ts) */
+export type AudioAnalysisKind = "breaths" | "roomtone" | "spectrum";
+export interface AudioAnalysisOptions {
+  /** media seconds (out exclusive); default the whole file */
+  in?: number; out?: number;
+  /** breaths: the confidence a breath needs (0..1, default 0.5) */
+  threshold?: number;
+  /** roomtone: the stretch's length bounds in seconds (default 1 and 3) */
+  minS?: number; maxS?: number;
+  /** spectrum: the sequence's frame rate (one of the editor's) and the band count (8..128, default 64) */
+  fps?: number; bands?: number;
+}
+export interface BreathRange { start: number; end: number; confidence: number; rmsDb: number; peakDb: number }
+/** A visualiser's spectrum frames as stored in `<edit>/.tatvam/spectrum-<media>-<fps>-<bands>.json` (frontend audiotools/spectrum.ts). */
+export interface SpectrumSidecarJson {
+  format: "tatvam-spectrum"; version: 1; mediaId: string; fps: number; bands: number; fMin: number; fMax: number; rate: number; fft: number;
+  floorDb: number; frames: number; data: string; source?: { size: number; mtimeMs: number };
+}
+export type AudioAnalysisResult =
+  /** media seconds; `speech` the words found, `noiseFloorDb` the room noise */
+  | { kind: "breaths"; breaths: BreathRange[]; speech: { start: number; end: number }[]; noiseFloorDb: number; duration: number }
+  /** the quietest 1–3 s without speech that isn't digital silence (null: none), media seconds */
+  | { kind: "roomtone"; stretch: { start: number; end: number; rmsDb: number; spreadDb: number; /** under 1 s: no longer pause was there */ short?: boolean } | null;
+      thresholdDb: number; silences: number; duration: number }
+  /** the visualiser's frames, from (or written to) the sidecar `name` */
+  | { kind: "spectrum"; name: string; cached: boolean; spectrum: SpectrumSidecarJson };
 export interface ShaderEntry { id: string; name: string; kind: "transition" | "effect"; glsl: string }
 export interface LutEntry { id: string; name: string; /** additive */ path?: string; url?: string; size?: number }
 
@@ -523,6 +554,17 @@ export interface EditorBridge {
   /** additive: JSON stored with the edit at <edit folder>/.tatvam/<name>.json (name: letters, digits, _ . -); null when there is none */
   readSidecar(editPath: string, name: string): Promise<unknown>;
   writeSidecar(editPath: string, name: string, json: unknown): Promise<{ bytes: number }>;
+  /**
+   * additive (audio-tools2, docs/EDITOR.md §15.4): breaths (ranges with a confidence), room tone (the quietest stretch
+   * without speech) and the visualiser's spectrum frames (cached in a sidecar per media + fps + bands) of a media item.
+   */
+  audioAnalysis(editPath: string, mediaId: string, kind: AudioAnalysisKind, opts?: AudioAnalysisOptions): Promise<AudioAnalysisResult>;
+  /**
+   * additive (sfx-synth, docs/EDITOR.md §15.1): writes a file the page generated (the SFX library's 24-bit WAVs) into
+   * the edit (audio: `<edit>\Audio\SFX\`, video and images: `<edit>\Generated\…`): a safe name of that kind, at most
+   * 50 MB, atomic, only under the edit folder, the same content reused. Returns it probed like an import.
+   */
+  writeGeneratedMedia(editPath: string, name: string, bytes: Uint8Array, kind: "audio" | "video" | "image"): Promise<MediaItem>;
   /** additive (editor-interop, docs/EDITOR.md §12): Premiere Pro / Audition / EDL / OTIO / markers interchange */
   interop: InteropBridge;
 }
@@ -965,6 +1007,8 @@ export const IPC = {
   editorReadSidecar: "tatvam:editor.readSidecar",
   editorWriteLut: "tatvam:editor.writeLut",
   editorWriteSidecar: "tatvam:editor.writeSidecar",
+  editorAudioAnalysis: "tatvam:editor.audioAnalysis",
+  editorWriteGeneratedMedia: "tatvam:editor.writeGeneratedMedia",
   toolsStatus: "tatvam:tools.status",
   toolsInstall: "tatvam:tools.install",
   toolsRemove: "tatvam:tools.remove",

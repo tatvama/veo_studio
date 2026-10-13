@@ -20,6 +20,7 @@ import { mixer } from "../playback/audio";
 import { program } from "../playback/transport";
 import { setFocus, useEditor, useSequence } from "../store";
 import { IBtn, openMenu, ScrubNumber } from "../ui";
+import { AuditionNote, AudioWave, fxChain, presetChain, rowAudition } from "../preview/AudioWave"; // preview-polish: wave bars
 
 /** The program frame, at most ~12 times a second. */
 function useSlowFrame(): number {
@@ -113,7 +114,7 @@ function Stack({ s, t }: { s: Sequence; t: FxTarget }) {
         <span className="ml-auto text-2xs text-dim">{list.length ? `${list.length} effect${list.length > 1 ? "s" : ""}` : ""}</span>
       </div>
       {adding && <AddList onPick={(id) => { addFx(t, id); setAdding(false); }} onPreset={(id) => { applyChainPreset(t, id); setAdding(false); }} />}
-      <div className="pn-scroll" onDragOver={(e) => { if (drag) e.preventDefault(); }}>
+      <div className={clsx("pn-scroll", adding && "afx-stack-adding")} onDragOver={(e) => { if (drag) e.preventDefault(); }}>
         {list.map((e, i) => {
           const d = audioFxDef(e.type);
           return (
@@ -209,14 +210,18 @@ function AddList({ onPick, onPreset }: { onPick: (id: string) => void; onPreset:
   const presets = CHAIN_PRESETS.filter((p) => !q.trim() || p.name.toLowerCase().includes(q.trim().toLowerCase()) || p.group.toLowerCase().includes(q.trim().toLowerCase()));
   return (
     <div className="afx-add">
-      <div className="sticky top-0 z-10 bg-panel p-1.5"><SearchField value={q} onChange={setQ} placeholder="Search audio effects and presets" className="[&_input]:h-6 [&_input]:text-xs" /></div>
+      <div className="sticky top-0 z-10 bg-panel p-1.5"><SearchField value={q} onChange={setQ} placeholder="Search audio effects and presets" className="[&_input]:h-6 [&_input]:text-xs" />
+        <AuditionNote className="mt-1 block px-0.5 text-2xs text-dim" fallback="Hover a row (or ▶) to hear it: on the selected audio clip's first 4 s, else a music loop or a voice-like sample" /></div>
       {!!presets.length && (
         <>
           <div className="grp">Presets</div>
           {presets.map((p) => (
-            <button key={p.id} type="button" className="it" onClick={() => onPreset(p.id)} title={p.effects.map((e) => audioFxDef(e.id)?.label ?? e.id).join(" → ")}>
-              <span className="min-w-0 flex-1 truncate">{p.name}</span><span className="text-2xs text-dim">{p.group}</span>
-            </button>
+            <div key={p.id} className="flex items-center pr-2 hover:bg-hover/70" data-afx-preset={p.id} onPointerEnter={() => rowAudition.enter(presetChain(p))} onPointerLeave={() => rowAudition.leave(presetChain(p))}>
+              <button type="button" className="it min-w-0 hover:!bg-transparent" style={{ width: "auto", flex: 1 }} onClick={() => onPreset(p.id)} title={p.effects.map((e) => audioFxDef(e.id)?.label ?? e.id).join(" → ")}>
+                <span className="min-w-0 flex-1 truncate">{p.name}</span><span className="text-2xs text-dim">{p.group}</span>
+              </button>
+              <AudioWave chain={presetChain(p)} note={false} />
+            </div>
           ))}
         </>
       )}
@@ -224,10 +229,13 @@ function AddList({ onPick, onPreset }: { onPick: (id: string) => void; onPreset:
         <div key={g.group}>
           <div className="grp">{g.group}</div>
           {g.defs.map((d: AudioFxDef) => (
-            <button key={d.id} type="button" className="it" onClick={() => onPick(d.id)} title={d.note}>
-              <span className="min-w-0 flex-1 truncate">{d.label}</span>
-              <span className={clsx("afx-tag", d.preview === "realtime" ? "live" : "render")}>{d.preview === "realtime" ? "live" : "render"}</span>
-            </button>
+            <div key={d.id} className="flex items-center pr-2 hover:bg-hover/70" data-afx-fx={d.id} onPointerEnter={() => rowAudition.enter(fxChain(d.id))} onPointerLeave={() => rowAudition.leave(fxChain(d.id))}>
+              <button type="button" className="it min-w-0 hover:!bg-transparent" style={{ width: "auto", flex: 1 }} onClick={() => onPick(d.id)} title={d.note}>
+                <span className="min-w-0 flex-1 truncate">{d.label}</span>
+                <span className={clsx("afx-tag", d.preview === "realtime" ? "live" : "render")}>{d.preview === "realtime" ? "live" : "render"}</span>
+              </button>
+              <AudioWave chain={fxChain(d.id)} note={false} />
+            </div>
           ))}
         </div>
       ))}

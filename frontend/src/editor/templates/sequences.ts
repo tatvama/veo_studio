@@ -13,6 +13,7 @@ import { uid } from "../model/ids.ts";
 import type { ClipSource, EditProject, EffectInstance, MediaItem, Sequence, TimelineClip, TitleSpec } from "../model/types.ts";
 import { formatById, formatSize, SAFE_AREAS, type Format } from "./formats.ts";
 import { STICKERS, stickerSpec, templateSpec, titleTemplate } from "./titles.ts";
+import { PACK_SEQ_GROUPS, socialPack, type PackSeqGroup } from "./packs/social.ts";
 
 export const SLOT_PREFIX = "Slot · ";
 export const SLOT_COLOR = "#1f2937";
@@ -27,8 +28,11 @@ export interface SeqLayer {
   /** Motion overrides: scale %, position as fractions of the frame, opacity %. */
   scale?: number; at?: [number, number]; opacity?: number;
 }
+/** The library's groups: wave 3's, then the §15.3 presets pack's (templates/packs/social.ts). */
+export type SeqGroup = "Intros" | "Outros" | "Subscribe" | "Social" | PackSeqGroup;
+export const SEQ_TEMPLATE_GROUPS: SeqGroup[] = ["Intros", "Outros", "Subscribe", "Social", ...PACK_SEQ_GROUPS];
 export interface SeqTemplate {
-  id: string; name: string; group: "Intros" | "Outros" | "Subscribe" | "Social"; seconds: number; blurb: string;
+  id: string; name: string; group: SeqGroup; seconds: number; blurb: string;
   /** Social formats make a new sequence of this format. */
   format?: Format["id"];
   fields: SeqField[];
@@ -131,6 +135,8 @@ export const SEQ_TEMPLATES: SeqTemplate[] = [
       [title("headline.clean.rise", 0.2, 4, H, { text: f.title }, { box: box("4:5", 0.08, 0.12) })],
       [title("lower.bar.slide_left", 1, 6, H, { text: f.name, sub: f.role }, { box: [0.08, 0.7, 0.6, 0.1] })],
     ] },
+  // §15.3 presets pack: hooks, subscribe and like, end screens, audiograms, quote cards, before/after, countdowns
+  ...socialPack({ slot, matte }),
 ];
 export const seqTemplate = (id: string) => SEQ_TEMPLATES.find((t) => t.id === id);
 

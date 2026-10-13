@@ -9,7 +9,7 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import * as A from "../actions";
 import { demoCustomSources } from "../demoSources";
 import { currentDrag, isEditorDrag } from "../dnd";
-import { buildComposition, createPreview, type PreviewEngine } from "../engine";
+import { buildComposition, createPreview, onPicturesRestored, type PreviewEngine } from "../engine";
 import { markedRange, seqEnd } from "../model/ops";
 import { shortDuration } from "../model/time";
 import { toAudioMix } from "../model/toComposition";
@@ -23,6 +23,8 @@ import { IBtn, TimecodeField } from "../ui";
 import { fitSize, ScrubBar, TransportButtons } from "./monitor";
 import { setProgramReader } from "../moods/programTap";
 import { MotionOverlay } from "./MotionOverlay";
+import { liveTime, setLiveDrawer, useLiveProject } from "../preview/live"; // preview-polish: live previews (additive)
+import { LiveBadge } from "../preview/LiveBadge";
 import "./MotionOverlay.css";
 
 /** Additive (editor-looks): the scopes overlay, loaded when it's first shown. */
@@ -87,7 +89,14 @@ export default function ProgramMonitor() {
   }, [disp.w, disp.h, ready]);
 
   // the sequence → a composition, loaded (debounced while it changes quickly, e.g. during a drag)
-  const result = useMemo(() => buildComposition(p, s.id, { urlFor, lutUrl }), [p, s.id, urls, ready]);
+  // preview-polish: while a card's live preview shows, the monitor draws a copy of the edit with it applied
+  const shown = useLiveProject(p);
+  const result = useMemo(() => buildComposition(shown, s.id, { urlFor, lutUrl }), [shown, s.id, urls, ready]);
+  useEffect(() => {
+    if (!ready) return;
+    setLiveDrawer((t, r) => { const e = eng.current; if (!e) return 0; e.draw(t, { playing: false, rate: 1, resolution: r * resRef.current }); return e.lastMs(); });
+    return () => setLiveDrawer(null);
+  }, [ready]);
   useEffect(() => {
     if (!ready) return;
     const wait = ed().h.gesture ? 220 : 40;
@@ -119,13 +128,13 @@ export default function ProgramMonitor() {
   function redraw() {
     const e = eng.current;
     if (!e) return;
-    e.draw(program.time, { playing: program.playing, rate: program.rate, resolution: resRef.current });
+    e.draw(liveTime() ?? program.time, { playing: program.playing, rate: program.rate, resolution: resRef.current });
     if (!program.playing) {
       const until = performance.now() + 700;
       if (settle.current) return;
       const loop = () => {
         if (program.playing || performance.now() > until || !eng.current) { settle.current = 0; return; }
-        eng.current.draw(program.time, { playing: false, rate: 1, resolution: resRef.current });
+        eng.current.draw(liveTime() ?? program.time, { playing: false, rate: 1, resolution: resRef.current });
         settle.current = requestAnimationFrame(loop);
       };
       settle.current = requestAnimationFrame(loop);
@@ -136,6 +145,8 @@ export default function ProgramMonitor() {
     mixer.sync(t, program.playing, program.rate);
   }), []);
   useEffect(() => program.subscribeState(() => { if (!program.playing) { mixer.sync(program.time, false, 1); redraw(); } }), []);
+  // a GPU reset blanked the titles' canvases (they draw again) or the engine's context came back: draw now
+  useEffect(() => onPicturesRestored(() => redraw()), []);
 
   const range = markedRange(s);
   const len = seqEnd(s);
@@ -171,6 +182,7 @@ export default function ProgramMonitor() {
           </div>
         )}
         <Dropped />
+        <LiveBadge />
         {scopes && ready && <Suspense fallback={null}><ScopesOverlay /></Suspense>}
         {res !== 1 && <div className="mon-badge bottom-2 left-2">{res === 2 ? "½" : "¼"} resolution</div>}
       </div>

@@ -5,6 +5,7 @@
  * Texture rows are top first everywhere ("image space"); only the canvas present flips.
  */
 import { ShaderError, type Backend, type DrawCall, type Program, type RenderTarget, type Texture, type Texture3D, type UniformValue } from "./backend";
+import { notifyCanvasRestored } from "../sources/canvasLoss";
 
 const VS3 = `#version 300 es
 in vec2 a_pos;
@@ -112,6 +113,8 @@ export class WebGL2Backend implements Backend {
         this.init();
         this.lost = false;
         this.onRestore?.();
+        // the monitors draw again (nothing else would while paused)
+        notifyCanvasRestored();
       }, false);
     }
   }

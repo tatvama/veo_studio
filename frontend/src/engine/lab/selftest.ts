@@ -18,11 +18,12 @@ import { packI420p10, type Primaries, type Transfer } from "../colour";
 import { labStats, samplePixels, statsDistance } from "../analysis/colorMath";
 import type { Program } from "../gl/backend";
 import { transitionProgram } from "../transitions/gltransitions";
-import type { Clip, Composition, ShotFx } from "../types";
+import type { Clip, Composition, ShotFx, TitleSpec } from "../types";
 import { packI420, yuvToRgb } from "../yuv";
 import { badge, blocks, invertStripUrl, lightUrl, procedural, rawRgb } from "./media";
 import { editorDemo } from "./demo";
 import type { CustomSource } from "../sources/source";
+import { onCanvasRestored, watchCanvas } from "../sources/canvasLoss";
 
 export interface Failure { id: string; error: string }
 export interface Check { name: string; ok: boolean; detail: string }
@@ -573,6 +574,56 @@ async function wave3Checks(sources: Record<string, CustomSource>, sheet: Sheet):
     let md = 0;
     for (let i = 0; i < want.length; i++) md = Math.max(md, Math.abs(want[i] - got[i]));
     check("custom source bounds", u1 === u0 && sub === 1 && md === 0, `static frames uploaded ${u1 - u0} times; after a change ${sub} sub-rect upload; vs a full upload max difference ${md}`);
+  });
+  // a GPU reset (canvasLoss.ts): the browser brings every 2D canvas back blank and fires "contextrestored"; titles
+  // holding still (the engine's own, and a versioned custom source like the editor's template titles) and colour
+  // mattes draw again, also when the WebGL context was lost with them, and the monitors hear of it
+  await run("canvas restore (GPU reset)", async () => {
+    const cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+    const g = cv.getContext("2d")!;
+    let last = "", box: [number, number, number, number] | null = null;
+    const restores = watchCanvas(cv);
+    const keyAt = () => `static|${restores()}`;
+    const paint = () => { g.clearRect(0, 0, W, H); g.fillStyle = "#ff8800"; g.fillRect(200, 40, 80, 50); box = [200, 40, 80, 50]; };
+    const hooked: CustomSource = { kind: "canvas", width: W, height: H, version: () => restores(), bounds: () => box,
+      draw: () => { if (keyAt() !== last) { last = keyAt(); paint(); } return cv; } };
+    const title: TitleSpec = { text: "Holding still", font: "Inter Variable", size: 28, color: "#ffffff", weight: 700, align: "center", box: [0.05, 0.6, 0.6, 0.3] };
+    const comp: Composition = { width: W, height: H, fps: 24, duration: 4, background: [0, 0, 0], tracks: [
+      { id: "m", kind: "video", clips: [vclip("matte", "", 0, 4, { type: "color", color: "#2255cc", motion: { scale: { value: 30 }, position: { value: [50, 40] } } })] },
+      { id: "t", kind: "video", clips: [vclip("title", "", 0, 4, { type: "title", title })] },
+      { id: "c", kind: "video", clips: [vclip("hook", "cus:still", 0, 4, { fit: "fill" })] },
+    ] };
+    await document.fonts.load(`700 28px "Inter Variable"`).catch(() => undefined);
+    const eng = await createEngine({ width: W, height: H, canvas: document.createElement("canvas") });
+    const r = eng.renderer, b = r.b;
+    await eng.load(comp, { mode: "live", sources: { "cus:still": hooked } });
+    for (let i = 0; i < 3; i++) eng.drawLive(2 + i / 24);
+    const before = eng.readRgba().slice();
+    const maxDiff = (a: Uint8Array) => { let m = 0; for (let i = 0; i < a.length; i += 4) for (let k = 0; k < 3; k++) m = Math.max(m, Math.abs(a[i + k] - before[i + k])); return m; };
+    let lit = 0;
+    for (let i = 0; i < before.length; i += 4) if (before[i] + before[i + 1] + before[i + 2] > 60) lit++;
+    let heard = 0;
+    const off = onCanvasRestored(() => { heard++; });
+    const canvases = [cv, ...[...(r as unknown as { sources: Map<string, { cv?: HTMLCanvasElement | OffscreenCanvas | null }> }).sources.values()].map((s) => s.cv).filter((c): c is HTMLCanvasElement | OffscreenCanvas => !!c)];
+    const blank = () => { for (const c of canvases) { (c.getContext("2d") as CanvasRenderingContext2D).clearRect(0, 0, c.width, c.height); c.dispatchEvent(new Event("contextrestored")); } };
+    // 1. only the 2D canvases come back blank (the engine's textures stay): the pictures are drawn and uploaded again
+    blank();
+    for (let i = 0; i < 3; i++) eng.drawLive(2.5 + i / 24);
+    const md1 = maxDiff(eng.readRgba());
+    // 2. the whole GPU: the WebGL context goes too, and comes back after the canvases
+    const lose = b.gl.getExtension("WEBGL_lose_context");
+    if (lose) { lose.loseContext(); await until(() => b.lost); }
+    blank();
+    if (lose) { lose.restoreContext(); await until(() => !b.lost); }
+    for (let i = 0; i < 3; i++) eng.drawLive(3 + i / 24);
+    const after = eng.readRgba().slice();
+    const md2 = maxDiff(after);
+    await new Promise((res) => setTimeout(res, 60));
+    off();
+    eng.dispose();
+    check("canvas restore (GPU reset)", canvases.length === 3 && lit > 1500 && md1 <= 2 && md2 <= 2 && heard >= 1 && (!lose || eng.stats.restores === 1),
+      `${canvases.length} canvases blanked (custom, title, matte), ${lit} lit pixels; max difference after a 2D reset ${md1}, after a full GPU reset ${md2}; monitors told ${heard}×; WebGL restores ${eng.stats.restores}`);
+    sheet.add(after, "after a GPU reset (2D canvases blanked)", md2 > 2);
   });
   // live: the <video> runs at the time map's slope, pauses on a freeze (never playbackRate 0)
   await run("time remap (live)", async () => {

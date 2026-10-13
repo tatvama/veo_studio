@@ -489,6 +489,8 @@ export function planAutoEdit(media: PlanMedia[], analysis: MediaAnalysis[] | Rec
     proposals,
     summary: { clipsIn, clipsUsed: used.size, cuts: Math.max(0, segments.length - 1), silenceRemoved, dropped: c.dropped, badRemoved: r3(c.badRemoved), length,
       sourceLength, notes: c.notes },
+    // auto-sfx: "Add sound effects" (editor/autosfx runs after the sequence is built)
+    ...(options.sfx && options.sfx !== "none" ? { sfx: options.sfx } : {}),
   };
 }
 

@@ -473,6 +473,13 @@ Other parts of the editor:
   title templates, karaoke captions, multi-format export with reframe, edit by transcript, comments, and versions.
 - **Sound:** 75 audio effects whose preview matches the export, Essential Sound roles, LUFS / true-peak / phase
   meters, a spectrum analyser, match loudness, and auto-ducking.
+  - 136 sound effects generated on the PC (whooshes, risers, impacts, pops, typing, glitches, ambience and more).
+  - **Auto SFX** places them where the edit calls for them.
+  - Auto mix, room-tone fill, a breath remover, and an audio visualiser.
+- **Previews:** every look, effect, transition and template is previewed on your own clip, or on the studio's
+  showreel samples. Hover over one to scrub it, or see it live on the Program monitor. Audio effects play with live
+  wave bars and a Before / After switch.
+- **Templates:** 169 title templates and 24 social templates on one design system, with 30 looks in 6 packs.
 - **Interchange:** Final Cut Pro XML for Premiere Pro and Audition, EDL, OpenTimelineIO, markers CSV, Open in
   Premiere and Send to Audition.
 - **AI assistants:** Claude Desktop, Claude Code or Codex can drive the editor through a local MCP server. It is off

@@ -233,6 +233,31 @@ export type AnalyzeResult =
   | { kind: "scenes"; cuts: number[]; duration: number }
   | { kind: "beats"; beats: number[]; bpm: number; duration: number }
   | { kind: "loudness"; lufs: number | null; lra: number | null; truePeak: number | null };
+/** additive (audio-tools2, docs/EDITOR.md §15.4; same as desktop/src/shared/types.ts) */
+export type AudioAnalysisKind = "breaths" | "roomtone" | "spectrum";
+export interface AudioAnalysisOptions {
+  /** media seconds (out exclusive); default the whole file */
+  in?: number; out?: number;
+  /** breaths: the confidence a breath needs (0..1, default 0.5) */
+  threshold?: number;
+  /** roomtone: the stretch's length bounds in seconds (default 1 and 3) */
+  minS?: number; maxS?: number;
+  /** spectrum: the sequence's frame rate and the band count (default 64) */
+  fps?: number; bands?: number;
+}
+export interface BreathRange { start: number; end: number; confidence: number; rmsDb: number; peakDb: number }
+export interface SpectrumSidecarJson {
+  format: "tatvam-spectrum"; version: 1; mediaId: string; fps: number; bands: number; fMin: number; fMax: number; rate: number; fft: number;
+  floorDb: number; frames: number; data: string; source?: { size: number; mtimeMs: number };
+}
+export type AudioAnalysisResult =
+  /** media seconds; `speech` the words found, `noiseFloorDb` the room noise */
+  | { kind: "breaths"; breaths: BreathRange[]; speech: { start: number; end: number }[]; noiseFloorDb: number; duration: number }
+  /** the quietest 1–3 s without speech that isn't digital silence (null: none), media seconds */
+  | { kind: "roomtone"; stretch: { start: number; end: number; rmsDb: number; spreadDb: number; /** under 1 s: no longer pause was there */ short?: boolean } | null;
+      thresholdDb: number; silences: number; duration: number }
+  /** the visualiser's frames, as stored in the sidecar `name` (<edit>/.tatvam/<name>.json) */
+  | { kind: "spectrum"; name: string; cached: boolean; spectrum: SpectrumSidecarJson };
 export interface ShaderEntry { id: string; name: string; kind: "transition" | "effect"; glsl: string }
 export interface LutEntry { id: string; name: string; /** additive */ path?: string; url?: string; size?: number }
 
@@ -273,6 +298,19 @@ export interface EditorBridge {
    * userData/irs and served at `/__media/irs/<preset>.wav` (48 kHz stereo float, unit energy per channel).
    */
   impulseResponses?(): Promise<{ id: string; label: string; url: string; seconds: number }[]>;
+  /**
+   * additive (audio-tools2, docs/EDITOR.md §15.4; missing in older desktop builds): local analysis for the audio tools:
+   * breaths (ranges with a confidence), room tone (the quietest stretch without speech), spectrum (the visualiser's
+   * frames, cached in a sidecar per media + fps + bands).
+   */
+  audioAnalysis?(path: string, mediaId: string, kind: AudioAnalysisKind, opts?: AudioAnalysisOptions): Promise<AudioAnalysisResult>;
+  /**
+   * additive (sfx-synth, docs/EDITOR.md §15.1; missing in older desktop builds): writes a file the page generated (the
+   * SFX library's 24-bit WAVs) into the edit (audio: `<edit>\Audio\SFX\`, video and images: `<edit>\Generated\…`): a safe
+   * name of that kind, at most 50 MB, atomic, only under the edit folder, the same content reused. Returns it probed
+   * like an import.
+   */
+  writeGeneratedMedia?(path: string, name: string, bytes: Uint8Array, kind: "audio" | "video" | "image"): Promise<MediaItem>;
   /** additive (editor-interop, docs/EDITOR.md §12; missing in older desktop builds): Premiere Pro / Audition / EDL / OTIO interchange */
   interop?: InteropBridge;
 }

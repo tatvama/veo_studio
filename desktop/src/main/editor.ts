@@ -18,6 +18,7 @@ import type {
   EditProject, EditVersion, InterpolateOptions, LocalTranscript, LutEntry, MediaItem, ShaderEntry, TimelineClip, TranscribeOptions,
 } from "../shared/types.ts";
 import { isLoudnessPreset, previewJob } from "./editor-audio.ts";
+import { attachSpectra } from "./editor-audiotools.ts"; // audio-tools2 (additive)
 import { interpDiskBytes, interpName, interpPlan, isRifeFrameLine, readMatrix, rifeArgs, rifeEncodeArgs, rifeExtractArgs, RIFE_MODELS, isV4 } from "./editor-interpolate.ts";
 import { IR_LABELS, IR_NAMES, IR_PRESETS, irSeconds, isIrPreset, presetWav, type IrPreset } from "./editor-irs.ts";
 import { etaFrom, LocalJobs, runProc, type ProcRunner } from "./editor-jobs.ts";
@@ -500,6 +501,23 @@ export class EditorManager {
     return it.path;
   }
 
+  /** The folder of an edit opened in Tatvam (the same allow-list check as every editor call; throws otherwise). */
+  editDir(file: string): string {
+    return this.editFile(file).dir;
+  }
+
+  /** Imports a file that already sits inside the edit folder (no copy into Media\): probe, peaks, gateway registry. */
+  ingestInPlace(dir: string, src: string, name: string): Promise<MediaItem> {
+    return this.ingest(dir, src, { copy: false, name });
+  }
+
+  /** additive (audio-tools2, editor-audiotools.ts): an edit's media item, its file on this PC and FFmpeg to read it. */
+  async mediaFile(file: string, mediaId: string): Promise<{ item: MediaItem; src: string; dir: string; tools: MediaTools }> {
+    const { dir } = this.editFile(file);
+    const item = await this.item(file, dir, mediaId);
+    return { item, src: await this.existingFile(item), dir, tools: this.tools() };
+  }
+
   async relink(file: string, mediaId: string): Promise<MediaItem | null> {
     const { dir } = this.editFile(file);
     const it = await this.item(file, dir, mediaId);
@@ -682,6 +700,9 @@ export class EditorManager {
     if (!Array.isArray(items) || !items.length) throw new EditorError("Nothing to export");
     if (items.length > 24) throw new EditorError("At most 24 exports in one batch");
     const project = this.runtime(await this.readProject(abs), dir);
+    // audio-tools2: the visualisers' spectrum frames go with the job (the render window draws from them, as the preview does)
+    await attachSpectra(project, { lines: (a, l, o) => this.tools().lines(a, l, o), read: (n) => this.readSidecar(abs, n), write: (n, j) => this.writeSidecar(abs, n, j),
+      log: (m) => this.deps.log(m) });
     const irDir = await this.ensureIrs();
     const planned = items.map((o, i) => {
       const seq = project.sequences.find((s) => s.id === (o?.sequenceId || sequenceId));

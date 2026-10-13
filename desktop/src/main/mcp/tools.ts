@@ -441,8 +441,8 @@ export const TOOLS: ToolDef[] = [
   }),
   def({
     name: "add_effect", scope: "edit", title: "Add an effect",
-    description: "Adds a video effect (to video clips) or an audio effect (to audio clips) with its defaults or the params you give. Ids from list_catalog (effects, audio_effects), e.g. adjust, look, gaussian_blur, audio:compressor. Returns the effect ids.",
-    input: { clip_ids: ids("The clips"), effect: z.string().min(1).max(80).describe("Effect id"),
+    description: "Adds a video effect (to video clips) or an audio effect (to audio clips) with its defaults or the params you give. Ids from list_catalog (effects, audio_effects), e.g. adjust, look, gaussian_blur, audio:compressor; on audio clips also a whole chain preset, preset:<id> from list_catalog(audio_presets), e.g. preset:youtube_voice. Returns the effect ids.",
+    input: { clip_ids: ids("The clips"), effect: z.string().min(1).max(80).describe("Effect id, or preset:<id> (an audio chain preset)"),
       params: z.record(z.string(), z.unknown()).optional().describe("Parameter values by name (numbers, text, booleans, [r,g,b])") },
     async run(a, ctx, deps) { return fromPage(await page(ctx, deps, "add_effect", a)); },
   }),
@@ -459,8 +459,8 @@ export const TOOLS: ToolDef[] = [
   }),
   def({
     name: "apply_mood", scope: "edit", title: "Apply a mood",
-    description: "A one-click look (colour, film texture, its transitions and title style) on clips or the whole sequence. Mood ids from list_catalog (moods), e.g. warm_nostalgia, noir.",
-    input: { mood: z.string().min(1).max(60), clip_ids: z.array(z.string().max(80)).max(500).optional().describe("Default: every video clip"),
+    description: "A one-click look (colour, film texture, its transitions and title style) on clips or the whole sequence. Mood ids from list_catalog (moods), e.g. warm_nostalgia, noir; or a look-pack look from list_catalog(looks), e.g. cinematic.teal_orange (effects only).",
+    input: { mood: z.string().min(1).max(60).describe("A mood id or a look-pack look id"), clip_ids: z.array(z.string().max(80)).max(500).optional().describe("Default: every video clip"),
       intensity: z.number().min(0).max(1.5).optional().describe("Default 1"), transitions: z.boolean().optional().describe("Also its transitions at the cuts"),
       titles: z.boolean().optional().describe("Also restyle the titles") },
     async run(a, ctx, deps) { return fromPage(await page(ctx, deps, "apply_mood", a)); },
@@ -574,6 +574,7 @@ export const TOOLS: ToolDef[] = [
       transitions: z.enum(["none", "cuts", "soft", "style"]).optional().describe("cuts = hard cuts; soft = dissolves; style = the style's own (default)"),
       order: z.enum(["name", "date", "timecode", "content"]).optional().describe("Clip order (default name = series order)"),
       title: z.string().max(120).optional().describe("Hook / opening title text"),
+      sfx: z.enum(["none", "subtle", "normal", "punchy"]).optional().describe("Add sound effects at this intensity (auto_sfx) in the same undo step (default none)"),
       dry_run: z.boolean().optional().describe("Only return the plan"),
     },
     async run(a, ctx, deps) {
@@ -630,12 +631,42 @@ export const TOOLS: ToolDef[] = [
       return result(`Still working: ${j ? jobText(j) : job.id}. Follow it with job_status("${job.id}").`, j ? jobData(j) : { job_id: job.id });
     },
   }),
+  // auto-sfx (docs/EDITOR.md §15.2, additive): the sounds are made in the editor window (the SFX engine), free
+  def({
+    name: "auto_sfx", scope: "edit", needs: (a) => (a.dry_run ? ["read"] : ["edit"]), title: "Auto sound effects",
+    description: "Adds sound effects where the edit calls for them, made free on this PC: whooshes on transitions, whoosh + soft impact on wipes, pops and swishes on titles and stickers, typing, countdown ticks, punch-in swishes, slow-motion risers, freeze shutters, shake booms, glitches; beats opt-in. On an SFX track, 6 dB lower under speech; a re-run replaces earlier ones. dry_run lists them only. One undo step.",
+    input: {
+      intensity: z.enum(["subtle", "normal", "punchy"]).optional().describe("Levels −24 / −18 / −12 dB and the variants (default normal)"),
+      rules: z.array(z.enum(["transitions", "stingers", "titles", "stickers", "countdowns", "punch_ins", "speed_ramps", "freeze_frames", "shake", "glitch", "beats"]))
+        .max(11).optional().describe("Only these rules (default every rule but beats)"),
+      range: z.union([z.enum(["all", "inout"]), z.object({ start: seconds("From"), end: seconds("To") })]).optional()
+        .describe("all (default), the in/out marks, or { start, end } in seconds"),
+      dry_run: z.boolean().optional().describe("Only return the plan (time, sound, why) without changing anything"),
+    },
+    async run(a, ctx, deps) { return fromPage(await page(ctx, deps, "auto_sfx", a, 180_000)); },
+  }),
+  // one sound effect from the library (docs/EDITOR.md §15.1), made in the editor window: free, on this PC
+  def({
+    name: "add_sfx", scope: "edit", title: "Add a sound effect",
+    description: "Places one sound effect from the built-in library (made free on this PC) on the SFX track at a time: a preset id from list_catalog(sfx), or a tag (whoosh, impact, pop, riser, typing, ding …) and the seed picks among the matching sounds. One undo step.",
+    input: {
+      preset: z.string().min(1).max(80).optional().describe("A sound id from list_catalog(sfx), e.g. whoosh.air_soft"),
+      tag: z.string().min(1).max(40).optional().describe("Or a tag: the first matching sound (another with seed)"),
+      at: seconds("Where it starts on the timeline"),
+      gain_db: z.number().min(-60).max(12).optional().describe("Clip gain in dB (default 0: the sound's own −16 LUFS)"),
+      seed: z.number().int().min(0).max(2 ** 31 - 1).optional().describe("A variation of the sound (default 1)"),
+    },
+    async run(a, ctx, deps) {
+      if (!a.preset && !a.tag) throw new Error("Give preset (a sound id from list_catalog(sfx)) or tag");
+      return fromPage(await page(ctx, deps, "add_sfx", a, 90_000));
+    },
+  }),
 
   // ── catalogue ──
   def({
     name: "list_catalog", scope: "read", readOnly: true, title: "List the catalogue",
-    description: "Ids for the other tools: transitions, effects (video), audio_effects, moods or title_templates, with a search.",
-    input: { kind: z.enum(["transitions", "effects", "audio_effects", "moods", "title_templates"]), search: z.string().max(60).optional(),
+    description: "Ids for the other tools: transitions, effects (video), audio_effects, moods, looks (moods and the look-pack looks), audio_presets (audio chain presets for add_effect), sfx (sound effects with tags and categories, for add_sfx) or title_templates, with a search.",
+    input: { kind: z.enum(["transitions", "effects", "audio_effects", "moods", "looks", "audio_presets", "sfx", "title_templates"]), search: z.string().max(60).optional(),
       limit: z.number().int().min(1).max(400).optional().describe("Default 80") },
     async run(a, ctx, deps) { return fromPage(await page(ctx, deps, "list_catalog", a)); },
   }),

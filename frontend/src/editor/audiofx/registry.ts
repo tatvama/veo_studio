@@ -314,6 +314,71 @@ export const CHAIN_PRESETS: ChainPreset[] = [
     { id: "eq3", values: { low: 1, high: 1 } }, { id: "compressor", values: { threshold: -16, ratio: 2, attack: 0.02, release: 0.3, makeup: 2, knee: 6 } }, { id: "limiter", values: { ceiling: -1 } }] },
   { id: "loud_clear", group: "Music", name: "Loud and clear", effects: [{ id: "loudness_maximizer", values: { boost: 6, ceiling: -1 } }] },
   { id: "lofi_radio", group: "Creative", name: "Lo-fi radio", effects: [{ id: "lofi" }, { id: "vinyl", values: { crackle: 0.4, wow: 0.2 } }] },
+  // §15.3 presets pack (presets-pack, 13 October 2026). Tuned through the export graph (FFmpeg 7.1) on a SAPI speech
+  // test signal at −20.2 LUFS; the comment after each is what it measured (integrated LUFS / true peak, then the band
+  // changes against the dry voice).
+  // −14.3 LUFS / −1.5 dBTP; rumble −1.9 dB, mud −1.6, presence (3.4–8 kHz) +4.6, air +3.3
+  { id: "youtube_voice", group: "Voice", name: "YouTube voice", effects: [
+    { id: "highpass", values: { frequency: 85, q: 0.707 } },
+    { id: "eq_param", values: { gain2: -2.5, freq2: 280, q2: 1, gain4: 3.5, freq4: 4000, q4: 1, type6: "highshelf", gain6: 2, freq6: 10000 } },
+    { id: "compressor", values: { threshold: -24, ratio: 4, attack: 0.005, release: 0.12, makeup: 11, knee: 6 } },
+    { id: "deesser", values: { intensity: 0.3, max: 0.35, frequency: 0.6 } },
+    { id: "limiter", values: { ceiling: -1.5, release: 0.05 } }] },
+  // two voices 9.9 dB apart end up 0.6 dB apart (auto level), −16 LUFS for podcast platforms
+  { id: "podcast_duo", group: "Voice", name: "Podcast duo", effects: [
+    { id: "highpass", values: { frequency: 75 } },
+    { id: "auto_level", values: { frame: 250, window: 15, peak: 0.9, maxGain: 8 } },
+    { id: "compressor", values: { threshold: -20, ratio: 2.5, attack: 0.01, release: 0.2, makeup: 5, knee: 6 } },
+    { id: "eq_param", values: { gain2: -2, freq2: 300, gain4: 2.5, freq4: 3200, q4: 1.1 } },
+    { id: "deesser", values: { intensity: 0.4, max: 0.4, frequency: 0.5 } },
+    { id: "limiter", values: { ceiling: -1.5 } }] },
+  // band-pass 300–3400 Hz (24 dB/oct each side: below 100 Hz −24 dB, above 8 kHz −24 dB), light tanh drive, mono
+  { id: "phone_bandpass", group: "Voice", name: "Phone call (band-pass)", effects: [
+    { id: "highpass", values: { frequency: 300 } }, { id: "highpass", values: { frequency: 300 } },
+    { id: "lowpass", values: { frequency: 3400 } }, { id: "lowpass", values: { frequency: 3400 } },
+    { id: "eq_param", values: { gain3: 3, freq3: 1500, q3: 0.9 } },
+    { id: "distortion", values: { type: "tanh", drive: 8, output: -5 } },
+    { id: "mono", values: { amount: 1 } }] },
+  // −17 LUFS; PA slap at 220 ms into a wide hall (side −5.3 dB under the mid)
+  { id: "stadium_announcer", group: "Space", name: "Stadium announcer", effects: [
+    { id: "highpass", values: { frequency: 120 } },
+    { id: "compressor", values: { threshold: -26, ratio: 6, attack: 0.003, release: 0.15, makeup: 12, knee: 4 } },
+    { id: "eq_param", values: { gain3: 2, freq3: 1200, gain4: 3, freq4: 3000, q4: 0.9 } },
+    { id: "echo", values: { delay: 220, feedback: 0.3, wet: 0.35 } },
+    { id: "reverb", values: { preset: "hall", mix: 0.35, width: 1.4, predelay: 30 } },
+    { id: "limiter", values: { ceiling: -1 } }] },
+  // thin and breathy (below 300 Hz −5 to −21 dB, above 8 kHz +9), doubled, in a cathedral; −20 LUFS
+  { id: "horror_whisper", group: "Creative", name: "Horror whisper", effects: [
+    { id: "highpass", values: { frequency: 250 } },
+    { id: "eq_param", values: { type1: "lowshelf", freq1: 300, gain1: -6, type6: "highshelf", freq6: 5000, gain6: 8 } },
+    { id: "chorus", values: { delay: 18, depth: 4, rate: 0.25, mix: 0.45 } },
+    { id: "compressor", values: { threshold: -30, ratio: 4, attack: 0.002, release: 0.2, makeup: 13, knee: 6 } },
+    { id: "reverb", values: { preset: "cathedral", mix: 0.4, width: 1.5, predelay: 40 } },
+    { id: "limiter", values: { ceiling: -2 } }] },
+  // −16.5 LUFS; lows +3.5 dB, 300 Hz–1 kHz −3.4, presence +5.5 (exciter), a short hall
+  { id: "trailer_voice", group: "Voice", name: "Trailer voice", effects: [
+    { id: "highpass", values: { frequency: 40 } },
+    { id: "eq_param", values: { type1: "lowshelf", freq1: 120, gain1: 5, gain2: -2, freq2: 400, gain4: 2, freq4: 3000 } },
+    { id: "compressor", values: { threshold: -26, ratio: 5, attack: 0.004, release: 0.18, makeup: 12, knee: 4 } },
+    { id: "exciter", values: { amount: 1.5, drive: 6, blend: 0, frequency: 5500 } },
+    { id: "reverb", values: { preset: "hall", mix: 0.16, width: 1.2, predelay: 25 } },
+    { id: "limiter", values: { ceiling: -1.5 } }] },
+  // gentle: −19.8 LUFS, air +3.5 dB, a soft low gate (−18 dB range), widened from mono (side −4.4 dB)
+  { id: "asmr", group: "Voice", name: "ASMR", effects: [
+    { id: "highpass", values: { frequency: 30 } },
+    { id: "gate", values: { threshold: -58, range: -18, attack: 0.01, release: 0.3, ratio: 2 } },
+    { id: "compressor", values: { threshold: -32, ratio: 2, attack: 0.02, release: 0.3, makeup: 6, knee: 8 } },
+    { id: "eq_param", values: { type6: "highshelf", freq6: 8000, gain6: 3 } },
+    { id: "mono_to_stereo", values: { delay: 14, width: 0.6 } },
+    { id: "limiter", values: { ceiling: -3 } }] },
+  // lo-fi first (FFmpeg's acrusher turns an IIR filter's denormal tails into NaN), then 140 Hz–6 kHz with a cone
+  // peak at 1.5 kHz, light compression, mono: below 100 Hz −8.5 dB, above 8 kHz −13.5
+  { id: "car_radio", group: "Creative", name: "Car radio", effects: [
+    { id: "lofi", values: { bits: 11, samples: 2, cutoff: 6500 } },
+    { id: "highpass", values: { frequency: 140 } }, { id: "lowpass", values: { frequency: 6000 } },
+    { id: "eq_param", values: { gain3: 3, freq3: 1500, q3: 1 } },
+    { id: "compressor", values: { threshold: -20, ratio: 2.5, attack: 0.01, release: 0.2, makeup: 3, knee: 6 } },
+    { id: "mono", values: { amount: 1 } }] },
 ];
 
 // ── generator clips (§11.1 "Generate": a clip source, not an effect) ──────────────────────────────────────
