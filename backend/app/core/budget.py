@@ -137,6 +137,51 @@ class Estimator:
             return 0.0
         return float(self.prices["video_per_second"].get(self.models["omni"], {}).get("720p", 0.1)) * seconds
 
+    # ── Tatvam Editor AI tools (core/edit_ai.py) ─────────────────────────────
+    def tts_chars(self, provider: str, chars: int) -> float:
+        """Speech for `chars` characters of text with this provider's voice."""
+        return self._tts(provider, chars)
+
+    def listen(self, seconds: float, words: bool = True) -> float:
+        """Speech to text on Gemini (it hears the audio): ~32 audio tokens a second in (priced at the text model's
+        "audio_in" rate, else 3× its text input rate), the transcript with its timings out."""
+        if not self._live("gemini"):
+            return 0.0
+        p = self.prices["text_per_million"].get(self.models["text"], {"in": 0.3, "out": 2.5})
+        tin, tout = seconds * 32 + 800, seconds * (14 if words else 5) + 200
+        return (tin * float(p.get("audio_in", p["in"] * 3)) + tout * float(p["out"])) / 1e6
+
+    def text(self, chars_in: int, chars_out: int, calls: int = 1) -> float:
+        """Writing on the team's text route (Claude by default): ~3.5 characters a token, plus ~2,000 thinking tokens
+        a call."""
+        from ..providers.services import Services
+        route = Services().text_route()
+        if not self._live(route):
+            return 0.0
+        model = (self.settings.get("writer_claude_model") or self.models["writer_claude"]) if route == "anthropic" \
+            else self.models["text"]
+        p = self.prices["text_per_million"].get(model, {"in": 0.3, "out": 2.5})
+        return (chars_in / 3.5 * float(p["in"]) + (chars_out / 3.5 + 2000 * calls) * float(p["out"])) / 1e6
+
+    def sfx(self, seconds: float) -> float:
+        """ElevenLabs sound effects (the same rate services.sound_effect books)."""
+        return 0.02 * max(seconds, 1) / 10 if self._live("elevenlabs") else 0.0
+
+    def isolation(self, seconds: float) -> float:
+        """ElevenLabs voice isolation, per minute of audio."""
+        if not self._live("elevenlabs"):
+            return 0.0
+        return float(self.prices["isolation_per_minute"].get("elevenlabs", 0.3)) * max(seconds, 0.0) / 60
+
+    def image_engine(self, m: Any, n: int = 1) -> float:
+        """`n` images on a Model Hub image engine (models.AIModel; Google's Nano Banana first in the team's chain)."""
+        from . import model_hub
+        return model_hub.price_for(m, units=max(n, 0))
+
+    def voice_clone(self, provider: str = "elevenlabs") -> float:
+        """An instant voice clone (prices.voice_clone_each; ElevenLabs includes it in the plan, so 0 by default)."""
+        return float((self.prices.get("voice_clone_each") or {}).get(provider, 0.0)) if self._live(provider) else 0.0
+
     @staticmethod
     def needs_lipsync(shot: Shot, project: Project, lang: str) -> bool:
         if not shot_lines(shot, lang):

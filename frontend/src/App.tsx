@@ -27,8 +27,12 @@ const PosterEditor = lazy(() => import("./pages/posters/Editor"));
 const ProjectLayout = lazy(() => import("./pages/project/ProjectLayout"));
 const PublicReview = lazy(() => import("./pages/PublicReview"));
 const PanelApp = lazy(() => import("./pages/desktop/PanelApp"));
+const RenderJob = lazy(() => import("./pages/desktop/RenderJob"));
 const SearchPage = lazy(() => import("./pages/SearchPage"));
 const KitGallery = import.meta.env.DEV ? lazy(() => import("./pages/dev/Kit")) : null;
+const EngineLab = lazy(() => import("./pages/dev/EngineLab"));
+const EditorHome = lazy(() => import("./editor/EditorHome"));
+const EditorRoute = lazy(() => import("./editor/EditorRoute"));
 
 /** Shown while a page's code downloads: a skeleton shaped like a page, after a short grace period so quick loads don't flash. */
 export function PageLoading() {
@@ -86,6 +90,9 @@ function AppRoutes() {
   }
   if (!data.user) return <Login setupNeeded={data.setup_needed} googleEnabled={data.google_enabled} />;
 
+  // The hidden window of a desktop GPU render (docs/ENGINE.md §5): just the engine, no shell.
+  if (loc.pathname === "/desktop/render-job") return <Suspense fallback={null}><RenderJob /></Suspense>;
+
   // Pop-out panels (Tatvam Desktop windows and browser pop-outs): signed in, but outside the studio shell.
   if (loc.pathname.startsWith("/desktop/panel/")) {
     return (
@@ -95,6 +102,24 @@ function AppRoutes() {
           <Suspense fallback={<PageLoading />}>
             <Routes>
               <Route path="/desktop/panel/:panel" element={<PanelApp />} />
+            </Routes>
+          </Suspense>
+        </ErrorBoundary>
+      </GenerateProvider>
+    );
+  }
+
+  // Tatvam Editor (docs/EDITOR.md): signed in, outside the studio shell. /editor is its home, /editor/edit the workspace.
+  if (loc.pathname === "/editor" || loc.pathname.startsWith("/editor/")) {
+    return (
+      <GenerateProvider>
+        <DesktopMenu />
+        <ErrorBoundary resetKey={loc.pathname}>
+          <Suspense fallback={<PageLoading />}>
+            <Routes>
+              <Route path="/editor" element={<EditorHome />} />
+              <Route path="/editor/edit" element={<EditorRoute />} />
+              <Route path="*" element={<Navigate to="/editor" replace />} />
             </Routes>
           </Suspense>
         </ErrorBoundary>
@@ -139,6 +164,7 @@ function AppRoutes() {
               <Route path="/oauth/consent" element={<OAuthConsentPage />} />
               <Route path="/p/:pid/*" element={<ProjectLayout />} />
               {KitGallery && <Route path="/dev/kit" element={<KitGallery />} />}
+              <Route path="/dev/engine" element={<EngineLab />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
             </Suspense>

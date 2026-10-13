@@ -23,7 +23,7 @@ from .context import call
 def list_projects() -> dict:
     """List the Tatvam projects you can work on (newest first), with their episodes. Start here to get a project_id."""
     with call("read") as c:
-        q = c.db.query(Project).filter(Project.archived.is_(False))
+        q = c.db.query(Project).filter(Project.archived.is_(False), Project.type != "edit")  # not editor edits (api/edits.py)
         if c.who.project_ids:
             q = q.filter(Project.id.in_(c.who.project_ids))
         out = []

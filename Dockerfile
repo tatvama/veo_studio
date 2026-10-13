@@ -23,6 +23,8 @@ ARG WITH_DEMUCS=0
 RUN if [ "$WITH_DEMUCS" = "1" ]; then pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu && pip install demucs; fi
 COPY backend/ backend/
 COPY --from=web /web/dist frontend/dist
+# package.json carries tatvam.requiresDesktop for /api/ui/manifest (the desktop app's "screens from the server")
+COPY --from=web /web/package.json frontend/package.json
 ENV CAPTION_FONT="Noto Sans" MEDIA_ROOT=/data/media DATA_ROOT=/data/db
 VOLUME ["/data"]
 EXPOSE 8100

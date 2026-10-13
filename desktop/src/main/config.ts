@@ -4,8 +4,9 @@
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { DesktopSettings, Workspace } from "../shared/types.ts";
+import type { AppearanceSettings, DesktopSettings, Workspace } from "../shared/types.ts";
 import { DEFAULT_TEMPLATES } from "./naming.ts";
+import { defaultAssistants, sanitizeAssistants } from "./mcp/settings.ts";
 
 export const DEFAULT_GATEWAY_PORT = 18100;
 
@@ -22,7 +23,8 @@ export function defaultSettings(opts: { documents: string; env?: Record<string, 
   return {
     serverUrl: normalizeServerUrl(env.TATVAM_SERVER || "http://localhost:8100"),
     gatewayPort: DEFAULT_GATEWAY_PORT,
-    uiSource: "bundled",
+    uiSource: "auto",
+    appearance: { ...DEFAULT_APPEARANCE },
     libraryRoot: path.join(opts.documents, "Tatvam Projects"),
     projectFolders: {},
     naming: { ...DEFAULT_TEMPLATES },
@@ -34,7 +36,41 @@ export function defaultSettings(opts: { documents: string; env?: Record<string, 
     windowState: { panels: {} },
     autoSync: true,
     watching: {},
+    editorBackups: { auto: true, minutes: 10 },
+    lutFolders: [],
+    assistants: defaultAssistants(),
   };
+}
+
+/** Appearance defaults (docs/DESKTOP.md, desktop shell): dark, the Windows accent, comfortable, 100 %, Mica. */
+export const DEFAULT_APPEARANCE: AppearanceSettings = {
+  theme: "dark", accent: "system", density: "comfortable", scale: 100, reduceMotion: false, highContrast: false, material: "mica",
+};
+
+/** Keep known appearance keys with the right types over `base`. */
+export function sanitizeAppearance(input: unknown, base: AppearanceSettings = DEFAULT_APPEARANCE): AppearanceSettings {
+  const a: AppearanceSettings = { ...base };
+  if (typeof input !== "object" || input === null || Array.isArray(input)) return a;
+  const o = input as Record<string, unknown>;
+  if (o.theme === "dark" || o.theme === "light" || o.theme === "system") a.theme = o.theme;
+  if (typeof o.accent === "string" && (o.accent === "system" || o.accent === "tatvam" || /^#[0-9a-fA-F]{6}$/.test(o.accent))) a.accent = o.accent.toLowerCase();
+  if (o.density === "comfortable" || o.density === "compact") a.density = o.density;
+  if (typeof o.scale === "number" && Number.isFinite(o.scale)) a.scale = Math.min(150, Math.max(80, Math.round(o.scale / 5) * 5));
+  if (typeof o.reduceMotion === "boolean") a.reduceMotion = o.reduceMotion;
+  if (typeof o.highContrast === "boolean") a.highContrast = o.highContrast;
+  if (o.material === "mica" || o.material === "acrylic" || o.material === "none") a.material = o.material;
+  return a;
+}
+
+/**
+ * Settings files from before docs/DESKTOP.md §4.3: `uiSource: "bundled"` was the default, so unless the user picked it
+ * in the Studio server window (`uiSourceChosen`) it moves to the new default "auto". "server" was always a choice.
+ */
+export function migrateSettings(stored: unknown): { value: unknown; migrated: boolean } {
+  if (typeof stored !== "object" || stored === null || Array.isArray(stored)) return { value: stored, migrated: false };
+  const o = stored as Record<string, unknown>;
+  if (o.uiSource === "bundled" && o.uiSourceChosen !== true) return { value: { ...o, uiSource: "auto" }, migrated: true };
+  return { value: stored, migrated: false };
 }
 
 export function normalizeServerUrl(u: string): string {
@@ -55,7 +91,9 @@ export function sanitize(input: unknown, defaults: DesktopSettings): DesktopSett
   if (typeof input.gatewayPort === "number" && Number.isInteger(input.gatewayPort) && input.gatewayPort > 1023 && input.gatewayPort < 65536) {
     s.gatewayPort = input.gatewayPort;
   }
-  if (input.uiSource === "bundled" || input.uiSource === "server") s.uiSource = input.uiSource;
+  if (input.uiSource === "bundled" || input.uiSource === "server" || input.uiSource === "auto") s.uiSource = input.uiSource;
+  if (typeof input.uiSourceChosen === "boolean") s.uiSourceChosen = input.uiSourceChosen;
+  s.appearance = sanitizeAppearance(input.appearance, s.appearance);
   if (typeof input.libraryRoot === "string" && input.libraryRoot.trim()) s.libraryRoot = input.libraryRoot;
   if (isObj(input.projectFolders)) {
     s.projectFolders = Object.fromEntries(Object.entries(input.projectFolders).filter(([k, v]) => /^\d+$/.test(k) && typeof v === "string" && v)) as Record<string, string>;
@@ -83,6 +121,13 @@ export function sanitize(input: unknown, defaults: DesktopSettings): DesktopSett
       panels: isObj(input.windowState.panels) ? (input.windowState.panels as never) : {} };
   }
   if (typeof input.autoSync === "boolean") s.autoSync = input.autoSync;
+  if (isObj(input.editorBackups)) {
+    const b = input.editorBackups;
+    if (typeof b.auto === "boolean") s.editorBackups.auto = b.auto;
+    if (typeof b.minutes === "number" && Number.isFinite(b.minutes)) s.editorBackups.minutes = Math.min(120, Math.max(5, Math.round(b.minutes)));
+  }
+  if (Array.isArray(input.lutFolders)) s.lutFolders = input.lutFolders.filter((d): d is string => typeof d === "string" && path.isAbsolute(d)).slice(0, 50);
+  if (isObj(input.assistants)) s.assistants = sanitizeAssistants(input.assistants, s.assistants);
   if (isObj(input.watching)) {
     s.watching = Object.fromEntries(Object.entries(input.watching).filter(([k, v]) => /^\d+$/.test(k) && typeof v === "number")) as Record<string, number>;
   }
@@ -110,8 +155,9 @@ export class Config {
     if (existsSync(this.file)) {
       try { stored = JSON.parse(readFileSync(this.file, "utf8")); } catch { stored = undefined; }
     }
-    this.value = sanitize(stored, this.defaults);
-    if (!stored) this.save();
+    const m = migrateSettings(stored);
+    this.value = sanitize(m.value, this.defaults);
+    if (!stored || m.migrated) this.save();
   }
 
   get(): DesktopSettings {

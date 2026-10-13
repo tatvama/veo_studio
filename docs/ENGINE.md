@@ -1,0 +1,187 @@
+# Tatvam GPU render engine
+
+*Phase 9, part 2 (TATVAM_PLAN.md §8.1, §8.2, §16.5). Started 12 October 2026.*
+
+The engine is one TypeScript code base that draws the cut on the graphics card. It runs in three places:
+
+| Place | What it does |
+| --- | --- |
+| **Browser preview** | Plays the cut in the web studio at reduced size, with the real transitions and effects instead of CSS approximations |
+| **Desktop preview** | The same, at full size, in Tatvam Desktop's program monitor and pop-out windows |
+| **Desktop final render** | A hidden window renders every frame exactly, and FFmpeg only encodes them (NVENC / Quick Sync / AMF) |
+
+**Preview and render look the same, because they are the same code.** The FFmpeg server render stays as it is for
+the web; anything it can't draw falls back to the nearest thing it can, with a warning.
+
+## 1. Backend choice
+
+v1 is **WebGL2**: it runs in every current browser and in Electron, `texImage2D` takes a `<video>`, an `ImageBitmap`
+or a WebCodecs `VideoFrame`, and 3D textures handle LUTs. Shaders are GLSL ES 3.00, so the **gl-transitions**
+collection (MIT, 125 transitions) runs as written. Every draw goes through a small `Backend` interface (textures,
+render targets, programs, draw-quad, read-back), so a **WebGPU** backend can come in later for compute effects
+without touching the timeline, effects or transitions code.
+
+## 2. Effects data (shared by server and UI: `Shot.fx`)
+
+Everything that exists today stays the same: `transition {type, duration}`, `look`, `adjust` (12 keys), `speed`,
+`reverse`, `flip_h`, `flip_v`, `stabilize`, `move`, `fade_in` and `fade_out`. New, all optional:
+
+| Key | Shape (ranges are clamped by `fx.clean`) | Notes |
+| --- | --- | --- |
+| `transition.type` | also `"gl:<name>"`, e.g. `"gl:cube"`, `"gl:GlitchMemories"` | One of the gl-transitions names |
+| `transition.params` | `{name: number \| [n,n] \| [n,n,n] \| [n,n,n,n] \| bool}` | Overrides the transition's default uniforms; unknown names are dropped |
+| `transition.easing` | `"linear"` (default), `"ease_in"`, `"ease_out"`, `"ease_in_out"` | |
+| `lut_strength` | 0..1, default 1 | How much of the look or LUT to apply |
+| `wheels` | `{lift: [r,g,b], gamma: [r,g,b], gain: [r,g,b]}`, each value -1..1 | Three-way colour corrector |
+| `curves` | `{master?, r?, g?, b?}`: each 2..16 points `[x, y]` in 0..1, x ascending | Monotone cubic, baked into a 256-entry lookup |
+| `chroma` | `{color: "#RRGGBB", similarity: 0..1, smoothness: 0..1, spill: 0..1}` | Green or blue screen key; what shows through is the track below, else black |
+| `mask` | `{shape: "rect" \| "ellipse", x, y, w, h (0..1, centre and size), rotation: -180..180, feather: 0..1, invert: bool}` | Limits the shot's effects (or, on a layer, the layer) to a shape |
+| `glow` | `{amount: 0..1, threshold: 0..1, radius: 0..1}` | Bloom from the highlights |
+
+The GPU-only keys are `gl:` transitions, `wheels`, `curves`, `chroma`, `mask` and `glow`. The server keeps them, the
+FFmpeg render ignores them and adds a warning, and a `gl:` transition becomes `fade` there ("Rendered as a fade: the
+cube transition needs the GPU render in Tatvam Desktop").
+
+`GET /api/fx/catalog` adds two lists:
+- `gpu_transitions`: `[{id: "gl:cube", label, tags, author, license, params: [{name, type, default, min?, max?}]}]`
+- `gpu_effects`: `["wheels", "curves", "chroma", "mask", "glow"]`
+
+`GET /api/fx/looks/{look}.cube` is a 33-point 3D LUT of a preset look. The server bakes it once with FFmpeg (an
+identity HALD image through the look's own filter) and caches it, so the GPU applies **exactly** the server's look.
+
+The render plan gives every segment its cleaned `fx` and `gpu_transition` (the `gl:` type with params, or null),
+next to the FFmpeg strings it already carries.
+
+## 3. Composition (the engine's input, `frontend/src/engine/types.ts`)
+
+```ts
+interface Composition {
+  width: number; height: number; fps: number; duration: number;
+  tracks: Track[];                  // drawn bottom → top: tracks[0] is the main (shots) track
+  background?: [number, number, number];
+}
+interface Track { id: string; kind: "main" | "layer"; hidden?: boolean; opacity?: number; blend?: BlendMode; clips: Clip[] }
+interface Clip {
+  id: string;
+  media: { url: string; kind: "video" | "image"; width?: number; height?: number; duration?: number };
+  start: number;          // seconds on the cut where the clip starts (a transition overlaps the clip before it)
+  duration: number;       // seconds on the cut
+  in: number;             // source seconds at the clip's start (trim)
+  speed: number;          // 0.25..4; reverse plays from in + duration*speed backwards
+  reverse?: boolean;
+  fit: "cover" | "contain"; center?: [number, number];   // crop aim for cover (face-aware reframe)
+  move?: { kind: MoveKind; amount: number };              // Ken Burns, as fx.move
+  kenburns?: boolean;                                     // stills: the default slow push-in
+  transform?: Transform;                                  // layers: x, y (centre 0..1), scale, rotation, opacity + keyframes
+  fx: ShotFx;                                             // §2 (look, adjust, wheels, curves, chroma, mask, glow, flips, fades)
+  transitionIn?: { type: string; duration: number; params?: Record<string, unknown>; easing?: Easing };
+  timeMap?: { t: number; s: number }[];  // speed ramps: local seconds → source seconds (overrides in/speed/reverse); speed 0 = freeze
+}
+```
+
+Also optional: `Composition.output` (`{transfer: "sdr" | "hlg" | "pq"; primaries: "bt709" | "bt2020"}`, used by the 10-bit
+read-back), `Composition.lutUrls` (`{id: url}`: LUTs any window can load, so the export window has the same ones),
+and keyframes with `ease: "bezier" | "bounce" | "elastic"`, CSS cubic-bezier handles `out` / `in`, and spatial
+handles `tangentOut` / `tangentIn` (a cubic Bézier path; timing still follows the ease).
+
+Two builders produce a Composition:
+- `fromEpisode(episode, layers, {width, height, lang})` uses the same maths as `layoutClips()` and `assembler.timeline()`.
+- `fromPlan(plan, urlForKey)` uses the desktop render plan.
+
+## 4. Engine API (`frontend/src/engine/index.ts`)
+
+```ts
+const eng = await createEngine({ canvas?: HTMLCanvasElement | OffscreenCanvas, width, height, backend?: "webgl2" });
+await eng.load(comp, { mode: "live" | "exact" });   // live = <video> elements; exact = WebCodecs, frame-accurate
+eng.drawLive(t);                                     // realtime preview: draws what the sources show now
+await eng.renderExact(t);                            // export: waits for exactly the frame at t on every clip
+eng.readYuv420(): Uint8Array;                        // the frame as planar YUV 4:2:0, BT.709 limited range (W·H·1.5 bytes)
+eng.readYuv420p10(): Uint16Array;                    // 10-bit yuv420p10le per Composition.output (HEVC Main10, ProRes)
+eng.computeScopes(kind, opts?);                      // waveform, parade, vectorscope, histogram as an ImageBitmap
+eng.renderThumbnail(id, width?, kind?, {source?, params?, progress?, lutUrl?});
+eng.resize(w, h); eng.dispose();
+listTransitions(); listEffects();                    // the catalogue the UI shows
+analyzeColor(src, t?); matchColor(source, reference); trackFaces(url, from, to);   // colour tools, auto-reframe
+registerEffect(def); registerTransition(def); registerLut(id, lut);                 // custom shaders and LUTs
+```
+
+Effects can declare `temporal` (the renderer keeps per-clip history, e.g. temporal denoise), `segmentation`
+(a person mask from MediaPipe's selfie segmenter, for background blur and replace) and `prepare()`. A generated
+source (titles) can give `version(t)` and `bounds(t)`, so only a changed box is uploaded again.
+
+A frame is drawn in this order:
+1. **Each clip:** sample its source at its own time (in, speed, reverse), fit or crop and Ken Burns, flips.
+2. **Effects, in order:** LUT or look (with strength), adjust, wheels, curves, chroma key, glow, sharpen, blur,
+   vignette, grain. The mask confines all of them.
+3. **Fades.**
+4. **The main track's transition** (`progress` eased) blends the clip before with this one.
+5. **Layer tracks:** transform with keyframes, opacity and blend mode, composited in order.
+6. **Output:** the canvas, or a YUV read-back for export (four Y samples per RGBA pixel, so `readPixels` stays
+   RGBA8).
+
+**Transitions.** The **58 FFmpeg xfade ids** are written as GPU transitions that look like the server's, so old cuts
+keep their look. The **125 gl-transitions** come from the `gl-transitions` npm package. Each one is wrapped in a
+program: `getFromColor` / `getToColor` / `progress` / `ratio`, plus its params as uniforms, compiled lazily and
+cached.
+
+**Sources.**
+- **Live:** one muted `<video>` per clip, kept within half a frame of the timeline (seek when it drifts). Sound stays
+  with the existing player.
+- **Exact:** mp4box.js demuxes the file, a WebCodecs `VideoDecoder` decodes in order, and frames are cached by
+  timestamp. Images go through `createImageBitmap`.
+
+## 5. Desktop GPU render (Tatvam Desktop)
+
+1. Render card → **Engine: GPU** (on by default when the cut uses a GPU-only transition or effect).
+2. Main fetches the render plan and makes every key local, as before.
+3. Main opens a hidden window `/desktop/render-job?id=…` (`backgroundThrottling: false`). The page asks the bridge
+   for the job, builds `fromPlan(...)` with local media URLs, renders frame `i` at `t = i / fps`, and hands each frame
+   to `engine.frame(id, i, bytes)` (an invoke, so main's write to FFmpeg sets the pace). It ends with
+   `engine.done(id)`, or `engine.fail(id, message)` if something breaks.
+4. FFmpeg reads `-f rawvideo -pix_fmt yuv420p -s W×H -r fps -i pipe:0` and adds the **audio** from the existing
+   pipeline. That pipeline runs at draft size, keeps only its sound, and is unchanged otherwise: crossfades, voice,
+   layers, music with ducking, loudnorm. Captions and titles are burned with the plan's ASS (libass with HarfBuzz
+   shaping, the same as now), and the result is encoded with the preset's encoder and BT.709 tags.
+5. Upload and versions work as before.
+
+## 6. Tests
+
+- **Pure modules** (timeline, keyframes, easing, curves, `.cube` parser, `fromEpisode`, `fromPlan`, YUV packing
+  maths): `node --test` (`npm run test:engine` in `frontend/`, also in CI).
+- **GPU:** `/dev/engine`, the engine lab page, renders a test composition with every transition and effect. It is
+  driven over CDP in Electron and in the browser pane, and screenshots are compared.
+- **Parity:** a desktop GPU render of a cut with fades and xfade transitions against the FFmpeg render of the same
+  cut (PSNR, frame by frame).
+
+## 7. Status (13 October 2026)
+
+Built and verified on the reference laptop (GTX 1660 Ti, Electron 44, D3D11 through ANGLE). The desktop app passes
+`force_high_performance_gpu`, so laptops with two GPUs use the dedicated one; set `TATVAM_INTEGRATED_GPU=1` to
+opt out.
+
+| Area | Result |
+| --- | --- |
+| Catalogue | **304 transitions:** 58 xfade redrawn, 125 gl-transitions (none excluded; `luma` and `displacement` get a generated noise texture) and 120 of our own `tv:` ones (68 luma mattes generated on the GPU and equalised so they sweep evenly, 14 light, 17 motion, 8 glitch and retro, 13 3D), plus custom ones through `registerTransition`. **107 effects in 11 groups** (Colour, Keying, Blur & Sharpen, Distort, Stylize, Light, Film, Lens, Clean-up, Generate, Transform): pixi-filters 6.1.5 ports (MIT) except backdrop-blur, glfx.js ports (MIT), and our own, including camera log inputs (S-Log3, LogC3/LogC4, V-Log, C-Log3, D-Log, BMD Film Gen 5), output transforms (Rec.709, sRGB, HLG, PQ), hue/luma curves, split toning, film grain and halation, lens flares, temporal denoise, and MediaPipe background blur and replace. Custom effects come through `registerEffect`. Credits are in `effects/licenses.ts` |
+| Self-test | `/dev/engine?selftest=1`: 472 of 472 pass (every transition and effect compiles, renders and visibly changes the picture, and every `tv:` one differs from both pictures; plus cut transitions, nested sequences, titles, adjustment layers, incremental load, ½ resolution, thumbnails, context loss/restore, time maps and freezes, title sub-rect uploads, LUTs by URL and the 10-bit read-back) |
+| Fidelity vs FFmpeg | A plain clip is bit-exact (99 dB Y/U/V). xfade transitions are ≥ 50 dB luma for 55 of 58. Preset looks run as their FFmpeg filters (teal_orange 51 dB); the 6 curves-based presets use the baked .cube |
+| Desktop GPU export | 1080p cut on the GPU: 46 dB Y and 48.7 dB U/V against the server's own FFmpeg export, 368 of 368 frames (the desktop FFmpeg path gets 48 dB; the gap is the encoder). 1080p in 15–18 s against 51 s through FFmpeg; 4K with a `gl:cube` transition in 70 s on NVENC |
+| Speed | Studio cut 1.0–2.3 ms a frame at 1080p. Editor scene (2 tracks, transition, 4 effects per clip, title) 6–7 ms on average at 1080p and 21–27 ms at 4K. Exact export with read-back runs at 3.4× realtime at 4K. `tv:` transitions 0.9–1.5 ms; the heavy effects: bokeh 2.9, oil paint 5.4, watercolour 2.2, temporal denoise 1.1, background blur 24 ms (16 ms of it is the CPU segmenter; 6.5 ms when paused). Scopes ≤ 9.7 ms each |
+| Colour tools | Auto white balance (near-neutral light estimate, shades-of-grey fallback, low-confidence results halved; temperature > 0 makes the picture warmer), shot match and grade from a reference (Reinhard transfer, giving wheels, adjust and a 17-point LUT) |
+| Models | MediaPipe tasks-vision 1.1.0 (Apache-2.0), loaded on demand: `selfie_segmenter.tflite` and `blaze_face_short_range.tflite` in `frontend/public/models/mediapipe` (sources and SHA-256 in its NOTICE.md). It runs on the CPU delegate (the GPU delegate stalled on early frames); small faces fall back to the person's head from the segmenter |
+
+**Measuring against FFmpeg.** FFmpeg 7 negotiates colour tags between filter inputs. The GPU export is tagged
+BT.709 limited range and most AI clips aren't tagged, so `psnr` silently converts one side. Put
+`setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv` on both inputs first. Without it, a
+correct render reads as about 27 dB.
+
+**Known gaps:**
+- Chroma downsampling is a 2×2 box, not FFmpeg's scaler.
+- `stabilize` isn't drawn on the GPU.
+- Edge-fade dips on upper tracks darken the whole frame (xfade semantics).
+- A blend mode falls back to normal inside a transition.
+- Masks aren't keyframed yet.
+- Time maps only run forwards, so reversed speed ramps are split into pieces.
+- Spatial tangents have no arc-length reparameterisation, and temporal effects start again after a seek.
+- `pixel_sort` is an approximation. The FFmpeg server render can't draw the `tv:` transitions or the new
+  effects; the studio doesn't offer them, and the desktop editor renders them on the GPU.
+- DJI publishes no D-Log M curve, so `dlogm` uses the D-Log white-paper curve and says so.

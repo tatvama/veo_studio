@@ -2,9 +2,13 @@
 files that are already on disk."""
 from __future__ import annotations
 
+import os
+import threading
 import time
 
-from app.storage import S3Storage
+import pytest
+
+from app.storage import LocalStorage, S3Storage, _strip_long_prefix, safe_key
 
 
 class NotFound(Exception):
@@ -65,8 +69,82 @@ def test_scratch_and_bad_paths(tmp_path):
     st = S3Storage(tmp_path, client=bucket, bucket="b")
     assert not st.exists("_tmp/abc/x.wav")
     assert bucket.gets == 0
-    try:
+    with pytest.raises(ValueError):
         st.abs("../outside.txt")
-        raise AssertionError("path escape not refused")
-    except ValueError:
-        pass
+    assert bucket.gets == 0  # refused before anything is asked of the bucket
+
+
+@pytest.mark.parametrize("bad", [
+    "../x", "a/../../x", "a/../x", "..", "a\\..\\..\\x", "/etc/passwd", "\\\\server\\share\\x", "//server/share/x",
+    "C:/Windows/x", "c:x", "a\0b",
+])
+def test_safe_key_refuses_escapes(bad):
+    with pytest.raises(ValueError):
+        safe_key(bad)
+
+
+def test_safe_key_cleans_keys():
+    assert safe_key("projects/1/a.mp4") == "projects/1/a.mp4"
+    assert safe_key("projects\\1\\a.mp4") == "projects/1/a.mp4"
+    assert safe_key("./projects//1/./a.mp4/") == "projects/1/a.mp4"
+    assert safe_key("") == "" and safe_key(".") == ""
+    assert safe_key("a..b/c...mp4") == "a..b/c...mp4"  # dots inside a name are fine
+
+
+def test_windows_long_prefix_is_dropped_for_the_link_check():
+    assert _strip_long_prefix(r"\\?\D:\media\a.mp4") == r"D:\media\a.mp4"
+    assert _strip_long_prefix(r"\\?\UNC\server\share\a.mp4") == r"\\server\share\a.mp4"
+    assert _strip_long_prefix(r"D:\media\a.mp4") == r"D:\media\a.mp4"
+    assert _strip_long_prefix("/srv/media/a.mp4") == "/srv/media/a.mp4"
+
+
+def test_local_paths_stay_under_the_root(tmp_path):
+    st = LocalStorage(tmp_path / "media")
+    root = os.path.abspath(tmp_path / "media")
+    assert str(st.abs("projects/1/a.mp4")) == os.path.join(root, "projects", "1", "a.mp4")
+    assert str(st.abs("projects\\1\\a.mp4")) == os.path.join(root, "projects", "1", "a.mp4")
+    assert str(st.abs("")) == root
+    for bad in ("../x", "/x", "C:x"):
+        with pytest.raises(ValueError):
+            st.abs(bad)
+        with pytest.raises(ValueError):
+            st.save_bytes(bad, b"x")
+    assert not (tmp_path / "x").exists()
+
+
+def test_saves_into_new_folders_from_many_workers_at_once(tmp_path):
+    """Workers saving into folders that other workers are creating at that moment (Windows' realpath can answer with
+    a \\\\?\\ path then): every save lands under the root."""
+    st = LocalStorage(tmp_path / "media")
+    fails: list[str] = []
+
+    def work():
+        for i in range(60):
+            try:
+                st.save_bytes(st.new_path(f"characters/{i // 3}/voices", ".wav"), b"x")
+            except Exception as e:  # collected and reported below
+                fails.append(repr(e))
+
+    threads = [threading.Thread(target=work) for _ in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not fails, fails[:3]
+    assert len(list((tmp_path / "media" / "characters").rglob("*.wav"))) == 8 * 60
+
+
+def test_a_link_out_of_the_root_is_refused(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("secret")
+    st = LocalStorage(tmp_path / "media")
+    try:
+        os.symlink(outside, tmp_path / "media" / "link", target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("this system can't make symlinks")
+    with pytest.raises(ValueError):
+        st.abs("link/secret.txt")  # resolved, it's outside the media root
+    with pytest.raises(ValueError):
+        st.save_bytes("link/new.txt", b"x")
+    assert not (outside / "new.txt").exists()

@@ -82,6 +82,17 @@ export async function runSmoke(ctx: AppCtx, win: BrowserWindow): Promise<void> {
         version: d.version, platform: d.platform, machine: info.machine, presets: presets.map((p) => p.id + ':' + (p.hardware || 'cpu')),
         displays: displays.length, popOut: list.find((w) => w.id === wid) || null, workspaces: workspaces.map((w) => w.name) };
     })()`);
+    // 5b. the editor bridge (read-only: the smoke's library is the real one, so nothing is created)
+    out.editor = await inPage<Check>(win, `(async () => {
+      const e = window.tatvamDesktop.editor;
+      if (!e) return { ok: false, error: 'no editor bridge' };
+      const edits = await e.list();
+      const shaders = await e.shaders();
+      const drop = e.pathsForDrop([]);
+      const refused = await e.open('C:\\\\nowhere\\\\x.tatvamedit').then(() => 'opened', (err) => String(err.message || err));
+      return { ok: Array.isArray(edits) && Array.isArray(shaders) && Array.isArray(drop) && drop.length === 0 && /wasn't opened in Tatvam/.test(refused),
+        edits: edits.length, shaders: shaders.length, refused };
+    })()`);
     // 6. the machine check
     out.machine = await inPage<Check>(win, `window.tatvamDesktop.media.machineCheck().then((m) => ({ ok: Boolean(m.verdict && m.baseline && m.encoders),
       verdict: m.verdict, nvenc: m.nvenc, gpu: (m.gpus || [])[0], ramGb: Math.round((m.ramBytes || 0) / 1073741824), disk: m.disk && m.disk.kind,

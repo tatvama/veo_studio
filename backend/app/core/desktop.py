@@ -434,7 +434,9 @@ def render_plan(db: Session, episode: Episode, lang: str | None = None, w: int |
                 upscaled: bool = False) -> dict[str, Any]:
     """The final render of this cut as data: per segment the source, timing, audio and ready-made filter strings for
     w×h, then the end card, layers, music, captions and loudness. Uses assembler.plan() and assembler.timeline(), the
-    code the server render runs. LUT files are written @@LUT_<id>@@; every media reference is a storage key."""
+    code the server render runs. LUT files are written @@LUT_<id>@@; every media reference is a storage key.
+    For the GPU engine (docs/ENGINE.md §2, §5) each segment also carries its cleaned `fx` and `gpu_transition`, each
+    picture layer its `raw` clip values, and `gpu_only` lists what only the GPU draws (e.g. ["chroma", "gl:cube"])."""
     st = get_storage()
     project = db.get(Project, episode.project_id)
     lang = (lang or project.primary_language)[:8]
@@ -459,9 +461,12 @@ def render_plan(db: Session, episode: Episode, lang: str | None = None, w: int |
         all_luts = {str(lt["id"]): lt["path"] for lt in project.luts or [] if lt.get("id") and lt.get("path") and st.exists(lt["path"])}
         marks = {i: f"@@LUT_{i}@@" for i in all_luts}
         used_luts: set[str] = set()
+        gpu_only: set[str] = set()
         out: list[dict[str, Any]] = []
         for i, tm in enumerate(timed):
             sg, fx = tm.sg, tm.fx
+            cfx = fxlib.clean(fx, set(all_luts)) if fx else {}
+            gpu_only.update(fxlib.gpu_only(cfx, tm.transition is not None))
             src = sg.source_key or st.save_file(f"projects/{project.id}/desktop/placeholder_{sg.shot.id}.png", sg.source)
             up = fresh_upscale(db, sg.shot.id) if upscaled and sg.source_kind == "video" else None
             if up is not None:
@@ -476,7 +481,8 @@ def render_plan(db: Session, episode: Episode, lang: str | None = None, w: int |
                 "extra_audio": [{"key": key(e[3] if len(e) > 3 else ""), "offset": float(e[1]), "gain_db": float(e[2]) if len(e) > 2 else 0.0}
                                 for e in sg.extra_audio],
                 "keep_src_audio": sg.keep_src_audio, "src_gain_db": sg.src_gain_db,
-                "transition": list(tm.transition) if tm.transition else None}
+                "transition": list(tm.transition) if tm.transition else None,  # FFmpeg xfade (a gl-transition is "fade")
+                "fx": cfx, "gpu_transition": fxlib.gpu_transition(cfx, tm.transition[1]) if tm.transition else None}
             if sg.source_kind == "still":
                 seg.update(has_audio=False, pre="", stabilize=False, center=None, kenburns=ff.still_kenburns(fx),
                            vf_post=fxlib.video_filters(fx, w, h, sg.duration, fps, marks), af_fx=fxlib.audio_filters(fx, sg.duration),
@@ -506,8 +512,11 @@ def render_plan(db: Session, episode: Episode, lang: str | None = None, w: int |
             pics, sounds = layerlib.resolve(episode.layers, lambda rel: rel if rel and st.exists(rel) else None)
             for c in pics:
                 chain, x, y = layerlib.pic_chain(c, w, h, layerlib._aspect(st.abs(c["path"])))
+                raw = {"id": c.get("id"), "track": c.get("track"), **{k: c.get(k, d) for k, d in layerlib.KF_DEFAULT.items()},
+                       "keyframes": list(c.get("keyframes") or []),
+                       **{k: c.get(k, 0) for k in ("fade_in", "fade_out", "gain_db")}}
                 layers["pics"].append({"key": key(c["path"]), "kind": c["kind"], "start": c["start"], "in": c.get("in", 0),
-                                       "dur": c["dur"], "chain": chain, "x": x, "y": y})
+                                       "dur": c["dur"], "chain": chain, "x": x, "y": y, "raw": raw})
             for c in sounds:
                 if ff.has_audio(st.abs(c["path"])):  # the mix skips files without sound
                     layers["sounds"].append({"key": key(c["path"]), "start": c["start"], "in": c.get("in", 0), "dur": c["dur"],
@@ -530,6 +539,7 @@ def render_plan(db: Session, episode: Episode, lang: str | None = None, w: int |
             "options": {"effects": effects, "captions": captions, "music": music, "upscaled": upscaled},
             "cut_version": latest_number(db, episode.id), "fingerprint": fingerprint(snap), "generated_at": _iso(utcnow()),
             "duration_s": round(total, 3), "warnings": warnings, "segments": out, "end_card": end, "layers": layers, "music": bed,
+            "gpu_only": sorted(gpu_only),
             "captions": {"srt": srt.read_text(encoding="utf-8") if srt else "", "ass": ass.read_text(encoding="utf-8") if ass else "",
                          "burn": burn, "style": ro["caption_style"], "font": get_settings().caption_font},
             "luts": {i: key(all_luts[i]) for i in sorted(used_luts)},

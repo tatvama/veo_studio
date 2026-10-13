@@ -1,16 +1,21 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { CircleAlert, CircleCheck, Cpu, FileText, Film, RefreshCw, Server, Stethoscope } from "lucide-react";
-import { useState } from "react";
+import { CircleAlert, CircleCheck, Cpu, FileText, Film, HardDrive, RefreshCw, Server, Stethoscope } from "lucide-react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { SectionCard } from "../../../components/room/kit";
 import { Badge, Button, Skeleton, Toggle, Tooltip } from "../../../components/ui";
-import { bytes, dcall, desktop, useDesktopInfo, useDesktopQuery, useDesktopSettings } from "../../../lib/desktop";
+import { useDisk, useUiStatus } from "../../../desktop/bridge";
+import { bytes, dcall, desktop, useDesktopInfo, useDesktopQuery, useDesktopSettings, type GpuSummary } from "../../../lib/desktop";
 import { useT } from "../../../lib/i18n";
 import { KV, Quiet, Sub } from "./parts";
 
-/** The machine check against the baseline (RTX 3060, 32 GB RAM, NVMe SSD), proxy mode, and the app itself. */
-export function MachineCard({ pid, className }: { pid: number; className?: string }) {
+/**
+ * The machine check against the baseline (RTX 3060, 32 GB RAM, NVMe SSD), proxy mode, and the app itself. Without a
+ * project (`pid` 0: the Start page, the first-run steps) "Build proxies" is left out; `summary` shows the graphics
+ * card, the hardware encoder and the free disk at once, and the full check on demand.
+ */
+export function MachineCard({ pid = 0, className, variant = "full" }: { pid?: number; className?: string; variant?: "full" | "summary" }) {
   const t = useT();
   const qc = useQueryClient();
   const { data: info } = useDesktopInfo();
@@ -45,6 +50,16 @@ export function MachineCard({ pid, className }: { pid: number; className?: strin
     else toast.success(t("Tatvam Desktop is up to date"));
   };
 
+  const summary = variant === "summary";
+  const ui = useUiStatus();
+  const disk = useDisk();
+  const [gpu, setGpu] = useState<GpuSummary | null>(null);
+  const [hw, setHw] = useState<string | null | undefined>(undefined);
+  useEffect(() => {
+    if (!summary) return;
+    void desktop()?.shell?.gpu().then(setGpu).catch(() => undefined);
+    void desktop()?.render.presets().then((ps) => { const h = ps.find((p) => p.hardware)?.hardware; setHw(typeof h === "string" ? h : null); }).catch(() => setHw(null));
+  }, [summary]);
   const ram = r?.ramBytes;
   const verdictTone = r?.verdict === "ok" ? "ok" : r?.verdict === "bad" ? "bad" : r?.verdict ? "warn" : "neutral";
 
@@ -55,9 +70,20 @@ export function MachineCard({ pid, className }: { pid: number; className?: strin
         {r ? t("Check again") : t("Run machine check")}
       </Button>}>
       <div className="space-y-4">
-        {check.isFetching && !r ? <Skeleton className="h-40" /> : !r ? (
+        {summary && (
+          <div className="divide-y divide-line/60">
+            <KV k={t("GPU")}>{gpu?.name ?? (gpu ? t("Unknown") : <Skeleton className="ml-auto h-3 w-32" />)}</KV>
+            <KV k={t("Encoder")}>{hw === undefined ? <Skeleton className="ml-auto h-3 w-24" /> : hw ? `${hw} (hardware)` : t("Software (no hardware encoder found)")}</KV>
+            {(disk?.drives ?? []).map((dr) => (
+              <KV key={dr.path} k={<span className="inline-flex items-center gap-1"><HardDrive className="size-3" />{dr.label}</span>}>
+                <span className={dr.low ? "text-warn" : undefined}>{bytes(dr.freeBytes)} free on {dr.path.replace(/\\$/, "")}</span>
+              </KV>
+            ))}
+          </div>
+        )}
+        {check.isFetching && !r ? <Skeleton className="h-40" /> : !r ? (summary ? null : (
           <Quiet>{t("The check finds FFmpeg, lists the hardware encoders and test-encodes on NVENC, Quick Sync and AMF. It takes a few seconds.")}</Quiet>
-        ) : (
+        )) : (
           <>
             <div className="flex flex-wrap items-center gap-2">
               {r.verdict && <Badge tone={verdictTone} dot>{r.verdict === "ok" ? t("Meets the baseline") : r.verdict === "bad" ? t("Below the baseline") : t("Partly below the baseline")}</Badge>}
@@ -106,26 +132,26 @@ export function MachineCard({ pid, className }: { pid: number; className?: strin
           </>
         )}
 
-        <Sub title={t("Proxies")}>
+        {!summary && <Sub title={t("Proxies")}>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <Toggle checked={!!settings?.proxyMode} disabled={busy === "proxy"} onChange={(v) => void proxyMode(v)} label={<span className="text-sm">{t("Play 1080p proxies")}</span>} />
-            <Button size="sm" variant="outline" icon={<Film className="size-3.5" />} loading={busy === "build"} onClick={build}>{t("Build proxies")}</Button>
+            {pid > 0 && <Button size="sm" variant="outline" icon={<Film className="size-3.5" />} loading={busy === "build"} onClick={build}>{t("Build proxies")}</Button>}
           </div>
           <p className="mt-1.5 text-2xs leading-relaxed text-dim">{t("On a slower machine the timeline plays light 1080p copies; renders always use the originals.")}</p>
-        </Sub>
+        </Sub>}
 
-        <Sub title={t("App")}>
+        {!summary && <Sub title={t("App")}>
           <div className="divide-y divide-line/60">
             <KV k={t("Version")}>{info?.appVersion ?? desktop()?.version ?? "—"}{info && !info.packaged ? ` · ${t("dev")}` : ""}</KV>
             <KV k={t("Studio server")}>{info?.serverUrl ?? settings?.serverUrl ?? "—"}</KV>
-            <KV k={t("Interface")}>{info?.uiSource === "server" ? t("from the server") : t("bundled")}</KV>
+            <KV k={t("Interface")}>{ui?.label ?? (info?.uiSource === "server" ? t("from the server") : info?.uiSource === "auto" ? t("automatic") : t("bundled"))}</KV>
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5">
             <Button size="sm" variant="ghost" icon={<RefreshCw className="size-3.5" />} loading={busy === "update"} onClick={updates}>{t("Check for updates")}</Button>
             <Button size="sm" variant="ghost" icon={<FileText className="size-3.5" />} onClick={() => void dcall(t("Logs"), (d) => d.app.revealLogs())}>{t("Show logs")}</Button>
             <Button size="sm" variant="ghost" icon={<Server className="size-3.5" />} onClick={() => void dcall(t("Studio server"), (d) => d.app.openConnection())}>{t("Change server…")}</Button>
           </div>
-        </Sub>
+        </Sub>}
       </div>
     </SectionCard>
   );

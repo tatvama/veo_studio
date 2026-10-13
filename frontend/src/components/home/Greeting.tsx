@@ -1,7 +1,8 @@
 import { clsx } from "clsx";
-import { Plus } from "lucide-react";
+import { Clapperboard, Plus } from "lucide-react";
 import { Fragment, type ReactNode } from "react";
 import { Link } from "react-router-dom";
+import { isDesktop } from "../../lib/desktop";
 import { useT } from "../../lib/i18n";
 import { useJobs } from "../../lib/queries";
 import type { UserBrief } from "../../lib/types";
@@ -61,9 +62,14 @@ export function Greeting({ user, canCreate, onNew }: { user: UserBrief | null | 
           )}
         </div>
       </div>
-      {canCreate && (
-        <Button variant="outline" icon={<Plus className="size-4" />} onClick={onNew} className="shrink-0">{t("New production")}</Button>
-      )}
+      <div className="flex shrink-0 gap-2">
+        {isDesktop && (
+          <Link to="/editor" className="inline-flex"><Button variant="outline" icon={<Clapperboard className="size-4" />}>Tatvam Editor</Button></Link>
+        )}
+        {canCreate && (
+          <Button variant="outline" icon={<Plus className="size-4" />} onClick={onNew} className="shrink-0">{t("New production")}</Button>
+        )}
+      </div>
     </header>
   );
 }

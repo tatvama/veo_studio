@@ -38,7 +38,9 @@ class ProjectIn(BaseModel):
 
 @router.get("/projects")
 def list_projects(archived: bool = False, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    rows = db.query(Project).filter(Project.archived.is_(archived)).order_by(Project.updated_at.desc()).all()
+    # an editor edit's studio project (type "edit", api/edits.py) only carries its AI costs: not a studio project
+    rows = (db.query(Project).filter(Project.archived.is_(archived), Project.type != "edit")
+            .order_by(Project.updated_at.desc()).all())
     return [project_out(db, p) for p in rows]
 
 

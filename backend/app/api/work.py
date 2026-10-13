@@ -85,40 +85,66 @@ def decide(aid: int, body: DecideIn, request: Request, user: User = Depends(requ
 # ── comments & activity ──────────────────────────────────────────────────────
 
 @router.get("/api/comments")
-def list_comments(project_id: int, target_type: str | None = None, target_id: int | None = None,
-                  user: User = Depends(current_user), db: Session = Depends(get_db)):
+def list_comments(project_id: int | None = None, target_type: str | None = None, target_id: int | None = None,
+                  sequence_id: str | None = None, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Comments of a project (on a target). An edit's timeline comments: target_type=edit&target_id=<its studio
+    project> (project_id may be left out), optionally of one sequence; they are ordered by frame."""
+    if project_id is None:
+        if target_type != "edit" or not target_id:
+            raise HTTPException(422, "project_id is required")
+        project_id = target_id
     q = db.query(Comment).filter(Comment.project_id == project_id)
     if target_type:
         q = q.filter(Comment.target_type == target_type)
     if target_id:
         q = q.filter(Comment.target_id == target_id)
+    if sequence_id:
+        q = q.filter(Comment.sequence_id == sequence_id)
     users = {u.id: u for u in db.query(User).all()}
+    if target_type == "edit":
+        order = (Comment.frame.is_(None), Comment.frame, Comment.id)
+    else:
+        order = (Comment.timecode.is_(None), Comment.timecode, Comment.id)
     return [c.to_dict(user=user_brief(users.get(c.user_id)) or {"id": 0, "name": f"{c.guest_name} (client)", "email": "",
                                                                  "role": "viewer"})
-            for c in q.order_by(Comment.timecode.is_(None), Comment.timecode, Comment.id).all()]
+            for c in q.order_by(*order).all()]
 
 
 class CommentIn(BaseModel):
-    project_id: int
-    target_type: str
+    project_id: int | None = None  # an edit's comment may leave it out (it is the edit's studio project)
+    target_type: str = Field(max_length=20)
     target_id: int
     body: str = Field(min_length=1, max_length=4000)
     timecode: float | None = None
     drawing: list[dict] = []
+    sequence_id: str | None = Field(None, max_length=80, pattern=r"^[A-Za-z0-9_.:\-]+$")  # an edit's sequence
+    frame: int | None = Field(None, ge=0, le=100_000_000)  # the frame of that sequence it is pinned to
 
 
 @router.post("/api/comments")
 def add_comment(body: CommentIn, user: User = Depends(require("reviewer")), db: Session = Depends(get_db)):
+    if body.target_type == "edit":
+        p = db.get(Project, body.target_id)
+        if p is None or p.type != "edit" or (body.project_id is not None and body.project_id != body.target_id):
+            raise HTTPException(404, "Edit not found")
+        project_id = p.id
+    else:
+        if body.project_id is None:
+            raise HTTPException(422, "project_id is required")
+        if body.sequence_id is not None or body.frame is not None:
+            raise HTTPException(400, "sequence_id and frame are for comments on an edit")
+        project_id = body.project_id
     names = {m.lower() for m in re.findall(r"@([\w.\-]+)", body.body)}
     mentioned = [u.id for u in db.query(User).all()
                  if (u.name and u.name.split()[0].lower() in names) or u.email.split("@")[0].lower() in names]
-    c = Comment(project_id=body.project_id, target_type=body.target_type, target_id=body.target_id, user_id=user.id,
-                body=body.body, mentions=mentioned, timecode=body.timecode, drawing=body.drawing[:50])
+    c = Comment(project_id=project_id, target_type=body.target_type, target_id=body.target_id, user_id=user.id,
+                body=body.body, mentions=mentioned, timecode=body.timecode, drawing=body.drawing[:50],
+                sequence_id=body.sequence_id, frame=body.frame)
     db.add(c)
     db.commit()
-    emit(db, body.project_id, "comment.created", {"comment_id": c.id, "target_type": c.target_type, "target_id": c.target_id,
-                                                  "mentions": mentioned, "by": user.name or user.email,
-                                                  "excerpt": body.body[:120]}, user_id=user.id)
+    emit(db, project_id, "comment.created", {"comment_id": c.id, "target_type": c.target_type, "target_id": c.target_id,
+                                             "sequence_id": c.sequence_id, "frame": c.frame, "mentions": mentioned,
+                                             "by": user.name or user.email, "excerpt": body.body[:120]}, user_id=user.id)
     return c.to_dict(user=user_brief(user))
 
 
@@ -127,7 +153,8 @@ def resolve_comment(cid: int, user: User = Depends(require("reviewer")), db: Ses
     c = get_or_404(db, Comment, cid)
     c.resolved = not c.resolved
     db.commit()
-    emit(db, c.project_id, "comment.updated", {"comment_id": c.id})
+    emit(db, c.project_id, "comment.updated", {"comment_id": c.id, "target_type": c.target_type, "target_id": c.target_id,
+                                               "sequence_id": c.sequence_id, "resolved": c.resolved})
     return c.to_dict()
 
 

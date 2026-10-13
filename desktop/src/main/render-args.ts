@@ -38,8 +38,13 @@ export interface PlanSegment {
   vf_post: string;
   af_fx: string;
   transition: [string, number] | null;
+  /** The cleaned shot fx ({} when effects are off) and the effective transition for the GPU engine (docs/ENGINE.md §2). */
+  fx?: Record<string, unknown>;
+  gpu_transition?: { type: string; duration: number; params?: Record<string, unknown>; easing?: string } | null;
 }
-export interface PlanPic { key: string; kind: string; start: number; in: number; dur: number; chain: string[]; x: string; y: string }
+export interface PlanPic { key: string; kind: string; start: number; in: number; dur: number; chain: string[]; x: string; y: string;
+  /** The layer clip's own values (the GPU engine composites from these, not from the FFmpeg expressions). */
+  raw?: Record<string, unknown> }
 export interface PlanSound { key: string; start: number; in: number; dur: number; gain_db?: number; fade_in?: number; fade_out?: number; has_audio?: boolean }
 export interface RenderPlan {
   episode_id: number;
@@ -64,6 +69,8 @@ export interface RenderPlan {
   /** Stabilising filters with a @@TRF@@ placeholder for the transforms file (backend ffmpeg.STAB_DETECT / STAB_TRANSFORM). */
   stabilize_filters?: { detect: string; transform: string };
   keys?: string[];
+  /** GPU-only features the cut uses (e.g. "chroma", "gl:cube"): the desktop then renders on the GPU engine. */
+  gpu_only?: string[];
 }
 
 export const STAB_DETECT = "vidstabdetect=shakiness=6:accuracy=12:result='@@TRF@@'";
@@ -152,6 +159,8 @@ export const AUDIO_INTERMEDIATE = ["-c:a", "aac", "-ar", "48000", "-ac", "2"];
 export interface PresetDef {
   id: string; label: string; w: number; h: number; fps?: number; orientation: "project" | "vertical";
   codec: "hevc" | "h264" | "prores" | "av1"; container: "mp4" | "mov"; tenBit: boolean; cq?: number; cbr?: string; note: string;
+  /** additive: a target bit rate (VBR, peaks at 1.5×) on a quick encoder preset instead of a constant quality, and the AAC rate (default 192k) */
+  vbr?: string; audioBitrate?: string;
 }
 
 export const PRESETS: PresetDef[] = [
@@ -163,6 +172,8 @@ export const PRESETS: PresetDef[] = [
   { id: "master_prores", label: "Master ProRes 422 HQ", w: 3840, h: 2160, orientation: "project", codec: "prores", container: "mov", tenBit: true, note: "prores_ks profile 3, yuv422p10le (software encoder)" },
   { id: "broadcast1080", label: "Broadcast 1080p25", w: 1920, h: 1080, fps: 25, orientation: "project", codec: "h264", container: "mp4", tenBit: false, cbr: "50M", note: "H.264 high, 50 Mb/s CBR, AAC 48 kHz" },
   { id: "review1080", label: "Review 1080p (fast)", w: 1920, h: 1080, orientation: "project", codec: "h264", container: "mp4", tenBit: false, cq: 23, note: "H.264 CQ 23" },
+  { id: "draft720", label: "Draft 720p", w: 1280, h: 720, orientation: "project", codec: "h264", container: "mp4", tenBit: false, vbr: "4500k", audioBitrate: "160k",
+    note: "H.264 4.5 Mb/s on a quick preset, AAC 160k (assistant drafts)" },
   { id: "av1_4k", label: "AV1 4K (archive)", w: 3840, h: 2160, orientation: "project", codec: "av1", container: "mp4", tenBit: false, cq: 28, note: "AV1 NVENC, only where supported (RTX 40 and up)" },
 ];
 
@@ -188,6 +199,19 @@ export function finalEncoder(p: PresetDef, probe: Record<string, boolean>, prefe
   if (p.codec === "av1") {
     if (probe.av1_nvenc) return { name: "av1_nvenc", family: "nvenc", args: ["-c:v", "av1_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", cq, "-b:v", "0", "-pix_fmt", "yuv420p"] };
     return null;
+  }
+  if (p.vbr && p.codec === "h264") { // drafts: a modest bit rate on the quickest settings of each encoder
+    const b = p.vbr;
+    const kbps = Number.parseInt(b, 10) * (/m$/i.test(b) ? 1000 : 1);
+    const max = `${Math.round(kbps * 1.5)}k`;
+    const buf = `${kbps * 2}k`;
+    for (const fam of order) {
+      if (fam === "nvenc" && probe.h264_nvenc) return { name: "h264_nvenc", family: fam, args: ["-c:v", "h264_nvenc", "-preset", "p2", "-rc", "vbr", "-b:v", b, "-maxrate", max, "-bufsize", buf, "-profile:v", "high", "-pix_fmt", "yuv420p"] };
+      if (fam === "qsv" && probe.h264_qsv) return { name: "h264_qsv", family: fam, args: ["-c:v", "h264_qsv", "-preset", "veryfast", "-b:v", b, "-maxrate", max, "-bufsize", buf, "-profile:v", "high", "-pix_fmt", "nv12"] };
+      if (fam === "amf" && probe.h264_amf) return { name: "h264_amf", family: fam, args: ["-c:v", "h264_amf", "-quality", "speed", "-rc", "vbr_peak", "-b:v", b, "-maxrate", max, "-profile:v", "high", "-pix_fmt", "nv12"] };
+      if (fam === "software") break;
+    }
+    return { name: "libx264", family: "software", args: ["-c:v", "libx264", "-preset", "veryfast", "-b:v", b, "-maxrate", max, "-bufsize", buf, "-profile:v", "high", "-pix_fmt", "yuv420p"] };
   }
   if (p.cbr) { // broadcast: constant bit rate H.264 high
     const b = p.cbr;
@@ -485,19 +509,58 @@ export function musicBedArgs(music: string, voiceMix: string | null, out: string
 
 /** The final mux: loudness-normalised sound, burned ASS captions / titles, the preset's encoder (backend replace_audio_mix). */
 export function finalArgs(opts: { video: string; audio: string; out: string; ass?: string | null; fontsDir?: string | null; loudnorm?: string;
-  encoder: string[]; container: "mp4" | "mov"; fps?: number }): string[] {
-  const af = opts.loudnorm || "loudnorm=I=-14:TP=-1.5:LRA=11";
+  encoder: string[]; container: "mp4" | "mov"; fps?: number; /** AAC rate (default 192k) */ audioBitrate?: string }): string[] {
+  // apad: with -shortest the picture decides the length, so a sound mix that comes out a little short can't cut the
+  // end of the cut off (seen once: a 15.3 s cut rendered as 14.5 s, the last shot's tail missing)
+  const af = `${opts.loudnorm || "loudnorm=I=-14:TP=-1.5:LRA=11"},apad`;
   const args: string[] = ["-i", opts.video, "-i", opts.audio];
+  // tagged BT.709 like the GPU path: the joined body carries no colour tags (probed: "yuv420p(progressive)")
+  let vf = "";
   if (opts.ass) {
-    let vf = `ass='${escAssPath(opts.ass)}':shaping=complex`;
+    vf = `ass='${escAssPath(opts.ass)}':shaping=complex`;
     if (opts.fontsDir) vf += `:fontsdir='${escAssPath(opts.fontsDir)}'`;
-    args.push("-vf", vf);
   }
-  args.push(...opts.encoder);
+  args.push("-vf", `${vf ? `${vf},` : ""}${BT709_FRAME_TAGS}`);
+  args.push(...opts.encoder, "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv");
   if (opts.fps) args.push("-r", String(opts.fps));
-  const audio = opts.container === "mov" ? ["-c:a", "pcm_s24le", "-ar", "48000"] : ["-c:a", "aac", "-b:a", "192k", "-ar", "48000"];
+  const audio = opts.container === "mov" ? ["-c:a", "pcm_s24le", "-ar", "48000"] : ["-c:a", "aac", "-b:a", opts.audioBitrate ?? "192k", "-ar", "48000"];
   args.push("-map", "0:v", "-map", "1:a", "-af", af, ...audio, "-movflags", "+faststart", "-shortest", opts.out);
   return args;
+}
+
+/**
+ * The final encode of the GPU path: raw YUV 4:2:0 frames from the engine on stdin (BT.709 limited range, as the engine
+ * writes them; 8-bit, or 10-bit yuv420p10le for the 10-bit presets), the sound from the draft-size FFmpeg pass, the plan's ASS burned with libass (HarfBuzz shaping), and the
+ * preset's encoder. `frames` fixes the length; the sound is padded or cut to it.
+ */
+export function gpuFinalArgs(opts: { w: number; h: number; fps: number; frames: number; audio: string; out: string; ass?: string | null;
+  fontsDir?: string | null; loudnorm?: string; encoder: string[]; container: "mp4" | "mov";
+  /** 10: the frames are yuv420p10le (16-bit little-endian samples, value in the low 10 bits), else 8-bit I420 */ bits?: 8 | 10;
+  /** AAC rate (default 192k) */ audioBitrate?: string }): string[] {
+  const seconds = (opts.frames / opts.fps).toFixed(3);
+  const args: string[] = ["-f", "rawvideo", "-pix_fmt", opts.bits === 10 ? "yuv420p10le" : "yuv420p", "-s", `${opts.w}x${opts.h}`, "-framerate", String(opts.fps),
+    "-color_range", "tv", "-colorspace", "bt709", "-i", "pipe:0", "-i", opts.audio];
+  // the frames carry the BT.709 tags too: FFmpeg 7 takes them over the -color_* options (else primaries / transfer read "unknown")
+  let vf = "";
+  if (opts.ass) {
+    vf = `ass='${escAssPath(opts.ass)}':shaping=complex`;
+    if (opts.fontsDir) vf += `:fontsdir='${escAssPath(opts.fontsDir)}'`;
+  }
+  args.push("-vf", `${vf ? `${vf},` : ""}${BT709_FRAME_TAGS}`);
+  const af = `${opts.loudnorm || "loudnorm=I=-14:TP=-1.5:LRA=11"},apad,atrim=0:${seconds}`;
+  const audio = opts.container === "mov" ? ["-c:a", "pcm_s24le", "-ar", "48000"] : ["-c:a", "aac", "-b:a", opts.audioBitrate ?? "192k", "-ar", "48000"];
+  args.push(...opts.encoder, "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv",
+    "-map", "0:v", "-map", "1:a", "-af", af, ...audio, "-frames:v", String(opts.frames), "-movflags", "+faststart", opts.out);
+  return args;
+}
+
+/** Tags on the frames themselves (FFmpeg 7 encoders take the frames' colour properties over -color_primaries / -color_trc). */
+export const BT709_FRAME_TAGS = "setparams=color_primaries=bt709:color_trc=bt709:colorspace=bt709:range=tv";
+
+/** A draft size with the same shape (the GPU path's sound-only FFmpeg pass): short side 144, even numbers. */
+export function draftDims(w: number, h: number): { w: number; h: number } {
+  const even = (v: number) => Math.max(2, Math.round(v / 2) * 2);
+  return w >= h ? { w: even((144 * w) / h), h: 144 } : { w: 144, h: even((144 * h) / w) };
 }
 
 /** Step weights for the overall progress bar. */

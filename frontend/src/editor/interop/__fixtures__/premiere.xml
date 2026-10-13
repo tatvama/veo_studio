@@ -1,0 +1,467 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xmeml>
+<!-- Hand-written from Apple's FCP 7 XML reference and the shape of Premiere Pro's File > Export > Final Cut Pro XML:
+     a bin with a master clip that defines the file, a 23.976 sequence, a centred Cross Dissolve with -1 edges whose
+     in / out reach into it, a 50 % clip (Time Remap), an FCP 7 style stereo pair on A1 + A2, Audio Levels, links,
+     an unknown filter, an untouched Basic Motion, markers with a colour and with Premiere's pproColor. -->
+<xmeml version="4">
+	<project>
+		<name>Doc</name>
+		<children>
+			<bin>
+				<name>Footage</name>
+				<children>
+					<clip id="masterclip-1" explodedTracks="true">
+						<uuid>2d6a1c8e-4c55-4d60-9d3e-6c1f3c1b0a01</uuid>
+						<masterclipid>masterclip-1</masterclipid>
+						<ismasterclip>TRUE</ismasterclip>
+						<duration>1000</duration>
+						<rate>
+							<timebase>24</timebase>
+							<ntsc>TRUE</ntsc>
+						</rate>
+						<name>Interview A.mov</name>
+						<media>
+							<video>
+								<track>
+									<clipitem id="clipitem-100">
+										<masterclipid>masterclip-1</masterclipid>
+										<name>Interview A.mov</name>
+										<file id="file-1">
+											<name>Interview A.mov</name>
+											<pathurl>file://localhost/C%3a/Projects/Doc/Interview%20A.mov</pathurl>
+											<rate>
+												<timebase>24</timebase>
+												<ntsc>TRUE</ntsc>
+											</rate>
+											<duration>1000</duration>
+											<timecode>
+												<rate>
+													<timebase>24</timebase>
+													<ntsc>TRUE</ntsc>
+												</rate>
+												<string>00:00:00:00</string>
+												<frame>0</frame>
+												<displayformat>NDF</displayformat>
+											</timecode>
+											<media>
+												<video>
+													<samplecharacteristics>
+														<rate>
+															<timebase>24</timebase>
+															<ntsc>TRUE</ntsc>
+														</rate>
+														<width>1920</width>
+														<height>1080</height>
+														<anamorphic>FALSE</anamorphic>
+														<pixelaspectratio>square</pixelaspectratio>
+														<fielddominance>none</fielddominance>
+													</samplecharacteristics>
+												</video>
+												<audio>
+													<samplecharacteristics>
+														<depth>16</depth>
+														<samplerate>48000</samplerate>
+													</samplecharacteristics>
+													<channelcount>2</channelcount>
+												</audio>
+											</media>
+										</file>
+									</clipitem>
+								</track>
+							</video>
+						</media>
+					</clip>
+				</children>
+			</bin>
+			<sequence id="sequence-1" TL.SQAudioVisibleBase="0" TL.SQVideoVisibleBase="0" explodedTracks="true">
+				<uuid>9b1d3c2a-7e44-4f1a-8b0c-2f9d8e7a6b55</uuid>
+				<duration>120</duration>
+				<rate>
+					<timebase>24</timebase>
+					<ntsc>TRUE</ntsc>
+				</rate>
+				<name>Doc Cut v3</name>
+				<media>
+					<video>
+						<format>
+							<samplecharacteristics>
+								<rate>
+									<timebase>24</timebase>
+									<ntsc>TRUE</ntsc>
+								</rate>
+								<codec>
+									<name>Apple ProRes 422</name>
+								</codec>
+								<width>1920</width>
+								<height>1080</height>
+								<anamorphic>FALSE</anamorphic>
+								<pixelaspectratio>square</pixelaspectratio>
+								<fielddominance>none</fielddominance>
+								<colordepth>24</colordepth>
+							</samplecharacteristics>
+						</format>
+						<track TL.SQTrackShy="0" TL.SQTrackExpandedHeight="41" TL.SQTrackExpanded="0" MZ.TrackTargeted="1">
+							<clipitem id="clipitem-1">
+								<masterclipid>masterclip-1</masterclipid>
+								<name>Interview A.mov</name>
+								<enabled>TRUE</enabled>
+								<duration>1000</duration>
+								<rate>
+									<timebase>24</timebase>
+									<ntsc>TRUE</ntsc>
+								</rate>
+								<start>0</start>
+								<end>-1</end>
+								<in>0</in>
+								<out>60</out>
+								<pproTicksIn>0</pproTicksIn>
+								<pproTicksOut>635635000000</pproTicksOut>
+								<alphatype>none</alphatype>
+								<pixelaspectratio>square</pixelaspectratio>
+								<anamorphic>FALSE</anamorphic>
+								<file id="file-1"/>
+								<filter>
+									<effect>
+										<name>Gaussian Blur</name>
+										<effectid>AE.ADBE Gaussian Blur 2</effectid>
+										<effectcategory>Blur &amp; Sharpen</effectcategory>
+										<effecttype>filter</effecttype>
+										<mediatype>video</mediatype>
+										<parameter authoringApp="PremierePro">
+											<parameterid>1</parameterid>
+											<name>Blurriness</name>
+											<valuemin>0</valuemin>
+											<valuemax>3000</valuemax>
+											<value>12</value>
+										</parameter>
+									</effect>
+								</filter>
+								<link>
+									<linkclipref>clipitem-1</linkclipref>
+									<mediatype>video</mediatype>
+									<trackindex>1</trackindex>
+									<clipindex>1</clipindex>
+								</link>
+								<link>
+									<linkclipref>clipitem-3</linkclipref>
+									<mediatype>audio</mediatype>
+									<trackindex>1</trackindex>
+									<clipindex>1</clipindex>
+									<groupindex>1</groupindex>
+								</link>
+								<link>
+									<linkclipref>clipitem-5</linkclipref>
+									<mediatype>audio</mediatype>
+									<trackindex>2</trackindex>
+									<clipindex>1</clipindex>
+									<groupindex>1</groupindex>
+								</link>
+								<logginginfo>
+									<description></description>
+									<scene></scene>
+								</logginginfo>
+								<labels>
+									<label2>Iris</label2>
+								</labels>
+							</clipitem>
+							<transitionitem>
+								<start>36</start>
+								<end>60</end>
+								<alignment>center</alignment>
+								<cutPointTicks>254270016000</cutPointTicks>
+								<rate>
+									<timebase>24</timebase>
+									<ntsc>TRUE</ntsc>
+								</rate>
+								<effect>
+									<name>Cross Dissolve</name>
+									<effectid>Cross Dissolve</effectid>
+									<effectcategory>Dissolve</effectcategory>
+									<effecttype>transition</effecttype>
+									<mediatype>video</mediatype>
+									<wipecode>0</wipecode>
+									<wipeaccuracy>100</wipeaccuracy>
+									<startratio>0</startratio>
+									<endratio>1</endratio>
+									<reverse>FALSE</reverse>
+								</effect>
+							</transitionitem>
+							<clipitem id="clipitem-2">
+								<masterclipid>masterclip-2</masterclipid>
+								<name>B-roll 1.mp4</name>
+								<enabled>TRUE</enabled>
+								<duration>480</duration>
+								<rate>
+									<timebase>24</timebase>
+									<ntsc>TRUE</ntsc>
+								</rate>
+								<start>-1</start>
+								<end>120</end>
+								<in>30</in>
+								<out>72</out>
+								<alphatype>none</alphatype>
+								<file id="file-2">
+									<name>B-roll 1.mp4</name>
+									<pathurl>file://localhost/C%3a/Projects/Doc/B-roll%201.mp4</pathurl>
+									<rate>
+										<timebase>24</timebase>
+										<ntsc>TRUE</ntsc>
+									</rate>
+									<duration>480</duration>
+									<media>
+										<video>
+											<samplecharacteristics>
+												<width>3840</width>
+												<height>2160</height>
+											</samplecharacteristics>
+										</video>
+									</media>
+								</file>
+								<filter>
+									<effect>
+										<name>Basic Motion</name>
+										<effectid>basic</effectid>
+										<effectcategory>motion</effectcategory>
+										<effecttype>motion</effecttype>
+										<mediatype>video</mediatype>
+										<parameter authoringApp="PremierePro">
+											<parameterid>scale</parameterid>
+											<name>Scale</name>
+											<valuemin>0</valuemin>
+											<valuemax>1000</valuemax>
+											<value>100</value>
+										</parameter>
+										<parameter authoringApp="PremierePro">
+											<parameterid>rotation</parameterid>
+											<name>Rotation</name>
+											<valuemin>-8640</valuemin>
+											<valuemax>8640</valuemax>
+											<value>0</value>
+										</parameter>
+									</effect>
+								</filter>
+								<filter>
+									<effect>
+										<name>Time Remap</name>
+										<effectid>timeremap</effectid>
+										<effectcategory>motion</effectcategory>
+										<effecttype>motion</effecttype>
+										<mediatype>video</mediatype>
+										<parameter authoringApp="PremierePro">
+											<parameterid>variablespeed</parameterid>
+											<name>variablespeed</name>
+											<valuemin>0</valuemin>
+											<valuemax>1</valuemax>
+											<value>0</value>
+										</parameter>
+										<parameter authoringApp="PremierePro">
+											<parameterid>speed</parameterid>
+											<name>speed</name>
+											<valuemin>-100000</valuemin>
+											<valuemax>100000</valuemax>
+											<value>50</value>
+										</parameter>
+										<parameter authoringApp="PremierePro">
+											<parameterid>reverse</parameterid>
+											<name>reverse</name>
+											<value>FALSE</value>
+										</parameter>
+										<parameter authoringApp="PremierePro">
+											<parameterid>frameblending</parameterid>
+											<name>frameblending</name>
+											<value>FALSE</value>
+										</parameter>
+									</effect>
+								</filter>
+							</clipitem>
+							<enabled>TRUE</enabled>
+							<locked>FALSE</locked>
+						</track>
+					</video>
+					<audio>
+						<numOutputChannels>2</numOutputChannels>
+						<format>
+							<samplecharacteristics>
+								<depth>16</depth>
+								<samplerate>48000</samplerate>
+							</samplecharacteristics>
+						</format>
+						<outputs>
+							<group>
+								<index>1</index>
+								<numchannels>1</numchannels>
+								<downmix>0</downmix>
+								<channel>
+									<index>1</index>
+								</channel>
+							</group>
+							<group>
+								<index>2</index>
+								<numchannels>1</numchannels>
+								<downmix>0</downmix>
+								<channel>
+									<index>2</index>
+								</channel>
+							</group>
+						</outputs>
+						<track TL.SQTrackAudioKeyframeStyle="0" PannerCurrentValue="0.5" currentExplodedTrackIndex="0" totalExplodedTrackCount="2" premiereTrackType="Stereo">
+							<clipitem id="clipitem-3" premiereChannelType="stereo">
+								<masterclipid>masterclip-1</masterclipid>
+								<name>Interview A.mov</name>
+								<enabled>TRUE</enabled>
+								<duration>1000</duration>
+								<rate>
+									<timebase>24</timebase>
+									<ntsc>TRUE</ntsc>
+								</rate>
+								<start>0</start>
+								<end>48</end>
+								<in>0</in>
+								<out>48</out>
+								<file id="file-1"/>
+								<sourcetrack>
+									<mediatype>audio</mediatype>
+									<trackindex>1</trackindex>
+								</sourcetrack>
+								<filter>
+									<effect>
+										<name>Audio Levels</name>
+										<effectid>audiolevels</effectid>
+										<effectcategory>audiolevels</effectcategory>
+										<effecttype>audiolevels</effecttype>
+										<mediatype>audio</mediatype>
+										<parameter authoringApp="PremierePro">
+											<parameterid>level</parameterid>
+											<name>Level</name>
+											<valuemin>0</valuemin>
+											<valuemax>3.98109</valuemax>
+											<value>0.501187</value>
+										</parameter>
+									</effect>
+								</filter>
+								<link>
+									<linkclipref>clipitem-1</linkclipref>
+									<mediatype>video</mediatype>
+									<trackindex>1</trackindex>
+									<clipindex>1</clipindex>
+								</link>
+								<link>
+									<linkclipref>clipitem-3</linkclipref>
+									<mediatype>audio</mediatype>
+									<trackindex>1</trackindex>
+									<clipindex>1</clipindex>
+									<groupindex>1</groupindex>
+								</link>
+							</clipitem>
+							<clipitem id="clipitem-4">
+								<masterclipid>masterclip-3</masterclipid>
+								<name>Music.wav</name>
+								<enabled>TRUE</enabled>
+								<duration>2400</duration>
+								<rate>
+									<timebase>24</timebase>
+									<ntsc>TRUE</ntsc>
+								</rate>
+								<start>48</start>
+								<end>120</end>
+								<in>0</in>
+								<out>72</out>
+								<file id="file-3">
+									<name>Music.wav</name>
+									<pathurl>file://localhost/C%3a/Projects/Doc/Music.wav</pathurl>
+									<rate>
+										<timebase>24</timebase>
+										<ntsc>TRUE</ntsc>
+									</rate>
+									<duration>2400</duration>
+									<media>
+										<audio>
+											<samplecharacteristics>
+												<depth>24</depth>
+												<samplerate>48000</samplerate>
+											</samplecharacteristics>
+											<channelcount>2</channelcount>
+										</audio>
+									</media>
+								</file>
+								<sourcetrack>
+									<mediatype>audio</mediatype>
+									<trackindex>1</trackindex>
+								</sourcetrack>
+							</clipitem>
+							<enabled>TRUE</enabled>
+							<locked>FALSE</locked>
+							<outputchannelindex>1</outputchannelindex>
+						</track>
+						<track TL.SQTrackAudioKeyframeStyle="0" PannerCurrentValue="0.5" currentExplodedTrackIndex="1" totalExplodedTrackCount="2" premiereTrackType="Stereo">
+							<clipitem id="clipitem-5" premiereChannelType="stereo">
+								<masterclipid>masterclip-1</masterclipid>
+								<name>Interview A.mov</name>
+								<enabled>TRUE</enabled>
+								<duration>1000</duration>
+								<rate>
+									<timebase>24</timebase>
+									<ntsc>TRUE</ntsc>
+								</rate>
+								<start>0</start>
+								<end>48</end>
+								<in>0</in>
+								<out>48</out>
+								<file id="file-1"/>
+								<sourcetrack>
+									<mediatype>audio</mediatype>
+									<trackindex>2</trackindex>
+								</sourcetrack>
+								<link>
+									<linkclipref>clipitem-1</linkclipref>
+									<mediatype>video</mediatype>
+									<trackindex>1</trackindex>
+									<clipindex>1</clipindex>
+								</link>
+								<link>
+									<linkclipref>clipitem-5</linkclipref>
+									<mediatype>audio</mediatype>
+									<trackindex>2</trackindex>
+									<clipindex>1</clipindex>
+									<groupindex>1</groupindex>
+								</link>
+							</clipitem>
+							<enabled>TRUE</enabled>
+							<locked>FALSE</locked>
+							<outputchannelindex>2</outputchannelindex>
+						</track>
+					</audio>
+				</media>
+				<timecode>
+					<rate>
+						<timebase>24</timebase>
+						<ntsc>TRUE</ntsc>
+					</rate>
+					<string>00:00:00:00</string>
+					<frame>0</frame>
+					<displayformat>NDF</displayformat>
+				</timecode>
+				<marker>
+					<comment>Second act starts</comment>
+					<name>Act 2</name>
+					<in>72</in>
+					<out>-1</out>
+					<color>
+						<alpha>255</alpha>
+						<red>239</red>
+						<green>68</green>
+						<blue>68</blue>
+					</color>
+				</marker>
+				<marker>
+					<comment></comment>
+					<name>Check sound</name>
+					<in>100</in>
+					<out>-1</out>
+					<pproColor>4294741314</pproColor>
+				</marker>
+			</sequence>
+		</children>
+	</project>
+</xmeml>

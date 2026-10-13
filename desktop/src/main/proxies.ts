@@ -11,9 +11,9 @@ import type { Library } from "./library.ts";
 
 const VIDEO = new Set([".mp4", ".mov", ".m4v", ".webm", ".mkv"]);
 
-/** The proxy encode: short side 1080 (never upscaled), NVENC H.264 when available, else x264 veryfast. */
-export function proxyArgs(src: string, out: string, nvenc: boolean): string[] {
-  const vf = "scale='if(gt(iw,ih),-2,min(1080,iw))':'if(gt(iw,ih),min(1080,ih),-2)',format=yuv420p";
+/** The proxy encode: short side 1080 (never upscaled; the editor also makes 540p ones), NVENC H.264 when available, else x264 veryfast. */
+export function proxyArgs(src: string, out: string, nvenc: boolean, short = 1080): string[] {
+  const vf = `scale='if(gt(iw,ih),-2,min(${short},iw))':'if(gt(iw,ih),min(${short},ih),-2)',format=yuv420p`;
   const v = nvenc ? ["-c:v", "h264_nvenc", "-preset", "p2", "-rc", "vbr", "-cq", "26", "-b:v", "0"] : ["-c:v", "libx264", "-preset", "veryfast", "-crf", "24"];
   return ["-i", src, "-map", "0:v:0", "-map", "0:a?", "-vf", vf, ...v, "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-movflags", "+faststart", out];
 }

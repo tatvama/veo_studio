@@ -237,6 +237,8 @@ class Project(Base, Serializable):
     __tablename__ = "projects"
     id: Mapped[int] = mapped_column(primary_key=True)
     title: Mapped[str] = mapped_column(String(200))
+    # catalog.PROJECT_TYPES, or "edit": the hidden studio project of a Tatvam Editor edit (api/edits.py; brief.edit_id),
+    # which carries its AI costs, budget and approvals and is left out of the studio's project lists
     type: Mapped[str] = mapped_column(String(20), default="short")
     concept: Mapped[str] = mapped_column(Text, default="")
     aspect: Mapped[str] = mapped_column(String(8), default="9:16")
@@ -555,16 +557,41 @@ class Comment(Base, Serializable):
     __tablename__ = "comments"
     id: Mapped[int] = mapped_column(primary_key=True)
     project_id: Mapped[int] = mapped_column(Integer, index=True)
-    target_type: Mapped[str] = mapped_column(String(20))  # shot | take | episode | export
+    # shot | take | episode | export | edit (a Tatvam Editor edit: target_id = its studio project, docs/EDITOR.md §10)
+    target_type: Mapped[str] = mapped_column(String(20))
     target_id: Mapped[int] = mapped_column(Integer)
     user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     guest_name: Mapped[str] = mapped_column(String(120), default="")  # client comments via review link
     body: Mapped[str] = mapped_column(Text)
     timecode: Mapped[float | None] = mapped_column(Float, nullable=True)  # seconds into the video
+    # timeline review comments on an edit: the sequence and the frame (at that sequence's rate) they are pinned to
+    sequence_id: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    frame: Mapped[int | None] = mapped_column(Integer, nullable=True)
     drawing: Mapped[Any] = mapped_column(JSON, default=list)  # frame annotation strokes [{color, points:[[x,y]…]}] in 0–1 coords
     mentions: Mapped[Any] = mapped_column(JSON, default=list)
     resolved: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class EditBackup(Base, Serializable):
+    """A copy of a Tatvam Editor edit (.tatvamedit JSON) kept on the studio (core/edit_backups.py): the same content is
+    kept once; the last 50 stay, plus one a day for 30 days."""
+    __tablename__ = "edit_backups"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(Integer, index=True)  # the edit's studio project
+    key: Mapped[str] = mapped_column(String(500))  # projects/{pid}/edit_backups/<iso>-<hash>.json
+    sha256: Mapped[str] = mapped_column(String(64), index=True)
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    name: Mapped[str] = mapped_column(String(200), default="")
+    edit_id: Mapped[str] = mapped_column(String(80), default="")
+    edit_modified: Mapped[str] = mapped_column(String(40), default="")  # the document's own "modified"
+    clip_count: Mapped[int] = mapped_column(Integer, default=0)
+    sequence_count: Mapped[int] = mapped_column(Integer, default=0)
+    duration_s: Mapped[float] = mapped_column(Float, default=0.0)  # the active sequence's length
+    device: Mapped[str] = mapped_column(String(120), default="")  # the computer it came from
+    note: Mapped[str] = mapped_column(String(200), default="")
+    created_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
 
 
 class AgentMessage(Base, Serializable):

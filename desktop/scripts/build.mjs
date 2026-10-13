@@ -46,4 +46,16 @@ await build({ // the Studio server window's own bridge (main/connect.ts)
   external: ["electron"],
   logLevel: "warning",
 });
+// desktop-mcp: the stdio relay runs in Node mode (ELECTRON_RUN_AS_NODE), so it is its own bundle without Electron
+await build({
+  absWorkingDir: root,
+  entryPoints: ["src/main/mcp/relay-node.ts"],
+  outfile: "dist/mcp-relay.cjs",
+  bundle: true,
+  platform: "node",
+  target: "node24",
+  format: "cjs",
+  define,
+  logLevel: "warning",
+});
 console.log(`bundled main + preload (v${pkg.version}) into dist/`);

@@ -1,0 +1,26 @@
+/* Program monitor Motion overlay (editor-motion). The picture shows through; only the handles take the pointer. */
+.mo-overlay { position: absolute; inset: 0; overflow: visible; pointer-events: none; z-index: 5; }
+.mo-box { fill: transparent; stroke: rgb(255 255 255 / .85); stroke-width: 1; pointer-events: all; cursor: move; filter: drop-shadow(0 0 1px rgb(0 0 0 / .9)); }
+.mo-corner { fill: white; stroke: rgb(0 0 0 / .7); stroke-width: 1; pointer-events: all; cursor: nwse-resize; }
+.mo-stem { stroke: rgb(255 255 255 / .7); stroke-width: 1; }
+.mo-rot { fill: var(--color-accent, #7c5cff); stroke: white; stroke-width: 1.5; pointer-events: all; cursor: grab; }
+.mo-anchor { pointer-events: all; cursor: crosshair; }
+.mo-anchor circle { fill: rgb(0 0 0 / .25); stroke: white; stroke-width: 1.2; }
+.mo-anchor line { stroke: white; stroke-width: 1.2; filter: drop-shadow(0 0 1px rgb(0 0 0 / .9)); }
+.mo-path polyline { fill: none; stroke: rgb(255 214 102 / .9); stroke-width: 1.3; filter: drop-shadow(0 0 1px rgb(0 0 0 / .8)); }
+.mo-tick { fill: rgb(255 214 102 / .85); }
+.mo-key { fill: rgb(255 214 102); stroke: black; stroke-width: 1; pointer-events: all; cursor: move; }
+.mo-key.on { fill: var(--color-accent, #7c5cff); stroke: white; }
+.mo-tline { stroke: rgb(125 211 252 / .9); stroke-width: 1; }
+.mo-tline.ghost { stroke-dasharray: 2 3; opacity: .55; }
+.mo-tknob { fill: rgb(14 20 30 / .8); stroke: rgb(125 211 252); stroke-width: 1.5; pointer-events: all; cursor: grab; }
+.mo-tknob:hover { fill: rgb(125 211 252); }
+/* Multicam angle grid (Source monitor) */
+.mc-grid { flex: 1; min-height: 0; display: grid; gap: 4px; padding: 4px; background: black; align-content: center; }
+.mc-tile { position: relative; aspect-ratio: 16 / 9; background: #0b0d12; border: 2px solid transparent; border-radius: 4px; overflow: hidden; }
+.mc-tile:hover { border-color: rgb(255 255 255 / .35); }
+.mc-tile.live { border-color: var(--color-bad, #ef4444); box-shadow: 0 0 0 1px var(--color-bad, #ef4444); }
+.mc-tile video, .mc-tile canvas { width: 100%; height: 100%; object-fit: contain; display: block; }
+.mc-label { position: absolute; left: 4px; bottom: 4px; font-size: 10.5px; padding: 1px 5px; border-radius: 4px; background: rgb(0 0 0 / .65); color: white; }
+.mc-label b { color: var(--color-warn, #fbbf24); margin-right: 3px; }
+.mc-none { position: absolute; inset: 0; display: grid; place-items: center; font-size: 11px; color: rgb(255 255 255 / .45); }

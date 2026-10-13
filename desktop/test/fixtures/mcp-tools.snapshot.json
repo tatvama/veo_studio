@@ -1,0 +1,1358 @@
+[
+  {
+    "name": "status",
+    "readOnly": true,
+    "input": {
+      "type": "object",
+      "properties": {},
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "list_edits",
+    "readOnly": true,
+    "input": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "description": "How many (default 30)",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "open_edit",
+    "readOnly": true,
+    "input": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 1000,
+          "description": "Full path of the .tatvamedit file (from list_edits)"
+        },
+        "save_first": {
+          "description": "Save the edit that is open now before switching (default false)",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "create_edit",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "The edit's name (also its folder name)"
+        },
+        "format": {
+          "description": "Sequence size (default 1080p; see list_formats)",
+          "type": "string",
+          "enum": [
+            "1080p",
+            "4k",
+            "720p",
+            "vertical",
+            "square"
+          ]
+        },
+        "fps": {
+          "description": "Frame rate: 23.976, 24, 25, 29.97, 30, 50, 59.94 or 60 (default 25)",
+          "type": "number"
+        },
+        "from_folder": {
+          "description": "Full path of a folder whose media to import",
+          "type": "string",
+          "maxLength": 1000
+        },
+        "recursive": {
+          "description": "Also import from sub-folders (default false)",
+          "type": "boolean"
+        },
+        "order": {
+          "description": "Import order: series order by name (default) or by file date",
+          "type": "string",
+          "enum": [
+            "name",
+            "date"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "save_edit",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {},
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "list_formats",
+    "readOnly": true,
+    "input": {
+      "type": "object",
+      "properties": {},
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "import_media",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "paths": {
+          "description": "Full paths of files",
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        },
+        "folder": {
+          "description": "Full path of a folder (instead of, or as well as, paths)",
+          "type": "string",
+          "maxLength": 1000
+        },
+        "recursive": {
+          "description": "Folder: include sub-folders",
+          "type": "boolean"
+        },
+        "types": {
+          "description": "Folder: only these kinds (default all three)",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "video",
+              "audio",
+              "image"
+            ]
+          }
+        },
+        "order": {
+          "description": "Folder: series order by name (default) or by date",
+          "type": "string",
+          "enum": [
+            "name",
+            "date"
+          ]
+        },
+        "bin": {
+          "description": "Put them in this bin (made when missing; default the folder's name)",
+          "type": "string",
+          "maxLength": 80
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "list_media",
+    "readOnly": true,
+    "input": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "Only this kind",
+          "type": "string",
+          "enum": [
+            "video",
+            "audio",
+            "image"
+          ]
+        },
+        "search": {
+          "description": "Name contains",
+          "type": "string",
+          "maxLength": 80
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "analyze_media",
+    "readOnly": true,
+    "input": {
+      "type": "object",
+      "properties": {
+        "media_ids": {
+          "description": "Which media (default all of the edit's video and audio)",
+          "maxItems": 200,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 80
+          }
+        },
+        "kinds": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "silence",
+              "scenes",
+              "beats",
+              "loudness",
+              "quality",
+              "transcript"
+            ]
+          },
+          "description": "What to find"
+        },
+        "language": {
+          "description": "Transcript language code (hi, kn, te, ta, en …) or auto",
+          "type": "string",
+          "maxLength": 10
+        },
+        "wait_seconds": {
+          "description": "Wait this long for the results (default 30)",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 120
+        }
+      },
+      "required": [
+        "kinds"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "get_timeline",
+    "readOnly": true,
+    "input": {
+      "type": "object",
+      "properties": {
+        "sequence_id": {
+          "description": "Another sequence of the edit (default the active one)",
+          "type": "string",
+          "maxLength": 80
+        },
+        "from": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 86400,
+          "description": "Only clips ending after this time"
+        },
+        "to": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 86400,
+          "description": "Only clips starting before this time"
+        },
+        "details": {
+          "description": "Include effect parameters and keyframes (default false)",
+          "type": "boolean"
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "open_sequence",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "sequence_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        }
+      },
+      "required": [
+        "sequence_id"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "add_clip",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "media_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "at": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 86400,
+          "description": "Timeline start (default: the end of the sequence)"
+        },
+        "track": {
+          "description": "Video (or audio) track: V1, V2, A1 … or a track id (default V1 / A1)",
+          "type": "string",
+          "maxLength": 80
+        },
+        "in": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 86400,
+          "description": "Source in point (default 0)"
+        },
+        "out": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 86400,
+          "description": "Source out point (default the end)"
+        },
+        "mode": {
+          "description": "overwrite (default) or insert (pushes later clips)",
+          "type": "string",
+          "enum": [
+            "overwrite",
+            "insert"
+          ]
+        },
+        "video": {
+          "description": "Include the picture (default true)",
+          "type": "boolean"
+        },
+        "audio": {
+          "description": "Include the sound (default true)",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "media_id"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "move_clip",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "clip_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "to": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 86400,
+          "description": "New start time"
+        },
+        "track": {
+          "description": "Target track (V1, V2, A1 … or an id)",
+          "type": "string",
+          "maxLength": 80
+        }
+      },
+      "required": [
+        "clip_id",
+        "to"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "trim_clip",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "clip_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "start": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 86400,
+          "description": "New start edge"
+        },
+        "end": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 86400,
+          "description": "New end edge"
+        },
+        "ripple": {
+          "description": "Shift later clips by the change (default false)",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "clip_id"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "split_at",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 86400,
+          "description": "Where to cut"
+        },
+        "tracks": {
+          "description": "Only these tracks (V1, A1 … or ids)",
+          "maxItems": 40,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 80
+          }
+        },
+        "clip_ids": {
+          "description": "Only these clips",
+          "maxItems": 200,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 80
+          }
+        }
+      },
+      "required": [
+        "at"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "delete_clips",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "clip_ids": {
+          "minItems": 1,
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "description": "The clips"
+        },
+        "ripple": {
+          "description": "Close the gaps (default false)",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "clip_ids"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "set_speed",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "clip_ids": {
+          "minItems": 1,
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "description": "The clips"
+        },
+        "speed": {
+          "type": "number",
+          "minimum": 0.25,
+          "maximum": 4
+        },
+        "reverse": {
+          "type": "boolean"
+        },
+        "ripple": {
+          "description": "Shift later clips by the length change (default true)",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "clip_ids",
+        "speed"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "add_transition",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "clip_id": {
+          "description": "A clip whose edge(s) get it",
+          "type": "string",
+          "maxLength": 80
+        },
+        "edge": {
+          "description": "Which edge of clip_id (default out)",
+          "type": "string",
+          "enum": [
+            "in",
+            "out",
+            "both"
+          ]
+        },
+        "at": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 86400,
+          "description": "Or: the time of the cut"
+        },
+        "track": {
+          "description": "With at: the track (default V1)",
+          "type": "string",
+          "maxLength": 80
+        },
+        "type": {
+          "description": "Transition id (default fade)",
+          "type": "string",
+          "maxLength": 80
+        },
+        "duration": {
+          "description": "Seconds (default 1)",
+          "type": "number",
+          "minimum": 0.04,
+          "maximum": 10
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "add_effect",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "clip_ids": {
+          "minItems": 1,
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 80
+          },
+          "description": "The clips"
+        },
+        "effect": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Effect id"
+        },
+        "params": {
+          "description": "Parameter values by name (numbers, text, booleans, [r,g,b])",
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        }
+      },
+      "required": [
+        "clip_ids",
+        "effect"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "set_effect_param",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "clip_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "effect_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "The effect's id (from add_effect / get_timeline with details), or \"motion\" or \"audio\" (gain, pan)"
+        },
+        "param": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "value": {
+          "description": "A constant value (removes keyframes)"
+        },
+        "keyframes": {
+          "description": "Keyframes instead of a value",
+          "maxItems": 200,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "at": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 86400,
+                "description": "Timeline time"
+              },
+              "value": {},
+              "ease": {
+                "type": "string",
+                "enum": [
+                  "linear",
+                  "ease_in",
+                  "ease_out",
+                  "ease_in_out",
+                  "hold"
+                ]
+              }
+            },
+            "required": [
+              "at",
+              "value"
+            ]
+          }
+        }
+      },
+      "required": [
+        "clip_id",
+        "effect_id",
+        "param"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "apply_mood",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "mood": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60
+        },
+        "clip_ids": {
+          "description": "Default: every video clip",
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 80
+          }
+        },
+        "intensity": {
+          "description": "Default 1",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1.5
+        },
+        "transitions": {
+          "description": "Also its transitions at the cuts",
+          "type": "boolean"
+        },
+        "titles": {
+          "description": "Also restyle the titles",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "mood"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "add_title",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "at": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 86400,
+          "description": "Start"
+        },
+        "duration": {
+          "description": "Seconds (default 4)",
+          "type": "number",
+          "minimum": 0.2,
+          "maximum": 600
+        },
+        "position": {
+          "type": "string",
+          "enum": [
+            "top",
+            "center",
+            "lower_third",
+            "bottom"
+          ]
+        },
+        "size": {
+          "description": "Font size in pixels at 1080p",
+          "type": "number",
+          "minimum": 8,
+          "maximum": 400
+        },
+        "color": {
+          "description": "#rrggbb",
+          "type": "string",
+          "maxLength": 20
+        },
+        "template": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "subtitle": {
+          "description": "A second line, for templates that have one",
+          "type": "string",
+          "maxLength": 200
+        }
+      },
+      "required": [
+        "text",
+        "at"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "add_captions",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "cues": {
+          "maxItems": 2000,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "start": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 86400,
+                "description": "Start"
+              },
+              "end": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 86400,
+                "description": "End"
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 400
+              }
+            },
+            "required": [
+              "start",
+              "end",
+              "text"
+            ]
+          }
+        },
+        "clip_ids": {
+          "description": "Transcribe these clips (default every clip with sound)",
+          "maxItems": 200,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 80
+          }
+        },
+        "language": {
+          "description": "Whisper language code or auto (default auto)",
+          "type": "string",
+          "maxLength": 10
+        },
+        "style": {
+          "description": "Whole lines, or short phrases for Shorts",
+          "type": "string",
+          "enum": [
+            "lines",
+            "phrases"
+          ]
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "add_marker",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 86400,
+          "description": "Time"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "comment": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "color": {
+          "type": "string",
+          "maxLength": 20
+        },
+        "duration": {
+          "description": "Seconds (a range marker)",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 3600
+        }
+      },
+      "required": [
+        "at"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "set_audio",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "clip_ids": {
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 80
+          }
+        },
+        "track": {
+          "description": "An audio track (A1 …) instead of clips",
+          "type": "string",
+          "maxLength": 80
+        },
+        "gain_db": {
+          "type": "number",
+          "minimum": -60,
+          "maximum": 24
+        },
+        "pan": {
+          "type": "number",
+          "minimum": -1,
+          "maximum": 1
+        },
+        "fade_in": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 30
+        },
+        "fade_out": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 30
+        },
+        "mute": {
+          "type": "boolean"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "dialogue",
+            "music",
+            "sfx",
+            "ambience"
+          ]
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "undo",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "steps": {
+          "description": "Default 1",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "redo",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "steps": {
+          "description": "Default 1",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "get_frame",
+    "readOnly": true,
+    "input": {
+      "type": "object",
+      "properties": {
+        "at": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 86400,
+          "description": "Timeline time"
+        },
+        "width": {
+          "description": "Default 960",
+          "type": "integer",
+          "minimum": 160,
+          "maximum": 1280
+        }
+      },
+      "required": [
+        "at"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "get_waveform_summary",
+    "readOnly": true,
+    "input": {
+      "type": "object",
+      "properties": {
+        "clip_id": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "media_id": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "buckets": {
+          "description": "Default 40",
+          "type": "integer",
+          "minimum": 8,
+          "maximum": 200
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "list_auto_edit_styles",
+    "readOnly": true,
+    "input": {
+      "type": "object",
+      "properties": {},
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "auto_edit",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "style": {
+          "type": "string",
+          "enum": [
+            "talking_head",
+            "montage",
+            "documentary",
+            "highlights",
+            "slideshow"
+          ]
+        },
+        "media_ids": {
+          "description": "Which media (default all video, audio and pictures in the edit)",
+          "maxItems": 500,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 80
+          }
+        },
+        "folder": {
+          "description": "Import this folder first and use its media",
+          "type": "string",
+          "maxLength": 1000
+        },
+        "target_seconds": {
+          "description": "Target length (default per style)",
+          "type": "number",
+          "minimum": 3,
+          "maximum": 14400
+        },
+        "format": {
+          "description": "Default per style (highlights 9:16)",
+          "type": "string",
+          "enum": [
+            "16:9",
+            "9:16",
+            "1:1"
+          ]
+        },
+        "music": {
+          "description": "A media id, a full path of a music file, \"library\" (the first audio item), \"ai\" (proposed after) or \"none\"",
+          "type": "string",
+          "maxLength": 1000
+        },
+        "captions": {
+          "description": "Language code for captions (local Whisper), or \"none\"",
+          "type": "string",
+          "maxLength": 10
+        },
+        "mood": {
+          "description": "A mood id (list_catalog moods) or \"none\"",
+          "type": "string",
+          "maxLength": 60
+        },
+        "transitions": {
+          "description": "cuts = hard cuts; soft = dissolves; style = the style's own (default)",
+          "type": "string",
+          "enum": [
+            "none",
+            "cuts",
+            "soft",
+            "style"
+          ]
+        },
+        "order": {
+          "description": "Clip order (default name = series order)",
+          "type": "string",
+          "enum": [
+            "name",
+            "date",
+            "timecode",
+            "content"
+          ]
+        },
+        "title": {
+          "description": "Hook / opening title text",
+          "type": "string",
+          "maxLength": 120
+        },
+        "dry_run": {
+          "description": "Only return the plan",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "style"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "list_catalog",
+    "readOnly": true,
+    "input": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "transitions",
+            "effects",
+            "audio_effects",
+            "moods",
+            "title_templates"
+          ]
+        },
+        "search": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "limit": {
+          "description": "Default 80",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 400
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "list_presets",
+    "readOnly": true,
+    "input": {
+      "type": "object",
+      "properties": {},
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "export",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "preset": {
+          "description": "A preset id from list_presets (default draft720, a fast 720p H.264 draft)",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "range": {
+          "type": "string",
+          "enum": [
+            "all",
+            "inout"
+          ]
+        },
+        "name": {
+          "description": "Output base name (default the sequence name); never a path",
+          "type": "string",
+          "maxLength": 100
+        },
+        "sequence_id": {
+          "type": "string",
+          "maxLength": 80
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "render_status",
+    "readOnly": true,
+    "input": {
+      "type": "object",
+      "properties": {
+        "render_id": {
+          "type": "string",
+          "minLength": 6,
+          "maxLength": 64
+        },
+        "wait_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 120
+        }
+      },
+      "required": [
+        "render_id"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "cancel_render",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "render_id": {
+          "type": "string",
+          "minLength": 6,
+          "maxLength": 64
+        }
+      },
+      "required": [
+        "render_id"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "job_status",
+    "readOnly": true,
+    "input": {
+      "type": "object",
+      "properties": {
+        "job_id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 40
+        },
+        "wait_seconds": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 120
+        }
+      },
+      "required": [
+        "job_id"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "cancel_job",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "job_id": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 40
+        }
+      },
+      "required": [
+        "job_id"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "ai_tools",
+    "readOnly": true,
+    "input": {
+      "type": "object",
+      "properties": {},
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "run_ai_tool",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "tool": {
+          "type": "string",
+          "enum": [
+            "captions",
+            "translate_captions",
+            "voice_over",
+            "music",
+            "sound_effect",
+            "clean_voice",
+            "dub"
+          ]
+        },
+        "args": {
+          "type": "object",
+          "properties": {
+            "clip_ids": {
+              "maxItems": 100,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 80
+              }
+            },
+            "language": {
+              "type": "string",
+              "maxLength": 10
+            },
+            "languages": {
+              "maxItems": 8,
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 10
+              }
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 5000
+            },
+            "prompt": {
+              "type": "string",
+              "maxLength": 1000
+            },
+            "seconds": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 600
+            },
+            "at": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 86400,
+              "description": "Timeline time"
+            },
+            "volume_db": {
+              "type": "number",
+              "minimum": -40,
+              "maximum": 6
+            },
+            "target": {
+              "type": "string",
+              "maxLength": 10
+            }
+          },
+          "description": "captions: clip_ids?, language · translate_captions: languages · voice_over: text, language · music: prompt, seconds, at?, volume_db? · sound_effect: prompt, seconds · clean_voice: clip_ids · dub: clip_ids (one), target"
+        },
+        "approve": {
+          "description": "Approve within budgets (needs the spend scope)",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "tool",
+        "args"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  }
+]

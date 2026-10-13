@@ -342,6 +342,17 @@ class Services:
             return speaker, sample, Usage(provider, self.models["tts_sarvam"], "voice_design", 1, "voices", 0.0)
         raise ProviderError(f"unknown provider {provider}")
 
+    def clone_voice(self, name: str, samples: list[tuple[str, bytes, str]], description: str = "",
+                    remove_noise: bool = True) -> tuple[str, Usage]:
+        """An ElevenLabs instant voice clone from speech samples (filename, bytes, mime) → (voice id, usage). Callers
+        check the speaker's consent first."""
+        price = float((self.prices.get("voice_clone_each") or {}).get("elevenlabs", 0.0))
+        if _require("elevenlabs") == "mock":
+            digest = hashlib.sha1(name.encode() + b"".join(s[1][:4096] for s in samples)).hexdigest()[:10]
+            return f"mock-clone-{digest}", Usage("elevenlabs", "mock", "voice_clone", 1, "voices", 0.0, mock=True)
+        vid = self.eleven().clone_voice(name, samples, description=description, remove_background_noise=remove_noise)
+        return vid, Usage("elevenlabs", "instant-voice-clone", "voice_clone", 1, "voices", price)
+
     def voice_change(self, audio_wav: Path, voice_id: str) -> MediaResult:
         model = self.models["sts_elevenlabs"]
         d = ff.duration(audio_wav)

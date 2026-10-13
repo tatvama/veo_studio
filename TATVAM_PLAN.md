@@ -418,6 +418,24 @@ call (`QueryBalanceAcct`); an unreadable balance never blocks work. New team set
 limit: `safety_fallback`, `quota_fallback_routes` (keeps Google first strict while off), `byteplus_auto_register`,
 `fallback_extra_limit_usd` ($0.50).
 
+
+### 19.2 Tatvam Editor roadmap (wave 4, planned)
+
+The desktop editor's next wave, chosen on 13 October 2026. It is planned only: nothing is built until it's asked
+for. Details are in [docs/EDITOR.md §14](docs/EDITOR.md).
+
+| # | Area | In short |
+| --- | --- | --- |
+| 1 | Preview and smart render | Background preview render with a timeline bar; unchanged ranges are stream-copied on export |
+| 2 | Network render | Paired render nodes on the LAN share an export's frame ranges |
+| 3 | Pro editing tools | Trim monitor, timeline list view and close gaps, track folders, clip labels, sub-clips, macros |
+| 4 | Media management and subtitles | Smart bins, ratings and keywords, camera metadata, collect project, a subtitle editor (SRT / VTT / TTML) |
+| 5 | Pen masks and tracking | Bézier masks with boolean modes and keyframes; a classic point and planar tracker |
+| 6 | Colour | Node grading, HSL qualifiers, ACES and OCIO-baked LUTs, HDR scopes in nits, gamut warnings, still gallery, grade versions |
+| 7 | Motion graphics | Lottie import, shape layers, text on a path, 3D extruded titles, particles, camera shake, layouts, safe expressions, keyframe presets |
+| 8 | Broadcast graphics and live previews | 42 text animations, 16 ticker systems, 30 stingers, a Wipe Designer, hover previews on the program monitor |
+| 9 | Monitor tools, QC and recording | Zebras, false colour, peaking, safe areas, loupe, A/B wipe, second-screen output; QC including a photosensitive flash check; voice-over, webcam and screen recording; a teleprompter |
+
 ---
 
 ## 20. What is reused and what is new

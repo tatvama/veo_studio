@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import mimetypes
 import os
+import re
 import shutil
 import threading
 import time
@@ -19,20 +20,67 @@ from pathlib import Path
 
 from .config import get_settings
 
+_DRIVE = re.compile(r"^[A-Za-z]:")
+
+
+def safe_key(rel: str | os.PathLike) -> str:
+    """A storage key as a clean relative path ("projects/1/a.mp4"), else ValueError.
+
+    Backslashes count as separators and empty and "." parts are dropped; absolute paths ("/x", "\\\\server\\share"),
+    drive letters ("C:x"), ".." parts and NUL characters are refused. "" (and ".") is the media root itself."""
+    s = os.fspath(rel)
+    if not isinstance(s, str):
+        raise ValueError("a storage key is text")
+    s = s.replace("\\", "/")
+    if "\0" in s or s.startswith("/") or _DRIVE.match(s):
+        raise ValueError("path escapes media root")
+    parts = [p for p in s.split("/") if p not in ("", ".")]
+    if ".." in parts:
+        raise ValueError("path escapes media root")
+    return "/".join(parts)
+
+
+def _prefix(d: str) -> str:
+    return d if d.endswith(os.sep) else d + os.sep
+
+
+def _strip_long_prefix(p: str) -> str:
+    """realpath on Windows can keep the \\\\?\\ prefix when the path changes while it looks (a folder made at that
+    moment by another worker): the same path without it."""
+    if p.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + p[8:]
+    return p[4:] if p.startswith("\\\\?\\") else p
+
 
 class LocalStorage:
     def __init__(self, root: Path):
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
-        # Pure string normalisation (no filesystem calls): Path.resolve() on Windows can flip between
-        # 8.3 short names and long names while folders are being created concurrently.
+        # The paths handed out are pure string normalisation of the root (no filesystem calls): Path.resolve() on
+        # Windows can flip between 8.3 short names and long names while folders are being created concurrently.
         self._root_abs = os.path.abspath(self.root)
-        self._root_cmp = os.path.normcase(self._root_abs)
+        self._root_prefix = _prefix(self._root_abs)
+        # ... and the root as the file system has it (links resolved), for the link check
+        self._real_cmp = os.path.normcase(_strip_long_prefix(os.path.realpath(self.root)))
+        self._real_prefix = _prefix(self._real_cmp)
 
     def _local(self, rel: str) -> Path:
-        """Where `rel` lives on this machine's disk (no download)."""
-        p = os.path.abspath(os.path.join(self._root_abs, rel))
-        if os.path.commonpath([self._root_cmp, os.path.normcase(p)]) != self._root_cmp:
+        """Where `rel` lives on this machine's disk (no download): the one resolver every file access goes through.
+
+        The key is cleaned (safe_key: no absolute paths, drive letters or ".."), joined to the media root and
+        normalised; the result must lie under the root. Resolved with realpath it must still lie under the root's
+        real path, so a link inside the media root can't lead out of it either. Else ValueError."""
+        key = safe_key(rel)
+        if not key:
+            return Path(self._root_abs)
+        p = os.path.abspath(os.path.join(self._root_abs, *key.split("/")))
+        if not p.startswith(self._root_prefix):
+            raise ValueError("path escapes media root")
+        try:
+            real = os.path.normcase(_strip_long_prefix(os.path.realpath(p)))
+        except OSError as e:
+            raise ValueError("path escapes media root") from e
+        if real != self._real_cmp and not real.startswith(self._real_prefix):
             raise ValueError("path escapes media root")
         return Path(p)
 
@@ -63,6 +111,11 @@ class LocalStorage:
 
     def exists(self, rel: str) -> bool:
         return bool(rel) and self.abs(rel).exists()
+
+    def delete(self, rel: str) -> None:
+        """Removes a file (no error when it is already gone)."""
+        if rel:
+            self._local(rel).unlink(missing_ok=True)
 
     def url(self, rel: str) -> str:
         return f"/media/{rel}" if rel else ""
@@ -161,6 +214,20 @@ class S3Storage(LocalStorage):
                 print(f"[storage] upload to bucket failed for {rel}: {e}")
 
         threading.Thread(target=upload, daemon=True).start()
+
+    def delete(self, rel: str) -> None:
+        super().delete(rel)
+        if not rel:
+            return
+        key = self._key(rel)
+
+        def remove():
+            try:
+                self.client.delete_object(Bucket=self.bucket, Key=key)
+            except Exception as e:  # a copy left in the bucket is harmless (lifecycle rules clean up)
+                print(f"[storage] delete from bucket failed for {rel}: {e}")
+
+        threading.Thread(target=remove, daemon=True).start()
 
     def public_url(self, path: Path, expires_s: int = 6 * 3600) -> str | None:
         """Copy the file to share/<sha1> in the bucket (once; same content, same key) and return a presigned link.
