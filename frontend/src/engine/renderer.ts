@@ -521,7 +521,7 @@ export class Renderer {
     this.rw = w; this.rh = h;
     this.b.tick();
     if (++this.frames % 90 === 0) { this.b.trimOld(240); this.pruneTemporal(240); }
-    const acc = this.drawComp(this.rootCtx(w, h), fs, true);
+    const acc = this.drawComp(this.rootCtx(w, h), fs, !this.comp?.transparent);
     this.b.release(this.frame);
     this.frame = acc;
     return acc;

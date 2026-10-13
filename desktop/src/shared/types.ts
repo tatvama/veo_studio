@@ -261,7 +261,29 @@ export interface RenderJobInput {
 export type GpuRenderJob =
   | { kind: "plan"; plan: unknown; w: number; h: number; fps: number; frames: number; bits?: 8 | 10 }
   | { kind: "composition"; project: EditProject; sequenceId: string; range: { in: number; out: number }; w: number; h: number; fps: number; frames: number;
-      bits?: 8 | 10 };
+      bits?: 8 | 10;
+      /** additive (News Room delivery, docs/EDITOR.md §16.11): what the window does to the edit before drawing it */
+      news?: NewsGpuOptions };
+
+/**
+ * additive (News Room delivery): a news export's drawing options for the GPU render window
+ * (frontend/src/editor/newsroom/delivery/window.ts applies them in this order: language, ratio, graphics only).
+ * `alpha`: the frame is drawn on a transparent background and sent as RGBA8 (W·H·4 bytes, straight alpha, rows top
+ * first, `engine.readRgba()`) instead of YUV.
+ */
+export interface NewsGpuOptions {
+  alpha?: boolean;
+  /** "graphics": only the News Room graphics tracks (`Track.gfxRole`); "all" (default): the whole picture. */
+  only?: "graphics" | "all";
+  /** With only "graphics": just these roles ("ticker", "bug" …) or clips (a loop of one ticker). */
+  roles?: string[]; clipIds?: string[];
+  /** The other ratio of a both-ratio edit (newsroom/companion.ts companionProject). */
+  ratio?: "16:9" | "9:16" | "1:1" | "4:5";
+  /** A language version: each graphic's `langs[lang]` values. */
+  lang?: string;
+  /** "#rrggbb" behind graphics-only pictures that aren't transparent. */
+  background?: string;
+}
 
 // ── Tatvam Editor document (docs/EDITOR.md §2; a copy of frontend/src/editor/model/types.ts, extras marked additive) ──
 
@@ -1414,8 +1436,30 @@ export interface NewsExportOptions {
   /** Output file or folder; none = <edit>\Exports\News\<name>. */
   outPath?: string;
   name?: string;
+  // ── additive (nr-delivery, docs/EDITOR.md §16.11) ──
+  /** With only "graphics": just these graphics roles ("ticker", "bug" …) or these clips (a loop of one ticker). */
+  roles?: string[]; clipIds?: string[];
+  /** mp4: the render preset (desktop render presets, e.g. "broadcast1080"); default by the output's size. */
+  preset?: string;
+  /** mp4: the loudness target (default by preset: EBU R128 for broadcast1080, else YouTube −14). */
+  loudness?: LoudnessPreset;
+  /** mp4: broadcast-safe picture (legal range: Y 16–235, Cb/Cr 16–240; 64–940 / 64–960 at 10 bits). */
+  legal?: boolean;
+  /** Graphics only into an mp4 (no alpha): this colour behind them ("#rrggbb", default black). */
+  background?: string;
+  /**
+   * Generated sequences (batch rows, news shorts, the preview reel) added to the saved edit for this export only
+   * (never saved); `sequenceId` may name one of them. They use the edit's media and templates.
+   */
+  sequences?: unknown[];
+  /** News Room templates the generated sequences use that the saved edit doesn't have yet (by id). */
+  templates?: Record<string, unknown>;
 }
-export interface NewsExportResult { path: string; frames: number; seconds: number }
+/**
+ * The export is queued as a render job (progress on `render.onProgress`, cancel with `render.cancel(jobId)`, show it with
+ * `render.reveal(jobId)`); `path` is where the file (or, for "png", the folder of frames) will be written.
+ */
+export interface NewsExportResult { path: string; frames: number; seconds: number; /** additive */ jobId?: string; w?: number; h?: number; fps?: number }
 export interface NewsroomBridge {
   /** The user's looks and templates in <library>\News\Looks | Templates (one JSON file each). */
   libraryList(kind: NewsLibraryKind): Promise<NewsLibraryEntry[]>;

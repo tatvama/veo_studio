@@ -281,7 +281,8 @@ async function start(): Promise<void> {
   registerInteropIpc(ipcMain, (url) => wm.isGatewayUrl(url), interop,
     { export: IPC.editorInteropExport, import: IPC.editorInteropImport, findApps: IPC.editorInteropFindApps, openIn: IPC.editorInteropOpenIn });
   // News Room (docs/EDITOR.md §16.9): look / template library, data fetch, graphics export
-  registerNewsroomIpc(ipcMain, (url) => wm.isGatewayUrl(url), { libraryRoot: () => config.get().libraryRoot, parent: () => pickParent(), log });
+  registerNewsroomIpc(ipcMain, (url) => wm.isGatewayUrl(url), { libraryRoot: () => config.get().libraryRoot, parent: () => pickParent(), log,
+    loadEdit: (f) => appCtx.editor.newsEdit(f), startNews: (input) => appCtx.renders.startNews(input) });
 
   session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => {
     cb(wm.isGatewayUrl(wc.getURL()) && ["fullscreen", "clipboard-sanitized-write", "clipboard-read", "media", "notifications", "window-management",

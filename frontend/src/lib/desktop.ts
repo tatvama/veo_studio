@@ -782,8 +782,26 @@ export interface NewsExportOptions {
   /** Output file or folder; none = <edit>\Exports\News\<name>. */
   outPath?: string;
   name?: string;
+  // ── additive (nr-delivery, docs/EDITOR.md §16.11) ──
+  /** With only "graphics": just these graphics roles ("ticker", "bug" …) or these clips (a loop of one ticker). */
+  roles?: string[]; clipIds?: string[];
+  /** mp4: the render preset (desktop render presets, e.g. "broadcast1080"); default by the output's size. */
+  preset?: string;
+  /** mp4: the loudness target (default by preset: EBU R128 for broadcast1080, else YouTube −14). */
+  loudness?: NewsLoudness;
+  /** mp4: broadcast-safe picture (legal range: Y 16–235, Cb/Cr 16–240). */
+  legal?: boolean;
+  /** Graphics only into an mp4 (no alpha): this colour behind them ("#rrggbb", default black). */
+  background?: string;
+  /** Generated sequences (batch rows, news shorts, the preview reel) added to the saved edit for this export only. */
+  sequences?: unknown[];
+  /** News Room templates the generated sequences use that the saved edit doesn't have yet (by id). */
+  templates?: Record<string, unknown>;
 }
-export interface NewsExportResult { path: string; frames: number; seconds: number }
+/** The desktop's export loudness targets (desktop/src/main/editor-audio.ts LOUDNESS). */
+export type NewsLoudness = "youtube" | "instagram" | "spotify" | "apple" | "ebu_r128" | "ott" | "off";
+/** Queued as a render job (progress on render.onProgress, cancel / reveal by `jobId`); `path` = where it will be written. */
+export interface NewsExportResult { path: string; frames: number; seconds: number; /** additive */ jobId?: string; w?: number; h?: number; fps?: number }
 export interface NewsroomBridge {
   /** The user's looks and templates in <library>\News\Looks | Templates (one JSON file each). */
   libraryList(kind: NewsLibraryKind): Promise<NewsLibraryEntry[]>;

@@ -3,7 +3,9 @@ import { desktop } from "../../lib/desktop";
 
 type PlanJob = { kind?: "plan"; plan: unknown; w: number; h: number; fps: number; frames: number; bits?: 8 | 10 };
 type CompositionJob = { kind: "composition"; project: unknown; sequenceId: string; range?: { in: number; out: number };
-  w: number; h: number; fps: number; frames: number; bits?: 8 | 10 };
+  w: number; h: number; fps: number; frames: number; bits?: 8 | 10;
+  /** News Room delivery (docs/EDITOR.md §16.11): language, other ratio, graphics only, alpha */
+  news?: import("../../editor/newsroom/delivery/prepare").NewsGpuOptions };
 
 const mediaUrl = (key: string) => `/media/${key.split("/").map(encodeURIComponent).join("/")}`;
 
@@ -28,6 +30,11 @@ export default function RenderJob() {
     void (async () => {
       try {
         const job = (await bridge.job(id)) as PlanJob | CompositionJob;
+        // News Room delivery (nr-delivery): the language version, the other ratio and graphics only are made from the
+        // edit here (so the export draws like the preview); alpha jobs draw on transparency and send RGBA
+        const news = job.kind === "composition" && job.news ? await import("../../editor/newsroom/delivery/window") : null;
+        if (news && job.kind === "composition") news.prepareNewsJob(job);
+        let readNews: ((t: number) => Promise<Uint8Array>) | null = null;
         const eng = await import("../../engine");
         const engine = await eng.createEngine({ width: job.w, height: job.h });
         if (job.kind === "composition") {
@@ -40,7 +47,16 @@ export default function RenderJob() {
           // every title's font is in before the first frame (the preview may redraw later; an export can't)
           await Promise.all(project.sequences.flatMap((s) => s.clips).filter((c) => c.source.type === "title")
             .map((c) => ensureFont((c.source as { text: Parameters<typeof ensureFont>[0] }).text)));
-          const r = buildComposition(project, job.sequenceId, job.range ? { range: [job.range.in, job.range.out] } : {});
+          const copts: Parameters<typeof buildComposition>[2] = { ...(job.range ? { range: [job.range.in, job.range.out] as [number, number] } : {}),
+            ...news?.newsCompositionOptions(job.news) };
+          const r = buildComposition(project, job.sequenceId, copts);
+          // News Room graphics: their fonts and pictures are in before the first frame too
+          const gfx = Object.values(r.generated).filter((g) => g.kind === "graphic");
+          if (gfx.length) {
+            const { ensureGraphicAssets } = await import("../../editor/newsroom/render");
+            await Promise.all(gfx.map((g) => ensureGraphicAssets((g as { input: Parameters<typeof ensureGraphicAssets>[0] }).input).catch(() => undefined)));
+          }
+          if (news) readNews = await news.setupNews(engine, r.comp, job.news); // News Room delivery: background / alpha
           await engine.load(r.comp, { mode: "exact", sources: generatedSources(r.generated) });
         } else {
           await engine.load(eng.fromPlan(job.plan as Parameters<typeof eng.fromPlan>[0], mediaUrl), { mode: "exact" });
@@ -51,7 +67,7 @@ export default function RenderJob() {
         for (let i = 0; i < job.frames; i++) {
           await engine.renderExact(i / job.fps);
           // the IPC copies the bytes, so the engine may reuse its read-back buffer for the next frame
-          await bridge.frame(id, i, ten ? engine.readYuv420p10() : engine.readYuv420());
+          await bridge.frame(id, i, readNews ? await readNews(i / job.fps) : ten ? engine.readYuv420p10() : engine.readYuv420());
           if (i % 24 === 0) setStatus(`Frame ${i + 1} of ${job.frames} · ${((i + 1) / ((performance.now() - t0) / 1000)).toFixed(1)} fps`);
         }
         engine.dispose();

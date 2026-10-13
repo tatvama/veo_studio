@@ -35,6 +35,8 @@ export interface CompositionOptions {
   /** Only this range of the sequence ([from, to) frames), starting at 0 (export in → out). */
   range?: [number, number];
   pixelScale?: number;
+  /** News Room: a language version ("hi"): graphics use their `gfx.langs[lang]` values (docs/EDITOR.md §16.11). */
+  lang?: string;
 }
 export interface CompositionResult { comp: Composition; generated: Record<string, GeneratedSource>; warnings: string[] }
 
@@ -267,7 +269,7 @@ function graphicMedia(project: EditProject, seq: Sequence, c: TimelineClip, opts
   if (c.source.type !== "graphic") return null;
   const ratios = c.source.gfx.ratios;
   if (ratios?.length && !ratios.includes(ratioOf(W, H))) return null;
-  const input = renderInputFor(project, seq, c, { urlFor: opts.urlFor, width: W, height: H });
+  const input = renderInputFor(project, seq, c, { urlFor: opts.urlFor, width: W, height: H, lang: opts.lang });
   if (!input) { warn(`"${c.name}": its graphic template isn't in this edit`); return null; }
   const duration = framesToSeconds(c.duration, seq.fps);
   gen[url] = { kind: "graphic", input, width: W, height: H, duration };
