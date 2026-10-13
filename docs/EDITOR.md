@@ -669,7 +669,7 @@ two files are the contract: change them only with the lead's agreement.
 | `templates/stingers.ts`, `templates/openers.ts`, `templates/backgrounds.ts`, `render/kinds/{shine,panels,bg}.ts`, `wipes/**` | 30 stingers, 8 openers and bumpers, 10 looping backgrounds, the Wipe Designer, news transitions | nr-wipes |
 | `designer/**`, `panels/LookPanel.tsx`, `library.ts`, `desktop/src/main/newsroom/files.ts` | The Template Designer, the channel look editor, Make my look, the look / template library on disk | nr-designer |
 | `panels/{GraphicsLibrary,FillIn,Rundown,People,Playlist,CompanionMonitor}.tsx`, `room/**`, `rundown.ts`, `editor/EditorHome.tsx` (additive), `editor/keymap.ts` (additive) | The room: New news edit, library, Fill in, rundown and Build, people and places, playlist and quick keys, find and replace, the other-ratio monitor | nr-room |
-| `data/**`, `auto/**`, `qc/**`, `panels/{DataPanel,GraphicsQC}.tsx`, `desktop/src/main/newsroom/fetch.ts` | Data sources and snapshots, speaker straps, AI-content labels, graphics QC | nr-data |
+| `feeds/**` (named so because the repository ignores `data/` folders), `auto/**`, `qc/**`, `panels/{DataPanel,GraphicsQC}.tsx`, `desktop/src/main/newsroom/fetch.ts` | Data sources and snapshots, speaker straps, AI-content labels, graphics QC | nr-data |
 | `delivery/**`, `panels/Deliver.tsx`, `desktop/src/main/newsroom/export.ts` (+ additive in `render.ts` / RenderJob read-back) | Both-ratio export, transparent export, loops, batch from a spreadsheet, news shorts, language versions, preview reel, TV presets | nr-delivery |
 
 ### 16.2 Channel looks (`looks.ts`, `format.ts`)
@@ -761,6 +761,26 @@ For Indic text, never animate per letter: letters join, so the smallest unit is 
 - **line**
 - **icon:** a built-in vector set. Kinds may add icons with `registerIcons`.
 
+**Property conventions** (the Designer shows these as "Follow look", "Auto" …):
+- **rect:** `fill`, `gloss`, `glass` ("look" / "on" / "off"), `shape` ("look" / "flat" / "rounded" / "angled" / "pill"),
+  `radius` (−1 follows the look), `skew`, `ends`, `stroke`, `strokeWidth`, `stripe` (side), `stripeColor`,
+  `stripeWidth`.
+- **text:** `text`, `font`, `size`, `weight` (0 follows the look), `color`, `align`, `valign`, `padX`, `tracking`
+  (design px), `lineHeight`, `upper` ("look" / "on" / "off"), `fit`, `maxLines` (0 = as many as the box holds),
+  `minScale`, `outline`, `outlineWidth`, `grow: { layers, pad, min, max }`.
+- **Text tokens:** `{field}`, `{$time}`, `{$time:s}`, `{$date}`.
+- **Paints** may name a colour field: `"{level}"` uses that field's value (a colour or a look token).
+- **`when`:** `"{field}"`, `"!{field}"`, `"{field}=value"` and `"{field}!=value"`.
+- **Directions** of an animation are the way the layer travels. Loops: `glowColor` for glow.
+- **Number props with a usual value** say so in their hint ("−1 follows the look", "0 = as many as fit"); a `null`
+  default means "automatic".
+- **Overrides** ("Change only this one") are keyed by layer id, or `"<layerId>@<ratio>"` for one ratio only
+  (`applyOverrides(layers, ov, ratio)`).
+- **The logo bug** (`role: "bug"`, `kind: "logo"`) is designed top right; `placeBug` mirrors it to the look's
+  `bug.corner`, scales it by `bug.scale` and fades it by `bug.opacity`.
+- **Kinds beyond the list in `types.ts` are fine:** layouts add "backdrop" and "progress", boards add "stamp", wipes
+  add "countdown".
+
 **Collision rules** (`NewsroomSettings.collision`, on by default): a strap or board on screen with a ticker, breaking
 bar or stacked ticker lifts above their top edge. The composition passes `input.avoid`, the boxes of the other
 graphics at the clip's start.
@@ -776,7 +796,15 @@ graphics at the clip's start.
   `gen:gfx:<path><clipId>`, in both `toComposition` and `toVideoComposition`.
 - `editor/engine.ts makeGenerated` draws it.
 - `RenderJob.tsx` and `automation/bridge/frame.ts` await `ensureGraphicAssets` for every graphic before the first frame.
-- Slot clips get their motion and a `crop` effect from `slotMotion` (16.6).
+- Slot clips get their motion and a `crop` effect from `slotMotion` (16.6). Layout graphics get `layoutOverrides`
+  (their morph) as their render overrides, so holes and pictures move together.
+- `CompositionOptions.lang` picks a language version; `Composition.transparent` draws on transparency (alpha exports).
+
+**The dev lab** (dev builds only, no sign-in): `/editor/gfx-lab?template=<id>&ratio=16:9|9:16|both&t=<s>&look=<id>&values=<URL-encoded JSON>&w=<px>`,
+or `grid=<Category>` for a contact sheet. Extras: `bg=studio|checker|black|grey`, `avoid=1` (a ticker on screen),
+`dur=<s>`, `engine=1` (through `buildComposition` and the GPU engine), `perf=1` (ms per 1080p draw). It sets
+`document.title = "ready"` once drawn. The Designer and the Wipe Designer have dev-only openers too: `?nrDesigner=<id>`
+and `?nrWipes=<id|new>` in the editor.
 
 ### 16.4 Templates (`templates/**`)
 
@@ -901,6 +929,17 @@ ratio:
 
 Squeeze-back / L-band is a layout whose box 0 shrinks while the L-shaped frame and its ad / info panel come in.
 
+How it fits together:
+- Layouts draw their studio plate with the "backdrop" kind, and story counters with "progress".
+- `layoutOverrides` gives each layout graphic its morph:
+  - boxes glide from the previous layout;
+  - the main picture squeezes in from, and back out to, full frame when it was on screen before or carries on after;
+  - the old layout holds its boxes while a new one takes over;
+  - the backdrop doesn't dip.
+- With no layout on screen a slot clip shows full frame. A layout without that box hides it.
+- `layouts/commands.ts` (`assignSlot`, `placeInSlot` …), `layouts/SlotAssigner.tsx` and the clip menu ("Put in box",
+  "Fill the boxes in order", "Take out of box") do the placing.
+
 UI: right-click a clip → "Put in box 1…n", or drop a clip from the bin onto a box in the program monitor.
 
 ### 16.7 Both ratios (`companion.ts`)
@@ -979,7 +1018,7 @@ and plates.
 
 In the browser (no desktop) the library falls back to localStorage and data to `fetch` (CORS permitting).
 
-### 16.10 Data, automation and checks (`data/**`, `auto/**`, `qc/**`)
+### 16.10 Data, automation and checks (`feeds/**`, `auto/**`, `qc/**`)
 
 **Data sources:**
 - Kinds: CSV, JSON (with a root path), RSS / Atom, a published Google Sheet CSV link, or manual.
@@ -987,11 +1026,23 @@ In the browser (no desktop) the library falls back to localStorage and data to `
   "as of 19:42". `bind` links a graphic's field to a source and column.
 - Mappers fill the weather, markets, score, election and rates templates from rows.
 
+**Linking fields to data.** A linked field's path is one of:
+- empty (the whole source);
+- `"Column"`;
+- `"Column#3"` (row 3);
+- `"@markets"` (through a mapper);
+- `"@ticker:Title"`.
+
 **Automation:**
 - **Speaker straps:** the transcript's speaker runs are matched to people (by their speaker label), and a strap is
   placed at each speaker change. Re-running replaces the earlier ones, never doubles them. One undo step.
 - **AI-content labels:** while studio-made (AI) media is on screen, an "AI-generated" label strap is placed over it
-  (`settings.aiLabel`), and QC warns when one is missing.
+  (`settings.aiLabel`), and QC warns when one is missing. The labels go on their own "AI label" track (a strap
+  track just above Straps), so they never overwrite name straps.
+- **Tagging:** graphics the tools place carry `values._auto = "speaker" | "ai-label"`, so a re-run replaces only its own
+  graphics. Anything that walks all value keys skips keys starting with "_".
+- **Where transcripts come from:** they live per media file in this browser (`panels/transcriptStore.ts`), not in the
+  edit, so speaker straps work on the PC that made the transcript.
 
 **Graphics check (QC):** each finding jumps to its frame and offers "Fix" where it can.
 - text that doesn't fit (shrunk below 70 % or ellipsized);
@@ -1021,6 +1072,14 @@ In the browser (no desktop) the library falls back to localStorage and data to `
 - **Look preview reel:** every graphic of a look with sample text, for a client.
 - **TV presets:** EBU R128 −23 LUFS loudness and a broadcast-safe colour limiter (16–235), next to the web presets.
 
+**How a news export runs:**
+- `exportGraphics` checks the options, reads the saved edit and queues a render job. It returns at once with the job
+  id and the planned path; the jobs list follows the render's progress.
+- The GPU render window prepares the job (`delivery/window.ts`): the language values, the other ratio
+  (`companionProject`) and graphics only. Alpha jobs draw with `Composition.transparent` and send RGBA to FFmpeg.
+- Loops are cut on whole cycles: layer loops, backgrounds' periods and tickers' measured cycles
+  (`tickers/period.ts crawlPeriod`).
+
 ### 16.12 Rules for the builders
 
 **The shared rules of §14 apply.** In particular:
@@ -1041,6 +1100,7 @@ In the browser (no desktop) the library falls back to localStorage and data to `
 
 **Imports and UI:**
 - Imports inside pure modules end in `.ts` (Node runs them).
+- Tests go in `frontend/src/editor/__tests__/newsroom-*.test.ts`, which `npm run test:editor` (and CI) runs.
 - UI follows the editor's existing panel style (`pn`, `pn-empty`, editor.css tokens), in English, and is calm and
   uncluttered.
 
