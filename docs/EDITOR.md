@@ -424,6 +424,8 @@ by a hash of the source, the trims and the effect parameters.
   - `vibrato` emits NaN at the start, so a guard follows it.
   - `haas` is a comb; we use `adelay` on one channel.
   - `acrusher` only downsamples on the mix side, so it runs in two passes.
+  - `acrusher` at `aa=0` divides by zero and outputs NaN when its float rounding lands past the half step (any
+    upstream filter can cause this), so the hold pass uses `aa=1` and `aeval` rounds the bits.
 - **Meters:** a −23 dBFS tone reads −23.00 LUFS (BS.1770-4, EBU 3341 levels in the tests).
 
 ### 11.1 Audition and Premiere parity (added 12 October 2026)

@@ -189,11 +189,11 @@
   "values": "[0:a]volume=12dB,asoftclip=type=hard,volume=0dB[out]"
  },
  "bitcrusher": {
-  "defaults": "[0:a]acrusher=bits=8:samples=1:mix=0:aa=0:dc=1:mode=lin[out]",
-  "values": "[0:a]asplit=2[c0e0d][c0e0w];[c0e0w]acrusher=bits=64:samples=4:mix=1:aa=0:dc=1:mode=lin,acrusher=bits=8:samples=1:mix=0:aa=0:dc=1:mode=lin[c0e0c];[c0e0d][c0e0c]amix=inputs=2:weights='0.4 0.6':normalize=0:duration=first[c0g0];[c0g0]anull[out]"
+  "defaults": "[0:a]aeval=exprs='round(val(ch)*255)/255':c=same[out]",
+  "values": "[0:a]asplit=2[c0e0d][c0e0w];[c0e0w]acrusher=bits=64:samples=4:mix=1:aa=1:dc=1:mode=lin,aeval=exprs='round(val(ch)*255)/255':c=same[c0e0c];[c0e0d][c0e0c]amix=inputs=2:weights='0.4 0.6':normalize=0:duration=first[c0g0];[c0g0]anull[out]"
  },
  "lofi": {
-  "defaults": "[0:a]acrusher=bits=64:samples=3:mix=1:aa=0:dc=1:mode=lin,acrusher=bits=10:samples=1:mix=0:aa=0:dc=1:mode=lin,lowpass=f=5000:t=q:w=0.707[out]"
+  "defaults": "[0:a]acrusher=bits=64:samples=3:mix=1:aa=1:dc=1:mode=lin,aeval=exprs='round(val(ch)*1023)/1023':c=same,lowpass=f=5000:t=q:w=0.707[out]"
  },
  "telephone": {
   "defaults": "[0:a]highpass=f=300:t=q:w=0.707,highpass=f=300:t=q:w=0.707,lowpass=f=3400:t=q:w=0.707,lowpass=f=3400:t=q:w=0.707[out]"

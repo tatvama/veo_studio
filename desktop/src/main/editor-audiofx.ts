@@ -307,14 +307,18 @@ export function echoFilter(delayMs: number, feedback: number, wet: number): stri
 
 /**
  * FFmpeg's acrusher reduces the sample rate only on its `mix` side (sample = mix·SR(x) + (1 − mix)·x) and keeps
- * (1 − mix) of the bit-reduced value, so one instance can't do both: a sample-and-hold pass (bits 64, mix 1), then a
- * bits-only pass (samples 1, mix 0).
+ * (1 − mix) of the bit-reduced value, so one instance can't do both: a sample-and-hold pass (bits 64, mix 1), then the
+ * bits. Its anti-aliasing divides by `aa`, and at aa 0 (hard steps) a sample is NaN whenever roundf's float rounding of
+ * x·(2^bits − 1) lands past the half step: 0.13947239518165588 at 11 bits, most double input at 64 bits (after aeval).
+ * NaN in amix or loudnorm silences the whole mix. So the hold pass uses aa 1 (mix 1 throws its bit side away) and aeval
+ * rounds the bits: round(x·c) / c with c = 2^bits − 1, which is acrusher's lin / dc 1 / aa 0 value wherever that isn't NaN.
  */
 function crusher(bits: number, samples: number): string[] {
   const out: string[] = [];
   const s = Math.round(samples);
-  if (s > 1) out.push(`acrusher=bits=64:samples=${s}:mix=1:aa=0:dc=1:mode=lin`);
-  out.push(`acrusher=bits=${num(bits)}:samples=1:mix=0:aa=0:dc=1:mode=lin`);
+  if (s > 1) out.push(`acrusher=bits=64:samples=${s}:mix=1:aa=1:dc=1:mode=lin`);
+  const c = num(Math.pow(2, bits) - 1);
+  out.push(`aeval=exprs='round(val(ch)*${c})/${c}':c=same`);
   return out;
 }
 
@@ -586,7 +590,7 @@ export const AUDIO_FX: FxDef[] = [
   { id: "distortion", group: "Modulation & creative", label: "Distortion", ffmpeg: "volume, asoftclip, volume",
     params: [C("type", "Type", "tanh", CLIP_TYPES), DB("drive", "Drive", 12, 0, 48), DB("output", "Output", 0, -24, 12)],
     build: (p) => [`volume=${num(p.n("drive"))}dB`, `asoftclip=type=${p.s("type")}`, `volume=${num(p.n("output"))}dB`] },
-  { id: "bitcrusher", group: "Modulation & creative", label: "Bitcrusher", ffmpeg: "acrusher ×2 (sample-and-hold, then bits), asplit + amix for the dry mix",
+  { id: "bitcrusher", group: "Modulation & creative", label: "Bitcrusher", ffmpeg: "acrusher (sample-and-hold), aeval (bits), asplit + amix for the dry mix",
     params: [P("bits", "Bits", 8, 1, 16), P("samples", "Downsample", 1, 1, 64, "×"), A("mix", "Mix", 1)],
     build: (p) => {
       const mix = p.n("mix");
@@ -597,7 +601,7 @@ export const AUDIO_FX: FxDef[] = [
       return [{ graph: (inL, outL) => [`[${inL}]asplit=2[${u}d][${u}w]`, `[${u}w]${wet.join(",")}[${u}c]`,
         `[${u}d][${u}c]amix=inputs=2:weights='${num(r(1 - mix, 6))} ${num(r(mix, 6))}':normalize=0:duration=first[${outL}]`] }];
     } },
-  { id: "lofi", group: "Modulation & creative", label: "Lo-fi", ffmpeg: "acrusher ×2 (sample-and-hold, then bits), lowpass",
+  { id: "lofi", group: "Modulation & creative", label: "Lo-fi", ffmpeg: "acrusher (sample-and-hold), aeval (bits), lowpass",
     params: [P("bits", "Bits", 10, 4, 16), P("samples", "Downsample", 3, 1, 16, "×"), HZ("cutoff", "Tone", 5000, 1000, 12000)],
     build: (p) => [...crusher(p.n("bits"), p.n("samples")), `lowpass=f=${num(p.n("cutoff"))}:t=q:w=0.707`] },
   { id: "telephone", group: "Modulation & creative", label: "Telephone", ffmpeg: "highpass, lowpass (24 dB/oct)", params: [HZ("low", "Low cut", 300, 100, 1000), HZ("high", "High cut", 3400, 2000, 8000)],
