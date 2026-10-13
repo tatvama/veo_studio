@@ -11,6 +11,7 @@ import { makeHost } from "../host";
 import * as M from "../motionActions";
 import { switchAngle } from "../model/multicam";
 import { RAMP_PRESETS } from "../model/remap";
+import { slotMenuItems } from "../newsroom/layouts/actions";
 import { ed, project, seq, seqExec, setMulticamView } from "../store";
 import type { MenuItem } from "../ui";
 
@@ -45,6 +46,7 @@ export function clipMenu(c: TimelineClip): MenuItem[] {
       { label: `Hold the last frame (${M.freezeSeconds()} s)`, onClick: () => M.freezeLast(c.id) },
       { label: "Frame hold: the whole clip on the playhead's frame", onClick: () => M.holdFrameAt() },
     ] } as MenuItem] : []),
+    ...slotMenuItems(c),
     { label: `Add default ${kind === "video" ? "transitions" : "crossfades"}`, shortcut: kind === "video" ? "Ctrl+D" : "Ctrl+Shift+D", onClick: () => A.defaultTransitions(kind) },
     { label: "Nest into a compound clip…", shortcut: "Ctrl+Shift+N", onClick: () => M.nestNamed() },
     ...(c.source.type === "nested" && !c.multicam ? [{ label: "Un-nest (break apart)", onClick: () => M.unnest(c.id) } as MenuItem] : []),

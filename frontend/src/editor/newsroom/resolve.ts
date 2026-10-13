@@ -11,6 +11,7 @@ import { zonedTimeToMs } from "./format.ts";
 import { resolveLook } from "./looks.ts";
 import type { GfxRenderInput } from "./render/contract.ts";
 import { contentBox, designSpace, valuesOf } from "./render/layout.ts";
+import { layoutOverrides } from "./slots.ts";
 import type { DataSnapshot, GfxField, GfxListItem, GfxRatio, GfxTableRow, GfxValue } from "./types.ts";
 
 export interface ResolveOptions {
@@ -101,7 +102,9 @@ export function renderInputFor(p: EditProject, seq: Sequence, clip: TimelineClip
     template, values, look, images, clockAt: air + framesToSeconds(clip.start, seq.fps) * 1000,
     seed: gfx.seed ?? seedOf(clip.id), fps: seq.fps,
   };
-  if (gfx.overrides && Object.keys(gfx.overrides).length) input.overrides = gfx.overrides;
+  // a layout's own overrides plus its morph (boxes glide between layouts: slots.ts); others: their own overrides
+  const ov = layoutOverrides(p, seq, clip);
+  if (ov && Object.keys(ov).length) input.overrides = ov;
   if (o.ratio) input.ratio = o.ratio;
   // collision rules: tickers on screen at this graphic's start
   if (nr?.settings?.collision !== false && AVOIDS.has(template.role)) {
