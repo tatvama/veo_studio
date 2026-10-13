@@ -285,12 +285,23 @@ export function parseCubeHeader(text: string): CubeInfo {
   return { size, title, domainMin, domainMax };
 }
 
-/** Bytes → text for small text files (shaders, LUTs): refuses binary. */
+/**
+ * Bytes → text for small text files (shaders, LUTs): refuses binary. One handle for the checks and the read, so the
+ * file checked is the file read (no check-then-read race).
+ */
 export async function readText(file: string, maxBytes: number): Promise<string> {
-  const st = await fsp.stat(file);
-  if (!st.isFile()) throw new Error("Not a file");
-  if (st.size > maxBytes) throw new Error(`${path.basename(file)} is too big (${Math.round(st.size / 1024)} KB, at most ${Math.round(maxBytes / 1024)} KB)`);
-  const buf = await fsp.readFile(file);
+  const tooBig = (size: number) => new Error(`${path.basename(file)} is too big (${Math.round(size / 1024)} KB, at most ${Math.round(maxBytes / 1024)} KB)`);
+  const fh = await fsp.open(file, "r");
+  let buf: Buffer;
+  try {
+    const st = await fh.stat();
+    if (!st.isFile()) throw new Error("Not a file");
+    if (st.size > maxBytes) throw tooBig(st.size);
+    buf = await fh.readFile();
+  } finally {
+    await fh.close();
+  }
+  if (buf.length > maxBytes) throw tooBig(buf.length); // it grew while being read
   if (buf.includes(0)) throw new Error(`${path.basename(file)} isn't a text file`);
   return buf.toString("utf8").replace(/^﻿/, "");
 }

@@ -289,7 +289,6 @@ export function mixPlan(project: EditProject, seq: Sequence, range: { in: number
     if (!audible(t)) continue;
     let file = "";
     let channels = 2;
-    let srcFps = fps;
     let inS = 0;
     if (!gen) {
       const m = media.get((c.source as { mediaId: string }).mediaId);
@@ -301,7 +300,7 @@ export function mixPlan(project: EditProject, seq: Sequence, range: { in: number
       }
       file = f;
       channels = m.audioChannels ?? 2;
-      srcFps = m.fps > 0 ? m.fps : fps;
+      const srcFps = m.fps > 0 ? m.fps : fps;
       inS = (c.source as { in: number }).in / fpsExact(srcFps);
     }
     const ramped = !gen && hasRamp(c);

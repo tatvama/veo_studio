@@ -343,6 +343,7 @@ export class RenderManager {
     let ass: string | null = null;
     if (plan.captions?.ass) {
       ass = path.join(tmp, "captions.ass");
+      // the studio's caption text (not a download): a fixed name in this job's own temp folder, read only by libass
       await fsp.writeFile(ass, plan.captions.ass, "utf8");
     }
     const finalTmp = path.join(tmp, `final.${preset.container}`);

@@ -184,6 +184,7 @@ export async function downloadPinned(pin: PinnedFile, dest: string, o: { signal?
       await fsp.rm(part, { force: true });
       return downloadPinned(pin, dest, o);
     }
+    // network bytes go only to `<dest>.part`, capped at the pinned size; it becomes `dest` only after the size and SHA-256 match
     const out = createWriteStream(part, { flags: have ? "a" : "w" });
     try {
       for await (const chunk of r.body as unknown as AsyncIterable<Uint8Array>) {

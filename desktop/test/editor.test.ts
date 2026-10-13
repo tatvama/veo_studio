@@ -463,9 +463,13 @@ test("model helpers: names, presets, ranges, export sizes, render names, deep li
   assert.equal(renderName("Sequence 01", "mp4", ["Sequence-01_v001.mp4", "Sequence-01_v007.mov", "other_v009.mp4"]), "Sequence-01_v008.mp4");
   assert.equal(renderName("S01E02 The river", ".mov", []), "S01E02-The-river_v001.mov");
   assert.equal(secondsToFrames(1, 29.97), 30);
-  assert.deepEqual(editorDeepLink("tatvam://editor?path=D%3A%5CEdits%5CA%5CA.tatvamedit"),
-    { urlPath: `/editor/edit?path=${encodeURIComponent("D:\\Edits\\A\\A.tatvamedit")}`, file: "D:\\Edits\\A\\A.tatvamedit" });
+  // deep links: a full path of this OS to a .tatvamedit opens it; anything else opens the editor home
+  const native = path.join(os.tmpdir(), "Edits", "A", "A.tatvamedit");
+  assert.deepEqual(editorDeepLink(`tatvam://editor?path=${encodeURIComponent(native)}`),
+    { urlPath: `/editor/edit?path=${encodeURIComponent(native)}`, file: native });
   assert.deepEqual(editorDeepLink("tatvam://editor"), { urlPath: "/editor" });
+  assert.deepEqual(editorDeepLink(`tatvam://editor?path=${encodeURIComponent(path.join("Edits", "A", "A.tatvamedit"))}`), { urlPath: "/editor" }, "a relative path");
+  assert.deepEqual(editorDeepLink(`tatvam://editor?path=${encodeURIComponent(path.join(os.tmpdir(), "evil.exe"))}`), { urlPath: "/editor" }, "not an edit");
   assert.deepEqual(editorDeepLink("tatvam://editor?path=C%3A%5Cevil.exe"), { urlPath: "/editor" });
   assert.equal(editorDeepLink("tatvam://open?project=1"), null);
   const size = { w: 1920, h: 1080, fps: 24, frames: 48 };
@@ -473,4 +477,10 @@ test("model helpers: names, presets, ranges, export sizes, render names, deep li
   const project = { id: "p" } as unknown as EditProject;
   const job = gpuJob({ kind: "composition", project, sequenceId: "s1", range: { in: 10, out: 58 } }, size);
   assert.deepEqual(job, { kind: "composition", project, sequenceId: "s1", range: { in: 10, out: 58 }, ...size });
+});
+
+test("deep links with Windows paths: a drive-letter path to an edit opens it", { skip: process.platform !== "win32" && "Windows paths" }, () => {
+  assert.deepEqual(editorDeepLink("tatvam://editor?path=D%3A%5CEdits%5CA%5CA.tatvamedit"),
+    { urlPath: `/editor/edit?path=${encodeURIComponent("D:\\Edits\\A\\A.tatvamedit")}`, file: "D:\\Edits\\A\\A.tatvamedit" });
+  assert.deepEqual(editorDeepLink("tatvam://editor?path=Edits%5CA%5CA.tatvamedit"), { urlPath: "/editor" }, "a relative path");
 });

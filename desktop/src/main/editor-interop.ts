@@ -306,10 +306,20 @@ export class InteropManager {
     if (typeof file !== "string" || !path.isAbsolute(file)) throw new EditorError("A timeline file is named by its full path");
     file = path.resolve(file);
     if (!IMPORT_EXTS.includes(path.extname(file).slice(1).toLowerCase())) throw new EditorError(`${path.basename(file)} isn't an XML, EDL, OTIO or markers CSV file`);
-    const st = await fsp.stat(file).catch(() => null);
-    if (!st?.isFile()) throw new EditorError(`${path.basename(file)} wasn't found`);
-    if (st.size > MAX_IMPORT) throw new EditorError(`${path.basename(file)} is too large for a timeline file`);
-    const text = InteropManager.decode(await fsp.readFile(file));
+    // one handle for the checks and the read: the file checked is the file read
+    const fh = await fsp.open(file, "r").catch(() => null);
+    if (!fh) throw new EditorError(`${path.basename(file)} wasn't found`);
+    let buf: Buffer;
+    try {
+      const st = await fh.stat();
+      if (!st.isFile()) throw new EditorError(`${path.basename(file)} wasn't found`);
+      if (st.size > MAX_IMPORT) throw new EditorError(`${path.basename(file)} is too large for a timeline file`);
+      buf = await fh.readFile();
+    } finally {
+      await fh.close();
+    }
+    if (buf.length > MAX_IMPORT) throw new EditorError(`${path.basename(file)} is too large for a timeline file`);
+    const text = InteropManager.decode(buf);
     const kind = detectImport(file, text);
     if (kind === "markers-csv") {
       fromMarkersCsv(text, 25); // throws nothing; checks it reads

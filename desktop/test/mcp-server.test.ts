@@ -188,17 +188,20 @@ test("folders outside the library prompt the user; Deny refuses, Allow once lets
   try {
     answerWith = "deny";
     const before = prompts.length;
-    const r = await c.callTool({ name: "import_media", arguments: { paths: ["G:\\Shoots\\Day1\\a.mp4"] } });
+    // native paths outside the library (they needn't exist: the prompt comes first)
+    const r = await c.callTool({ name: "import_media", arguments: { paths: [path.join(dir, "Shoots", "Day1", "a.mp4")] } });
     assert.equal(r.isError, true);
     assert.match(textOf(r), /didn't allow/);
     assert.equal(prompts.length, before + 1);
-    assert.equal(prompts[prompts.length - 1].folder, path.resolve("G:\\Shoots\\Day1"));
+    assert.equal(prompts[prompts.length - 1].folder, path.join(dir, "Shoots", "Day1"));
     answerWith = null; // nobody answers: denied after the timeout
-    const slow = await c.callTool({ name: "import_media", arguments: { paths: ["H:\\Slow\\b.mp4"] } });
+    const slow = await c.callTool({ name: "import_media", arguments: { paths: [path.join(dir, "Slow", "b.mp4")] } });
     assert.match(textOf(slow), /didn't answer within 60 s|didn't allow/);
     answerWith = "once";
-    const once = await c.callTool({ name: "import_media", arguments: { paths: ["G:\\Once\\c.exe"] } });
+    const once = await c.callTool({ name: "import_media", arguments: { paths: [path.join(dir, "Once", "c.exe")] } });
     assert.match(textOf(once), /only media and interchange files/, "a program is never read, prompt or not");
+    const rel = await c.callTool({ name: "import_media", arguments: { paths: [path.join("Shoots", "a.mp4")] } });
+    assert.match(textOf(rel), /Give a full path/, "a relative path is refused before anything else");
   } finally { await c.close(); answerWith = "deny"; }
 });
 

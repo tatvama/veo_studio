@@ -22,6 +22,12 @@ const footage = path.join(tmp, "Footage");
 mkdirSync(userData, { recursive: true });
 mkdirSync(footage, { recursive: true });
 
+/**
+ * A local path as a file URL the way FCP 7 XML writes it: file://localhost/C:/Footage/Shot%201.mp4 on Windows,
+ * file://localhost/tmp/Footage/Shot%201.mp4 elsewhere (one slash after the host, never two).
+ */
+const localUrl = (p: string) => `file://localhost/${p.replace(/\\/g, "/").replace(/^\/+/, "").split("/").map((seg) => encodeURIComponent(seg).replaceAll("%3A", ":")).join("/")}`;
+
 const tools: MediaTools = {
   async probe(file) {
     const e = path.extname(file).toLowerCase();
@@ -138,7 +144,7 @@ test("exportFile: Premiere XML in Exports\\Interchange, studio media made local,
   assert.equal(r.path, path.join(path.dirname(file), "Exports", "Interchange", "Sequence 01.xml"));
   const xml = readFileSync(r.path, "utf8");
   assert.ok(xml.includes("<xmeml version=\"4\">"));
-  assert.ok(xml.includes(`file://localhost/${footage.replace(/\\/g, "/").replace(/ /g, "%20")}/Shot%201.mp4`), "the local path as a file URL");
+  assert.ok(xml.includes(localUrl(path.join(footage, "Shot 1.mp4"))), "the local path as a file URL");
   // the studio voice-over was pulled into Media\ and the XML points at it
   assert.equal(r.pulled.length, 1);
   assert.equal(r.pulled[0].mediaId, "vo");
@@ -175,7 +181,7 @@ test("exportFile: Send to Audition renders one stem per audio track and an XML t
   for (const f of r.files) assert.ok(existsSync(f));
   assert.ok(h.ff.every((args) => args.includes("48000")), "48 kHz stems");
   const xml = readFileSync(r.path, "utf8");
-  for (const f of r.files) assert.ok(xml.includes(encodeURIComponent(path.basename(f)).replace(/%20/g, "%20")), path.basename(f));
+  for (const f of r.files) assert.ok(xml.includes(encodeURIComponent(path.basename(f))), path.basename(f));
   assert.ok(!xml.includes("aevalsrc"));
 });
 
@@ -183,14 +189,13 @@ test("importFile: an XML becomes a new edit; local files are probed and rebased,
   const h = harness();
   const clip = path.join(footage, "Take 7.mov");
   writeFileSync(clip, "video");
-  const url = (p: string) => `file://localhost/${p.replace(/\\/g, "/").split("/").map(encodeURIComponent).join("/").replace(/%3A/, ":")}`;
   const fileEl = (id: string, name: string, p: string) => `<file id="${id}"><name>${name}</name><pathurl>${p}</pathurl><rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate><duration>500</duration>`
     + "<media><video><samplecharacteristics><width>1920</width><height>1080</height></samplecharacteristics></video><audio><channelcount>2</channelcount></audio></media></file>";
   const item = (id: string, start: number, end: number, inF: number, f: string) => `<clipitem id="${id}"><name>x</name><rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>`
     + `<start>${start}</start><end>${end}</end><in>${inF}</in><out>${inF + end - start}</out>${f}</clipitem>`;
   const xml = `<?xml version="1.0"?><xmeml version="4"><sequence id="s1"><name>From Premiere</name><rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate><media><video><track>`
-    + item("c1", 0, 50, 50, fileEl("f1", "Take 7.mov", url(clip)))
-    + item("c2", 50, 100, 0, fileEl("f2", "Gone.mov", url(path.join(footage, "Gone.mov"))))
+    + item("c1", 0, 50, 50, fileEl("f1", "Take 7.mov", localUrl(clip)))
+    + item("c2", 50, 100, 0, fileEl("f2", "Gone.mov", localUrl(path.join(footage, "Gone.mov"))))
     + item("c3", 100, 150, 0, fileEl("f3", "Server.mov", "file://nas/share/Server.mov"))
     + "</track></video></media></sequence></xmeml>";
   const src = path.join(tmp, "From Premiere.xml");

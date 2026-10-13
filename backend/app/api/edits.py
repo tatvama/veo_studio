@@ -121,7 +121,7 @@ def upload_asset(pid: int, file: UploadFile = File(...), user: User = Depends(re
         tmp.unlink(missing_ok=True)
         try:
             tmp.parent.rmdir()
-        except OSError:
+        except OSError:  # not empty or already gone: _tmp is scratch space, so a leftover folder does no harm
             pass
     return {"key": key, "url": st.url(key), "kind": kind, "duration": round(duration, 3), "has_audio": has_audio,
             "width": w, "height": hh, "bytes": n}

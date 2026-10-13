@@ -140,7 +140,7 @@ async function start(): Promise<void> {
     uiDirs: () => uiCache.dirs(),
     resolveMedia: (key) => library.resolveKey(key),
     resolveEditorMedia: (id) => editorRef?.resolve(id) ?? null,
-    resolveImpulse: (name) => editorRef?.impulseFile(name) ?? Promise.resolve(null),
+    resolveImpulse: async (name) => (await editorRef?.impulseFile(name)) ?? null,
     store: library,
     getCookie: cookie,
     onStatus: (s) => { windows?.broadcast(IPC.offlineChange, s); shellRef?.onOffline(s); },

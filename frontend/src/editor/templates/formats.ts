@@ -208,10 +208,10 @@ export function reframeSequence(project: EditProject, seqId: string, f: Format, 
       if (isVideo) x.motion = { ...m, position: { value: [W / 2, H / 2] }, anchor: { value: [W / 2, H / 2] } };
       return x;
     }
-    let pic: { w: number; h: number } | null = null, srcIn = 0, fps = s.fps;
+    let pic: { w: number; h: number } | null = null, srcIn = 0;
     if (c.source.type === "media") {
       const md: MediaItem | undefined = ctx.media(c.source.mediaId);
-      if (md && md.width > 0 && md.height > 0) { pic = { w: md.width, h: md.height }; fps = md.fps > 0 ? md.fps : s.fps; srcIn = framesToSeconds(c.source.in, fps); }
+      if (md && md.width > 0 && md.height > 0) { pic = { w: md.width, h: md.height }; srcIn = framesToSeconds(c.source.in, md.fps > 0 ? md.fps : s.fps); }
     } else {
       const ns = ctx.sequence(c.source.sequenceId);
       if (ns) { pic = { w: ns.width, h: ns.height }; srcIn = framesToSeconds(c.source.in, ns.fps); }

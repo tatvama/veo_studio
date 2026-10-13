@@ -4,6 +4,7 @@
  * a batch the edit can't take now is tried again later, and the notification says what happened.
  */
 import assert from "node:assert/strict";
+import os from "node:os";
 import path from "node:path";
 import { mock, test } from "node:test";
 import { AutoWatcher, isWatchMedia, RETRY_MS, StableTracker, type WatchFs } from "../src/main/autowatch.ts";
@@ -46,8 +47,9 @@ const flush = async () => { for (let i = 0; i < 20; i++) await new Promise((r) =
 test("watcher: a batch once every new file has settled; files in the edit are skipped; one notification", async (t) => {
   t.mock.timers.enable({ apis: ["setInterval", "Date"], now: 1_000_000 });
   const fs = fakeFs();
-  const W = "D:\\Shoots\\Lighthouse";
-  const watch: WatchFolder = { id: "w1test", folder: W, style: "talking_head", editPath: "D:\\Lib\\Edits\\Lighthouse\\Lighthouse.tatvamedit", mode: "append", on: true };
+  const W = path.join(os.tmpdir(), "Shoots", "Lighthouse"); // native paths: only the file system is fake
+  const watch: WatchFolder = { id: "w1test", folder: W, style: "talking_head", editPath: path.join(os.tmpdir(), "Lib", "Edits", "Lighthouse", "Lighthouse.tatvamedit"),
+    mode: "append", on: true };
   const delivered: string[][] = [];
   const notes: { title: string; body: string }[] = [];
   const saved: Partial<WatchFolder>[] = [];
@@ -81,8 +83,8 @@ test("watcher: a batch once every new file has settled; files in the edit are sk
 test("watcher: an edit that can't take the clips now (unsaved work open) is tried again later", async (t) => {
   t.mock.timers.enable({ apis: ["setInterval", "Date"], now: 2_000_000 });
   const fs = fakeFs();
-  const W = "E:\\Drop";
-  const watch: WatchFolder = { id: "w2test", folder: W, style: "montage", editPath: "D:\\Lib\\Edits\\Reel\\Reel.tatvamedit", mode: "rebuild", on: true };
+  const W = path.join(os.tmpdir(), "Drop");
+  const watch: WatchFolder = { id: "w2test", folder: W, style: "montage", editPath: path.join(os.tmpdir(), "Lib", "Edits", "Reel", "Reel.tatvamedit"), mode: "rebuild", on: true };
   let accept = false;
   const delivered: string[][] = [];
   const notes: string[] = [];

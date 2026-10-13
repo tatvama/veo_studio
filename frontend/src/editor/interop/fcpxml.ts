@@ -640,7 +640,7 @@ export function fromFcpXml(text: string, opts: FcpImportOptions = {}): IrDoc {
             } else if (/opacity/.test(s) && kind === "video") {
               const p = params.find((x) => /opacity/i.test(txt(x, "parameterid") || txt(x, "name"))) ?? params[0];
               if (p) clip.opacity = kf(p, (v) => Math.max(0, Math.min(100, v)));
-            } else if (/^basic|basic motion/.test(s) && params.every((p) => !kids(p, "keyframe").length && (/(scale)/i.test(txt(p, "parameterid")) ? numOf(p, "value", 100) === 100 : /(rotation)/i.test(txt(p, "parameterid")) ? numOf(p, "value", 0) === 0 : true))) {
+            } else if ((s.startsWith("basic") || s.includes("basic motion")) && params.every((p) => !kids(p, "keyframe").length && (/(scale)/i.test(txt(p, "parameterid")) ? numOf(p, "value", 100) === 100 : /(rotation)/i.test(txt(p, "parameterid")) ? numOf(p, "value", 0) === 0 : true))) {
               continue; // an untouched Basic Motion (FCP 7 writes one on every clip)
             } else {
               const label = name || id || "Effect";

@@ -1224,7 +1224,8 @@ export class EditorManager {
     if (job.file) {
       try { const st = await fsp.stat(job.file); stamp = `${st.size}|${Math.floor(st.mtimeMs)}`; } catch { throw new EditorError("The clip's media is missing"); }
     }
-    const hash = createHash("sha1").update(`${job.key}|${stamp}|${IR_SIG}`).digest("hex").slice(0, 24);
+    // the cache name: the first 24 hex digits of a sha256 of everything the preview depends on
+    const hash = createHash("sha256").update(`${job.key}|${stamp}|${IR_SIG}`).digest("hex").slice(0, 24);
     const out = path.join(cacheDir, `${hash}.wav`);
     let cached = existsSync(out);
     if (!cached) {
@@ -1309,10 +1310,18 @@ export class EditorManager {
     const names = await fsp.readdir(lutsDir);
     const base = safeFileName(String(name ?? "").replace(/\.cube$/i, "").trim().slice(0, 80) || "lut", "lut");
     let dest: string | null = null;
-    // the same content already there (any name): reuse it
+    // the same content already there (any name): reuse it. One handle per file for the size check and the read.
+    const bytes = Buffer.byteLength(cubeText);
     for (const n of names.filter((x) => x.toLowerCase().endsWith(".cube"))) {
       const f = path.join(lutsDir, n);
-      try { if ((await fsp.stat(f)).size === Buffer.byteLength(cubeText) && (await fsp.readFile(f, "utf8")) === cubeText) { dest = f; break; } } catch { /* vanished */ }
+      const fh = await fsp.open(f, "r").catch(() => null); // vanished
+      if (!fh) continue;
+      try {
+        if ((await fh.stat()).size === bytes && (await fh.readFile("utf8")) === cubeText) dest = f;
+      } catch { /* unreadable: not a match */ } finally {
+        await fh.close();
+      }
+      if (dest) break;
     }
     if (!dest) {
       dest = uniquePath(path.join(lutsDir, `${base}.cube`), new Set(names.map((n) => pathKey(path.join(lutsDir, n)))));

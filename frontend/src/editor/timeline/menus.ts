@@ -11,8 +11,7 @@ import { makeHost } from "../host";
 import * as M from "../motionActions";
 import { switchAngle } from "../model/multicam";
 import { RAMP_PRESETS } from "../model/remap";
-import { ed, project, seq, seqExec, setMulticamView, setSource } from "../store";
-import { source as sourceTransport } from "../playback/transport";
+import { ed, project, seq, seqExec, setMulticamView } from "../store";
 import type { MenuItem } from "../ui";
 
 const swatch = (css: string) => createElement("span", { className: "block size-3 rounded-sm", style: { background: css } });

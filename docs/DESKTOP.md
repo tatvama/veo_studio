@@ -561,5 +561,5 @@ replay from the real UI (covered by unit tests), and the paid fal upscale (mock 
 price before relying on `upscale_price_per_s`). Kenburns stills are slow at 4K, captions need the caption font
 installed on the PC for Indic shaping, and there is no app icon yet.
 
-**Next:** wave 4 of the editor (preview render, smart render, network render, trim monitor, masks and tracking,
+**Next (roadmap only, not started):** wave 4 of the editor, docs/EDITOR.md §14 (preview render, smart render, network render, trim monitor, masks and tracking,
 node grading, motion graphics and broadcast graphics, QC, recording, subtitles, media management).

@@ -112,6 +112,18 @@ export const readableType = (f: string) => mediaKind(f) !== null || (INTERCHANGE
 export type FolderDecision = "allowed" | "ask" | "refused";
 
 /**
+ * The operating system's own folders, never open to an assistant. Windows (what the app ships for): Windows, Program
+ * Files (both) and ProgramData. Elsewhere (the tests run on Linux too) the system directories of a Unix.
+ */
+export function systemFolders(platform: NodeJS.Platform = process.platform, env: Record<string, string | undefined> = process.env): string[] {
+  if (platform === "win32") {
+    return [env.SystemRoot || "C:\\Windows", env.ProgramFiles || "C:\\Program Files", env["ProgramFiles(x86)"] || "C:\\Program Files (x86)",
+      env.ProgramData || "C:\\ProgramData"];
+  }
+  return ["/bin", "/boot", "/dev", "/etc", "/lib", "/lib32", "/lib64", "/proc", "/sbin", "/sys", "/usr", "/System", "/Library", "/private/etc"];
+}
+
+/**
  * May an assistant use this path? The library root, the listed folders and the session's "Allow once" folders are
  * allowed; system folders are refused outright; anything else asks the user.
  */
@@ -119,9 +131,7 @@ export function folderDecision(target: string, roots: { library: string; folders
   if (!path.isAbsolute(target)) return "refused";
   const t = path.resolve(target);
   if (/[\0]/.test(t) || /^\\\\[?.]\\/.test(t)) return "refused"; // device and \\?\ paths
-  const sys = [process.env.SystemRoot || "C:\\Windows", process.env.ProgramFiles || "C:\\Program Files", process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)",
-    process.env.ProgramData || "C:\\ProgramData"];
-  if (process.platform === "win32" && sys.some((s) => s && inside(s, t))) return "refused";
+  if (systemFolders().some((s) => inside(s, t))) return "refused";
   for (const r of [roots.library, ...roots.folders, ...roots.session]) if (r && inside(r, t)) return "allowed";
   return "ask";
 }

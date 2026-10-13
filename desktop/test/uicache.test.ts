@@ -10,7 +10,7 @@
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, promises as fsp, readdirSync, readFileSync, rmSync, writeFileSync, type Stats } from "node:fs";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import os from "node:os";
@@ -27,6 +27,23 @@ after(() => rmSync(tmp, { recursive: true, force: true }));
 const sha = (b: string | Buffer) => createHash("sha256").update(b).digest("hex");
 /** A temp folder of its own for every test. */
 const fresh = (name: string) => mkdtempSync(path.join(tmp, `${name}-`));
+
+/**
+ * Damages a cached file in place through one handle: what it was (the handle's stat), the new bytes, then the times
+ * `stamp` picks from the old stat. One handle, so the file looked at is the file changed.
+ */
+async function damage(f: string, text: string, stamp: (was: Stats) => [Date, Date]): Promise<void> {
+  const fh = await fsp.open(f, "r+");
+  try {
+    const was = await fh.stat();
+    await fh.truncate(0);
+    await fh.write(text, 0, "utf8");
+    const [atime, mtime] = stamp(was);
+    await fh.utimes(atime, mtime);
+  } finally {
+    await fh.close();
+  }
+}
 
 interface FakeBuild { files: Record<string, string>; requires?: string; lie?: string }
 const B1: FakeBuild = { files: { "index.html": "<!doctype html><title>b1</title>", "assets/app-1111.js": "console.log('b1')", "assets/shared-aaaa.js": "export const shared = 1;" } };
@@ -256,20 +273,15 @@ test("a damaged cached file is caught and fetched again (quick check by size and
     await c.check();
     const build = manifestOf(B1).build;
     const f = path.join(w.serverDir(), build, "assets", "app-1111.js");
-    const recorded = statSync(f);
     // 1. same size, different bytes, and a clearly different modification time: the quick check of every check() sees it
-    writeFileSync(f, "console.log('XX')");
-    const later = new Date(recorded.mtimeMs + 60_000);
-    utimesSync(f, later, later);
+    await damage(f, "console.log('XX')", (recorded) => { const later = new Date(recorded.mtimeMs + 60_000); return [later, later]; });
     w.srv.st.hits.length = 0;
     const s = await c.check();
     assert.equal(s.lastError, undefined);
     assert.ok(w.srv.st.hits.includes("/assets/app-1111.js"), "re-downloaded");
     assert.equal(readFileSync(f, "utf8"), "console.log('b1')");
     // 2. damaged with its recorded time put back: only the content tells, and the full check (at start) finds it
-    const now = statSync(f);
-    writeFileSync(f, "console.log('YY')");
-    utimesSync(f, now.atime, now.mtime);
+    await damage(f, "console.log('YY')", (now) => [now.atime, now.mtime]);
     assert.deepEqual(await c.verify(build, true), ["assets/app-1111.js"]);
     const c2 = cache(w.root, w.srv, w.bundled);
     await c2.init(); // a fresh start verifies every sha256 of the active build

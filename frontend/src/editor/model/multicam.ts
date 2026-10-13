@@ -8,7 +8,7 @@
 import { baseClip, newSequence } from "./defaults.ts";
 import { uid } from "./ids.ts";
 import {
-  activeSequence, clipById, clipEnd, clipsFromMedia, ctxOf, normalize, placeClips, seqEnd, sourceRate, splitAt, tracksOf, trackById, trimEndBy,
+  activeSequence, clipEnd, clipsFromMedia, ctxOf, normalize, placeClips, seqEnd, sourceRate, splitAt, tracksOf, trackById, trimEndBy,
   trimStartBy, type Ctx,
 } from "./ops.ts";
 import { secondsToFrames } from "./time.ts";

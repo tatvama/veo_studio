@@ -3,7 +3,6 @@
  * with in / out (I / O), markers (M), insert (,) and overwrite (.), and drag handles for video only / audio only.
  * Its transport counts the media's own frames (sequence frames for sound and stills).
  */
-import { clsx } from "clsx";
 import { AudioLines, Bookmark, Film, FolderOpen, Grid2x2, ListPlus, Replace } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as A from "../actions";

@@ -68,8 +68,18 @@ def cube_text(look: str) -> str:
     return "\n".join(head + [f"{r:.5f} {g:.5f} {b:.5f}" for r, g, b in rows]) + "\n"
 
 
+def look_id(look: str) -> str:
+    """The canonical id of a preset look: the LOOKS key itself (never the caller's text), so only a known look's
+    name reaches a storage path. KeyError for an unknown look."""
+    for known in LOOKS:
+        if known == look:
+            return known
+    raise KeyError(look)
+
+
 def cube(look: str) -> tuple[str, str]:
     """(.cube text, key) of a preset look: from storage, else baked now and stored. KeyError for an unknown look."""
+    look = look_id(look)
     key = look_key(look)
     st = get_storage()
     rel = f"fx/looks/{look}.cube"

@@ -12,7 +12,7 @@ import {
 import * as M from "../motionActions";
 import { audioTransients } from "../model/snapping";
 import "./motion.css";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useShallow } from "zustand/react/shallow";
 import * as A from "../actions";
@@ -28,7 +28,7 @@ import type { Param, Sequence, TimelineClip, Track, Transition } from "../model/
 import { program, useFrame } from "../playback/transport";
 import { importDropped } from "../session";
 import {
-  clearSelection, ctx as getCtx, ed, gesture, select, selectTransition, seq as getSeq, setFocus, setSnapLine, setSource, setTool, setView,
+  clearSelection, ctx as getCtx, ed, gesture, select, selectTransition, seq as getSeq, setFocus, setSnapLine, setTool, setView,
   toggleLinked, toggleSnapBeats, toggleSnapping, toggleSnapTransients, TOOLS, urlFor, useEditor, useProject, useSequence, type Tool,
 } from "../store";
 import { IBtn, openMenu, TimecodeField } from "../ui";

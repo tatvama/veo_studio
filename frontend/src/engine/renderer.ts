@@ -605,7 +605,6 @@ export class Renderer {
     const main = ts.track.kind === "main";
     let r: { cx: number; cy: number; w: number; h: number; rot: number }, opacity: number, sc: number;
     const generic = !!cs.motion || !cs.transform;
-    let k = 1;
     if (generic) {
       const m: MotionState = cs.motion ?? { scale: 100, rotation: 0, opacity: main ? 1 : cs.fade };
       r = motionRect(m, pic.pw, pic.ph, W, H, c.fit, ctx.unit);
@@ -620,7 +619,7 @@ export class Renderer {
     const aw = Math.abs(r.w), ah = Math.abs(r.h);
     if (opacity <= 1e-4 || aw < 0.5 || ah < 0.5) { b.release(pic.own); return null; }
     const maxS = Math.min(b.maxTextureSize, 2 * Math.max(W, H, 1024));
-    k = Math.min(1, maxS / aw, maxS / ah);
+    let k = Math.min(1, maxS / aw, maxS / ah);
     // an animated scale would ask for a new target size every frame: round those up to 16 px (rendered a little
     // larger, drawn into the exact rectangle); a still size stays exact (a plain clip is drawn 1:1)
     const q = generic && isAnimated(c.motion?.scale) ? 16 : 1;
