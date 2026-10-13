@@ -48,7 +48,7 @@ const BACKDROPS: Record<string, string> = {
 function inputFor(t: GfxTemplate, look: ChannelLook, values: Record<string, GfxValue>, ratio: GfxRatio, avoid: boolean): GfxRenderInput {
   return {
     template: t, values: { ...defaults(t), ...values }, look, images: {}, seed: 7, fps: 25, ratio,
-    ...(avoid ? { avoid: [{ role: "ticker", box: ratio === "9:16" ? [0, 0.7, 1, 0.07] : [0, 0.86, 1, 0.09] }] } : {}),
+    ...(avoid ? { avoid: [{ role: "ticker", box: ratio === "9:16" ? [0, 0.7, 1, 0.07] : [0, 0.891, 1, 0.07] }] } : {}),
   };
 }
 

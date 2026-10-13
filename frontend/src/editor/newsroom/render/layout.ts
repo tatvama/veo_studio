@@ -158,6 +158,13 @@ export function isEmpty(v: GfxValue | undefined): boolean {
 export function shownBy(when: string | undefined, values: Record<string, GfxValue>): boolean {
   if (!when) return true;
   const w = when.trim();
+  // "{field}=value" / "{field}!=value": a choice or text compared as text (case-insensitive)
+  const cmp = /^\{?([^}=!]+)\}?\s*(!?=)\s*(.*)$/.exec(w);
+  if (cmp) {
+    const v = values[cmp[1].trim()];
+    const same = String(typeof v === "string" || typeof v === "number" || typeof v === "boolean" ? v : "").trim().toLowerCase() === cmp[3].trim().toLowerCase();
+    return cmp[2] === "=" ? same : !same;
+  }
   const neg = w.startsWith("!");
   const id = w.replace(/^!/, "").replace(/^\{|\}$/g, "").trim();
   if (!id) return true;
@@ -189,6 +196,8 @@ const LIFTS = new Set(["strap", "board"]);
 /** Design px a strap / board moves up to stay above the tickers on screen (0 = no clash). */
 export function liftFor(role: string, layers: GfxLayer[], w: number, h: number, avoid: GfxRenderInput["avoid"]): number {
   if (!LIFTS.has(role) || !avoid?.length) return 0;
+  // full-screen boards are designed around the tickers; lifting them would push their title off the top
+  if (layers.some((l) => !l.hidden && l.box[2] >= w * 0.9 && l.box[3] >= h * 0.9)) return 0;
   const cb = contentBox(layers, w, h);
   if (!cb) return 0;
   const gap = 14 / h;

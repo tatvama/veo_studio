@@ -105,9 +105,9 @@ export interface NumberFormat {
 export type GfxLayerKind =
   | "rect" | "text" | "image" | "logo" | "line" | "icon"            // core (render/kinds/basic.ts)
   | "ticker" | "clock"                                               // tickers (render/kinds/ticker.ts, clock.ts)
-  | "number" | "list" | "bars" | "table" | "pins"                    // boards (render/kinds/number.ts …)
+  | "number" | "list" | "bars" | "table" | "pins" | "stamp"          // boards (render/kinds/number.ts …, boards/stamp.ts)
   | "slot"                                                           // layouts (render/kinds/slot.ts)
-  | "shine" | "panels" | "bg"                                        // wipes (render/kinds/shine.ts, panels.ts, bg.ts)
+  | "shine" | "panels" | "bg" | "countdown"                          // wipes (render/kinds/shine.ts, panels.ts, bg.ts)
   | (string & {});
 
 export type AnimKind =
@@ -145,7 +145,8 @@ export interface GfxLayer {
    *  text: text, font, size, weight, color, align … */
   p: Record<string, unknown>;
   anim?: LayerAnim;
-  /** Shown only when this field has a value (text not empty, toggle on, image set): "{field}" or "!{field}" (when empty). */
+  /** Shown only when this field has a value (text not empty, toggle on, image set): "{field}" or "!{field}" (when empty);
+   *  or when it equals a value: "{field}=value" / "{field}!=value" (case-insensitive). */
   when?: string;
   /** For "Make vertical" and other ratios: which edges the layer keeps to. */
   pin?: { x?: "left" | "right" | "center" | "stretch"; y?: "top" | "bottom" | "center" | "stretch" };

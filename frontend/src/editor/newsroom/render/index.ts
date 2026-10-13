@@ -7,7 +7,7 @@
  * between animations, so the engine uploads a still graphic once; `bounds` limits the upload to what changed.
  */
 import { fmtClock, fmtDate, fmtNumber, zonedTimeToMs } from "../format.ts";
-import type { AnimDir, Box, GfxField, GfxImageRef, GfxLayer, GfxListItem, GfxRatio, GfxTemplate, GfxValue } from "../types.ts";
+import type { AnimDir, Box, GfxField, GfxImageRef, GfxLayer, GfxListItem, GfxRatio, GfxTemplate, GfxValue, Paint } from "../types.ts";
 import { clamp01, combine, easeFn, IDENTITY, isPartStep, loopPose, poseOf, stepProgress, type Pose } from "./anim.ts";
 import type { CoreRenderContext } from "./context.ts";
 import type { Ctx2D, DirtyRect, GfxRenderInput, LayerRenderContext } from "./contract.ts";
@@ -90,7 +90,7 @@ function makeContext(g: Ctx2D, input: GfxRenderInput, plan: Plan, t: number, dur
     seed: input.seed ?? 0, fps: input.fps || 25, clock, box: [0, 0, 0, 0], pixel: scale,
     value: (id) => plan.values[id] ?? null,
     text: (s, upper) => { const x = fillText(s ?? "", plan.values, fields, look, clock); return upper && look.upper ? x.toUpperCase() : x; },
-    paint: (p, fb) => paintFor(g, p, look, rc.box, fb),
+    paint: (p, fb) => paintFor(g, fieldPaint(p, plan.values), look, rc.box, fb),
     font: (name, size, weight, sample) => cssFont(name, look, size, weight, sample),
     image: (ref) => imageFor(urlOf(ref)),
     logo: () => imageFor(look.logo?.image || (look.logo?.mediaId ? input.images[look.logo.mediaId] : undefined)),
@@ -313,6 +313,13 @@ function layerBounds(s: LayerState, rc: CoreRenderContext): Box {
  * Draws the graphic at t (seconds into a clip `dur` long) into a W×H canvas, clearing it first; returns the canvas
  * rectangle that holds pixels (for partial uploads), null = nothing drawn.
  */
+/** A paint "{field}" (a colour field): the field's value, a colour or a look token; anything else unchanged. */
+function fieldPaint(p: Paint | undefined, values: Record<string, GfxValue>): Paint | undefined {
+  if (typeof p !== "string" || !/^\{[^}]+\}$/.test(p)) return p;
+  const v = values[p.slice(1, -1).trim()];
+  return typeof v === "string" && v ? v : undefined;
+}
+
 export function drawGraphic(g: Ctx2D, input: GfxRenderInput, W: number, H: number, t: number, dur: number): DirtyRect {
   watchFonts();
   g.save();

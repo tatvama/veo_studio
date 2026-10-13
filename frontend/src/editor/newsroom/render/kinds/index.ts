@@ -11,4 +11,5 @@ import "./slot.ts";
 import "./shine.ts";
 import "./panels.ts";
 import "./bg.ts";
+import "../../boards/stamp.ts";
 export { layerKind, layerKinds, registerLayerKind, defaultProps } from "../registry.ts";
