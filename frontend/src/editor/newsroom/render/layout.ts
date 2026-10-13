@@ -231,12 +231,33 @@ function roughText(l: GfxLayer, values: Record<string, GfxValue>): string {
   return s.replace(/\{([^}]+)\}/g, (_, id: string) => { const v = values[id]; return typeof v === "string" || typeof v === "number" ? String(v) : ""; });
 }
 
+/**
+ * The logo bug follows the look's bug settings: designed in the top right, its layers are mirrored to the look's corner,
+ * scaled about that corner and faded by its opacity. Other templates are unchanged.
+ */
+export function placeBug(t: Pick<GfxTemplate, "role" | "kind">, layers: GfxLayer[], look: Pick<ChannelLook, "bug">, w: number, h: number): GfxLayer[] {
+  if (t.role !== "bug" || t.kind !== "logo" || !look.bug) return layers;
+  const { corner, scale = 1, opacity = 1 } = look.bug;
+  const left = corner === "tl" || corner === "bl", bottom = corner === "bl" || corner === "br";
+  if (!left && !bottom && scale === 1 && opacity === 1) return layers;
+  return layers.map((l) => {
+    let [x, y, bw, bh] = l.box;
+    if (left) x = w - x - bw;
+    if (bottom) y = h - y - bh;
+    const nw = bw * scale, nh = bh * scale;
+    // scale about the box's outer corner (the one towards the frame corner)
+    const nx = left ? x : x + bw - nw, ny = bottom ? y + bh - nh : y;
+    const p = left && l.p.align === "right" ? { ...l.p, align: "left" } : l.p;
+    return { ...l, box: [nx, ny, nw, nh] as Box, p, opacity: (l.opacity ?? 1) * opacity };
+  });
+}
+
 export function planOf(input: GfxRenderInput, W: number, H: number, dur: number, fields?: GfxField[]): Plan {
   void fields;
   const t = input.template;
   const ds = designSpace(t, W, H, input.ratio);
   const values = valuesOf(t, input.values);
-  const layers = applyOverrides(ds.layers, input.overrides, ds.ratio).filter((l) => !l.hidden && shownBy(l.when, values));
+  const layers = placeBug(t, applyOverrides(ds.layers, input.overrides, ds.ratio), input.look, ds.w, ds.h).filter((l) => !l.hidden && shownBy(l.when, values));
   const plans: LayerPlan[] = layers.map((layer) => {
     const timing = layerTiming(t, layer, dur);
     const txt = layer.kind === "text" ? roughText(layer, values) : "";

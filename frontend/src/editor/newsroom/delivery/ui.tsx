@@ -269,8 +269,9 @@ export function Loop({ templates }: { templates: GfxTemplate[] }) {
   const plan = useMemo(() => {
     if (!template) return null;
     const { template: _t, ...gfx } = clip?.source.gfx ?? { template: "", values: {} };
-    return planLoop(template, gfx, { seconds, width: s.width, height: s.height, fps: s.fps, background: bg === "color" ? color : null, ...(frames ? { frames } : {}) });
-  }, [template, clip, seconds, s.width, s.height, s.fps, bg, color, frames]);
+    return planLoop(template, gfx, { seconds, width: s.width, height: s.height, fps: s.fps, background: bg === "color" ? color : null, ...(frames ? { frames } : {}),
+      look: resolveLook(p, clip?.source.gfx.look) });
+  }, [template, clip, seconds, s.width, s.height, s.fps, bg, color, frames, p]);
   const outCodec: Codec = bg === "color" ? "mp4" : codec === "mp4" ? "prores4444" : codec;
   const drawer = async () => {
     if (!plan) return null;

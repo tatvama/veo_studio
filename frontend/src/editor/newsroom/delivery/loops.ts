@@ -3,15 +3,19 @@
  * end to end without a jump. Graphics are a pure function of time (§16.3), so the frame after the last equals the
  * first when N is a whole number of every loop period in the design (blink, pulse, shine, float …; a background's
  * own period). The loop is cut after the in phase (so it starts fully shown) and well before any out phase.
- * A crawl's period depends on how long its text is drawn, so it can't be read from the template: `findSeamless`
- * finds the length where the picture repeats by drawing small frames (the panel passes the renderer in).
+ * A crawl's period depends on how long its text is drawn: with the look given (in the browser, where text can be
+ * measured), `crawlPeriods` reads it exactly (tickers/period.ts); otherwise `findSeamless` finds the length where the
+ * picture repeats by drawing small frames (the panel passes the renderer in).
  * Pure.
  */
 import { uid } from "../../model/ids.ts";
 import { fpsExact } from "../../model/time.ts";
 import type { Sequence } from "../../model/types.ts";
 import { blankSequence, placeColor, placeGraphic } from "./build.ts";
-import type { GfxInstance, GfxRatio, GfxTemplate } from "../types.ts";
+import { crawlPeriod } from "../render/kinds/ticker.ts";
+import { valuesOf } from "../render/layout.ts";
+import { DESIGN } from "../templates/kit.ts";
+import type { ChannelLook, GfxInstance, GfxRatio, GfxTemplate } from "../types.ts";
 
 /** Kinds whose picture moves in a way the template can't tell the period of. */
 const OPEN_KINDS: Record<string, string> = {
@@ -38,6 +42,19 @@ export function loopPeriods(t: GfxTemplate, ratio: GfxRatio = "16:9"): number[] 
 export function openReasons(t: GfxTemplate, ratio: GfxRatio = "16:9"): string[] {
   const d = t.designs[ratio] ?? t.designs["16:9"] ?? Object.values(t.designs)[0];
   return [...new Set((d?.layers ?? []).filter((l) => !l.hidden && OPEN_KINDS[l.kind]).map((l) => OPEN_KINDS[l.kind]))];
+}
+
+/**
+ * Each ticker's own cycle (seconds per pass; flips and stacks by their pages) when it can be measured, else null for
+ * that ticker. Tickers that don't move give no period.
+ */
+export function crawlPeriods(t: GfxTemplate, gfx: Omit<GfxInstance, "template">, look: ChannelLook, ratio: GfxRatio, fps: number): (number | null)[] {
+  const d = t.designs[ratio] ?? t.designs["16:9"] ?? Object.values(t.designs)[0];
+  const D = DESIGN[ratio];
+  const values = valuesOf(t, gfx.values ?? {});
+  return (d?.layers ?? []).filter((l) => !l.hidden && l.kind === "ticker").map((l) => {
+    try { return crawlPeriod(l, values, look, { designW: D.w, designH: D.h, fps }); } catch { return null; }
+  });
 }
 
 /**
@@ -135,10 +152,18 @@ export interface LoopPlan {
  * loop), else it's on transparency.
  */
 export function planLoop(t: GfxTemplate, gfx: Omit<GfxInstance, "template">, o: { seconds: number; width: number; height: number; fps: number;
-  background?: string | null; frames?: number; ratio?: GfxRatio }): LoopPlan {
+  background?: string | null; frames?: number; ratio?: GfxRatio; look?: ChannelLook }): LoopPlan {
   const ratio = o.ratio ?? (o.width >= o.height ? "16:9" : "9:16");
   const periods = loopPeriods(t, ratio);
-  const open = openReasons(t, ratio);
+  let open = openReasons(t, ratio);
+  // tickers whose cycle can be measured loop exactly: their periods join the rest
+  if (o.look && open.includes(OPEN_KINDS.ticker)) {
+    const per = crawlPeriods(t, gfx, o.look, ratio, o.fps);
+    if (per.every((x) => x !== null)) {
+      for (const x of per) if (x! > 0) periods.push(Math.round(x! * 1e6) / 1e6);
+      open = open.filter((r) => r !== OPEN_KINDS.ticker);
+    }
+  }
   const still = !periods.length && !open.length;
   // a crawl or a clock: its own motion can't be read from the design, so whole cycles of the rest promise nothing
   const cycle = open.length ? null : cycleFrames(periods, o.fps);
