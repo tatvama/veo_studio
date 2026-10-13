@@ -140,7 +140,8 @@ export function setProp(t: GfxTemplate, ratio: GfxRatio, scope: "this" | "all", 
   const old = layerOf(t, ratio, id)?.p[key];
   return updateLayer(t, scope === "all" ? "all" : ratio, id, (l, r) => {
     let v = value;
-    if (r !== ratio && proportional && typeof value === "number" && typeof old === "number" && typeof l.p[key] === "number" && old !== 0) {
+    // in proportion only between real sizes (−1 / 0 / null mean "follow the look" or "automatic": copied as they are)
+    if (r !== ratio && proportional && typeof value === "number" && typeof old === "number" && typeof l.p[key] === "number" && old > 0 && value > 0 && (l.p[key] as number) > 0) {
       v = Math.round((l.p[key] as number) * (value / old) * 100) / 100;
     }
     if (v === undefined) delete l.p[key]; else l.p[key] = clone(v);

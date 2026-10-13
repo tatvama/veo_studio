@@ -16,6 +16,7 @@ import { DESIGN } from "../templates/kit";
 import type { AnimEase, AnimStep, Box, GfxLayer, GfxRatio, GfxTemplate, LayerAnim, LoopSpec, Paint } from "../types";
 import { layerOf, ratiosOf, setBox, setCommon, setProp } from "./doc";
 import { safeBox } from "./geometry";
+import { sentinelOf } from "./sentinel";
 import { kindIcon } from "./LayersPanel";
 import { FontPicker, IconPicker, Num, PaintPicker, Pick, Row, Sec, Seg } from "./controls";
 import { CATEGORIES, ROLES } from "./validate";
@@ -191,12 +192,12 @@ function PropRow({ def, layer, t, look, onChange }: { def: PropDef; layer: GfxLa
     case "font":
       return <Row label={def.label} hint={def.hint}><FontPicker value={String(v ?? "@body")} onChange={onChange} /></Row>;
     case "number":
-      return <Row label={def.label} hint={def.hint}><Num value={typeof v === "number" ? v : Number(v) || 0} min={def.min} max={def.max} step={def.step ?? 1} unit={def.unit} onChange={(n) => onChange(n)} />
-        {def.hint && /follows the look|0 =|-1/.test(def.hint) && <span className="truncate text-2xs text-dim">{def.hint}</span>}</Row>;
+      return <NumberProp def={def} value={layer.p[def.key]} look={look} onChange={onChange} />;
     case "bool":
       return <Row label={def.label} hint={def.hint}><input type="checkbox" checked={!!v} onChange={(e) => onChange(e.target.checked)} /></Row>;
     case "choice": {
-      const opts = def.options ?? [];
+      // "look" always reads the same way: the value follows the channel look
+      const opts = (def.options ?? []).map((o) => (o.value === "look" ? { ...o, label: "Follow look" } : o));
       const short = opts.length <= 3 && opts.every((o) => o.label.length <= 9);
       return <Row label={def.label} hint={def.hint}>{short ? <Seg value={String(v)} options={opts} onChange={onChange} /> : <Pick value={String(v ?? "")} options={opts} onChange={onChange} className="min-w-0 flex-1" />}</Row>;
     }
@@ -218,6 +219,33 @@ function PropRow({ def, layer, t, look, onChange }: { def: PropDef; layer: GfxLa
     default:
       return null;
   }
+}
+
+/** A number with units; "Auto" / "Follow look" values show as a choice with a way back. */
+function NumberProp({ def, value, look, onChange }: { def: PropDef; value: unknown; look: ReturnType<typeof ds>["look"]; onChange: (v: unknown) => void }) {
+  const sent = sentinelOf(def);
+  const v = value === undefined ? def.default : value;
+  const num = (n: unknown) => (typeof n === "number" && Number.isFinite(n) ? n : Number(n) || 0);
+  if (!sent) {
+    return <Row label={def.label} hint={def.hint}><Num value={num(v)} min={def.min} max={def.max} step={def.step ?? 1} unit={def.unit} onChange={(n) => onChange(n)} /></Row>;
+  }
+  const usual = v === null || v === sent.value;
+  const step = def.step ?? 1;
+  const lo = sent.value !== null && def.min !== undefined && def.min <= sent.value ? sent.value + step : def.min;
+  /** A sensible custom value to start from. */
+  const start = () => {
+    if (def.key === "radius") return look?.radius ?? 8;
+    if (def.key === "weight") return look?.fonts.headline.weight ?? 700;
+    if (def.min !== undefined && def.max !== undefined && sent.value === null) return Math.round(((def.min + def.max) / 2) / step) * step;
+    return Math.max(lo ?? 0, sent.value === null ? 0 : sent.value + step);
+  };
+  return (
+    <Row label={def.label} hint={def.hint}>
+      <Seg value={usual ? "usual" : "custom"} onChange={(x) => onChange(x === "usual" ? sent.value : start())}
+        options={[{ value: "usual", label: sent.label }, { value: "custom", label: "Set" }]} />
+      {!usual && <Num value={num(v)} min={lo} max={def.max} step={step} unit={def.unit} onChange={(n) => onChange(n)} />}
+    </Row>
+  );
 }
 
 /** Text with {field} tokens: type it, or insert a field / the clock from the menu. Double-click a layer to come here. */

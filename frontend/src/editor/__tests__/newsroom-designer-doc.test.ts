@@ -54,6 +54,11 @@ test("properties: this ratio or both, numbers in proportion", () => {
   const t = setProp(base(), "16:9", "all", "name", "size", 104, true);
   assert.equal(t.designs["16:9"]!.layers[1].p.size, 104);
   assert.equal(t.designs["9:16"]!.layers[1].p.size, 120, "doubled in 9:16 too");
+  const r1 = setProp(base(), "16:9", "all", "plate", "radius", -1, true);
+  assert.equal(r1.designs["9:16"]!.layers[0].p.radius, -1, "follow-the-look values are copied, not scaled");
+  const r2 = setProp(r1, "16:9", "all", "plate", "radius", 12, true);
+  assert.equal(r2.designs["9:16"]!.layers[0].p.radius, 12, "from a sentinel to a size: copied");
+  assert.equal(setProp(base(), "16:9", "all", "plate", "cx", null).designs["9:16"]!.layers[0].p.cx, null, "null = automatic");
   const c = setProp(base(), "16:9", "all", "plate", "fill", "#112233");
   assert.equal(c.designs["9:16"]!.layers[0].p.fill, "#112233");
   const one = setProp(base(), "9:16", "this", "plate", "fill", "@secondary");
