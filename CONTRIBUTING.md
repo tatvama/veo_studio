@@ -135,7 +135,10 @@ Releases are automatic with [release-please](https://github.com/googleapis/relea
 1. After every merge to `main`, release-please updates a pull request called **`chore: release X.Y.Z`**. It contains
    the next version (from the commit types since the last release) and the new [CHANGELOG.md](CHANGELOG.md) section.
 2. Merge it when you want to release. That tags `vX.Y.Z`, creates the GitHub Release with the changelog, and
-   publishes the Docker image `ghcr.io/tatvama/veo_studio` with tags `X.Y.Z`, `X.Y`, `X` and `latest`.
+   publishes the Docker image `ghcr.io/tatvama/veo_studio` with tags `X.Y.Z`, `X.Y`, `X` and `latest`. The Windows
+   installer goes to the same release and to the public, releases-only repository [tatvama/tatvam-desktop-releases](https://github.com/tatvama/tatvam-desktop-releases), which installed desktop
+   apps update from. That step needs the `DESKTOP_RELEASES_TOKEN` secret: a fine-grained token for that repository
+   only, with Contents read and write.
 3. The version is written to `version.txt`, `backend/app/__init__.py` (shown by `GET /api/health/live`) and
    `frontend/package.json`. Don't edit these or the released sections of `CHANGELOG.md` by hand.
 

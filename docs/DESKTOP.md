@@ -317,7 +317,7 @@ three takes (`…_001_SC02_SH001…`, `…_002_SC01_SH002…`, `…_003_SC01_SH0
 | `main/smoke.ts` | `npm run smoke`: UI, sign-in, API, WebSocket, bridge, a pop-out and the machine check, one JSON status line |
 | `main/windows.ts` | The main window, pop-out panels, the display list, move to display, clean full-screen feed, workspaces, saved window state |
 | `main/menu.ts` | The application menu and its shortcuts |
-| `main/updater.ts` | `electron-updater` on GitHub Releases, used only when the app is packaged |
+| `main/updater.ts` | `electron-updater` on the GitHub Releases of the public, releases-only repository [tatvama/tatvam-desktop-releases](https://github.com/tatvama/tatvam-desktop-releases), used only when the app is packaged |
 | `main/log.ts` | A rolling log file in `userData/logs`, plus local crash dumps |
 | `main/uicache.ts` | **Screens from the server** (§4.3): manifest check, sha256-verified downloads, atomic build swap, offline copy |
 | `main/notify.ts`, `main/taskbar.ts`, `main/tray.ts`, `main/shell*.ts` | Native toasts and the notification centre, taskbar progress / overlay / thumbnail buttons / Jump List, the tray, appearance (Mica, accent, theme, scale), Start, Settings, onboarding, splash and crash recovery |
@@ -516,10 +516,19 @@ npm run dist       # Windows installer (NSIS) in desktop/release, with the built
   server… changes it. `TATVAM_UI_DIR` points at another built UI, `TATVAM_USER_DATA` at another settings folder.
 - The end-to-end test (`TATVAM_E2E=1`, see `desktop/test/e2e.test.ts`) syncs a cut, writes the EDL, renders it in 4K
   and uploads it to a running server.
-- CI runs the desktop typecheck and unit tests (job "Desktop app"). A release builds the Windows installer and
-  attaches it, with `latest.yml`, to the GitHub Release, which is where installed apps update from. Signing uses the
-  optional `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` secrets; without them the installer is unsigned and Windows
-  SmartScreen warns on first run.
+- CI runs the desktop typecheck and unit tests (job "Desktop app").
+- **Releases and updates.**
+  - A release builds the Windows installer and attaches it, with `latest.yml` and the blockmap, to this repository's
+    GitHub Release (an internal copy).
+  - It also publishes it to the **public, releases-only repository** [tatvama/tatvam-desktop-releases](https://github.com/tatvama/tatvam-desktop-releases), which holds no source code. Installed
+    apps update from there (`publish` in `desktop/electron-builder.yml`), so they need no token even when this
+    repository is private. `desktop/test/release-config.test.ts` checks that the feed and the workflow name the
+    same repository.
+- **One-time setup:** a fine-grained personal access token with access to that repository only (permission
+  **Contents: read and write**), saved as the Actions secret `DESKTOP_RELEASES_TOKEN`. Without it the release job
+  stops with a message saying so. After adding it, run the Release workflow with `publish_tag` = that tag.
+- **Signing** uses the optional `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` secrets; without them the installer is
+  unsigned and Windows SmartScreen warns on first run.
 
 ## 7. Status (13 October 2026)
 

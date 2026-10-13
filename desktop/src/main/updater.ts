@@ -1,5 +1,6 @@
 /**
- * Auto-update from GitHub Releases (electron-updater, provider settings from electron-builder.yml `publish`).
+ * Auto-update from the GitHub Releases of the public, releases-only repository tatvama/tatvam-desktop-releases
+ * (electron-updater; provider settings from electron-builder.yml `publish`), so no token is ever needed.
  * Only in the packaged app; in dev every call reports "disabled". The state carries the release notes when the updater
  * has them (the title bar pill, "What's new" and Settings → Updates show them); a failed check can be retried.
  */
