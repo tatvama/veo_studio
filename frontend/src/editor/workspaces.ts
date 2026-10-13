@@ -109,6 +109,8 @@ export function listWorkspaces(): { id: string; name: string; custom: boolean }[
   return [...BUILT_IN.map((w) => ({ id: w.id, name: w.name, custom: false })), ...s.custom.map((c) => ({ ...c, custom: true }))];
 }
 export const currentWorkspace = () => load().current;
+/** Makes a workspace the current one without an open editor (the next edit opens laid out in it). */
+export function setCurrentWorkspace(id: string) { const s = load(); store({ ...s, current: id }); }
 
 /** Lays a built-in workspace out from scratch (panels this build doesn't have are left out). */
 function build(api: DockviewApi, id: string, panels: PanelInfo[], editing: (api: DockviewApi) => void) {

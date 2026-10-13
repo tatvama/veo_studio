@@ -56,6 +56,9 @@ export const KEY_ACTIONS: KeyAction[] = [
   A("Timeline", "zoom.in", "Zoom in", "=", "Shift+="), A("Timeline", "zoom.out", "Zoom out", "-"), A("Timeline", "zoom.fit", "Zoom to sequence", "\\"),
   A("File", "save", "Save", "Ctrl+S"), A("File", "save.as", "Save as", "Ctrl+Shift+S"), A("File", "open", "Open edit", "Ctrl+O"), A("File", "new.edit", "New edit", "Ctrl+Alt+N"),
   A("File", "import", "Import media", "Ctrl+I"), A("File", "export", "Export", "Ctrl+M"),
+  A("News Room", "nr.strap", "Add a name strap at the playhead", "Alt+N"), A("News Room", "nr.ticker", "Add a ticker at the playhead", "Alt+T"),
+  A("News Room", "nr.breaking", "Add a breaking bar at the playhead", "Alt+B"), A("News Room", "nr.layout", "Add a screen layout at the playhead", "Alt+L"),
+  A("News Room", "nr.wipe", "Add a wipe at the nearest cut", "Alt+S"),
   A("Help", "shortcuts", "Keyboard shortcuts list", "Shift+/"), A("Help", "shortcut.editor", "Keyboard shortcut editor", "Ctrl+Alt+K"),
 ];
 

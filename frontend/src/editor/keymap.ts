@@ -74,6 +74,10 @@ type Run = (c: Ctx) => boolean | void;
 
 const tool = (t: Tool): Run => () => setTool(t);
 const RUN: Record<string, Run> = {
+  // News Room (docs/EDITOR.md §16.8): graphics in one key; the room's code loads on first use
+  "nr.strap": () => { void room().then((m) => m.quickAdd("strap")); }, "nr.ticker": () => { void room().then((m) => m.quickAdd("ticker")); },
+  "nr.breaking": () => { void room().then((m) => m.quickAdd("breaking")); }, "nr.layout": () => { void room().then((m) => m.quickAdd("layout")); },
+  "nr.wipe": () => { void room().then((m) => m.quickAdd("wipe")); },
   "tool.select": tool("select"), "tool.trackFwd": tool("trackFwd"), "tool.trackBack": tool("trackBack"), "tool.ripple": tool("ripple"), "tool.roll": tool("roll"),
   "tool.rate": tool("rate"), "tool.razor": tool("razor"), "tool.slip": tool("slip"), "tool.slide": tool("slide"), "tool.pen": tool("pen"), "tool.hand": tool("hand"),
   "tool.zoom": tool("zoom"), "tool.text": tool("text"),
@@ -136,26 +140,13 @@ export function handleKey(e: KeyboardEvent, h: KeyHandlers): boolean {
 // ── News Room quick keys (docs/EDITOR.md §16.8, additive) ────────────────────
 
 /**
- * Graphics in one key: Alt + a letter that no preset, browser or the desktop menu uses (the desktop menu takes Alt+F,
- * E, V, W and H), and the graphics playlist on F1–F12 (while the News Room workspace is open or the timeline or
- * program monitor has focus, and only for keys with a graphic on them, so the browser's own F-keys still work). Any
- * binding the user or a preset gives the same key wins. The room's code loads on first use.
+ * The News Room's quick keys (Alt + a letter no preset, browser or the desktop menu uses — the desktop menu takes
+ * Alt+F, E, V, W and H) are rebindable actions ("nr.*" in model/keybindings.ts). The graphics playlist sits on F1–F12
+ * outside the bindings: only while the News Room workspace is open or the timeline or program monitor has focus, and
+ * only for keys with a graphic on them, so the browser's own F-keys and any preset's F-keys still work.
  */
-export const NEWS_QUICK_KEYS: { key: string; kind: "strap" | "ticker" | "breaking" | "layout" | "wipe"; label: string }[] = [
-  { key: "Alt+N", kind: "strap", label: "Add a name strap at the playhead" },
-  { key: "Alt+T", kind: "ticker", label: "Add a ticker at the playhead" },
-  { key: "Alt+B", kind: "breaking", label: "Add a breaking bar at the playhead" },
-  { key: "Alt+L", kind: "layout", label: "Add a screen layout at the playhead" },
-  { key: "Alt+S", kind: "wipe", label: "Add a wipe at the nearest cut" },
-];
 const room = () => import("./newsroom/room/actions");
 function newsKey(name: string, e: KeyboardEvent): boolean {
-  const q = NEWS_QUICK_KEYS.find((k) => k.key === name);
-  if (q) {
-    e.preventDefault();
-    void room().then((m) => m.quickAdd(q.kind));
-    return true;
-  }
   if (/^F([1-9]|1[0-2])$/.test(name)) {
     const st = ed();
     if (st.focus !== "timeline" && st.focus !== "program" && currentWorkspace() !== "news") return false;
@@ -180,8 +171,7 @@ function rebuildList() {
   }
   const extra: [string, [string, string][]] = ["Mouse", [["Alt+wheel", "Zoom at the pointer"], ["Shift+wheel", "Scroll in time"], ["Drag with Ctrl", "Insert instead of overwrite"],
     ["Drag with Alt", "Duplicate (on an edge: trim one side only)"], ["Ctrl+Alt drag", "Rearrange"], ["Ctrl+edge drag", "Ripple trim"]]];
-  const news: [string, [string, string][]] = ["News Room", [...NEWS_QUICK_KEYS.filter((k) => !index.has(k.key)).map((k): [string, string] => [k.key, k.label]),
-    ["F1–F12", "Add that playlist graphic at the playhead (News Room)"]]];
-  SHORTCUTS.splice(0, SHORTCUTS.length, ...groups.entries(), news, extra);
+  groups.set("News Room", [...(groups.get("News Room") ?? []), ["F1–F12", "Add that playlist graphic at the playhead"]]);
+  SHORTCUTS.splice(0, SHORTCUTS.length, ...groups.entries(), extra);
 }
 rebuildList();
