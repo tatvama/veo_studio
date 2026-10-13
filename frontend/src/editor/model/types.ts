@@ -4,6 +4,8 @@
  * rate. Pure types: no runtime code, so Node's type stripping runs the model tests as written.
  */
 
+import type { GfxInstance, GfxRole, NewsroomDoc, SlotBinding } from "../newsroom/types.ts";
+
 export type Fps = 23.976 | 24 | 25 | 29.97 | 30 | 50 | 59.94 | 60;
 
 /** Keyframe / transition easing. The first four match the engine; "hold" keeps the value until the next keyframe.
@@ -23,6 +25,8 @@ export interface EditProject {
   studioProjectId?: number;
   /** Additive: .cube LUTs imported into this edit (bridge.editor.importLut); looks use them as "lut:<id>". */
   luts?: { id: string; name: string; path?: string; size?: number; /** runtime: its gateway URL, when the bridge fills it */ url?: string }[];
+  /** Additive (News Room, docs/EDITOR.md §16): looks, templates, rundown, people, data snapshots of a news edit. */
+  newsroom?: NewsroomDoc;
 }
 
 export interface Bin { id: string; name: string; parentId: string | null; color?: string }
@@ -85,6 +89,8 @@ export interface Track {
   role?: AudioRole;
   /** Additive (editor-audio, §11): audio effects on the track's sum, in order (keyframes in sequence frames). */
   effects?: EffectInstance[];
+  /** Additive (News Room, §16): a graphics track (Bug, Ticker, Straps, Boards, Wipes, Layout, Background). */
+  gfxRole?: GfxRole;
 }
 
 /** The Essential Sound tag of a clip or an audio track (docs/EDITOR.md §11.1). */
@@ -98,7 +104,9 @@ export type ClipSource =
   | { type: "nested"; sequenceId: string; in: number }
   /** Additive (editor-audio, §11.1): a generated sound on an audio track (no picture). Params as
    *  editor/audiofx/registry.ts GENERATORS (keyframeable Params; the desktop also takes bare values). */
-  | { type: "generate"; generator: "tone" | "noise" | "dtmf"; params: Record<string, Param<unknown>> };
+  | { type: "generate"; generator: "tone" | "noise" | "dtmf"; params: Record<string, Param<unknown>> }
+  /** Additive (News Room, §16): a broadcast graphic (template + filled-in values), drawn by editor/newsroom/render. */
+  | { type: "graphic"; gfx: GfxInstance };
 
 export interface Motion {
   /** Pixels in the sequence frame (centre = [width/2, height/2]). */
@@ -146,6 +154,8 @@ export interface TimelineClip {
   multicam?: { angle: number; audioAngle?: number };
   /** Additive (editor-audio, §11.1): the Essential Sound tag (wins over its track's role). */
   role?: AudioRole;
+  /** Additive (News Room, §16): shown in a box of the screen layout on screen (its motion and crop come from it). */
+  slot?: SlotBinding;
 }
 
 export interface Keyframe<T> {

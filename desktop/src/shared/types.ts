@@ -806,6 +806,8 @@ export interface TatvamDesktop {
   notifications: NotificationsBridge;
   /** additive (desktop-mcp): AI assistants over the local MCP server, auto edit and watch folders (docs/EDITOR.md §13) */
   assistants: AssistantsBridge;
+  /** additive (News Room, docs/EDITOR.md §16.9): look / template library, data fetch, graphics export */
+  newsroom: NewsroomBridge;
 }
 
 // ── local AI upscale (main/aiupscale.ts) ──
@@ -1389,4 +1391,57 @@ export const ASSISTANTS_IPC = {
   call: "tatvam:assistants.call",
   reply: "tatvam:assistants.reply",
   jobUpdate: "tatvam:assistants.jobUpdate",
+} as const;
+
+// ── News Room (docs/EDITOR.md §16.9; main/newsroom/**) ──
+
+export type NewsLibraryKind = "look" | "template";
+export interface NewsLibraryEntry { id: string; name: string; path: string; modified: string; bytes: number }
+export interface NewsFetchResult { ok: boolean; status: number; type: string; text: string; finalUrl: string; error?: string }
+export interface NewsExportOptions {
+  /** The saved edit (save first) and its sequence. */
+  editPath: string; sequenceId: string;
+  /** Sequence frames [in, out); default the whole sequence. */
+  range?: { in: number; out: number };
+  /** Transparent graphics: ProRes 4444, WebM VP9 with alpha, or a PNG sequence; "mp4" = an ordinary picture. */
+  codec: "prores4444" | "webm_alpha" | "png" | "mp4";
+  /** "graphics" = graphics tracks only on a transparent background; "all" = the whole picture. */
+  only: "graphics" | "all";
+  /** The other ratio of a both-ratio edit ("9:16"). */
+  ratio?: "16:9" | "9:16" | "1:1" | "4:5";
+  /** Language version ("hi"). */
+  lang?: string;
+  /** Output file or folder; none = <edit>\Exports\News\<name>. */
+  outPath?: string;
+  name?: string;
+}
+export interface NewsExportResult { path: string; frames: number; seconds: number }
+export interface NewsroomBridge {
+  /** The user's looks and templates in <library>\News\Looks | Templates (one JSON file each). */
+  libraryList(kind: NewsLibraryKind): Promise<NewsLibraryEntry[]>;
+  libraryRead(kind: NewsLibraryKind, id: string): Promise<string | null>;
+  libraryWrite(kind: NewsLibraryKind, id: string, json: string): Promise<{ path: string }>;
+  libraryDelete(kind: NewsLibraryKind, id: string): Promise<void>;
+  /** Save dialog for a .tatvamlook / .tatvamgfx file; null = cancelled. */
+  exportFile(kind: NewsLibraryKind, json: string, suggestedName: string): Promise<string | null>;
+  /** Open dialog for a .tatvamlook / .tatvamgfx file; null = cancelled. */
+  importFile(kind: NewsLibraryKind): Promise<{ name: string; json: string } | null>;
+  /** GET a web address (http/https only, at most 10 MB, 20 s) from the main process (no CORS): RSS, JSON, sheet CSV. */
+  fetchText(url: string): Promise<NewsFetchResult>;
+  /** Reads a local text file (CSV, JSON, XML, TXT); no path = an open dialog; null = cancelled. */
+  readTextFile(path?: string): Promise<{ path: string; name: string; text: string } | null>;
+  /** Renders news graphics (transparent or not, a ratio, a language) to a file. */
+  exportGraphics(o: NewsExportOptions): Promise<NewsExportResult | null>;
+}
+/** IPC channels of the News Room group (main/newsroom/ipc.ts). */
+export const NEWSROOM_IPC = {
+  libraryList: "tatvam:newsroom.libraryList",
+  libraryRead: "tatvam:newsroom.libraryRead",
+  libraryWrite: "tatvam:newsroom.libraryWrite",
+  libraryDelete: "tatvam:newsroom.libraryDelete",
+  exportFile: "tatvam:newsroom.exportFile",
+  importFile: "tatvam:newsroom.importFile",
+  fetchText: "tatvam:newsroom.fetchText",
+  readTextFile: "tatvam:newsroom.readTextFile",
+  exportGraphics: "tatvam:newsroom.exportGraphics",
 } as const;

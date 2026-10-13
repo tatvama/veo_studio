@@ -84,6 +84,24 @@ export const BUILT_IN: { id: string; name: string; build?: Builder }[] = [
       api.getPanel("text")?.api.setActive(); api.getPanel("controls")?.api.setActive();
     });
   } },
+  // News Room (docs/EDITOR.md §16): rundown and graphics on the left, the program monitor with the other ratio beside
+  // it, the Fill in form on the right, the timeline with its graphics tracks below
+  { id: "news", name: "News Room", build: (api, add) => {
+    add("nr-rundown");
+    for (const id of ["nr-graphics", "nr-playlist", "nr-people", "project"]) add(id, { referencePanel: "nr-rundown", direction: "within" }, true);
+    add("program", { referencePanel: "nr-rundown", direction: "right" });
+    add("nr-companion", { referencePanel: "program", direction: "right" });
+    add("nr-fill", { referencePanel: "nr-companion", direction: "right" });
+    for (const id of ["nr-look", "nr-data", "nr-qc", "nr-deliver", "controls"]) add(id, { referencePanel: "nr-fill", direction: "within" }, true);
+    add("timeline", { direction: "below" });
+    requestAnimationFrame(() => {
+      const W = window.innerWidth, H = window.innerHeight;
+      api.getPanel("nr-rundown")?.group.api.setSize({ width: Math.round(W * 0.22), height: Math.round(H * 0.6) });
+      api.getPanel("nr-companion")?.group.api.setSize({ width: Math.round(W * 0.16) });
+      api.getPanel("nr-fill")?.group.api.setSize({ width: Math.round(W * 0.22) });
+      api.getPanel("nr-graphics")?.api.setActive(); api.getPanel("nr-fill")?.api.setActive();
+    });
+  } },
 ];
 
 export function listWorkspaces(): { id: string; name: string; custom: boolean }[] {

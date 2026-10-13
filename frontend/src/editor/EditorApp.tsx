@@ -34,6 +34,7 @@ import { kbd, MenuHost, openMenu, type MenuItem } from "./ui";
 import { DesktopEditorHooks, DesktopStatusSlot } from "../desktop/editorHooks"; // desktop shell: palette, guard, drops, status (additive)
 import { AssistantBanner, AssistantExecutor, AutoEditDialog, openAutoEdit } from "../automation"; // desktop-mcp: AI assistants and auto edit (additive)
 import { startLutMigration } from "./moods/matchLuts";
+import { NewsroomOverlays } from "./newsroom/overlays"; // News Room full-window tools (docs/EDITOR.md §16)
 
 const Timeline = lazy(() => import("./timeline/Timeline"));
 const ProgramMonitor = lazy(() => import("./panels/ProgramMonitor"));
@@ -55,6 +56,17 @@ const ScopesPanel = lazy(() => import("./panels/Scopes"));
 const TemplatesPanel = lazy(() => import("./panels/Templates"));
 const TranscriptPanel = lazy(() => import("./panels/Transcript"));
 const CommentsPanel = lazy(() => import("./panels/Comments"));
+// News Room (docs/EDITOR.md §16)
+const NrGraphics = lazy(() => import("./newsroom/panels/GraphicsLibrary"));
+const NrFillIn = lazy(() => import("./newsroom/panels/FillIn"));
+const NrRundown = lazy(() => import("./newsroom/panels/Rundown"));
+const NrPeople = lazy(() => import("./newsroom/panels/People"));
+const NrPlaylist = lazy(() => import("./newsroom/panels/Playlist"));
+const NrCompanion = lazy(() => import("./newsroom/panels/CompanionMonitor"));
+const NrLook = lazy(() => import("./newsroom/panels/LookPanel"));
+const NrData = lazy(() => import("./newsroom/panels/DataPanel"));
+const NrQc = lazy(() => import("./newsroom/panels/GraphicsQC"));
+const NrDeliver = lazy(() => import("./newsroom/panels/Deliver"));
 const VersionsPanel = lazy(() => import("./panels/Versions"));
 const ExportFormatsDialog = lazy(() => import("./panels/ExportFormats").then((m) => ({ default: m.ExportFormatsDialog })));
 // wave 3 (editor-audio)
@@ -91,6 +103,16 @@ const PANELS: { id: string; title: string; focus: Focus; C: ComponentType }[] = 
   { id: "essential", title: "Essential Sound", focus: "other", C: EssentialSoundPanel },
   { id: "loudness", title: "Loudness", focus: "mixer", C: LoudnessPanel },
   { id: "spectrum", title: "Spectrum", focus: "mixer", C: SpectrumPanel },
+  { id: "nr-graphics", title: "Graphics", focus: "other", C: NrGraphics },
+  { id: "nr-fill", title: "Fill in", focus: "other", C: NrFillIn },
+  { id: "nr-rundown", title: "Rundown", focus: "other", C: NrRundown },
+  { id: "nr-people", title: "People", focus: "other", C: NrPeople },
+  { id: "nr-playlist", title: "Playlist", focus: "other", C: NrPlaylist },
+  { id: "nr-companion", title: "Other ratio", focus: "other", C: NrCompanion },
+  { id: "nr-look", title: "Channel look", focus: "other", C: NrLook },
+  { id: "nr-data", title: "Data", focus: "other", C: NrData },
+  { id: "nr-qc", title: "Graphics check", focus: "other", C: NrQc },
+  { id: "nr-deliver", title: "News delivery", focus: "other", C: NrDeliver },
 ];
 
 /** The AI panel from editor/ai (lazily, only when that module exists). */
@@ -368,6 +390,7 @@ export default function EditorApp() {
       <AssistantExecutor />
       <AssistantBanner />
       <AutoEditDialog />
+      <NewsroomOverlays />
       <EpisodePicker open={epOpen} busy={epBusy} onClose={() => setEpOpen(false)} onPick={async (pid, eid) => {
         setEpBusy(true);
         const ok = await importEpisode(pid, eid);

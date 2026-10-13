@@ -12,6 +12,7 @@ import { Config } from "./config.ts";
 import { openConnectionWindow, registerConnectIpc, type ConnectDeps } from "./connect.ts";
 import { EditorManager } from "./editor.ts";
 import { InteropManager, registerInteropIpc } from "./editor-interop.ts";
+import { registerNewsroomIpc } from "./newsroom/ipc.ts";
 import { editorDeepLink } from "./editor-model.ts";
 import { locateFfmpeg, machineCheck, probeHardware, type FfmpegInfo } from "./ffmpeg.ts";
 import { Gateway } from "./gateway.ts";
@@ -279,6 +280,8 @@ async function start(): Promise<void> {
   });
   registerInteropIpc(ipcMain, (url) => wm.isGatewayUrl(url), interop,
     { export: IPC.editorInteropExport, import: IPC.editorInteropImport, findApps: IPC.editorInteropFindApps, openIn: IPC.editorInteropOpenIn });
+  // News Room (docs/EDITOR.md §16.9): look / template library, data fetch, graphics export
+  registerNewsroomIpc(ipcMain, (url) => wm.isGatewayUrl(url), { libraryRoot: () => config.get().libraryRoot, parent: () => pickParent(), log });
 
   session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => {
     cb(wm.isGatewayUrl(wc.getURL()) && ["fullscreen", "clipboard-sanitized-write", "clipboard-read", "media", "notifications", "window-management",
