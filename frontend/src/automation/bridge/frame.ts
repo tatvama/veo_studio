@@ -7,6 +7,7 @@ import type { Engine } from "../../engine";
 import { buildComposition, engineModule, generatedSources, registerDesktopShaders } from "../../editor/engine";
 import type { EditProject, MediaItem } from "../../editor/model/types";
 import { ensureFont } from "../../editor/render/title";
+import { ensureGraphicAssets } from "../../editor/newsroom/render";
 
 let engine: { eng: Engine; w: number; h: number } | null = null;
 let idle: number | null = null;
@@ -39,6 +40,8 @@ export function renderProgramFrame(project: EditProject, sequenceId: string, sec
     idle = window.setTimeout(() => { engine?.eng.dispose(); engine = null; idle = null; }, 60_000);
     await Promise.all(seq.clips.filter((c) => c.source.type === "title").map((c) => ensureFont((c.source as { text: Parameters<typeof ensureFont>[0] }).text).catch(() => undefined)));
     const r = buildComposition(project, sequenceId, { urlFor: urls.urlFor, lutUrl: urls.lutUrl });
+    // News Room graphics: fonts and pictures in before the frame (as the export does)
+    await Promise.all(Object.values(r.generated).map((g) => (g.kind === "graphic" ? ensureGraphicAssets(g.input).catch(() => undefined) : undefined)));
     const eng = engine.eng;
     await eng.load(r.comp, { mode: "exact", sources: generatedSources(r.generated) });
     await eng.renderExact(Math.max(0, seconds));

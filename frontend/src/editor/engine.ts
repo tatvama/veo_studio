@@ -13,6 +13,7 @@ import type { Composition, CustomSource, EffectInfo, EffectParamDef, Engine, Tra
 import type { EditProject } from "./model/types";
 import { toComposition, toVideoComposition, type CompositionOptions, type CompositionResult, type GeneratedSource } from "./model/toComposition";
 import { drawTitle, ensureFont, isExtendedTitle, titleFrameKey } from "./render/title";
+import { drawGraphic, ensureGraphicAssets, graphicFrameKey } from "./newsroom/render";
 
 type EngineModule = typeof import("../engine");
 let modP: Promise<EngineModule> | null = null;
@@ -166,6 +167,7 @@ function makeGenerated(g: GeneratedSource): CustomSource {
     ctx.fillStyle = g.color; ctx.fillRect(0, 0, g.width, g.height);
     return { kind: "canvas", width: g.width, height: g.height, still: true, draw: () => c };
   }
+  if (g.kind === "graphic") return makeGraphic(g, c, ctx);
   // editor-looks: the engine asks version(t) first (no draw or upload while it's the same) and bounds(t) after a draw
   // (only the union with the last box is uploaded); a font that arrives late counts as a change
   let fonts = 0, last = "", vKey = "", vNum = 0;
@@ -179,6 +181,28 @@ function makeGenerated(g: GeneratedSource): CustomSource {
       // static between its animations (and karaoke words): draw once
       const key = keyAt(t);
       if (key !== last) { last = key; box = drawTitle(ctx, g.spec, g.width, g.height, t, g.duration); }
+      return c;
+    },
+    bounds: () => box,
+  };
+}
+
+/**
+ * Additive (News Room, docs/EDITOR.md §16.3): a broadcast graphic. Like titles: version(t) changes only when the
+ * graphic's frame key does (a still graphic is drawn and uploaded once), bounds(t) is what the last draw touched; fonts
+ * and pictures that arrive late change the key, so the preview redraws (the export awaits them first).
+ */
+function makeGraphic(g: Extract<GeneratedSource, { kind: "graphic" }>, c: HTMLCanvasElement, ctx: CanvasRenderingContext2D): CustomSource {
+  let last = "", vKey = "", vNum = 0;
+  let box: [number, number, number, number] | null = [0, 0, g.width, g.height];
+  void ensureGraphicAssets(g.input);
+  const keyAt = (t: number) => graphicFrameKey(g.input, g.width, g.height, t, g.duration);
+  return {
+    kind: "canvas", width: g.width, height: g.height,
+    version(t: number) { const k = keyAt(t); if (k !== vKey) { vKey = k; vNum++; } return vNum; },
+    draw(t: number) {
+      const key = keyAt(t);
+      if (key !== last) { last = key; box = drawGraphic(ctx, g.input, g.width, g.height, t, g.duration); }
       return c;
     },
     bounds: () => box,

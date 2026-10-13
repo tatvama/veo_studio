@@ -34,6 +34,8 @@ function opt(o: Obj, key: string, value: unknown) { if (value === undefined) del
 const KEY_EASES = ["linear", "ease_in", "ease_out", "ease_in_out", "hold", "bezier", "bounce", "elastic"];
 const ROLES = ["dialogue", "music", "sfx", "ambience"];
 const BLENDS = ["normal", "add", "multiply", "screen", "overlay", "lighten", "darken"];
+/** News Room (docs/EDITOR.md §16): graphics track roles. */
+const GFX_ROLES = ["background", "layout", "board", "strap", "ticker", "bug", "wipe"];
 
 function keyframe(k: Obj): Keyframe<unknown> {
   const x: Obj = { ...k, frame: Math.round(k.frame as number), value: k.value, ease: KEY_EASES.includes(k.ease as string) ? k.ease : "linear" };
@@ -98,6 +100,8 @@ function track(v: unknown, i: number): Track | null {
   // editor-audio: the track's Essential Sound role and its effects
   opt(t, "role", ROLES.includes(v.role as string) ? v.role : undefined);
   opt(t, "effects", Array.isArray(v.effects) ? effects(v.effects) : undefined);
+  // News Room: a graphics track
+  opt(t, "gfxRole", GFX_ROLES.includes(v.gfxRole as string) ? v.gfxRole : undefined);
   return t as unknown as Track;
 }
 
@@ -122,6 +126,15 @@ function source(s: Obj): ClipSource | null {
   if (s.type === "nested" && isStr(s.sequenceId)) return { ...s, type: "nested", sequenceId: s.sequenceId, in: num(s.in, 0) } as ClipSource;
   // editor-audio: a generated sound (tone, noise, DTMF …) with its params
   if (s.type === "generate" && isStr(s.generator)) return { ...s, type: "generate", generator: s.generator, params: params(s.params) } as ClipSource;
+  // News Room: a broadcast graphic (template id + values; the rest of the instance is kept as written)
+  if (s.type === "graphic" && isObj(s.gfx) && isStr(s.gfx.template)) {
+    const g: Obj = { ...s.gfx, template: s.gfx.template, values: isObj(s.gfx.values) ? { ...s.gfx.values } : {} };
+    opt(g, "look", isStr(s.gfx.look) ? s.gfx.look : undefined);
+    opt(g, "ratios", Array.isArray(s.gfx.ratios) ? (s.gfx.ratios as unknown[]).filter(isStr) : undefined);
+    for (const k of ["overrides", "bind", "langs"]) opt(g, k, isObj(s.gfx[k]) ? s.gfx[k] : undefined);
+    opt(g, "seed", isNum(s.gfx.seed) ? s.gfx.seed : undefined);
+    return { ...s, type: "graphic", gfx: g } as unknown as ClipSource;
+  }
   return null;
 }
 
@@ -161,7 +174,36 @@ function clip(v: unknown, seq: Sequence, warn: (s: string) => void): TimelineCli
   } else delete c.multicam;
   // editor-audio: the clip's Essential Sound role
   opt(c, "role", ROLES.includes(v.role as string) ? v.role : undefined);
+  // News Room: shown in a screen layout's box
+  if (isObj(v.slot) && isNum(v.slot.index)) {
+    const sl: Obj = { ...v.slot, index: Math.max(0, int(v.slot.index, 0)) };
+    opt(sl, "fit", v.slot.fit === "cover" || v.slot.fit === "contain" ? v.slot.fit : undefined);
+    opt(sl, "zoom", isNum(v.slot.zoom) ? v.slot.zoom : undefined);
+    opt(sl, "offset", isPair(v.slot.offset) ? v.slot.offset : undefined);
+    c.slot = sl;
+  } else delete c.slot;
   return c as unknown as TimelineClip;
+}
+
+/** News Room document (docs/EDITOR.md §16): the containers it relies on are checked; looks and templates are kept as
+ *  written (they are the edit's own copies), entries that aren't objects go. */
+function newsroom(v: Obj): NonNullable<EditProject["newsroom"]> {
+  const objs = (x: unknown) => Object.fromEntries(Object.entries(isObj(x) ? x : {}).filter(([, y]) => isObj(y)));
+  const list = (x: unknown) => arr(x).filter(isObj);
+  const set = isObj(v.settings) ? v.settings : {};
+  const n: Obj = {
+    ...v, version: 1, look: str(v.look, "look.classic_red"), looks: objs(v.looks), templates: objs(v.templates),
+    ratio: v.ratio === "9:16" || v.ratio === "both" ? v.ratio : "16:9",
+    rundown: list(v.rundown), people: list(v.people), places: list(v.places), sources: list(v.sources), data: objs(v.data),
+    settings: {
+      ...set, safeGuides: bool(set.safeGuides, true), collision: bool(set.collision, true), readSpeed: Math.max(0.5, num(set.readSpeed, 3)),
+      tickerSpeed: set.tickerSpeed === "slow" || set.tickerSpeed === "fast" ? set.tickerSpeed : "normal", aiLabel: bool(set.aiLabel, true),
+    },
+  };
+  opt(n, "airTime", isStr(v.airTime) ? v.airTime : undefined);
+  opt(n, "langs", Array.isArray(v.langs) ? (v.langs as unknown[]).filter(isStr) : undefined);
+  opt(n, "playlist", Array.isArray(v.playlist) ? list(v.playlist) : undefined);
+  return n as unknown as NonNullable<EditProject["newsroom"]>;
 }
 
 function transition(v: unknown): Transition | null {
@@ -262,6 +304,7 @@ export function parseProject(input: unknown): { project: EditProject; warnings: 
     return x as unknown as NonNullable<EditProject["luts"]>[number];
   });
   opt(o, "luts", luts.length ? luts : undefined);
+  opt(o, "newsroom", isObj(v.newsroom) ? newsroom(v.newsroom) : undefined);
   // clips pointing at media or sequences that aren't there
   const mids = new Set(project.media.map((m) => m.id)), sids = new Set(project.sequences.map((s) => s.id));
   const ctx = ctxOf(project);

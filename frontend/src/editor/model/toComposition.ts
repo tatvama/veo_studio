@@ -16,10 +16,16 @@ import { ease, valueAt } from "./params.ts";
 import { clipSpan, hasRamp, rampPieces } from "./remap.ts";
 import { fpsExact, framesToSeconds } from "./time.ts";
 import type { BlendMode, EditProject, Easing, Keyframe, MediaItem, Param, Sequence, TimelineClip, TitleSpec, Transition } from "./types.ts";
+import type { GfxRenderInput } from "../newsroom/render/contract.ts";
+import { ratioOf } from "../newsroom/render/layout.ts";
+import { renderInputFor } from "../newsroom/resolve.ts";
+import { slotMotion } from "../newsroom/slots.ts";
 
 export type GeneratedSource =
   | { kind: "title"; spec: TitleSpec; width: number; height: number; duration: number }
-  | { kind: "color"; color: string; width: number; height: number };
+  | { kind: "color"; color: string; width: number; height: number }
+  /** Additive (News Room, docs/EDITOR.md §16.3): a broadcast graphic drawn by editor/newsroom/render. */
+  | { kind: "graphic"; input: GfxRenderInput; width: number; height: number; duration: number };
 
 export interface CompositionOptions {
   /** URL of a media file (default: MediaItem.url). */
@@ -250,6 +256,36 @@ function mediaFor(c: TimelineClip, ctx: Ctx, seq: Sequence, opts: CompositionOpt
   return null;
 }
 
+// ── News Room (docs/EDITOR.md §16.3, §16.6) ──────────────────────────────────
+
+/**
+ * A graphic clip as a generated picture at `gen:gfx:<path><clipId>` (W×H, the clip's length); null when its template
+ * is missing or its `ratios` leave this frame's ratio out.
+ */
+function graphicMedia(project: EditProject, seq: Sequence, c: TimelineClip, opts: CompositionOptions, gen: Record<string, GeneratedSource>,
+  url: string, W: number, H: number, warn: (s: string) => void): { media: EClip["media"]; in: number } | null {
+  if (c.source.type !== "graphic") return null;
+  const ratios = c.source.gfx.ratios;
+  if (ratios?.length && !ratios.includes(ratioOf(W, H))) return null;
+  const input = renderInputFor(project, seq, c, { urlFor: opts.urlFor, width: W, height: H });
+  if (!input) { warn(`"${c.name}": its graphic template isn't in this edit`); return null; }
+  const duration = framesToSeconds(c.duration, seq.fps);
+  gen[url] = { kind: "graphic", input, width: W, height: H, duration };
+  return { media: { url, kind: "video", width: W, height: H, duration }, in: 0 };
+}
+
+/** A clip in a screen layout's box (`slot`): its motion and a crop effect come from the layout on screen (slotMotion). */
+export function slotted(project: EditProject, seq: Sequence, c: TimelineClip, ctx: Ctx, place: typeof slotMotion = slotMotion): TimelineClip {
+  if (!c.slot || !project.newsroom) return c;
+  const m = c.source.type === "media" ? ctx.media(c.source.mediaId) : undefined;
+  const pic = m && m.width > 0 && m.height > 0 ? { w: m.width, h: m.height } : { w: seq.width, h: seq.height };
+  const pl = place(project, seq, c, seq.width, seq.height, pic);
+  if (!pl) return c;
+  const crop = { id: `${c.id}~slotcrop`, type: "crop", enabled: true, params: { left: pl.crop.left, right: pl.crop.right, top: pl.crop.top, bottom: pl.crop.bottom } as Record<string, Param<unknown>> };
+  return { ...c, motion: { ...c.motion, position: pl.position, scale: pl.scale, anchor: pl.anchor ?? { value: [pic.w / 2, pic.h / 2] }, rotation: { value: 0 } },
+    effects: [...c.effects.filter((e) => e.type !== "crop"), crop] };
+}
+
 /** Transitions of one track by clip id: {in: the one ending at the clip's start, out: at its end}. */
 function transitionsByClip(seq: Sequence, trackId: string) {
   const into = new Map<string, Transition>(), outOf = new Map<string, Transition>();
@@ -304,8 +340,10 @@ export function toComposition(project: EditProject, sequenceId: string, opts: Co
     const main: EClip[] = [];
     const layers = new Map<BlendMode, EClip[]>();
     for (const v of vt.clips) {
-      const c = v.clip;
-      const md = mediaFor(c, v.ctx, v.seq, opts, gen, root, warn);
+      const c = slotted(project, v.seq, v.clip, v.ctx);
+      const md = c.source.type === "graphic"
+        ? graphicMedia(project, v.seq, c, opts, gen, `gen:gfx:${v.seq.id === root.id ? "" : `${v.seq.id}/`}${c.id}`, root.width, root.height, warn)
+        : mediaFor(c, v.ctx, v.seq, opts, gen, root, warn);
       if (!md) continue;
       const { fx, move, kenburns } = effectsToFx(c, warn);
       if (fx.look && fx.look !== "none") looks.add(fx.look);
@@ -665,15 +703,17 @@ export function toVideoComposition(project: EditProject, sequenceId: string, opt
   const warnings: string[] = [];
   const warn = (s: string) => { if (!warnings.includes(s)) warnings.push(s); };
   const looks = new Set<string>();
-  const build = (seq: Sequence, depth: number): Composition => {
+  const gen: Record<string, GeneratedSource> = {};
+  const build = (seq: Sequence, depth: number, path = ""): Composition => {
     const sec = (f: number) => framesToSeconds(f, seq.fps);
     const param = <T>(p: Param<T>): EParam => engineParam(p, seq.fps);
     /** A reversed ramp's last piece (transitions out of the clip leave from it). */
     const lastPiece = new Map<string, string>();
     const tracks: ETrack[] = tracksOf(seq, "video").map((t) => {
       const clips: EClip[] = [];
-      for (const c of seq.clips) {
-        if (c.trackId !== t.id || !c.enabled) continue;
+      for (const c0 of seq.clips) {
+        if (c0.trackId !== t.id || !c0.enabled) continue;
+        const c = slotted(project, seq, c0, ctx);
         const legacy = effectsToFx({ ...c, effects: c.effects.filter((e) => LEGACY_FX.has(e.type)) }, warn);
         if (legacy.fx.look && legacy.fx.look !== "none") looks.add(legacy.fx.look);
         for (const e of c.effects) if (e.type === "look" && e.enabled && typeof e.params.look?.value === "string" && e.params.look.value !== "none") looks.add(e.params.look.value);
@@ -700,13 +740,17 @@ export function toVideoComposition(project: EditProject, sequenceId: string, opt
             clips.push(...ps);
             continue;
           }
+        } else if (s.type === "graphic") {
+          const md = graphicMedia(project, seq, c, opts, gen, `gen:gfx:${path}${c.id}`, seq.width, seq.height, warn);
+          if (!md) continue;
+          ec.media = md.media; ec.in = 0;
         } else if (s.type === "title") { ec.type = "title"; ec.title = { ...s.text } as EClip["title"]; }
         else if (s.type === "color") { ec.type = "color"; ec.color = s.color; }
         else if (s.type === "adjustment") ec.type = "adjustment";
         else if (s.type === "nested") {
           const ns = ctx.sequence(s.sequenceId);
           if (!ns || depth > 4 || ns.id === seq.id) { warn(`Nested sequence of "${c.name}" is missing`); continue; }
-          ec.type = "nested"; ec.comp = build(ns, depth + 1); ec.in = framesToSeconds(s.in, ns.fps);
+          ec.type = "nested"; ec.comp = build(ns, depth + 1, `${path}${c.id}/`); ec.in = framesToSeconds(s.in, ns.fps);
           // a multicam clip shows one angle: its video track of the multicam sequence
           if (c.multicam && ns.multicam) {
             const a = c.multicam.angle;
@@ -744,5 +788,5 @@ export function toVideoComposition(project: EditProject, sequenceId: string, opt
   comp.warnings = warnings;
   if (opts.pixelScale) comp.pixelScale = opts.pixelScale;
   if (opts.lutUrl && looks.size) { comp.lutUrls = {}; for (const l of looks) { const u = opts.lutUrl(l); if (u) comp.lutUrls[l] = u; } }
-  return { comp, generated: {}, warnings };
+  return { comp, generated: gen, warnings };
 }
