@@ -266,11 +266,16 @@ export async function readTextFile(d: NewsroomDeps, p?: string, o: { pick?(): Pr
     file = (await (o.pick ? o.pick() : pickFile(d))) ?? undefined;
     if (!file) return null;
   } else if (!path.isAbsolute(file) || !isDataFile(file)) throw new Error("Only CSV, TSV, JSON, XML, RSS or TXT files can be read");
-  let st;
-  try { st = await fsp.stat(file); } catch { throw new Error(`The file ${path.basename(file)} wasn't found. It may have been moved or renamed.`); }
-  if (!st.isFile()) throw new Error(`${path.basename(file)} isn't a file`);
-  if (st.size > max) throw new Error(`${path.basename(file)} is larger than ${max / 1048576} MB`);
-  const buf = await fsp.readFile(file);
+  // checked and read through one handle, so the file can't change in between
+  let fh;
+  try { fh = await fsp.open(file, "r"); } catch { throw new Error(`The file ${path.basename(file)} wasn't found. It may have been moved or renamed.`); }
+  let buf: Buffer;
+  try {
+    const st = await fh.stat();
+    if (!st.isFile()) throw new Error(`${path.basename(file)} isn't a file`);
+    if (st.size > max) throw new Error(`${path.basename(file)} is larger than ${max / 1048576} MB`);
+    buf = await fh.readFile();
+  } finally { await fh.close(); }
   if (buf.length > max) throw new Error(`${path.basename(file)} is larger than ${max / 1048576} MB`);
   d.log?.(`newsroom: read ${path.basename(file)} (${buf.length} bytes)`);
   return { path: file, name: path.basename(file), text: decodeText(buf) };
