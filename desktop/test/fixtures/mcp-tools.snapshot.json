@@ -581,7 +581,7 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 80,
-          "description": "Effect id"
+          "description": "Effect id, or preset:<id> (an audio chain preset)"
         },
         "params": {
           "description": "Parameter values by name (numbers, text, booleans, [r,g,b])",
@@ -673,7 +673,8 @@
         "mood": {
           "type": "string",
           "minLength": 1,
-          "maxLength": 60
+          "maxLength": 60,
+          "description": "A mood id or a look-pack look id"
         },
         "clip_ids": {
           "description": "Default: every video clip",
@@ -1095,6 +1096,16 @@
           "type": "string",
           "maxLength": 120
         },
+        "sfx": {
+          "description": "Add sound effects at this intensity (auto_sfx) in the same undo step (default none)",
+          "type": "string",
+          "enum": [
+            "none",
+            "subtle",
+            "normal",
+            "punchy"
+          ]
+        },
         "dry_run": {
           "description": "Only return the plan",
           "type": "boolean"
@@ -1102,6 +1113,126 @@
       },
       "required": [
         "style"
+      ],
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "auto_sfx",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "intensity": {
+          "description": "Levels −24 / −18 / −12 dB and the variants (default normal)",
+          "type": "string",
+          "enum": [
+            "subtle",
+            "normal",
+            "punchy"
+          ]
+        },
+        "rules": {
+          "description": "Only these rules (default every rule but beats)",
+          "maxItems": 11,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "transitions",
+              "stingers",
+              "titles",
+              "stickers",
+              "countdowns",
+              "punch_ins",
+              "speed_ramps",
+              "freeze_frames",
+              "shake",
+              "glitch",
+              "beats"
+            ]
+          }
+        },
+        "range": {
+          "description": "all (default), the in/out marks, or { start, end } in seconds",
+          "anyOf": [
+            {
+              "type": "string",
+              "enum": [
+                "all",
+                "inout"
+              ]
+            },
+            {
+              "type": "object",
+              "properties": {
+                "start": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 86400,
+                  "description": "From"
+                },
+                "end": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 86400,
+                  "description": "To"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ]
+            }
+          ]
+        },
+        "dry_run": {
+          "description": "Only return the plan (time, sound, why) without changing anything",
+          "type": "boolean"
+        }
+      },
+      "$schema": "http://json-schema.org/draft-07/schema#"
+    }
+  },
+  {
+    "name": "add_sfx",
+    "readOnly": false,
+    "input": {
+      "type": "object",
+      "properties": {
+        "preset": {
+          "description": "A sound id from list_catalog(sfx), e.g. whoosh.air_soft",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "tag": {
+          "description": "Or a tag: the first matching sound (another with seed)",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "at": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 86400,
+          "description": "Where it starts on the timeline"
+        },
+        "gain_db": {
+          "description": "Clip gain in dB (default 0: the sound's own −16 LUFS)",
+          "type": "number",
+          "minimum": -60,
+          "maximum": 12
+        },
+        "seed": {
+          "description": "A variation of the sound (default 1)",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        }
+      },
+      "required": [
+        "at"
       ],
       "$schema": "http://json-schema.org/draft-07/schema#"
     }
@@ -1119,6 +1250,9 @@
             "effects",
             "audio_effects",
             "moods",
+            "looks",
+            "audio_presets",
+            "sfx",
             "title_templates"
           ]
         },

@@ -148,6 +148,7 @@ export default function ProjectPanel() {
           { label: "Title", shortcut: "T", onClick: () => A.newTitle() },
           { label: "Colour matte", onClick: () => A.newMatte("color") },
           { label: "Adjustment layer", onClick: () => A.newMatte("adjustment") },
+          { label: "Sound effects…", onClick: () => window.dispatchEvent(new CustomEvent("ed:panel", { detail: "sfx" })) },
           { label: "Auto edit…", separator: true, onClick: () => openAutoEdit() },
         ])}><Plus className="size-3.5" /></IBtn>
         <SearchField ref={searchRef} value={q} onChange={setQ} placeholder="Search" className="mx-1 min-w-0 flex-1 [&_input]:h-6 [&_input]:text-xs" />

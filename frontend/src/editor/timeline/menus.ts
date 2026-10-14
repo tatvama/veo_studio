@@ -8,6 +8,7 @@ import { LABEL_COLORS } from "../model/defaults";
 import { gapAt, isAudioTransition, kindOf, removeTransitions, rippleDeleteGap, updateTransition, withLinked } from "../model/ops";
 import type { TimelineClip } from "../model/types";
 import { makeHost } from "../host";
+import { openAutoSfx } from "../autosfx"; // auto-sfx (additive)
 import * as M from "../motionActions";
 import { switchAngle } from "../model/multicam";
 import { RAMP_PRESETS } from "../model/remap";
@@ -46,6 +47,7 @@ export function clipMenu(c: TimelineClip): MenuItem[] {
       { label: "Frame hold: the whole clip on the playhead's frame", onClick: () => M.holdFrameAt() },
     ] } as MenuItem] : []),
     { label: `Add default ${kind === "video" ? "transitions" : "crossfades"}`, shortcut: kind === "video" ? "Ctrl+D" : "Ctrl+Shift+D", onClick: () => A.defaultTransitions(kind) },
+    { label: "Auto SFX…", hint: "Sound effects where the edit calls for them", onClick: () => openAutoSfx() },
     { label: "Nest into a compound clip…", shortcut: "Ctrl+Shift+N", onClick: () => M.nestNamed() },
     ...(c.source.type === "nested" && !c.multicam ? [{ label: "Un-nest (break apart)", onClick: () => M.unnest(c.id) } as MenuItem] : []),
     ...(ids.filter((id) => s.clips.find((x) => x.id === id)?.source.type === "media").length >= 2 ? [{ label: "Make multicam clip", items: [
@@ -108,6 +110,7 @@ export function gapMenu(trackId: string, frame: number): MenuItem[] {
     { label: "Paste", shortcut: "Ctrl+V", disabled: !ed().clipboard, onClick: () => A.paste("overwrite") },
     { label: "Paste insert", shortcut: "Ctrl+Shift+V", disabled: !ed().clipboard, onClick: () => A.paste("insert") },
     { label: "Add marker", shortcut: "M", separator: true, onClick: () => A.addSeqMarker(frame) },
+    { label: "Auto SFX…", separator: true, onClick: () => openAutoSfx() },
   ];
 }
 

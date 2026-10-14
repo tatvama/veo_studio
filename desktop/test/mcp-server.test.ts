@@ -225,6 +225,37 @@ test("exports: only edits in the library, into their Renders folder; render_stat
   } finally { await c.close(); link.detach(8); }
 });
 
+test("§15 tools: add_sfx (edit scope) and list_catalog's looks, audio_presets and sfx go to the editor window", async () => {
+  const t = tokens.create("SFX", ["read", "edit"]), ro = tokens.create("SFX read", ["read"]);
+  const c = await connect(t.token);
+  try {
+    const none = await c.callTool({ name: "add_sfx", arguments: { at: 1 } });
+    assert.equal(none.isError, true);
+    assert.match(textOf(none), /preset .*or tag/, "a preset or a tag, before the window is asked");
+    const ok = await c.callTool({ name: "add_sfx", arguments: { tag: "whoosh", at: 2.5, gain_db: -6, seed: 3 } });
+    assert.equal(ok.isError, undefined, textOf(ok));
+    const last = calls[calls.length - 1];
+    assert.deepEqual([last.tool, last.label, last.args.tag, last.args.at, last.args.gain_db, last.args.seed], ["add_sfx", "Assistant: add_sfx", "whoosh", 2.5, -6, 3]);
+    const loud = await c.callTool({ name: "add_sfx", arguments: { preset: "impact.boom_deep", at: 0, gain_db: 30 } });
+    assert.equal(loud.isError, true, "gain_db is capped at +12 dB");
+    for (const kind of ["looks", "audio_presets", "sfx"]) {
+      const r = await c.callTool({ name: "list_catalog", arguments: { kind, search: "x" } });
+      assert.equal(r.isError, undefined, kind);
+      assert.deepEqual([calls[calls.length - 1].tool, calls[calls.length - 1].args.kind], ["list_catalog", kind]);
+    }
+    assert.equal((await c.callTool({ name: "list_catalog", arguments: { kind: "sounds" } })).isError, true);
+    const fx = await c.callTool({ name: "add_effect", arguments: { clip_ids: ["a1"], effect: "preset:youtube_voice" } });
+    assert.equal(fx.isError, undefined);
+    assert.equal(calls[calls.length - 1].args.effect, "preset:youtube_voice", "a chain preset id passes through");
+    const look = await c.callTool({ name: "apply_mood", arguments: { mood: "cinematic.teal_orange" } });
+    assert.equal(look.isError, undefined);
+  } finally { await c.close(); }
+  const r = await connect(ro.token);
+  try {
+    assert.match(textOf(await r.callTool({ name: "add_sfx", arguments: { preset: "whoosh.fast", at: 0 } })), /lacks the "edit"/);
+  } finally { await r.close(); }
+});
+
 test("pause holds tool calls until resume; stop ends the session and refuses a new one for a while", async () => {
   const c = await connect(full.token);
   server.setPaused(true);

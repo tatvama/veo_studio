@@ -29,6 +29,9 @@ export interface AutoEditOptions {
   folder?: string;
   /** frame rate of the new sequence (default the edit's active one, else 25) */
   fps?: number;
+  /** Additive (auto-sfx, docs/EDITOR.md §15.2): "Add sound effects" at this intensity once the sequence is built
+   *  (editor/autosfx), or "none" (the default) */
+  sfx?: "none" | "subtle" | "normal" | "punchy";
 }
 
 /** A media item as the planner sees it (seconds). */
@@ -104,4 +107,6 @@ export interface Plan {
   /** what happens after (and isn't free): AI music to approve … */
   proposals: string[];
   summary: PlanSummary;
+  /** Additive (auto-sfx): add sound effects at this intensity after building (editor/autosfx); unset = none */
+  sfx?: "subtle" | "normal" | "punchy";
 }

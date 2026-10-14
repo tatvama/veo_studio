@@ -1,16 +1,14 @@
 /**
  * The looks tools' side of the GPU engine (docs/EDITOR.md §10 shared interfaces), through editor/engine.ts's module:
- * - frames of the user's own media at a time (grabFrame: the demo's procedural sources, stills, or a <video> seek),
- * - those frames through any effect chain (renderLook: a small offscreen engine, one composition per look, cached) —
- *   the Moods and LUT browser thumbnails,
+ * - frames of the user's own media at a time (grabFrame: the demo's procedural sources, stills, or a <video> seek; a
+ *   frame that fails or comes back blank is never kept, it is read again after a backoff: preview/frames.ts),
  * - analyzeColor / matchColor / trackFaces / computeScopes when engine-pack's build has them, else the CPU fallbacks in
  *   moods/scopes.ts (grey-world white balance, a mean / spread match as colour wheels) or nothing (reframe centres).
  * Everything is feature-detected, so the panels work with this engine build and get better with the next.
  */
-import type { Composition, CustomSource, Engine } from "../../engine";
 import { customSource } from "../demoSources";
 import { engineModule } from "../engine";
-import type { EffectInstance } from "../model/types";
+import { userFrame } from "../preview/frames";
 import { frameStats, greyWorldWb, matchWheels, type RgbaFrame } from "./scopes";
 import type { FaceSample } from "../templates/formats";
 
@@ -32,120 +30,20 @@ export function lookCaps(): Promise<LookCaps> {
 
 // ── frames of the user's media ───────────────────────────────────────────────
 
-const frames = new Map<string, Promise<HTMLCanvasElement | null>>();
-const isImageUrl = (u: string) => /\.(png|jpe?g|webp|gif|bmp|tiff?|avif)(\?|$)/i.test(u);
-
-function toCanvas(src: CanvasImageSource, w0: number, h0: number, maxW: number): HTMLCanvasElement {
-  const k = Math.min(1, maxW / Math.max(1, w0));
-  const c = document.createElement("canvas");
-  c.width = Math.max(2, Math.round(w0 * k)); c.height = Math.max(2, Math.round(h0 * k));
-  c.getContext("2d")!.drawImage(src, 0, 0, c.width, c.height);
-  return c;
-}
-
-function seekVideo(url: string, t: number, maxW: number): Promise<HTMLCanvasElement | null> {
-  return new Promise((resolve) => {
-    const v = document.createElement("video");
-    v.muted = true; v.preload = "auto"; v.playsInline = true; v.crossOrigin = "anonymous";
-    let done = false;
-    const finish = (c: HTMLCanvasElement | null) => { if (done) return; done = true; window.clearTimeout(timer); v.removeAttribute("src"); v.load(); resolve(c); };
-    const timer = window.setTimeout(() => finish(null), 8000);
-    v.onerror = () => finish(null);
-    v.onloadedmetadata = () => { v.currentTime = Math.max(0, Math.min(Math.max(0, (v.duration || 0) - 0.05), t)); };
-    v.onseeked = () => {
-      try { finish(v.videoWidth ? toCanvas(v, v.videoWidth, v.videoHeight, maxW) : null); } catch { finish(null); }
-    };
-    v.src = url;
-  });
-}
-
 /**
- * The picture of a media URL at `t` seconds (at most maxW wide), cached: the demo's procedural clips draw directly,
- * stills decode, videos seek a muted <video>. Null when it can't be read (offline, a codec the browser lacks).
+ * The picture of a media URL at `t` seconds (at most maxW wide): the demo's procedural clips draw directly, stills
+ * decode, videos seek a muted <video>. Null when it can't be read (offline, a codec the browser lacks, a seek that never
+ * lands) or comes back blank (a video read before its first picture): those are never cached, the next request tries
+ * again after a backoff (1 s, 3 s, 9 s, then every 30 s). The same grabber as the preview cards' (preview/frames.ts).
  */
 export function grabFrame(url: string, t: number, opts: { maxW?: number; image?: boolean } = {}): Promise<HTMLCanvasElement | null> {
-  const maxW = opts.maxW ?? 320;
-  const key = `${url}@${t.toFixed(2)}@${maxW}`;
-  let p = frames.get(key);
-  if (!p) {
-    p = (async () => {
-      const cus: CustomSource | undefined = customSource(url);
-      if (cus) return toCanvas(cus.draw(t) as CanvasImageSource, cus.width, cus.height, maxW);
-      if (opts.image || isImageUrl(url)) {
-        const img = new Image();
-        img.crossOrigin = "anonymous";
-        img.src = url;
-        await img.decode();
-        return toCanvas(img, img.naturalWidth, img.naturalHeight, maxW);
-      }
-      return seekVideo(url, t, maxW);
-    })().catch(() => null);
-    frames.set(key, p);
-    if (frames.size > 48) frames.delete(frames.keys().next().value as string);
-  }
-  return p;
+  return userFrame(url, t, { maxW: opts.maxW ?? 320, image: opts.image });
 }
 
 /** A canvas's pixels as an RGBA frame. */
 export function canvasFrame(c: HTMLCanvasElement): RgbaFrame {
   const d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height);
   return { data: d.data, width: c.width, height: c.height };
-}
-
-// ── a frame through an effect chain ─────────────────────────────────────────
-
-let lookEngine: Promise<Engine> | null = null;
-let queue: Promise<unknown> = Promise.resolve();
-const looks = new Map<string, Promise<ImageBitmap | null>>();
-const srcIds = new WeakMap<HTMLCanvasElement, string>();
-let srcN = 0;
-let lastSrc: { canvas: HTMLCanvasElement; source: CustomSource } | null = null;
-
-const plainEffects = (effects: Pick<EffectInstance, "type" | "params" | "enabled">[]) => effects.map((e, i) => ({
-  id: `e${i}`, type: e.type, enabled: e.enabled !== false,
-  params: Object.fromEntries(Object.entries(e.params).map(([k, p]) => [k, { value: (p as { value: unknown }).value }])),
-}));
-
-/**
- * `frame` drawn through `effects` (registry ids and params, as on a clip) at the frame's size, as an ImageBitmap.
- * One look at a time on a shared offscreen engine; results are cached by frame and chain.
- */
-export function renderLook(frame: HTMLCanvasElement, effects: Pick<EffectInstance, "type" | "params" | "enabled">[], opts: { lutUrl?(look: string): string | undefined } = {}): Promise<ImageBitmap | null> {
-  let fid = srcIds.get(frame);
-  if (!fid) { fid = `f${++srcN}`; srcIds.set(frame, fid); }
-  const chain = plainEffects(effects);
-  const key = `${fid}|${frame.width}x${frame.height}|${JSON.stringify(chain)}`;
-  let p = looks.get(key);
-  if (p) return p;
-  p = (queue = queue.then(async () => {
-    const m = await mod();
-    lookEngine ??= m.createEngine({ width: frame.width, height: frame.height });
-    const eng = await lookEngine;
-    if (eng.width !== frame.width || eng.height !== frame.height) eng.resize(frame.width, frame.height);
-    if (lastSrc?.canvas !== frame) lastSrc = { canvas: frame, source: { kind: "canvas", width: frame.width, height: frame.height, still: true, draw: () => frame } };
-    const url = `looks:${fid}`;
-    const W = frame.width, H = frame.height;
-    const lutUrls: Record<string, string> = {};
-    for (const e of chain) if (e.type === "look") { const l = e.params.look?.value; const u = typeof l === "string" && l !== "none" ? opts.lutUrl?.(l) : undefined; if (u) lutUrls[l as string] = u; }
-    const comp = {
-      width: W, height: H, fps: 25, duration: 1, background: [0, 0, 0],
-      tracks: [{ id: "v", kind: "video", clips: [{
-        id: "c", media: { url, kind: "video", width: W, height: H, duration: 1 }, start: 0, duration: 1, in: 0, speed: 1, fit: "contain", fx: {},
-        motion: { position: { value: [W / 2, H / 2] }, scale: { value: 100 }, rotation: { value: 0 }, anchor: { value: [W / 2, H / 2] }, opacity: { value: 100 }, blend: "normal" },
-        effects: chain,
-      }], transitions: [] }],
-      ...(Object.keys(lutUrls).length ? { lutUrls } : {}),
-    } as unknown as Composition;
-    await eng.load(comp, { mode: "exact", sources: { [url]: lastSrc.source } });
-    await eng.renderExact(0.02);
-    const px = eng.readRgba();
-    const rgba = new Uint8ClampedArray(px.length);
-    rgba.set(px);
-    return createImageBitmap(new ImageData(rgba, W, H));
-  }).catch((e) => { console.warn("[looks] render", e); return null; })) as Promise<ImageBitmap | null>;
-  looks.set(key, p);
-  if (looks.size > 200) { const k = looks.keys().next().value as string; void looks.get(k)?.then((b) => b?.close()); looks.delete(k); }
-  return p;
 }
 
 // ── colour analysis ──────────────────────────────────────────────────────────

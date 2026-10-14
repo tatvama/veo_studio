@@ -1,11 +1,12 @@
 /**
  * Title clips (EDITOR.md §2 TitleSpec) drawn with Canvas2D — the browser shapes Indic and other complex scripts with
  * HarfBuzz — into a frame-sized canvas: wrapped text in its box, outline, shadow, a background plate, animated in
- * (fade, slide up, typewriter, pop) and out (fade, slide down). The raster is redrawn only while it animates.
- * Colour mattes are a tiny canvas of one colour.
+ * (fade, slide up, typewriter, pop) and out (fade, slide down). The raster is redrawn only while it animates, and
+ * again when a GPU reset brought its canvas back blank (canvasLoss.ts). Colour mattes are a tiny canvas of one colour.
  */
 import type { TitleSpec } from "../types";
 import type { Frame, FrameSource } from "./source";
+import { watchCanvas } from "./canvasLoss.ts";
 
 const ANIM_S = 0.5;
 const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
@@ -103,6 +104,8 @@ export class TitleSource implements FrameSource {
   private w = 0; private h = 0; private scale = 1;
   private key = "";
   private version = 0;
+  /** Times the canvas came back blank after a GPU reset (part of the key: it is drawn again). */
+  private restores: () => number = () => 0;
   constructor(spec: TitleSpec, dur: number) {
     this.spec = spec;
     this.dur = dur;
@@ -116,9 +119,9 @@ export class TitleSource implements FrameSource {
   }
   private frame(t: number): Frame | null {
     if (!this.w) return null;
-    if (!this.cv) { this.cv = canvas(this.w, this.h); this.g = this.cv.getContext("2d") as Ctx2D; }
+    if (!this.cv) { this.cv = canvas(this.w, this.h); this.g = this.cv.getContext("2d") as Ctx2D; this.restores = watchCanvas(this.cv); }
     const st = titleState(this.spec, t, this.dur);
-    const key = st.static ? "static" : `${st.pin.toFixed(4)}:${st.pout.toFixed(4)}:${st.chars}`;
+    const key = `${st.static ? "static" : `${st.pin.toFixed(4)}:${st.pout.toFixed(4)}:${st.chars}`}|${this.restores()}`;
     if (key !== this.key) { this.key = key; drawTitle(this.g!, this.spec, this.w, this.h, t, this.dur, this.scale); this.version++; }
     return { image: this.cv as TexImageSource, width: this.w, height: this.h, version: this.version };
   }
@@ -128,18 +131,24 @@ export class TitleSource implements FrameSource {
   dispose(): void { this.cv = null; this.g = null; }
 }
 
-/** A colour matte: one colour (alpha allowed: "#RRGGBBAA"). */
+/** A colour matte: one colour (alpha allowed: "#RRGGBBAA"), painted again (a new version) after a GPU reset. */
 export class MatteSource implements FrameSource {
   readonly kind = "canvas" as const;
   readonly ready = Promise.resolve();
   private cv: HTMLCanvasElement | OffscreenCanvas;
+  private version = 1;
   constructor(color: string) {
     this.cv = canvas(4, 4);
-    const g = this.cv.getContext("2d") as Ctx2D;
-    g.fillStyle = color;
-    g.fillRect(0, 0, 4, 4);
+    const paint = () => {
+      const g = this.cv.getContext("2d") as Ctx2D;
+      g.clearRect(0, 0, 4, 4);
+      g.fillStyle = color;
+      g.fillRect(0, 0, 4, 4);
+    };
+    paint();
+    watchCanvas(this.cv, () => { paint(); this.version++; });
   }
-  live(): Frame { return { image: this.cv as TexImageSource, width: 4, height: 4, version: 1 }; }
+  live(): Frame { return { image: this.cv as TexImageSource, width: 4, height: 4, version: this.version }; }
   async exact(): Promise<Frame> { return this.live(); }
   idle(): void {}
   dispose(): void {}

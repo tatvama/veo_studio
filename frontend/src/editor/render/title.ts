@@ -495,8 +495,11 @@ function drawText(g: G, s: TitleSpec, L: TitleLook, text: string, box: { x: numb
     let p = 1;
     if (tm.inDur > 0) {
       if (tm.spread > 0) {
-        const delay = n > 1 ? (i / (n - 1)) * tm.spread : 0;
-        const unitDur = tm.inId === "typewriter" ? 1e-3 : Math.max(1e-3, tm.inDur - tm.spread);
+        // a fixed step between units (design tokens: 30–60 ms), the whole entrance still within inDur
+        const step = L.staggerStep;
+        const span = step !== undefined && step > 0 ? Math.min((n - 1) * step, tm.inId === "typewriter" ? tm.inDur : tm.inDur * 0.6) : tm.spread;
+        const delay = n > 1 ? (i / (n - 1)) * span : 0;
+        const unitDur = tm.inId === "typewriter" ? 1e-3 : Math.max(1e-3, tm.inDur - span);
         p = tm.inId === "typewriter" ? (t >= delay ? 1 : 0) : clamp01((t - delay) / unitDur);
       } else p = clamp01(t / tm.inDur);
     }

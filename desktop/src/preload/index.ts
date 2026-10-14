@@ -158,6 +158,8 @@ const bridge: TatvamDesktop = {
     writeLut: (file, name, cube) => invoke(IPC.editorWriteLut, file, name, cube),
     readSidecar: (file, name) => invoke(IPC.editorReadSidecar, file, name),
     writeSidecar: (file, name, json) => invoke(IPC.editorWriteSidecar, file, name, json),
+    audioAnalysis: (file, mediaId, kind, opts) => invoke(IPC.editorAudioAnalysis, file, mediaId, kind, opts),
+    writeGeneratedMedia: (file, name, bytes, kind) => invoke(IPC.editorWriteGeneratedMedia, file, name, bytes, kind),
     interop: {
       exportFile: (file, sequenceId, format, outPath) => invoke(IPC.editorInteropExport, file, sequenceId, format, outPath),
       importFile: (file) => invoke(IPC.editorInteropImport, file),

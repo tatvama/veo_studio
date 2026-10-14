@@ -20,12 +20,21 @@ import { applyMood } from "../../editor/moods/apply";
 import { templateSpec, titleTemplates } from "../../editor/templates/titles";
 import { resolveUrls, save } from "../../editor/session";
 import { ed, exec, project, redo, seq, undo, urlFor } from "../../editor/store";
-import { moodById, MOODS } from "../../lib/moods";
+import { MOODS } from "../../lib/moods";
 import type { AnalyzeMediaRef, AssistantCall, MediaAnalysis } from "../../lib/desktop";
 import { buildAutoEdit, describePlan, planAutoEdit, type AutoEditOptions, type Plan, type PlanMedia } from "../autoedit";
 import { renderProgramFrame } from "./frame";
 import { runAiTool, aiToolsInfo } from "./ai";
 import { captionClipIds, clearCaptionBand } from "./layout";
+// auto-sfx (docs/EDITOR.md §15.2, additive)
+import { applyAutoSfx, describeAutoSfx, planAutoSfx, ruleIds, type AutoSfxPlan, type SfxIntensity, type SfxRule } from "../../editor/autosfx";
+import { resolveSfxUrls, withAutoSfx } from "../../editor/autosfx/autoedit";
+import { speechRanges } from "../../editor/autosfx/speech";
+import { makeHost } from "../../editor/host";
+// integration (docs/EDITOR.md §15): look packs, chain presets and the SFX library for the assistants (additive)
+import { applyLook } from "../../editor/moods/packs/looks";
+import { sfxSeconds } from "../../editor/sfx";
+import { addChainPreset, addLibrarySfx, catalogLine, catalogRows, chainPreset, CHAIN_PREFIX, moodOrLook, NEW_CATALOG_KINDS, type CatalogRow, type NewCatalogKind } from "./catalog";
 
 
 export interface PageReply { text: string; data?: Record<string, unknown>; image?: { data: string; mimeType: string } }
@@ -358,6 +367,17 @@ export const PAGE_TOOLS: Record<string, Tool> = {
     const clips = ids.map((id) => clipOf(s0, id));
     const type = str(a.effect) ?? "";
     const params = (a.params && typeof a.params === "object" ? a.params : {}) as Record<string, unknown>;
+    // an audio chain preset ("preset:<id>", list_catalog audio_presets): its effects in order, one undo step
+    if (type.startsWith(CHAIN_PREFIX)) {
+      const chain = chainPreset(type);
+      if (Object.keys(params).length) throw new Error("A chain preset takes no params: change them afterwards with set_effect_param");
+      const target = clips.filter((c) => kindOfClip(s0, c) === "audio");
+      if (!target.length) throw new Error("A chain preset is for audio clips: give audio clips (A tracks)");
+      let made = new Map<string, string[]>();
+      onSeq(call.label, (s, c) => { const r = addChainPreset(s, c, target.map((x) => x.id), chain); made = r.made; return r.seq; });
+      return { text: `${chain.name} (${chain.effects.map((e) => e.id).join(" → ")}) added to ${made.size} clip${made.size === 1 ? "" : "s"}: ${[...made].map(([c, es]) => `${c} → effects ${es.join(", ")}`).join("; ")}.`,
+        data: { preset: `${CHAIN_PREFIX}${chain.id}`, effects: [...made].flatMap(([clip_id, es]) => es.map((effect_id, i) => ({ clip_id, effect_id, type: `audio:${chain.effects[i].id}` }))) } };
+    }
     const defs = await videoEffects();
     const audioType = type.startsWith("audio:") || AUDIO_FX.some((d) => d.id === type);
     const target = clips.filter((c) => (audioType ? kindOfClip(s0, c) === "audio" : kindOfClip(s0, c) === "video"));
@@ -398,9 +418,18 @@ export const PAGE_TOOLS: Record<string, Tool> = {
   },
 
   apply_mood: (a, call) => {
-    const mood = moodById(str(a.mood) ?? "");
-    if (!mood) throw new Error(`No mood ${String(a.mood)} (moods: ${MOODS.map((m) => m.id).join(", ")})`);
+    const found = moodOrLook(str(a.mood) ?? "");
+    if (!found) throw new Error(`No mood or look ${String(a.mood)} (moods: ${MOODS.map((m) => m.id).join(", ")}; looks: list_catalog(looks), e.g. cinematic.teal_orange)`);
     const ids = Array.isArray(a.clip_ids) ? strs(a.clip_ids) : null;
+    // a look-pack look: its effects only (no transitions, title style or music), replacing an earlier mood or look
+    if (found.look) {
+      const look = found.look;
+      let n = 0;
+      onSeq(call.label, (s, c) => { const out = applyLook(s, c, look, ids ? { kind: "clips", ids } : { kind: "sequence" }, optNum(a.intensity) ?? 1); n = out.clips; return out.seq; });
+      const skipped = a.transitions || a.titles ? " A look has no transitions or title style: only its effects went on." : "";
+      return { text: `${look.label} (look): ${n} clips.${skipped}`, data: { look: look.id, clips: n, cuts: 0, titles: 0 } };
+    }
+    const mood = found.mood;
     let r = { clips: 0, cuts: 0, titles: 0 };
     onSeq(call.label, (s, c) => {
       const out = applyMood(s, c, mood, ids ? { kind: "clips", ids } : { kind: "sequence" }, { intensity: optNum(a.intensity) ?? 1, transitions: Boolean(a.transitions), titles: Boolean(a.titles) });
@@ -590,7 +619,7 @@ export const PAGE_TOOLS: Record<string, Tool> = {
       data: { media_id: m.id, seconds: r2(secs), buckets: out, quiet } };
   },
 
-  auto_edit: (a, call) => {
+  auto_edit: async (a, call) => {
     const p = project();
     const ids = strs(a.media_ids);
     const media = (ids.length ? ids.map((id) => p.media.find((m) => m.id === id)).filter((m): m is MediaItem => !!m) : p.media).filter((m) => !m.missing && !m.path.startsWith("studio:"));
@@ -606,8 +635,71 @@ export const PAGE_TOOLS: Record<string, Tool> = {
     if (a.dry_run) return { text: `Plan (nothing changed yet): ${text}`, data: { ...data, dry_run: true } };
     if (!plan.segments.length) throw new Error(`Nothing to cut: ${text}`);
     let sid = "";
+    const sfx = ["subtle", "normal", "punchy"].includes(String(a.sfx)) ? a.sfx as SfxIntensity : undefined;
+    if (sfx) {
+      // auto-sfx: the sounds go onto the new sequence before it is committed: the cut and its sounds are ONE undo step
+      const base = project();
+      const built = buildAutoEdit(base, plan);
+      const w = await withAutoSfx(built.project, ed().path ?? "", built.sequenceId, sfx);
+      if (project() !== base) throw new Error("The edit changed while the sound effects were made: run auto_edit again");
+      sid = built.sequenceId;
+      exec(call.label, () => w.project);
+      resolveSfxUrls(w.media);
+      return { text: `Made "${plan.name}" (${sid}), the active sequence now: ${text} Sound effects: ${describeAutoSfx(w.plan)} Undo takes it all back.`,
+        data: { ...data, sequence_id: sid, dry_run: false, sfx: sfxData(w.plan, seq()) } };
+    }
     exec(call.label, (x) => { const r = buildAutoEdit(x, plan); sid = r.sequenceId; return r.project; });
     return { text: `Made "${plan.name}" (${sid}), the active sequence now: ${text} Undo takes it all back.`, data: { ...data, sequence_id: sid, dry_run: false } };
+  },
+
+  auto_sfx: async (a, call) => {
+    const s0 = seq();
+    const intensity: SfxIntensity = ["subtle", "normal", "punchy"].includes(String(a.intensity)) ? a.intensity as SfxIntensity : "normal";
+    // rules: a list (only these on) or { rule: on }
+    let rules: Partial<Record<SfxRule, boolean>> | undefined;
+    if (Array.isArray(a.rules)) {
+      const want = strs(a.rules);
+      const bad = want.filter((r) => !ruleIds.includes(r as SfxRule));
+      if (bad.length) throw new Error(`No rule ${bad.join(", ")} (rules: ${ruleIds.join(", ")})`);
+      rules = Object.fromEntries(ruleIds.map((r) => [r, want.includes(r)]));
+    } else if (a.rules && typeof a.rules === "object") rules = a.rules as Partial<Record<SfxRule, boolean>>;
+    let range: "all" | "inout" | { from: number; to: number } = "all";
+    if (a.range === "inout") {
+      if (s0.inPoint === undefined && s0.outPoint === undefined) throw new Error("The sequence has no in / out marks: give range all, or { start, end } in seconds");
+      range = "inout";
+    } else if (a.range && typeof a.range === "object") {
+      const r = a.range as { start?: unknown; end?: unknown };
+      const from = F(s0, num(r.start, "range.start")), to = F(s0, num(r.end, "range.end"));
+      if (to <= from) throw new Error("range.end must be after range.start");
+      range = { from, to };
+    }
+    const host = makeHost();
+    const speech = await speechRanges(host).catch(() => undefined);
+    const plan = planAutoSfx(s0, project(), { intensity, rules, range, speech });
+    const data = sfxData(plan, s0);
+    const list = plan.placements.slice(0, 60).map((x) => `${at(s0, x.hit)} ${x.label} [${x.rule}] ${x.gainDb} dB${x.ducked ? " (under speech)" : ""}: ${x.reason}`);
+    const more = plan.placements.length > 60 ? `\n…and ${plan.placements.length - 60} more.` : "";
+    if (a.dry_run) return { text: `Plan (nothing changed yet): ${describeAutoSfx(plan, s0)}\n${list.join("\n")}${more}`, data: { ...data, dry_run: true } };
+    const r = await applyAutoSfx(host, plan, { label: call.label, onMedia: resolveSfxUrls });
+    const failed = r.failed.length ? ` ${r.failed.length} sound${r.failed.length === 1 ? "" : "s"} couldn't be made (${r.failed[0]}).` : "";
+    return { text: `Placed ${r.placed} sound effect${r.placed === 1 ? "" : "s"} on the SFX track${r.removed ? `, replacing ${r.removed} from an earlier run` : ""}: ${describeAutoSfx(plan, s0)}${failed} Undo takes it back.\n${list.join("\n")}${more}`,
+      data: { ...data, placed: r.placed, removed: r.removed, rendered: r.rendered, failed: r.failed, dry_run: false } };
+  },
+
+  // one sound effect from the library on the SFX track (editor/sfx: rendered, saved into the edit, placed): one undo step
+  add_sfx: async (a, call) => {
+    const s0 = seq();
+    const start = F(s0, num(a.at, "at"));
+    const gain = optNum(a.gain_db);
+    const { clipId, pick } = await addLibrarySfx(makeHost(), { preset: str(a.preset), tag: str(a.tag), seed: optNum(a.seed), at: start, gainDb: gain, label: call.label });
+    if (!clipId) throw new Error("Nothing was placed: the SFX track is locked, or there's no active sequence");
+    void resolveUrls();
+    const s = seq();
+    const c = s.clips.find((x) => x.id === clipId);
+    const t = c ? s.tracks.find((x) => x.id === c.trackId) : undefined;
+    const len = c ? c.duration : F(s, sfxSeconds(pick.preset.id));
+    return { text: `${pick.preset.name} (${pick.preset.id}, seed ${pick.seed}${pick.among > 1 ? `, 1 of ${pick.among} with the tag ${str(a.tag)}` : ""}) on ${t ? `${trackLabel(t)}${t.name !== trackLabel(t) ? ` "${t.name}"` : ""}` : "the SFX track"} at ${span(s, start, start + len)}${gain !== undefined ? `, gain ${gain} dB` : ""} [${clipId}]. Undo takes it back.`,
+      data: { clip_id: clipId, preset: pick.preset.id, seed: pick.seed, track: t ? trackLabel(t) : null, at: S(s, start), at_tc: tc(s, start), duration: S(s, len), gain_db: gain ?? 0, media_id: c?.source.type === "media" ? c.source.mediaId : null } };
   },
 
   watch_batch: (a, call) => {
@@ -639,14 +731,15 @@ export const PAGE_TOOLS: Record<string, Tool> = {
     const q = (str(a.search) ?? "").toLowerCase();
     const lim = Math.max(1, Math.min(400, optNum(a.limit) ?? 80));
     const hit = (...xs: (string | undefined)[]) => !q || xs.some((x) => (x ?? "").toLowerCase().includes(q));
-    let rows: { id: string; label: string; group?: string; params?: string }[] = [];
+    let rows: CatalogRow[] = [];
     if (a.kind === "transitions") rows = (await listTransitions()).filter((t) => hit(t.id, t.label, t.group)).map((t) => ({ id: t.id, label: t.label, group: t.group }));
     else if (a.kind === "effects") rows = (await videoEffects()).filter((e) => hit(e.id, e.label, e.group)).map((e) => ({ id: e.id, label: e.label, group: e.group, params: e.params.map((x) => x.name).join(", ") }));
     else if (a.kind === "audio_effects") rows = AUDIO_FX.filter((e) => hit(e.id, e.label, e.group)).map((e) => ({ id: `audio:${e.id}`, label: e.label, group: e.group, params: e.params.map((x) => x.name).join(", ") }));
     else if (a.kind === "moods") rows = MOODS.filter((m) => hit(m.id, m.label, m.blurb)).map((m) => ({ id: m.id, label: m.label, group: m.blurb }));
+    else if (NEW_CATALOG_KINDS.includes(a.kind as NewCatalogKind)) rows = catalogRows(a.kind as NewCatalogKind, q);
     else rows = titleTemplates().filter((t) => hit(t.id, t.name, t.category)).map((t) => ({ id: t.id, label: t.name, group: t.category }));
     const shown = rows.slice(0, lim);
-    return { text: `${rows.length} ${String(a.kind)}${q ? ` matching "${q}"` : ""}${rows.length > lim ? ` (first ${lim})` : ""}:\n${shown.map((r) => `${r.id} — ${r.label}${r.group ? ` [${r.group}]` : ""}${r.params ? ` (${r.params})` : ""}`).join("\n")}`,
+    return { text: `${rows.length} ${String(a.kind)}${q ? ` matching "${q}"` : ""}${rows.length > lim ? ` (first ${lim})` : ""}:\n${shown.map(catalogLine).join("\n")}`,
       data: { total: rows.length, items: shown } };
   },
 
@@ -660,6 +753,17 @@ function addTrackTop(s: Sequence, name?: string): { seq: Sequence; trackId: stri
   const t: Track = { id: uid("v"), kind: "video", name: name ?? `V${vs.length + 1}`, index: vs.length, locked: false, hidden: false, muted: false, solo: false, targeted: false,
     syncLock: true, height: 56, volume: 0, pan: 0 };
   return { seq: { ...s, tracks: [...s.tracks, t] }, trackId: t.id };
+}
+
+/** An auto SFX plan as structured content: counts per rule, and each sound in seconds and timecode. */
+function sfxData(plan: AutoSfxPlan, s: Sequence): Record<string, unknown> {
+  return {
+    sequence_id: plan.sequenceId, intensity: plan.intensity, range: { start: S(s, plan.range.from), end: S(s, plan.range.to) }, counts: plan.counts, found: plan.found,
+    total: plan.placements.length, replaces: plan.replaces, skipped: plan.skipped.length,
+    sounds: plan.placements.slice(0, 200).map((x) => ({ at: S(s, x.hit), at_tc: tc(s, x.hit), rule: x.rule, sound: x.label, preset: x.presetId, gain_db: x.gainDb,
+      under_speech: x.ducked, why: x.reason, source_id: x.sourceId })),
+    left_out: plan.skipped.slice(0, 50).map((x) => ({ at: S(s, x.hit), rule: x.rule, why: x.reason })),
+  };
 }
 
 /** The plan as structured content: the summary, and the segments in seconds and timecode. */

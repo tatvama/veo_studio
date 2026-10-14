@@ -5,8 +5,8 @@
  * subscribe prompts, social formats) inserted flattened or nested, with placeholder text and media slots.
  */
 import { clsx } from "clsx";
-import { Captions, Film, LayoutTemplate, Shapes, Type } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Captions, LayoutTemplate, Shapes, Type } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button, Input, SearchField } from "../../components/ui";
 import { FONTS, scriptOf, SCRIPT_FALLBACK, supports, type Script } from "../../pages/posters/fonts";
@@ -16,11 +16,28 @@ import { addGenerated, addTrack, clipEnd, ctxOf, tracksOf } from "../model/ops";
 import { secondsToFrames } from "../model/time";
 import type { Sequence, TitleSpec } from "../model/types";
 import { program } from "../playback/transport";
-import { drawTitle, ensureFont } from "../render/title";
 import { ed, project, select, setFocus, useEditor, useSequence } from "../store";
 import { CAPTION_STYLES, restyleCaption } from "../templates/captions";
-import { fillSlot, insertTemplate, isSlot, SEQ_TEMPLATES, socialSequence, type SeqTemplate } from "../templates/sequences";
+import { formatOf } from "../templates/formats";
+import { useVisualiserDetect, visualiserAudio, withVisualiserAudio } from "../templates/packs/visualiser";
+// integration: an audiogram brings its sound into the new sequence (templates/audiogram.ts)
+import { audiogramChoices, audiogramMedia, withAudiogramAudio } from "../templates/audiogram";
+import { makeVisualizerSource } from "../audiotools";
+import { fillSlot, insertTemplate, isSlot, SEQ_TEMPLATE_GROUPS, SEQ_TEMPLATES, socialSequence, type SeqTemplate } from "../templates/sequences";
 import { STICKERS, stickerSpec, templateSpec, TEMPLATE_CATEGORIES, titleTemplates, type TemplateCategory, type TitleTemplate } from "../templates/titles";
+// preview-polish: cards rendered by the shared preview engine (the title at its hold pose over a darkened frame)
+import { PreviewCard, PreviewFrame } from "../preview/Card";
+import { PreviewSwitch, usePreviewChoice } from "../preview/choice";
+import { categoryColor, sequenceItem, specItem, titleItem } from "../preview/items";
+import { templateLive, titleLive } from "../preview/liveSpecs";
+import type { FrameChoice } from "../preview/service";
+
+/** A value that follows `v` a moment after it stops changing (the cards re-render then, not on every key). */
+function useSettled<T>(v: T, ms = 350): T {
+  const [x, setX] = useState(v);
+  useEffect(() => { const id = window.setTimeout(() => setX(v), ms); return () => window.clearTimeout(id); }, [v, ms]);
+  return x;
+}
 
 type Tab = "titles" | "captions" | "stickers" | "fonts" | "library";
 
@@ -56,6 +73,7 @@ function placeTitles(host: ReturnType<typeof useEditorHost>, label: string, item
 
 export default function TemplatesPanel() {
   const [tab, setTab] = useState<Tab>("titles");
+  const pc = usePreviewChoice("templates");
   return (
     <div className="pn" onPointerDown={() => setFocus("other")}>
       <div className="ed-bar gap-1">
@@ -64,56 +82,20 @@ export default function TemplatesPanel() {
             <button key={v} type="button" aria-pressed={tab === v} onClick={() => setTab(v)}>{l}</button>
           ))}
         </div>
+        {tab !== "fonts" && <PreviewSwitch pc={pc} className="ml-auto" />}
       </div>
-      {tab === "titles" && <TitlesTab />}
-      {tab === "captions" && <CaptionsTab />}
-      {tab === "stickers" && <StickersTab />}
+      {tab === "titles" && <TitlesTab choice={pc.choice} />}
+      {tab === "captions" && <CaptionsTab choice={pc.choice} />}
+      {tab === "stickers" && <StickersTab choice={pc.choice} />}
       {tab === "fonts" && <FontsTab />}
-      {tab === "library" && <LibraryTab />}
+      {tab === "library" && <LibraryTab choice={pc.choice} />}
     </div>
-  );
-}
-
-// ── a live title preview ─────────────────────────────────────────────────────
-
-function TitlePreview({ spec, seconds, aspect, className, play }: { spec: TitleSpec; seconds: number; aspect: number; className?: string; play?: boolean }) {
-  const cv = useRef<HTMLCanvasElement>(null);
-  const [hover, setHover] = useState(false);
-  const animate = play || hover;
-  useEffect(() => {
-    const c = cv.current;
-    if (!c) return;
-    const W = 224, H = Math.round(W / aspect);
-    c.width = W; c.height = H;
-    const g = c.getContext("2d")!;
-    const H0 = 1080;
-    // zoom onto the title's box (small lower thirds and stickers stay readable), the frame's aspect kept
-    const [bx, by, bw, bh] = spec.box;
-    const f = Math.min(1, Math.max(0.4, bw * 1.15, bh * 1.7));
-    const cx = Math.max(0, Math.min(1 - f, bx + bw / 2 - f / 2)), cy = Math.max(0, Math.min(1 - f, by + bh / 2 - f / 2));
-    const paint = (t: number) => {
-      g.setTransform(1 / f, 0, 0, 1 / f, (-cx * W) / f, (-cy * H) / f);
-      drawTitle(g, spec, W, H, t, seconds, H / H0);
-      g.setTransform(1, 0, 0, 1, 0, 0);
-    };
-    let raf = 0, alive = true;
-    const rest = Math.min(seconds * 0.55, Math.max(1.2, seconds * 0.4));
-    void ensureFont(spec).then(() => { if (alive && !animate) paint(rest); });
-    if (!animate) { paint(rest); return () => { alive = false; }; }
-    const t0 = performance.now();
-    const loop = () => { if (!alive) return; paint(((performance.now() - t0) / 1000) % seconds); raf = requestAnimationFrame(loop); };
-    loop();
-    return () => { alive = false; cancelAnimationFrame(raf); };
-  }, [spec, seconds, aspect, animate]);
-  return (
-    <canvas ref={cv} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
-      className={clsx("block w-full rounded-md", className)} style={{ aspectRatio: String(aspect), background: "linear-gradient(135deg, #1e293b, #0f172a 55%, #312e81)" }} />
   );
 }
 
 // ── titles ───────────────────────────────────────────────────────────────────
 
-function TitlesTab() {
+function TitlesTab({ choice }: { choice: FrameChoice }) {
   const host = useEditorHost();
   const s = useSequence();
   const [q, setQ] = useState("");
@@ -122,8 +104,8 @@ function TitlesTab() {
   const all = titleTemplates();
   const ql = q.trim().toLowerCase();
   const shown = all.filter((t) => (cat === "All" || t.category === cat) && (!ql || t.name.toLowerCase().includes(ql) || t.id.includes(ql)));
-  const aspect = s.width / s.height;
-  const specs = useMemo(() => new Map(all.map((t) => [t.id, templateSpec(t, 1080, text.trim() ? { text: text.trim() } : {})])), [text]);
+  const ptext = useSettled(text.trim());
+  const specs = useMemo(() => new Map(all.map((t) => [t.id, templateSpec(t, 1080, ptext ? { text: ptext } : {})])), [ptext]);
   const add = (t: TitleTemplate) => placeTitles(host, `Title ${t.name}`, [{ spec: templateSpec(t, s.height, text.trim() ? { text: text.trim() } : {}), seconds: t.seconds, name: (text.trim() || t.fields.text).slice(0, 40) || t.name }]);
   return (
     <>
@@ -139,17 +121,16 @@ function TitlesTab() {
         ))}
       </div>
       <div className="pn-scroll">
-        <div className="grid gap-2 p-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))" }}>
+        <div className="pv-grid">
           {shown.map((t) => (
-            <button key={t.id} type="button" data-template={t.id} className="rounded-lg border border-line p-1.5 text-left hover:border-accent/60" title="Hover to play · click to add at the playhead" onClick={() => add(t)}>
-              <TitlePreview spec={specs.get(t.id)!} seconds={t.seconds} aspect={aspect} />
-              <p className="mt-1 truncate text-2xs">{t.name}</p>
-              <p className="text-[10px] text-dim">{t.category} · {t.seconds} s</p>
-            </button>
+            <PreviewCard key={t.id} item={titleItem(t, specs.get(t.id)!)} choice={choice} data={{ template: t.id }} name={t.name} desc={t.category} meta={`${t.seconds} s`}
+              dot={categoryColor(t.category, TEMPLATE_CATEGORIES)} title="Move across: in → hold → out · hold still to play · click to add at the playhead"
+              live={titleLive(`tpl:${t.id}:${ptext}`, t.name, [{ spec: templateSpec(t, s.height, ptext ? { text: ptext } : {}), seconds: t.seconds, name: (ptext || t.fields.text).slice(0, 40) || t.name }])}
+              onClick={() => add(t)} />
           ))}
         </div>
       </div>
-      <div className="ed-bar bottom text-2xs text-dim">Hover a template to play it · click to add it at the playhead · edit the text in the Text panel</div>
+      <div className="ed-bar bottom text-2xs text-dim">Move across a card to scrub it, hold to play · click adds it at the playhead · edit the text in the Text panel</div>
     </>
   );
 }
@@ -164,7 +145,7 @@ function captionSample(styleId: string): TitleSpec {
     ...(st.karaoke ? { karaoke: { mode: st.karaoke, color: st.color, highlightColor: st.highlight, words } } : {}) };
 }
 
-function CaptionsTab() {
+function CaptionsTab({ choice }: { choice: FrameChoice }) {
   const host = useEditorHost();
   const s = useSequence();
   const sel = useEditor((x) => x.selection);
@@ -193,12 +174,11 @@ function CaptionsTab() {
   return (
     <div className="pn-scroll">
       <p className="px-3 pt-2 text-2xs text-dim">Pick a style for the selected caption clips. Karaoke highlights each word as it's spoken: captions from the Transcript panel (local Whisper) and the AI captions tool carry word timings; plain captions get theirs spread over the clip.</p>
-      <div className="grid gap-2 p-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))" }}>
+      <div className="pv-grid" style={{ ["--pv-min" as string]: "180px" }}>
         {CAPTION_STYLES.map((st) => (
-          <button key={st.id} type="button" data-caption-style={st.id} className="rounded-lg border border-line p-1.5 text-left hover:border-accent/60" onClick={() => restyle(st.id)}>
-            <TitlePreview spec={captionSample(st.id)} seconds={3.2} aspect={16 / 9} play />
-            <p className="mt-1 text-2xs">{st.label}</p>
-          </button>
+          <PreviewCard key={st.id} item={specItem(`caption.${st.id}`, captionSample(st.id), 3.2, "caption")} choice={choice} data={{ "caption-style": st.id }} name={st.label}
+            desc={st.karaoke ? `Karaoke · ${st.karaoke}` : "Caption"} dot={categoryColor(st.karaoke ? "karaoke" : "caption")}
+            title="Move across to scrub the words, hold to play · click restyles the selected captions" onClick={() => restyle(st.id)} />
         ))}
       </div>
       <p className="px-3 pb-3 text-2xs text-dim">{titles.length ? `${titles.length} title clip${titles.length === 1 ? "" : "s"} selected` : "Select caption clips on the timeline to restyle them"}</p>
@@ -208,7 +188,7 @@ function CaptionsTab() {
 
 // ── stickers and shapes ──────────────────────────────────────────────────────
 
-function StickersTab() {
+function StickersTab({ choice }: { choice: FrameChoice }) {
   const host = useEditorHost();
   const s = useSequence();
   const groups = ["Shapes", "Arrows", "Callouts", "Emoji"] as const;
@@ -221,17 +201,25 @@ function StickersTab() {
       {groups.map((g) => (
         <div key={g}>
           <div className="pn-section cursor-default">{g}</div>
-          <div className="grid gap-1.5 p-2" style={{ gridTemplateColumns: g === "Emoji" ? "repeat(auto-fill, minmax(44px, 1fr))" : "repeat(auto-fill, minmax(96px, 1fr))" }}>
-            {STICKERS.filter((x) => x.group === g).map((st) => (
-              <button key={st.id} type="button" data-sticker={st.id} title={`Add ${st.name} at the playhead`} onClick={() => add(st.id)}
-                className="rounded-md border border-line p-1 hover:border-accent/60">
-                {g === "Emoji" ? <span className="block text-center text-2xl leading-9">{st.shape.emoji}</span> : (
-                  <><TitlePreview spec={{ ...stickerSpec(st, 1920, 1080), box: [0.2, 0.15, 0.6, Math.min(0.7, (0.6 * 16) / 9 / (st.aspect ?? 1))] }} seconds={4} aspect={16 / 9} />
-                    <p className="mt-0.5 truncate text-[10px] text-dim">{st.name}</p></>
-                )}
-              </button>
-            ))}
-          </div>
+          {g === "Emoji" ? (
+            <div className="grid gap-1.5 p-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(44px, 1fr))" }}>
+              {STICKERS.filter((x) => x.group === g).map((st) => (
+                <button key={st.id} type="button" data-sticker={st.id} title={`Add ${st.name} at the playhead`} onClick={() => add(st.id)}
+                  className="rounded-md border border-line p-1 hover:border-accent/60">
+                  <span className="block text-center text-2xl leading-9">{st.shape.emoji}</span>
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="pv-grid" style={{ ["--pv-min" as string]: "120px" }}>
+              {STICKERS.filter((x) => x.group === g).map((st) => (
+                <PreviewCard key={st.id} data={{ sticker: st.id }} choice={choice} name={st.name} dot={categoryColor(g, groups)}
+                  item={specItem(`sticker.${st.id}`, { ...stickerSpec(st, 1920, 1080), box: [0.2, 0.15, 0.6, Math.min(0.7, (0.6 * 16) / 9 / (st.aspect ?? 1))] }, 4, `sticker ${g}`)}
+                  live={titleLive(`sticker:${st.id}`, st.name, [{ spec: stickerSpec(st, s.width, s.height), seconds: 4, name: st.name }])}
+                  title={`Add ${st.name} at the playhead · move across to scrub its pop in and out`} onClick={() => add(st.id)} />
+              ))}
+            </div>
+          )}
         </div>
       ))}
       <p className="px-3 pb-3 text-2xs text-dim">Stickers are title clips: move and scale them in Effect Controls, change text and colours in the Text panel.</p>
@@ -303,14 +291,24 @@ function FontsTab() {
 
 // ── the templates library ────────────────────────────────────────────────────
 
-function LibraryTab() {
+function LibraryTab({ choice }: { choice: FrameChoice }) {
   const host = useEditorHost();
   const s = useSequence();
   const sourceId = useEditor((x) => x.sourceId);
   const [picked, setPicked] = useState<SeqTemplate>(SEQ_TEMPLATES[0]);
   const [fields, setFields] = useState<Record<string, string>>({});
   const [nest, setNest] = useState(true);
+  const vis = useVisualiserDetect(picked.group === "Audiograms" ? picked.id : null);
   useEffect(() => setFields(Object.fromEntries(picked.fields.map((f) => [f.key, f.value]))), [picked]);
+  // an audiogram's sound: the selected audio clip, else the dialogue mix (nested), else the media the user picks
+  const selection = useEditor((x) => x.selection);
+  const audiogram = picked.group === "Audiograms";
+  const choices = useMemo(() => (audiogram ? audiogramChoices(project(), s, selection, s.inPoint ?? program.frame) : []), [audiogram, s, selection]);
+  // with no selected clip and no dialogue the user picks the media (nothing is chosen for them)
+  const mustPick = choices.length > 0 && choices[0].source.kind === "media";
+  const [agPick, setAgPick] = useState(-1);
+  useEffect(() => setAgPick(mustPick ? -1 : 0), [choices.length, choices[0]?.label, mustPick]);
+  const agChoice = agPick >= 0 ? choices[Math.min(agPick, choices.length - 1)] ?? null : null;
   const slots = s.clips.filter(isSlot);
   const insert = (mode: "flatten" | "nest") => {
     const at = program.frame;
@@ -324,13 +322,26 @@ function LibraryTab() {
     toast.success(`${picked.name} added${mode === "nest" ? " as a nested sequence" : ""}`);
   };
   const social = () => {
-    let sid = "";
+    if (audiogram && mustPick && !agChoice) {
+      toast.message("Pick the sound for the audiogram first (the edit has no selected audio clip or dialogue track)");
+      document.querySelector<HTMLSelectElement>("[data-audiogram-sound] select")?.focus();
+      return;
+    }
+    let sid = "", sound: string | null = null;
     host.apply(`New ${picked.name}`, (d) => {
-      const r = socialSequence(d, d.activeSequenceId, picked, { nest, fields });
-      d.sequences = r.project.sequences; d.activeSequenceId = r.sequenceId; sid = r.sequenceId;
+      const fromId = d.activeSequenceId;
+      // an audiogram: built with its chosen sound (so the visualiser is drawn, not the static waveform), then the
+      // sound goes on the new sequence's A1 and the visualiser follows it — one undo step
+      const ag = audiogram && agChoice ? agChoice.source : null;
+      const r = withVisualiserAudio(ag ? audiogramMedia(d, fromId, ag) : null, () => socialSequence(d, fromId, picked, { nest, fields }));
+      let out = r.project;
+      if (ag) { const a = withAudiogramAudio(out, r.sequenceId, fromId, ag, { makeVisualiser: makeVisualizerSource }); out = a.project; sound = a.audioClipId; }
+      d.sequences = out.sequences; d.activeSequenceId = r.sequenceId; sid = r.sequenceId;
     });
     program.seek(0);
-    toast.success(`New sequence “${project().sequences.find((x) => x.id === sid)?.name ?? picked.name}”`);
+    const name = project().sequences.find((x) => x.id === sid)?.name ?? picked.name;
+    if (audiogram && !sound) toast.message(`New sequence “${name}”: add its sound on A1 (the edit has no audio yet), the visualiser draws it`);
+    else toast.success(`New sequence “${name}”${sound && agChoice ? ` with ${agChoice.label.replace(/^The /, "the ")} on A1` : ""}`);
   };
   const fill = (clipId: string) => {
     const m = project().media.find((x) => x.id === (sourceId ?? ed().sourceId));
@@ -340,7 +351,10 @@ function LibraryTab() {
       d.sequences[i] = fillSlot(d.sequences[i], ctxOf(d), clipId, m);
     });
   };
-  const groups = ["Intros", "Outros", "Subscribe", "Social"] as const;
+  const groups = SEQ_TEMPLATE_GROUPS.filter((g) => SEQ_TEMPLATES.some((t) => t.group === g));
+  // a template for a format the sequence already is can also go in at the playhead
+  const sameFormat = !!picked.format && formatOf(s)?.id === picked.format;
+  const pfields = useSettled(fields);
   return (
     <div className="flex min-h-0 flex-1">
       <div className="w-[46%] min-w-[150px] overflow-y-auto border-r border-line">
@@ -348,16 +362,35 @@ function LibraryTab() {
           <div key={g}>
             <div className="pn-section cursor-default">{g}</div>
             {SEQ_TEMPLATES.filter((t) => t.group === g).map((t) => (
-              <div key={t.id} data-seq-template={t.id} className={clsx("pn-row cursor-pointer", picked.id === t.id && "sel")} onClick={() => setPicked(t)}>
-                <Film className="size-3.5 shrink-0 text-accent-ink" /><span className="min-w-0 flex-1 truncate">{t.name}</span><span className="mono text-[10px] text-dim">{t.seconds}s</span>
+              <div key={t.id} data-seq-template={t.id} className={clsx("pn-row cursor-pointer py-0.5", picked.id === t.id && "sel")} onClick={() => setPicked(t)}>
+                <PreviewFrame item={sequenceItem(t)} choice={choice} width={48} /><span className="min-w-0 flex-1 truncate">{t.name}</span><span className="mono text-[10px] text-dim">{t.format ?? `${t.seconds}s`}</span>
               </div>
             ))}
           </div>
         ))}
       </div>
       <div className="min-w-0 flex-1 overflow-y-auto p-3">
+        <PreviewCard className="mb-3" item={sequenceItem(picked, pfields)} choice={choice} name={picked.name} desc={picked.blurb} meta={`${picked.seconds} s`} dot={categoryColor(picked.group, SEQ_TEMPLATE_GROUPS)}
+          data={{ "seq-preview": picked.id }} live={!picked.format || sameFormat ? templateLive(picked, pfields) : null}
+          title="Move across to scrub, hold still to play · the buttons below insert it" />
         <p className="text-sm font-semibold">{picked.name}</p>
         <p className="mb-3 text-2xs text-dim">{picked.blurb}{picked.format ? ` · makes a ${picked.format} sequence` : ""}</p>
+        {picked.group === "Audiograms" && (
+          <p className="mb-3 text-2xs text-mute" data-visualiser={vis === null ? "checking" : vis ? "live" : "static"}>
+            {vis === null ? "Looking for the audio visualiser…" : !vis ? "This build has no audio visualiser yet, so it draws a static waveform you can replace later."
+              : agChoice ? "The sound goes on the new sequence's A1 and the audio-reactive visualiser draws it."
+              : visualiserAudio() ? `Draws the audio-reactive visualiser from “${visualiserAudio()!.name}”.`
+              : "Import the episode's audio first: without it the template draws a static waveform."}
+          </p>
+        )}
+        {audiogram && choices.length > 0 && (
+          <label className="mb-3 grid gap-0.5 text-2xs text-mute" data-audiogram-sound>Sound
+            <select className="h-7 rounded-md border border-line bg-panel px-1.5 text-xs text-ink" value={agChoice ? Math.min(agPick, choices.length - 1) : -1} onChange={(e) => setAgPick(Number(e.target.value))}>
+              {!agChoice && <option value={-1} disabled>Pick the episode's sound…</option>}
+              {choices.map((c, i) => <option key={`${c.source.kind}:${i}`} value={i}>{c.label}</option>)}
+            </select>
+          </label>
+        )}
         <div className="grid gap-2">
           {picked.fields.map((f) => (
             <label key={f.key} className="grid gap-0.5 text-2xs text-mute">{f.label}
@@ -370,6 +403,7 @@ function LibraryTab() {
             <>
               <label className="flex w-full items-center gap-1.5 text-2xs text-mute"><input type="checkbox" checked={nest} onChange={(e) => setNest(e.target.checked)} />Put “{s.name}” in its main slot</label>
               <Button size="sm" variant="primary" onClick={social}>New {picked.format} sequence</Button>
+              {sameFormat && <Button size="sm" variant="secondary" onClick={() => insert("flatten")}>Insert at the playhead</Button>}
             </>
           ) : (
             <>

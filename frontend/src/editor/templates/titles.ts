@@ -1,13 +1,19 @@
 /**
- * Animated title templates (docs/EDITOR.md §10, editor-looks): generated from styles × animations, so the list is
- * deterministic (the same ids every build) — headlines (clean, bold, cinematic, neon, handwritten), lower thirds (12
- * plates), news tickers, end cards, subscribe / like stickers, quote cards, chapter titles and countdowns. A template
- * is a TitleSpec at 1080 lines with a `look` (render/title.ts) and its fields (the text and a sub line). Pure.
+ * Animated title templates (docs/EDITOR.md §10, §15.3): headlines (clean, bold, cinematic, neon, handwritten), lower
+ * thirds (12 plates), news tickers, end cards, subscribe / like stickers, quote cards, chapter titles and countdowns,
+ * then the presets pack's nine categories (templates/packs/titles.ts). Every template is built from the design system
+ * (templates/design.ts: the type scale, the 8 px grid inside title safe, ten palettes with 4.5:1 text, the bundled
+ * font pairings and the motion presets), so each category reads as one family. The ids are generated and stable (an
+ * edit keeps the spec it was given; the id only names where it came from). A template is a TitleSpec at 1080 lines
+ * with a `look` (render/title.ts) and its fields (the text and a sub line). Pure.
  */
-import type { ShapeSpec, TitleLook, TitleSpec } from "../model/types.ts";
+import type { ShapeSpec, TitleSpec } from "../model/types.ts";
+import { designed, gridBox, LAYOUT, palette, RADIUS, STROKE, type DesignOpts, type MotionId, type TitleDesign } from "./design.ts";
+import { PACK_TITLE_CATEGORIES, packTitleTemplates, type PackTitleCategory } from "./packs/titles.ts";
 
-export type TemplateCategory = "Headlines" | "Lower thirds" | "News" | "End cards" | "Social" | "Quotes" | "Chapters" | "Countdowns";
-export const TEMPLATE_CATEGORIES: TemplateCategory[] = ["Headlines", "Lower thirds", "News", "End cards", "Social", "Quotes", "Chapters", "Countdowns"];
+/** The wave-3 categories, then the §15.3 presets pack's (templates/packs/titles.ts). */
+export type TemplateCategory = "Headlines" | "Lower thirds" | "News" | "End cards" | "Social" | "Quotes" | "Chapters" | "Countdowns" | PackTitleCategory;
+export const TEMPLATE_CATEGORIES: TemplateCategory[] = ["Headlines", "Lower thirds", "News", "End cards", "Social", "Quotes", "Chapters", "Countdowns", ...PACK_TITLE_CATEGORIES];
 
 export interface TitleTemplate {
   id: string; name: string; category: TemplateCategory;
@@ -17,151 +23,155 @@ export interface TitleTemplate {
   fields: { text: string; sub?: string };
   /** At 1080 lines (templateSpec scales it to the sequence). */
   spec: TitleSpec;
+  /** The design tokens it was built from (templates/design.ts). */
+  design?: TitleDesign;
+  /** "serious" styles never use the expressive moves (bounce, elastic, glitch, spin, pop). */
+  tone?: "serious" | "expressive";
 }
 
-const SHADOW = { color: "#000000aa", blur: 14, x: 0, y: 4 };
-const base = (over: Partial<TitleSpec>): TitleSpec => ({
-  text: "Title", font: "Inter Variable", size: 110, color: "#ffffff", weight: 700, align: "center", box: [0.08, 0.36, 0.84, 0.28],
-  animIn: "none", animOut: "none", shadow: SHADOW, ...over,
-});
+// ── headlines: 5 styles × 8 entrances, plus one signature each ──────────────
 
-const ANIM_LABEL: Record<string, string> = {
-  fade: "Fade", rise: "Rise", pop: "Pop", typewriter: "Typewriter", blur: "Blur in", zoom: "Zoom", wipe: "Wipe", bounce: "Bounce",
-  slide_left: "Slide", glitch: "Glitch", tracking: "Tracking", elastic: "Elastic", flip: "Flip", drop: "Drop", spin: "Spin",
-};
-
-// ── headlines: 5 styles × 8 animations, plus one signature each ─────────────
-
-interface Style { id: string; name: string; spec: Partial<TitleSpec>; look: TitleLook; extra: { anim: string; look?: TitleLook; name: string } }
+interface Style {
+  id: string; name: string; text: string; tone: "serious" | "expressive";
+  opts: Omit<DesignOpts, "motion" | "box">;
+  signature: { id: string; name: string; motion: MotionId; loop?: string };
+}
 const HEADLINE_STYLES: Style[] = [
-  { id: "clean", name: "Clean", spec: { font: "Inter Variable", weight: 600, size: 104 }, look: {}, extra: { anim: "slide_left", name: "Slide", look: { stagger: "word" } } },
-  { id: "bold", name: "Bold", spec: { font: "Anton", weight: 400, size: 150, outline: { color: "#000000", width: 4 } }, look: { upper: true }, extra: { anim: "glitch", name: "Glitch" } },
-  { id: "cinematic", name: "Cinematic", spec: { font: "Cinzel Variable", weight: 700, size: 112, color: "#f8e7b5" }, look: { tracking: 0.18, upper: true, gradient: ["#fff3d1", "#c9a24a"] },
-    extra: { anim: "tracking", name: "Tracking", look: { inDur: 1.4 } } },
-  { id: "neon", name: "Neon", spec: { font: "Oswald Variable", weight: 500, size: 120, color: "#fdf4ff", shadow: undefined }, look: { glow: { color: "#ff2bd6", blur: 30 }, upper: true },
-    extra: { anim: "fade", name: "Flicker", look: { loop: "flicker" } } },
-  { id: "handwritten", name: "Handwritten", spec: { font: "Permanent Marker", weight: 400, size: 120, color: "#fff7d6" }, look: {}, extra: { anim: "elastic", name: "Elastic" } },
+  { id: "clean", name: "Clean", text: "Your Title Here", tone: "serious", opts: { palette: "ink", pairing: "modern", size: "display" }, signature: { id: "slide", name: "Slide", motion: "slide" } },
+  { id: "bold", name: "Bold", text: "Big News", tone: "expressive", opts: { palette: "ink", pairing: "impact", size: "hero", upper: true, outline: true }, signature: { id: "glitch", name: "Glitch", motion: "glitch" } },
+  { id: "cinematic", name: "Cinematic", text: "The Last Light", tone: "serious", opts: { palette: "navy_gold", pairing: "cinematic", size: "headline", upper: true, tracking: 0.18, gradient: true },
+    signature: { id: "tracking", name: "Tracking", motion: "reveal" } },
+  { id: "neon", name: "Neon", text: "Night Drive", tone: "expressive", opts: { palette: "plum", pairing: "newsroom", size: "display", upper: true, tracking: 0.04, glow: 28 },
+    signature: { id: "flicker", name: "Flicker", motion: "fade", loop: "flicker" } },
+  { id: "handwritten", name: "Handwritten", text: "Summer Diaries", tone: "expressive", opts: { palette: "amber", pairing: "handmade", size: "display" }, signature: { id: "elastic", name: "Elastic", motion: "elastic" } },
 ];
-const HEADLINE_ANIMS = ["fade", "rise", "pop", "typewriter", "blur", "zoom", "wipe", "bounce"];
-/** Staggered per letter / word for the ones that read better that way. */
-const STAGGER: Record<string, TitleLook["stagger"]> = { rise: "word", bounce: "char", pop: "word" };
-
-const HEADLINE_TEXT: Record<string, string> = { clean: "Your Title Here", bold: "Big News", cinematic: "The Last Light", neon: "Night Drive", handwritten: "Summer Diaries" };
+/** The eight entrances (ids kept); serious styles take a calm move in place of the playful ones. */
+const HEAD_ANIMS: { id: string; name: string; motion: MotionId; calm?: { name: string; motion: MotionId } }[] = [
+  { id: "fade", name: "Fade", motion: "fade" }, { id: "rise", name: "Rise", motion: "rise" },
+  { id: "pop", name: "Pop", motion: "pop", calm: { name: "Flip up", motion: "flip" } },
+  { id: "typewriter", name: "Typewriter", motion: "type" }, { id: "blur", name: "Blur in", motion: "blur" }, { id: "zoom", name: "Zoom", motion: "zoom" },
+  { id: "wipe", name: "Wipe", motion: "wipe" },
+  { id: "bounce", name: "Bounce", motion: "bounce", calm: { name: "Drop", motion: "drop" } },
+];
 
 function headlines(): TitleTemplate[] {
   const out: TitleTemplate[] = [];
   for (const st of HEADLINE_STYLES) {
-    const make = (id: string, name: string, anim: string, extra?: TitleLook) => out.push({
-      id: `headline.${st.id}.${id}`, name: `${st.name} · ${name}`, category: "Headlines", seconds: 4, fields: { text: HEADLINE_TEXT[st.id] },
-      spec: base({ ...st.spec, look: { ...st.look, in: anim, out: "fade", stagger: STAGGER[anim] ?? "none", ...extra } }),
-    });
-    for (const a of HEADLINE_ANIMS) make(a, ANIM_LABEL[a] ?? a, a);
-    // each style's signature move (neon flicker = a fade in and a flicker loop)
-    make(st.extra.name.toLowerCase(), st.extra.name, st.extra.anim, st.extra.look);
+    for (const a of HEAD_ANIMS) {
+      const m = st.tone === "serious" && a.calm ? a.calm : a;
+      out.push(designed(`headline.${st.id}.${a.id}`, `${st.name} · ${m.name}`, "Headlines", 4, { text: st.text }, { ...st.opts, motion: m.motion, box: LAYOUT.head, tone: st.tone }));
+    }
+    const sg = st.signature;
+    out.push(designed(`headline.${st.id}.${sg.id}`, `${st.name} · ${sg.name}`, "Headlines", 4, { text: st.text },
+      { ...st.opts, motion: sg.motion, box: LAYOUT.head, tone: st.tone, ...(sg.loop ? { loop: sg.loop } : {}) }));
   }
   return out;
 }
 
-// ── lower thirds: 12 plates × 3 animations ──────────────────────────────────
+// ── lower thirds: 12 plates × 3 entrances, one grid, one type pair ──────────
 
-interface Plate { id: string; name: string; spec: Partial<TitleSpec>; look: TitleLook }
-const LT_BOX: [number, number, number, number] = [0.06, 0.72, 0.5, 0.14];
+interface Plate { id: string; name: string; opts: Omit<DesignOpts, "motion" | "box" | "size"> }
 const PLATES: Plate[] = [
-  { id: "bar", name: "Accent bar", spec: { font: "Montserrat Variable", weight: 700, size: 58 }, look: { decor: { kind: "bar", color: "#f59e0b", size: 0.14 } } },
-  { id: "split", name: "Two-tone", spec: { font: "Montserrat Variable", weight: 800, size: 54, color: "#111827", shadow: undefined }, look: { decor: { kind: "split", color: "#ffffff", color2: "#2563eb" } } },
-  { id: "pill", name: "Pill", spec: { font: "Poppins", weight: 600, size: 52, color: "#ffffff", shadow: undefined }, look: { decor: { kind: "pill", color: "#7c3aedd9" } } },
-  { id: "box", name: "Solid box", spec: { font: "Inter Variable", weight: 700, size: 56, color: "#ffffff", shadow: undefined }, look: { decor: { kind: "box", color: "#000000cc" } } },
-  { id: "underline", name: "Underline", spec: { font: "Montserrat Variable", weight: 700, size: 58 }, look: { decor: { kind: "underline", color: "#22d3ee", size: 0.12 } } },
-  { id: "bracket", name: "Brackets", spec: { font: "Oswald Variable", weight: 500, size: 60 }, look: { upper: true, tracking: 0.06, decor: { kind: "bracket", color: "#fbbf24", size: 0.14 } } },
-  { id: "glass", name: "Glass", spec: { font: "Inter Variable", weight: 600, size: 54, shadow: undefined }, look: { decor: { kind: "glass", color: "#ffffff26", color2: "#ffffff66" } } },
-  { id: "slash", name: "Slash", spec: { font: "Anton", weight: 400, size: 62, shadow: undefined }, look: { upper: true, decor: { kind: "slash", color: "#e11d48" } } },
-  { id: "minimal", name: "Minimal", spec: { font: "Inter Variable", weight: 500, size: 54 }, look: {} },
-  { id: "gradient", name: "Gradient text", spec: { font: "Poppins", weight: 800, size: 60 }, look: { gradient: ["#fde68a", "#f97316"] } },
-  { id: "frame", name: "Frame", spec: { font: "Playfair Display Variable", weight: 600, size: 58 }, look: { decor: { kind: "frame", color: "#ffffffcc", size: 0.12 } } },
-  { id: "sport", name: "Sport", spec: { font: "Teko Variable", weight: 600, size: 72, shadow: undefined }, look: { upper: true, decor: { kind: "split", color: "#16a34a", color2: "#052e16" } } },
+  { id: "bar", name: "Accent bar", opts: { palette: "ink", pairing: "modern", plate: "bar" } },
+  { id: "split", name: "Two-tone", opts: { palette: "ink", pairing: "modern", plate: "split" } },
+  { id: "pill", name: "Pill", opts: { palette: "plum", pairing: "friendly", plate: "pill" } },
+  { id: "box", name: "Solid box", opts: { palette: "ink", pairing: "modern", plate: "box" } },
+  { id: "underline", name: "Underline", opts: { palette: "ocean", pairing: "modern", plate: "underline" } },
+  { id: "bracket", name: "Brackets", opts: { palette: "amber", pairing: "newsroom", plate: "bracket", upper: true, tracking: 0.06 } },
+  { id: "glass", name: "Glass", opts: { palette: "ink", pairing: "modern", plate: "glass" } },
+  { id: "slash", name: "Slash", opts: { palette: "broadcast", pairing: "impact", plate: "slash", upper: true } },
+  { id: "minimal", name: "Minimal", opts: { palette: "ink", pairing: "modern", role: "text" } },
+  { id: "gradient", name: "Gradient text", opts: { palette: "amber", pairing: "friendly", gradient: true } },
+  { id: "frame", name: "Frame", opts: { palette: "navy_gold", pairing: "editorial", plate: "frame" } },
+  { id: "sport", name: "Sport", opts: { palette: "emerald", pairing: "athletic", plate: "split", upper: true } },
 ];
-const LT_ANIMS = ["slide_left", "wipe", "rise"];
+const LT_ANIMS: { id: string; name: string; motion: MotionId }[] = [{ id: "slide_left", name: "Slide", motion: "slide" }, { id: "wipe", name: "Wipe", motion: "wipe" }, { id: "rise", name: "Rise", motion: "rise" }];
 
 function lowerThirds(): TitleTemplate[] {
-  return PLATES.flatMap((p) => LT_ANIMS.map((a) => ({
-    id: `lower.${p.id}.${a}`, name: `${p.name} · ${ANIM_LABEL[a]}`, category: "Lower thirds" as const, seconds: 5,
-    fields: { text: "Asha Rao", sub: "Director, Tatvam Films" },
-    spec: base({ ...p.spec, align: "left", box: LT_BOX, look: { ...p.look, in: a, out: a === "wipe" ? "wipe" : "fade", inDur: 0.6,
-      sub: { text: "Director, Tatvam Films", size: Math.round((p.spec.size ?? 56) * 0.62), color: p.id === "split" ? "#ffffff" : "#e5e7eb", weight: 500 } } }),
-  })));
+  return PLATES.flatMap((p) => LT_ANIMS.map((a) => designed(`lower.${p.id}.${a.id}`, `${p.name} · ${a.name}`, "Lower thirds", 5,
+    { text: "Asha Rao", sub: "Director, Tatvam Films" }, { ...p.opts, size: "title", motion: a.motion, box: LAYOUT.lower, align: "left", tone: "serious" })));
 }
 
 // ── the rest ─────────────────────────────────────────────────────────────────
 
 const shape = (s: ShapeSpec) => s;
 function others(): TitleTemplate[] {
-  const T = (id: string, name: string, category: TemplateCategory, seconds: number, fields: TitleTemplate["fields"], spec: TitleSpec): TitleTemplate => ({ id, name, category, seconds, fields, spec });
-  const TICKER_BOX: [number, number, number, number] = [0, 0.88, 1, 0.07];
+  const S = "serious" as const, X = "expressive" as const;
+  const broadcast = palette("broadcast"), paper = palette("paper"), amber = palette("amber");
   return [
-    // news tickers
-    T("news.ticker.red", "Ticker · Red band", "News", 12, { text: "Breaking: heavy rain expected across the coast tonight · Markets close higher · Festival dates announced" },
-      base({ font: "Inter Variable", weight: 700, size: 44, align: "left", box: TICKER_BOX, shadow: undefined, look: { decor: { kind: "ticker", color: "#b91c1c", color2: "#111111" }, loop: "ticker" } })),
-    T("news.ticker.blue", "Ticker · Blue band", "News", 12, { text: "Live updates · Scores · Weather · Traffic on the ring road is moving again" },
-      base({ font: "Montserrat Variable", weight: 700, size: 42, align: "left", box: TICKER_BOX, shadow: undefined, look: { decor: { kind: "ticker", color: "#1d4ed8" }, loop: "ticker" } })),
-    T("news.breaking", "Breaking news", "News", 6, { text: "BREAKING NEWS", sub: "Story developing" },
-      base({ font: "Anton", weight: 400, size: 76, align: "left", box: [0.05, 0.7, 0.6, 0.14], shadow: undefined,
-        look: { in: "wipe", out: "wipe", upper: true, decor: { kind: "split", color: "#dc2626", color2: "#111827" }, sub: { text: "Story developing", size: 40, color: "#ffffff", weight: 600 } } })),
+    // news (a ticker band bleeds to the frame edges; its text line sits inside title safe): one solid band each
+    (() => {
+      const t = designed("news.ticker.red", "Ticker · Red band", "News", 12, { text: "Breaking: heavy rain expected across the coast tonight · Markets close higher · Festival dates announced" },
+        { palette: "broadcast", pairing: "newsroom", role: "text", size: "body", plate: "ticker", motion: "fade", out: "none", box: LAYOUT.ticker, align: "left", loop: "ticker", tone: S });
+      if (t.spec.look?.decor) t.spec.look.decor = { kind: "ticker", color: broadcast.accent };   // the red band, white text (5.9:1)
+      t.spec.color = broadcast.onAccent;
+      return t;
+    })(),
+    (() => {
+      const t = designed("news.ticker.blue", "Ticker · Blue band", "News", 12, { text: "Live updates · Scores · Weather · Traffic on the ring road is moving again" },
+        { palette: "ocean", pairing: "newsroom", role: "text", size: "body", plate: "ticker", motion: "fade", out: "none", box: LAYOUT.ticker, align: "left", loop: "ticker", tone: S });
+      if (t.spec.look?.decor) delete t.spec.look.decor.color2;   // one calm band, no label block
+      return t;
+    })(),
+    designed("news.breaking", "Breaking news", "News", 6, { text: "BREAKING NEWS", sub: "Story developing" },
+      { palette: "broadcast", pairing: "impact", size: "headline", plate: "split", upper: true, motion: "wipe", box: LAYOUT.lowerWide, align: "left", tone: S }),
     // end cards
-    T("end.thanks", "Thanks for watching", "End cards", 6, { text: "Thanks for watching", sub: "See you in the next one" },
-      base({ font: "Playfair Display Variable", weight: 600, size: 100, look: { in: "rise", out: "fade", stagger: "word", sub: { text: "See you in the next one", size: 46, color: "#d1d5db" } } })),
-    T("end.next", "Watch next", "End cards", 8, { text: "Watch next", sub: "Two more stories you'll like" },
-      base({ font: "Montserrat Variable", weight: 800, size: 84, box: [0.08, 0.08, 0.84, 0.18], look: { in: "pop", out: "fade", upper: true, decor: { kind: "underline", color: "#f43f5e", size: 0.1 }, sub: { text: "Two more stories you'll like", size: 40, color: "#e5e7eb" } } })),
-    T("end.follow", "Follow for more", "End cards", 5, { text: "Follow for more" },
-      base({ font: "Poppins", weight: 800, size: 96, look: { in: "bounce", out: "fade", stagger: "char", gradient: ["#a5f3fc", "#818cf8"] } })),
-    T("end.credits", "Closing credit", "End cards", 6, { text: "A Tatvam Film", sub: "Written and directed by Asha Rao" },
-      base({ font: "Cinzel Variable", weight: 600, size: 84, color: "#f5f5f4", look: { in: "fade", out: "fade", inDur: 1.2, tracking: 0.2, upper: true, sub: { text: "Written and directed by Asha Rao", size: 38, color: "#a8a29e", weight: 400 } } })),
+    designed("end.thanks", "Thanks for watching", "End cards", 6, { text: "Thanks for watching", sub: "See you in the next one" },
+      { palette: "navy_gold", pairing: "editorial", size: "display", motion: "rise", box: LAYOUT.head, tone: S }),
+    designed("end.next", "Watch next", "End cards", 8, { text: "Watch next", sub: "Two more stories you'll like" },
+      { palette: "ink", pairing: "modern", size: "headline", plate: "underline", upper: true, motion: "rise", box: LAYOUT.top, tone: S }),
+    designed("end.follow", "Follow for more", "End cards", 5, { text: "Follow for more" },
+      { palette: "ocean", pairing: "friendly", size: "display", gradient: true, motion: "rise", box: LAYOUT.head, tone: S }),
+    designed("end.credits", "Closing credit", "End cards", 6, { text: "A Tatvam Film", sub: "Written and directed by Asha Rao" },
+      { palette: "navy_gold", pairing: "cinematic", size: "headline", upper: true, tracking: 0.2, motion: "fade", box: LAYOUT.head, tone: S }),
     // subscribe / like
-    T("social.subscribe.pop", "Subscribe button · Pop", "Social", 4, { text: "SUBSCRIBE" },
-      base({ font: "Montserrat Variable", weight: 800, size: 60, box: [0.36, 0.74, 0.28, 0.11], shadow: SHADOW, shape: shape({ kind: "subscribe", fill: "#dc2626", stroke: "#ffffff" }), look: { in: "pop", out: "fade" } })),
-    T("social.subscribe.slide", "Subscribe button · Slide", "Social", 4, { text: "SUBSCRIBE" },
-      base({ font: "Montserrat Variable", weight: 800, size: 60, box: [0.05, 0.78, 0.26, 0.1], shadow: SHADOW, shape: shape({ kind: "subscribe", fill: "#dc2626", stroke: "#ffffff" }), look: { in: "slide_left", out: "fade" } })),
-    T("social.like.pop", "Like button", "Social", 4, { text: "LIKE" },
-      base({ font: "Montserrat Variable", weight: 800, size: 60, box: [0.4, 0.74, 0.2, 0.11], shadow: SHADOW, shape: shape({ kind: "like", fill: "#2563eb", stroke: "#ffffff" }), look: { in: "pop", out: "fade" } })),
-    T("social.bell", "Notification bell", "Social", 3, { text: "" },
-      base({ size: 60, box: [0.45, 0.4, 0.1, 0.18], shape: shape({ kind: "bell", fill: "#facc15", stroke: "#78350f", strokeWidth: 4 }), look: { in: "pop", out: "fade", loop: "wiggle" } })),
-    T("social.likesub", "Like and subscribe", "Social", 5, { text: "Like & Subscribe" },
-      base({ font: "Baloo 2 Variable", weight: 800, size: 96, color: "#ffffff", outline: { color: "#dc2626", width: 6 }, look: { in: "pop", out: "fade", stagger: "word", loop: "pulse" } })),
-    T("social.burst", "Burst sticker", "Social", 4, { text: "NEW!" },
-      base({ font: "Anton", weight: 400, size: 90, color: "#111827", box: [0.4, 0.3, 0.2, 0.36], shadow: undefined, shape: shape({ kind: "burst", fill: "#fde047", stroke: "#111827", strokeWidth: 5 }), look: { in: "spin", out: "fade", loop: "pulse" } })),
+    designed("social.subscribe.pop", "Subscribe button · Pop", "Social", 4, { text: "SUBSCRIBE" },
+      { palette: "broadcast", pairing: "modern", size: "title", motion: "pop", box: LAYOUT.button, tone: X, shape: shape({ kind: "subscribe", fill: broadcast.accent, stroke: "#ffffff" }), color: "#ffffff" }),
+    designed("social.subscribe.slide", "Subscribe button · Slide", "Social", 4, { text: "SUBSCRIBE" },
+      { palette: "broadcast", pairing: "modern", size: "title", motion: "slide", box: LAYOUT.buttonLeft, tone: X, shape: shape({ kind: "subscribe", fill: broadcast.accent, stroke: "#ffffff" }), color: "#ffffff" }),
+    designed("social.like.pop", "Like button", "Social", 4, { text: "LIKE" },
+      { palette: "paper", pairing: "modern", size: "title", motion: "pop", box: gridBox(808, 856, 304, 120), tone: X, shape: shape({ kind: "like", fill: paper.accent, stroke: "#ffffff" }), color: "#ffffff" }),
+    designed("social.bell", "Notification bell", "Social", 3, { text: "" },
+      { palette: "amber", pairing: "modern", size: "title", motion: "pop", box: gridBox(864, 432, 192, 216), tone: X, loop: "wiggle", shape: shape({ kind: "bell", fill: amber.accent, stroke: amber.bg, strokeWidth: STROKE.thin }) }),
+    designed("social.likesub", "Like and subscribe", "Social", 5, { text: "Like & Subscribe" },
+      { palette: "broadcast", pairing: "friendly", size: "display", outline: true, motion: "pop", box: LAYOUT.head, tone: X }),
+    designed("social.burst", "Burst sticker", "Social", 4, { text: "NEW!" },
+      { palette: "amber", pairing: "impact", size: "headline", motion: "spin", box: LAYOUT.square, tone: X, shape: shape({ kind: "burst", fill: amber.accent, stroke: amber.bg, strokeWidth: STROKE.thin }), color: amber.onAccent }),
     // quotes
-    T("quote.serif", "Quote · Serif", "Quotes", 6, { text: "“The best stories are the ones we live.”", sub: "— Anonymous" },
-      base({ font: "Playfair Display Variable", weight: 500, size: 78, box: [0.12, 0.3, 0.76, 0.34], look: { in: "fade", out: "fade", inDur: 1, italic: true, stagger: "line", sub: { text: "— Anonymous", size: 40, color: "#d6d3d1" } } })),
-    T("quote.modern", "Quote · Modern", "Quotes", 6, { text: "Make it simple. Make it memorable.", sub: "Brand book" },
-      base({ font: "Montserrat Variable", weight: 800, size: 84, align: "left", box: [0.1, 0.32, 0.7, 0.32], look: { in: "rise", out: "fade", stagger: "word", decor: { kind: "bar", color: "#22c55e", size: 0.1 }, sub: { text: "Brand book", size: 36, color: "#a3a3a3" } } })),
-    T("quote.hand", "Quote · Handwritten", "Quotes", 6, { text: "Collect moments, not things." },
-      base({ font: "Great Vibes", weight: 400, size: 120, color: "#fff7ed", look: { in: "wipe", out: "fade", inDur: 1.6 } })),
-    T("quote.callout", "Quote · Speech bubble", "Quotes", 5, { text: "Wait… what?!" },
-      base({ font: "Baloo 2 Variable", weight: 800, size: 72, color: "#111827", box: [0.3, 0.2, 0.4, 0.3], shadow: undefined, shape: shape({ kind: "callout", fill: "#ffffff", stroke: "#111827", strokeWidth: 4, radius: 36 }), look: { in: "pop", out: "fade" } })),
+    designed("quote.serif", "Quote · Serif", "Quotes", 6, { text: "“The best stories are the ones we live.”", sub: "— Anonymous" },
+      { palette: "ink", pairing: "editorial", size: "headline", italic: true, motion: "lines", box: LAYOUT.centre, tone: S }),
+    designed("quote.modern", "Quote · Modern", "Quotes", 6, { text: "Make it simple. Make it memorable.", sub: "Brand book" },
+      { palette: "ink", pairing: "modern", size: "headline", plate: "bar", motion: "rise", box: LAYOUT.centre, align: "left", tone: S }),
+    designed("quote.hand", "Quote · Handwritten", "Quotes", 6, { text: "Collect moments, not things." },
+      { palette: "amber", pairing: "romance", size: "display", motion: "wipe", box: LAYOUT.head, tone: S }),
+    designed("quote.callout", "Quote · Speech bubble", "Quotes", 5, { text: "Wait… what?!" },
+      { palette: "paper", pairing: "friendly", size: "title", motion: "fade", box: gridBox(576, 216, 768, 328), tone: S, color: paper.text,
+        shape: shape({ kind: "callout", fill: paper.bg, stroke: paper.text, strokeWidth: STROKE.thin, radius: RADIUS.lg }) }),
     // chapters
-    T("chapter.lines", "Chapter · Lines", "Chapters", 4, { text: "Chapter One" },
-      base({ font: "Cinzel Variable", weight: 600, size: 84, look: { in: "fade", out: "fade", inDur: 0.9, tracking: 0.16, upper: true, decor: { kind: "lines", color: "#e7e5e4", size: 0.12 } } })),
-    T("chapter.part", "Chapter · Part", "Chapters", 4, { text: "Part I", sub: "The Journey Begins" },
-      base({ font: "Playfair Display Variable", weight: 700, size: 120, look: { in: "tracking", out: "fade", inDur: 1.2, sub: { text: "The Journey Begins", size: 48, color: "#d4d4d8", weight: 400 } } })),
-    T("chapter.number", "Chapter · Big number", "Chapters", 4, { text: "01", sub: "Origins" },
-      base({ font: "Anton", weight: 400, size: 260, color: "#ffffff", look: { in: "zoom", out: "fade", sub: { text: "Origins", size: 56, color: "#fbbf24", weight: 600 } } })),
-    T("chapter.left", "Chapter · Side bar", "Chapters", 4, { text: "Chapter 2", sub: "Into the city" },
-      base({ font: "Montserrat Variable", weight: 800, size: 92, align: "left", box: [0.08, 0.38, 0.6, 0.2], look: { in: "slide_left", out: "fade", upper: true, decor: { kind: "bar", color: "#38bdf8", size: 0.12 }, sub: { text: "Into the city", size: 44, color: "#e5e7eb" } } })),
-    T("chapter.underline", "Chapter · Underline", "Chapters", 4, { text: "Act Three" },
-      base({ font: "DM Serif Display", weight: 400, size: 110, look: { in: "rise", out: "fade", stagger: "word", decor: { kind: "underline", color: "#f472b6", size: 0.08 } } })),
+    designed("chapter.lines", "Chapter · Lines", "Chapters", 4, { text: "Chapter One" },
+      { palette: "navy_gold", pairing: "cinematic", size: "headline", plate: "lines", upper: true, tracking: 0.16, motion: "fade", box: LAYOUT.head, tone: S }),
+    designed("chapter.part", "Chapter · Part", "Chapters", 4, { text: "Part I", sub: "The Journey Begins" },
+      { palette: "navy_gold", pairing: "editorial", size: "display", motion: "reveal", box: LAYOUT.head, tone: S }),
+    designed("chapter.number", "Chapter · Big number", "Chapters", 4, { text: "01", sub: "Origins" },
+      { palette: "navy_gold", pairing: "impact", size: "hero", gradient: true, motion: "zoom", box: LAYOUT.head, tone: S }),
+    designed("chapter.left", "Chapter · Side bar", "Chapters", 4, { text: "Chapter 2", sub: "Into the city" },
+      { palette: "navy_gold", pairing: "modern", size: "headline", plate: "bar", upper: true, motion: "slide", box: gridBox(96, 384, 1152, 232), align: "left", tone: S }),
+    designed("chapter.underline", "Chapter · Underline", "Chapters", 4, { text: "Act Three" },
+      { palette: "navy_gold", pairing: "display_serif", size: "display", plate: "underline", motion: "rise", box: LAYOUT.head, tone: S }),
     // countdowns
-    T("count.ring", "Countdown · Ring", "Countdowns", 5, { text: "#" },
-      base({ font: "Oswald Variable", weight: 600, size: 220, box: [0.35, 0.3, 0.3, 0.4], look: { in: "pop", out: "fade", count: { from: 5, to: 0 }, decor: { kind: "ring", color: "#ffffff", color2: "#22d3ee", size: 0.08 } } })),
-    T("count.big", "Countdown · Big numbers", "Countdowns", 3, { text: "#" },
-      base({ font: "Anton", weight: 400, size: 300, outline: { color: "#000000", width: 6 }, look: { in: "zoom", out: "fade", count: { from: 3, to: 1 }, loop: "pulse" } })),
-    T("count.starting", "Countdown · Starting in", "Countdowns", 10, { text: "Starting in #" },
-      base({ font: "Montserrat Variable", weight: 700, size: 90, look: { in: "fade", out: "fade", count: { from: 10, to: 0 }, decor: { kind: "pill", color: "#00000099" } } })),
+    designed("count.ring", "Countdown · Ring", "Countdowns", 5, { text: "#" },
+      { palette: "ocean", pairing: "newsroom", size: "hero", plate: "ring", motion: "zoom", box: LAYOUT.square, count: { from: 5, to: 0 }, tone: S }),
+    designed("count.big", "Countdown · Big numbers", "Countdowns", 3, { text: "#" },
+      { palette: "ink", pairing: "impact", size: "hero", outline: true, motion: "zoom", box: LAYOUT.square, count: { from: 3, to: 1 }, tone: S }),
+    designed("count.starting", "Countdown · Starting in", "Countdowns", 10, { text: "Starting in #" },
+      { palette: "ink", pairing: "modern", size: "headline", plate: "pill", motion: "fade", box: LAYOUT.block, count: { from: 10, to: 0 }, tone: S }),
   ];
 }
 
 let cache: TitleTemplate[] | null = null;
 /** Every title template, in a fixed order. */
 export function titleTemplates(): TitleTemplate[] {
-  return (cache ??= [...headlines(), ...lowerThirds(), ...others()]);
+  return (cache ??= [...headlines(), ...lowerThirds(), ...others(), ...packTitleTemplates()]);
 }
 export const titleTemplate = (id: string) => titleTemplates().find((t) => t.id === id);
 
