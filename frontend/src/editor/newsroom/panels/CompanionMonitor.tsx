@@ -103,19 +103,23 @@ function Monitor({ other }: { other: GfxRatio }) {
 
   useEffect(() => {
     if (!ready || !result) return;
-    const id = window.setTimeout(async () => { const e = eng.current; if (!e) return; await e.load(result, demoCustomSources()); redraw(); }, ed().h.gesture ? 260 : 60);
+    const id = window.setTimeout(async () => { const e = eng.current; if (!e) return; await e.load(result, demoCustomSources()); redraw(2500); }, ed().h.gesture ? 260 : 60);
     return () => window.clearTimeout(id);
   }, [ready, result]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // a short settle loop while paused (videos decode a moment later); a redraw while it runs extends it, and a reload
+  // gives a clip that just arrived time to open
   const settle = useRef(0);
-  function redraw() {
+  const settleUntil = useRef(0);
+  function redraw(settleMs = 600) {
     const e = eng.current;
     if (!e) return;
     e.draw(program.time, { playing: program.playing, rate: program.rate, resolution: resRef.current });
-    if (program.playing || settle.current) return;
-    const until = performance.now() + 600;
+    if (program.playing) return;
+    settleUntil.current = Math.max(settleUntil.current, performance.now() + settleMs);
+    if (settle.current) return;
     const loop = () => {
-      if (program.playing || performance.now() > until || !eng.current) { settle.current = 0; return; }
+      if (program.playing || performance.now() > settleUntil.current || !eng.current) { settle.current = 0; return; }
       eng.current.draw(program.time, { playing: false, rate: 1, resolution: resRef.current });
       settle.current = requestAnimationFrame(loop);
     };

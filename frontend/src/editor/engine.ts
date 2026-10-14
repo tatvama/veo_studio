@@ -256,7 +256,9 @@ export async function createPreview(canvas: HTMLCanvasElement, width: number, he
   return {
     canvas,
     load(r, extra) {
-      const key = JSON.stringify(r.comp);
+      // the drawn content of titles and graphics lives in `generated` (the composition only has their URLs), so a
+      // change there (new text, a new look) must count as a change too
+      const key = JSON.stringify(r.comp) + JSON.stringify(r.generated);
       const my = ++token;
       chain = chain.then(async () => {
         if (my !== token || disposed || (key === lastKey && loaded)) return;

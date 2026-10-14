@@ -9,7 +9,7 @@
  * text clear of the top 12 %, the bottom 22 % and the right 16 % where Reels and Shorts draw their buttons.
  */
 import { backdrop, body, fadeIn, FLOAT, header, headline, kicker, OUT, panel, point, POP, rise, S16, S9, SLIDE, tagged, UNFOLD, vbox, WIPE, wipeIn, ZOOM } from "../layouts/kit.ts";
-import type { GfxField, GfxLayer, GfxTemplate } from "../types.ts";
+import type { Box, GfxField, GfxLayer, GfxTemplate } from "../types.ts";
 import { anim, field, icon, image, layer, line, rect, step, text, tpl } from "./kit.ts";
 
 interface L {
@@ -527,7 +527,57 @@ const V_COUNTER = layout({
   ],
 });
 
+// ── room for the bugs and the ticker ─────────────────────────────────────────
+
+/**
+ * A news edit always has bugs on screen (LIVE and clock top left, the logo top right) and usually a crawl, so layouts
+ * keep clear of them:
+ * - 16:9: thin things along the top edge (headers, kickers) move right of the LIVE bug and stop short of the logo;
+ *   boxes may run under the bugs, as on air.
+ * - 9:16: the content fits between the bugs (to y 363) and the crawl's tab (from y 1340): moved into that band, and
+ *   squeezed in height (text sizes with it) when it is taller; widths stay, so boxes still fill the frame's width.
+ * Full-frame layers (backdrops, a full-frame box 0) stay as they are.
+ */
+const BUG_LEFT_END = 410, BUG_RIGHT_START = 1560, BUG_ZONE_Y = 118, BUG_ROW_Y = 160;
+const V_TOP = 372, V_BOTTOM = 1330;
+const fullFrame = (l: GfxLayer, w: number, h: number) => l.box[2] >= w * 0.9 && l.box[3] >= h * 0.9;
+const scaleSizes = (p: Record<string, unknown>, k: number): Record<string, unknown> => {
+  const q = { ...p };
+  for (const key of ["size", "labelSize"]) if (typeof q[key] === "number" && (q[key] as number) > 0) q[key] = Math.round((q[key] as number) * k * 10) / 10;
+  return q;
+};
+function clearOfBugs(t: GfxTemplate): GfxTemplate {
+  const designs = { ...t.designs };
+  const d16 = designs["16:9"];
+  if (d16) designs["16:9"] = { ...d16, layers: d16.layers.map((l) => {
+    if (fullFrame(l, 1920, 1080) || l.box[2] >= 1920 * 0.9) return l;
+    let [x, y, w, h] = l.box;
+    // only the thin things along the top edge (headers, kickers, progress lines); boxes may run under the bugs
+    if (y + h > BUG_ROW_Y + 40) return l;
+    if (x < BUG_LEFT_END && y < BUG_ZONE_Y) x += BUG_LEFT_END - 72;
+    if (y < BUG_ROW_Y && x < BUG_RIGHT_START && x + w > BUG_RIGHT_START) w = BUG_RIGHT_START - x;
+    if (x === l.box[0] && w === l.box[2]) return l;
+    const p = l.p.grow ? { ...l.p, grow: { ...(l.p.grow as Record<string, unknown>), max: Math.min(Number((l.p.grow as { max?: number }).max ?? w), BUG_RIGHT_START - x) } } : l.p;
+    return { ...l, box: [x, y, w, h] as Box, p };
+  }) };
+  const d9 = designs["9:16"];
+  if (d9) {
+    const content = d9.layers.filter((l) => !fullFrame(l, 1080, 1920));
+    const y0 = Math.min(...content.map((l) => l.box[1])), y1 = Math.max(...content.map((l) => l.box[1] + l.box[3]));
+    if (content.length && (y0 < V_TOP || y1 > V_BOTTOM)) {
+      const k = Math.min(1, (V_BOTTOM - V_TOP) / (y1 - y0));
+      const top = Math.max(V_TOP, Math.min(y0, V_BOTTOM - (y1 - y0) * k));
+      designs["9:16"] = { ...d9, layers: d9.layers.map((l) => {
+        if (fullFrame(l, 1080, 1920)) return l;
+        const [x, y, w, h] = l.box;
+        return { ...l, box: [x, Math.round((top + (y - y0) * k) * 10) / 10, w, Math.round(h * k * 10) / 10] as Box, p: k < 1 ? scaleSizes(l.p, k) : l.p };
+      }) };
+    }
+  }
+  return { ...t, designs };
+}
+
 export const LAYOUTS: GfxTemplate[] = [
   OTS("left"), OTS("right"), TWO_WAY, THREE_WAY, FOUR_WAY, SIX_WAY, SIDE_PANEL, SQUEEZE, SPLIT_VS, PIP, EXPLAINER, WALL, SPEED,
   V_HEADLINE, V_TWO_WAY, V_THREE, V_CARD, V_QUOTE, V_BREAKING, V_STAT, V_COUNTER,
-];
+].map(clearOfBugs);
