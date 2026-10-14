@@ -27,14 +27,15 @@ import { renderProgramFrame } from "./frame";
 import { runAiTool, aiToolsInfo } from "./ai";
 import { captionClipIds, clearCaptionBand } from "./layout";
 // auto-sfx (docs/EDITOR.md §15.2, additive)
-import { applyAutoSfx, describeAutoSfx, planAutoSfx, ruleIds, type AutoSfxPlan, type SfxIntensity, type SfxRule } from "../../editor/autosfx";
+import { applyAutoSfx, describeAutoSfx, planAutoSfx, ruleIds, type AutoSfxPlan, type SfxIntensity, type SfxRule, type SfxSource } from "../../editor/autosfx";
 import { resolveSfxUrls, withAutoSfx } from "../../editor/autosfx/autoedit";
 import { speechRanges } from "../../editor/autosfx/speech";
 import { makeHost } from "../../editor/host";
 // integration (docs/EDITOR.md §15): look packs, chain presets and the SFX library for the assistants (additive)
 import { applyLook } from "../../editor/moods/packs/looks";
-import { sfxSeconds } from "../../editor/sfx";
-import { addChainPreset, addLibrarySfx, catalogLine, catalogRows, chainPreset, CHAIN_PREFIX, moodOrLook, NEW_CATALOG_KINDS, type CatalogRow, type NewCatalogKind } from "./catalog";
+import {
+  addChainPreset, addLibrarySfx, catalogLine, catalogRows, chainPreset, CHAIN_PREFIX, moodOrLook, NEW_CATALOG_KINDS, type CatalogRow, type NewCatalogKind, type PickSource,
+} from "./catalog";
 
 
 export interface PageReply { text: string; data?: Record<string, unknown>; image?: { data: string; mimeType: string } }
@@ -655,6 +656,8 @@ export const PAGE_TOOLS: Record<string, Tool> = {
   auto_sfx: async (a, call) => {
     const s0 = seq();
     const intensity: SfxIntensity = ["subtle", "normal", "punchy"].includes(String(a.intensity)) ? a.intensity as SfxIntensity : "normal";
+    if (a.source !== undefined && !["generated", "recorded", "both"].includes(String(a.source))) throw new Error("source is generated, recorded or both");
+    const source: SfxSource = (a.source as SfxSource | undefined) ?? "both";
     // rules: a list (only these on) or { rule: on }
     let rules: Partial<Record<SfxRule, boolean>> | undefined;
     if (Array.isArray(a.rules)) {
@@ -675,7 +678,7 @@ export const PAGE_TOOLS: Record<string, Tool> = {
     }
     const host = makeHost();
     const speech = await speechRanges(host).catch(() => undefined);
-    const plan = planAutoSfx(s0, project(), { intensity, rules, range, speech });
+    const plan = planAutoSfx(s0, project(), { intensity, rules, range, speech, source });
     const data = sfxData(plan, s0);
     const list = plan.placements.slice(0, 60).map((x) => `${at(s0, x.hit)} ${x.label} [${x.rule}] ${x.gainDb} dB${x.ducked ? " (under speech)" : ""}: ${x.reason}`);
     const more = plan.placements.length > 60 ? `\n…and ${plan.placements.length - 60} more.` : "";
@@ -691,15 +694,19 @@ export const PAGE_TOOLS: Record<string, Tool> = {
     const s0 = seq();
     const start = F(s0, num(a.at, "at"));
     const gain = optNum(a.gain_db);
-    const { clipId, pick } = await addLibrarySfx(makeHost(), { preset: str(a.preset), tag: str(a.tag), seed: optNum(a.seed), at: start, gainDb: gain, label: call.label });
+    if (a.source !== undefined && !["generated", "recorded", "both"].includes(String(a.source))) throw new Error("source is generated, recorded or both");
+    const { clipId, pick, gainDb } = await addLibrarySfx(makeHost(), { preset: str(a.preset), tag: str(a.tag), seed: optNum(a.seed), source: a.source as PickSource | undefined,
+      at: start, gainDb: gain, label: call.label });
     if (!clipId) throw new Error("Nothing was placed: the SFX track is locked, or there's no active sequence");
     void resolveUrls();
     const s = seq();
     const c = s.clips.find((x) => x.id === clipId);
     const t = c ? s.tracks.find((x) => x.id === c.trackId) : undefined;
-    const len = c ? c.duration : F(s, sfxSeconds(pick.preset.id));
-    return { text: `${pick.preset.name} (${pick.preset.id}, seed ${pick.seed}${pick.among > 1 ? `, 1 of ${pick.among} with the tag ${str(a.tag)}` : ""}) on ${t ? `${trackLabel(t)}${t.name !== trackLabel(t) ? ` "${t.name}"` : ""}` : "the SFX track"} at ${span(s, start, start + len)}${gain !== undefined ? `, gain ${gain} dB` : ""} [${clipId}]. Undo takes it back.`,
-      data: { clip_id: clipId, preset: pick.preset.id, seed: pick.seed, track: t ? trackLabel(t) : null, at: S(s, start), at_tc: tc(s, start), duration: S(s, len), gain_db: gain ?? 0, media_id: c?.source.type === "media" ? c.source.mediaId : null } };
+    const len = c ? c.duration : F(s, pick.preset.duration);
+    const what = pick.recorded ? `recorded, Kenney CC0, levelled by ${pick.recorded.gainDb} dB` : `seed ${pick.seed}`;
+    return { text: `${pick.preset.name} (${pick.preset.id}, ${what}${pick.among > 1 ? `, 1 of ${pick.among} with the tag ${str(a.tag)}` : ""}) on ${t ? `${trackLabel(t)}${t.name !== trackLabel(t) ? ` "${t.name}"` : ""}` : "the SFX track"} at ${span(s, start, start + len)}${gainDb !== undefined ? `, gain ${gainDb} dB` : ""} [${clipId}]. Undo takes it back.`,
+      data: { clip_id: clipId, preset: pick.preset.id, seed: pick.seed, recorded: !!pick.recorded, track: t ? trackLabel(t) : null, at: S(s, start), at_tc: tc(s, start), duration: S(s, len), gain_db: gainDb ?? 0,
+        media_id: c?.source.type === "media" ? c.source.mediaId : null } };
   },
 
   watch_batch: (a, call) => {

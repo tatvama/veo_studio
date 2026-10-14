@@ -7,6 +7,7 @@
 import { mediaSpan } from "../model/defaults.ts";
 import { addTrack, clipEnd, clipsFromMedia, ctxOf, normalize, trackById, tracksOf } from "../model/ops.ts";
 import type { EditProject, MediaItem, Sequence, TimelineClip, Track } from "../model/types.ts";
+import { isRecordedId, sfxClipFrames } from "../sfx/index.ts";
 import { contentEnd } from "./planner.ts";
 import type { AutoSfxPlan, FrameRange, SfxPlacement } from "./types.ts";
 
@@ -87,7 +88,8 @@ export function buildAutoSfx(project: EditProject, plan: AutoSfxPlan, mediaFor: 
   for (const p of list) {
     const m = mediaFor(p);
     if (!m) { skipped.push({ id: p.id, reason: "Its sound wasn't made" }); continue; }
-    const real = mediaSpan(m, fps, 0, undefined).frames;
+    // a recording plays to its end: its length rounded up to whole frames (the procedural sounds keep their span)
+    const real = isRecordedId(p.presetId) ? sfxClipFrames(m, fps, true) : mediaSpan(m, fps, 0, undefined).frames;
     let dur = p.trim ? Math.min(p.duration, real) : real;
     // lined up by the planned sound (a whoosh's `length`), not its file: a reverb tail after it doesn't move it
     const body = Math.max(1, Math.min(p.duration, dur));

@@ -9,7 +9,7 @@ import { CHAIN_PRESETS } from "../audiofx/registry.ts";
 import { ctxOf, tracksOf } from "../model/ops.ts";
 import type { EditorHost, EditProject } from "../model/types.ts";
 import { LOOKS } from "../moods/packs/looks.ts";
-import { SFX_PRESETS, SFX_TAGS, sfxSeconds } from "../sfx/index.ts";
+import { RECORDED_SFX, SFX_PRESETS, SFX_TAGS, sfxSeconds } from "../sfx/index.ts";
 import { MOODS } from "../../lib/moods.ts";
 import { A, project, put, seqOf } from "./fixtures.ts";
 
@@ -36,8 +36,10 @@ test("list_catalog audio_presets: the chain presets as preset:<id>, with their c
 
 test("list_catalog sfx: every sound with its category and tags; a tag search finds the tagged ones", () => {
   const rows = catalogRows("sfx");
-  assert.equal(rows.length, SFX_PRESETS.length);
-  assert.deepEqual(rows.map((r) => r.tags), SFX_PRESETS.map((p) => p.tags), "every sound keeps its tags");
+  // the generated sounds, then the recorded ones (Kenney CC0)
+  assert.equal(rows.length, SFX_PRESETS.length + RECORDED_SFX.length);
+  assert.deepEqual(rows.map((r) => r.tags), [...SFX_PRESETS.map((p) => p.tags), ...RECORDED_SFX.map((r) => r.tags)], "every sound keeps its tags");
+  assert.deepEqual(rows.slice(SFX_PRESETS.length).map((r) => r.id), RECORDED_SFX.map((r) => r.id));
   assert.ok(rows.length > 100, `${rows.length} sounds`);
   for (const r of rows) assert.ok(r.group && Array.isArray(r.tags) && /^\d+(\.\d+)? s(, loops)?$/.test(r.params ?? ""), `${r.id}: ${r.params}`);
   const typing = catalogRows("sfx", "typing");

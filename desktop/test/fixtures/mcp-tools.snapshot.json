@@ -1186,6 +1186,15 @@
             }
           ]
         },
+        "source": {
+          "description": "Sounds made by code, Kenney's CC0 recordings (no whooshes, risers or typing among them), or both (default)",
+          "type": "string",
+          "enum": [
+            "generated",
+            "recorded",
+            "both"
+          ]
+        },
         "dry_run": {
           "description": "Only return the plan (time, sound, why) without changing anything",
           "type": "boolean"
@@ -1201,7 +1210,7 @@
       "type": "object",
       "properties": {
         "preset": {
-          "description": "A sound id from list_catalog(sfx), e.g. whoosh.air_soft",
+          "description": "A sound id from list_catalog(sfx), e.g. whoosh.air_soft or rec.impact.impactsoft_heavy_000",
           "type": "string",
           "minLength": 1,
           "maxLength": 80
@@ -1212,6 +1221,15 @@
           "minLength": 1,
           "maxLength": 40
         },
+        "source": {
+          "description": "With tag: pick among the generated sounds (default), the recordings, or both",
+          "type": "string",
+          "enum": [
+            "generated",
+            "recorded",
+            "both"
+          ]
+        },
         "at": {
           "type": "number",
           "minimum": 0,
@@ -1219,13 +1237,13 @@
           "description": "Where it starts on the timeline"
         },
         "gain_db": {
-          "description": "Clip gain in dB (default 0: the sound's own −16 LUFS)",
+          "description": "Clip gain in dB relative to the library's −16 LUFS (default 0; a recording adds its own measured level)",
           "type": "number",
           "minimum": -60,
           "maximum": 12
         },
         "seed": {
-          "description": "A variation of the sound (default 1)",
+          "description": "A variation of a generated sound (default 1)",
           "type": "integer",
           "minimum": 0,
           "maximum": 2147483647

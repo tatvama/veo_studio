@@ -1,6 +1,6 @@
 /**
- * The Auto SFX dialog (docs/EDITOR.md §15.2): a switch per rule with its count, the intensity, the range (the whole
- * sequence or in to out), a preview list (time, sound, why) with a checkbox per sound, Apply (ONE undo step) and
+ * The Auto SFX dialog (docs/EDITOR.md §15.2): a switch per rule with its count, the intensity, the sound source
+ * (generated, recorded Kenney CC0 sounds, or both), the range (the whole sequence or in to out), a preview list (time, sound, why) with a checkbox per sound, Apply (ONE undo step) and
  * "Remove auto sound effects". Opens from Sequence → Auto SFX… and the timeline's context menus (openAutoSfx()).
  * Mounted once by the editor; a default export with no required props.
  */
@@ -16,9 +16,9 @@ import { useProject, useSequence } from "../store";
 import { applyAutoSfx, removeAutoSfxCommand } from "./apply";
 import { resolveSfxUrls } from "./autoedit";
 import { AUTO_SFX_EVENT } from "./index";
-import { describeAutoSfx, planAutoSfx, RULES } from "./planner";
+import { describeAutoSfx, planAutoSfx, RULES, SFX_SOURCES } from "./planner";
 import { speechRanges } from "./speech";
-import type { FrameRange, SfxIntensity, SfxRule } from "./types";
+import type { FrameRange, SfxIntensity, SfxRule, SfxSource } from "./types";
 
 const INTENSITIES: { value: SfxIntensity; label: string; title: string }[] = [
   { value: "subtle", label: "Subtle", title: "−24 dB, the softer variants" },
@@ -26,10 +26,14 @@ const INTENSITIES: { value: SfxIntensity; label: string; title: string }[] = [
   { value: "punchy", label: "Punchy", title: "−12 dB, the heavier variants" },
 ];
 const RULE_KEY = "tatvam-editor:auto-sfx";
-type Saved = { intensity: SfxIntensity; rules: Partial<Record<SfxRule, boolean>> };
+type Saved = { intensity: SfxIntensity; rules: Partial<Record<SfxRule, boolean>>; source: SfxSource };
+const isSource = (v: unknown): v is SfxSource => SFX_SOURCES.some((x) => x.value === v);
 function loadSaved(): Saved {
-  try { const v = JSON.parse(localStorage.getItem(RULE_KEY) ?? "null"); if (v && typeof v === "object") return { intensity: v.intensity ?? "normal", rules: v.rules ?? {} }; } catch { /* first time */ }
-  return { intensity: "normal", rules: {} };
+  try {
+    const v = JSON.parse(localStorage.getItem(RULE_KEY) ?? "null");
+    if (v && typeof v === "object") return { intensity: v.intensity ?? "normal", rules: v.rules ?? {}, source: isSource(v.source) ? v.source : "both" };
+  } catch { /* first time */ }
+  return { intensity: "normal", rules: {}, source: "both" };
 }
 function save(v: Saved) { try { localStorage.setItem(RULE_KEY, JSON.stringify(v)); } catch { /* private window */ } }
 
@@ -39,6 +43,7 @@ export default function AutoSfxDialog() {
   const s = useSequence();
   const [intensity, setIntensity] = useState<SfxIntensity>(() => loadSaved().intensity);
   const [rules, setRules] = useState<Partial<Record<SfxRule, boolean>>>(() => loadSaved().rules);
+  const [source, setSource] = useState<SfxSource>(() => loadSaved().source);
   const [range, setRange] = useState<"all" | "inout">("all");
   const [speech, setSpeech] = useState<FrameRange[] | undefined>(undefined);
   const [listening, setListening] = useState(false);
@@ -60,11 +65,11 @@ export default function AutoSfxDialog() {
     speechRanges(makeHost()).then((r) => { if (alive) setSpeech(r); }).catch(() => undefined).finally(() => { if (alive) setListening(false); });
     return () => { alive = false; };
   }, [open, s.id]);
-  useEffect(() => { save({ intensity, rules }); }, [intensity, rules]);
+  useEffect(() => { save({ intensity, rules, source }); }, [intensity, rules, source]);
 
   const hasInOut = s.inPoint !== undefined || s.outPoint !== undefined;
-  const plan = useMemo(() => (open ? planAutoSfx(s, p, { intensity, rules, range: range === "inout" && hasInOut ? "inout" : "all", speech }) : null),
-    [open, s, p, intensity, rules, range, hasInOut, speech]);
+  const plan = useMemo(() => (open ? planAutoSfx(s, p, { intensity, rules, source, range: range === "inout" && hasInOut ? "inout" : "all", speech }) : null),
+    [open, s, p, intensity, rules, source, range, hasInOut, speech]);
   const chosen = plan ? plan.placements.filter((x) => !off.has(x.id)) : [];
   const autoNow = s.clips.filter((c) => c.autoSfx).length;
   const fps = s.fps;
@@ -106,6 +111,8 @@ export default function AutoSfxDialog() {
           <div className="flex flex-wrap items-center gap-3">
             <span className="text-2xs uppercase tracking-wide text-dim">Intensity</span>
             <Segmented size="sm" value={intensity} options={INTENSITIES} onChange={setIntensity} aria-label="Intensity" />
+            <span className="ml-2 text-2xs uppercase tracking-wide text-dim">Sound source</span>
+            <Segmented size="sm" value={source} options={SFX_SOURCES} onChange={setSource} aria-label="Sound source" />
             <span className="ml-2 text-2xs uppercase tracking-wide text-dim">Range</span>
             <Segmented size="sm" value={range} onChange={setRange} aria-label="Range"
               options={[{ value: "all", label: "Whole sequence" }, { value: "inout", label: hasInOut ? "In to out" : "In to out (no marks)", title: hasInOut ? undefined : "Mark in and out first (I / O)" }]} />
@@ -170,7 +177,7 @@ export default function AutoSfxDialog() {
               </div>
             )}
           </div>
-          <p className="text-2xs text-dim">The sounds are made on this PC (no cost) and go on the SFX track{plan.replaces ? `, replacing ${plan.replaces} from an earlier run` : ""}. Apply is one step: Ctrl+Z takes it all back. Your own sound effects are never changed.</p>
+          <p className="text-2xs text-dim">{source === "generated" ? "The sounds are made on this PC (no cost)" : source === "recorded" ? "The sounds are Kenney's CC0 recordings, bundled with Tatvam (no cost), copied into the edit" : "The sounds are made on this PC or are Kenney's CC0 recordings (no cost)"} and go on the SFX track{plan.replaces ? `, replacing ${plan.replaces} from an earlier run` : ""}. Apply is one step: Ctrl+Z takes it all back. Your own sound effects are never changed.</p>
         </div>
       )}
     </Modal>

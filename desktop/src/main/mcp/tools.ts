@@ -641,6 +641,8 @@ export const TOOLS: ToolDef[] = [
         .max(11).optional().describe("Only these rules (default every rule but beats)"),
       range: z.union([z.enum(["all", "inout"]), z.object({ start: seconds("From"), end: seconds("To") })]).optional()
         .describe("all (default), the in/out marks, or { start, end } in seconds"),
+      source: z.enum(["generated", "recorded", "both"]).optional()
+        .describe("Sounds made by code, Kenney's CC0 recordings (no whooshes, risers or typing among them), or both (default)"),
       dry_run: z.boolean().optional().describe("Only return the plan (time, sound, why) without changing anything"),
     },
     async run(a, ctx, deps) { return fromPage(await page(ctx, deps, "auto_sfx", a, 180_000)); },
@@ -648,13 +650,14 @@ export const TOOLS: ToolDef[] = [
   // one sound effect from the library (docs/EDITOR.md §15.1), made in the editor window: free, on this PC
   def({
     name: "add_sfx", scope: "edit", title: "Add a sound effect",
-    description: "Places one sound effect from the built-in library (made free on this PC) on the SFX track at a time: a preset id from list_catalog(sfx), or a tag (whoosh, impact, pop, riser, typing, ding …) and the seed picks among the matching sounds. One undo step.",
+    description: "Places one sound effect from the built-in library on the SFX track at a time: a generated sound (made free on this PC) or a Kenney CC0 recording (ids rec.*), by its id from list_catalog(sfx), or a tag (whoosh, impact, pop, riser, typing, ding …) and the seed picks among the matching sounds. One undo step.",
     input: {
-      preset: z.string().min(1).max(80).optional().describe("A sound id from list_catalog(sfx), e.g. whoosh.air_soft"),
+      preset: z.string().min(1).max(80).optional().describe("A sound id from list_catalog(sfx), e.g. whoosh.air_soft or rec.impact.impactsoft_heavy_000"),
       tag: z.string().min(1).max(40).optional().describe("Or a tag: the first matching sound (another with seed)"),
+      source: z.enum(["generated", "recorded", "both"]).optional().describe("With tag: pick among the generated sounds (default), the recordings, or both"),
       at: seconds("Where it starts on the timeline"),
-      gain_db: z.number().min(-60).max(12).optional().describe("Clip gain in dB (default 0: the sound's own −16 LUFS)"),
-      seed: z.number().int().min(0).max(2 ** 31 - 1).optional().describe("A variation of the sound (default 1)"),
+      gain_db: z.number().min(-60).max(12).optional().describe("Clip gain in dB relative to the library's −16 LUFS (default 0; a recording adds its own measured level)"),
+      seed: z.number().int().min(0).max(2 ** 31 - 1).optional().describe("A variation of a generated sound (default 1)"),
     },
     async run(a, ctx, deps) {
       if (!a.preset && !a.tag) throw new Error("Give preset (a sound id from list_catalog(sfx)) or tag");
@@ -665,7 +668,7 @@ export const TOOLS: ToolDef[] = [
   // ── catalogue ──
   def({
     name: "list_catalog", scope: "read", readOnly: true, title: "List the catalogue",
-    description: "Ids for the other tools: transitions, effects (video), audio_effects, moods, looks (moods and the look-pack looks), audio_presets (audio chain presets for add_effect), sfx (sound effects with tags and categories, for add_sfx) or title_templates, with a search.",
+    description: "Ids for the other tools: transitions, effects (video), audio_effects, moods, looks (moods and the look-pack looks), audio_presets (audio chain presets for add_effect), sfx (sound effects with tags and categories for add_sfx: the generated ones, then the Kenney CC0 recordings, ids rec.*, search \"recorded\") or title_templates, with a search.",
     input: { kind: z.enum(["transitions", "effects", "audio_effects", "moods", "looks", "audio_presets", "sfx", "title_templates"]), search: z.string().max(60).optional(),
       limit: z.number().int().min(1).max(400).optional().describe("Default 80") },
     async run(a, ctx, deps) { return fromPage(await page(ctx, deps, "list_catalog", a)); },

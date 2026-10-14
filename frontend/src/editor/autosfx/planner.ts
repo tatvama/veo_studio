@@ -4,13 +4,16 @@
  * 0.2 s, a typing burst as long as the typewriter with one key per character …), levelled by the intensity, 6 dB lower
  * while speech plays, at most one sound per 0.4 s (the higher-priority rule wins a collision), seeded from the
  * sequence id plus the event id so a re-run gives the same plan. Pure: `planAutoSfx(seq, project, opts)`.
+ * The library is the procedural presets plus the recorded sounds (Kenney CC0; `source` picks generated, recorded or
+ * both): a recorded sound that fits a part's tags is one more candidate, its clip gain raised or lowered by its measured
+ * `gainDb` so it sits at the same −16 LUFS reference.
  */
-import { SFX_PRESETS } from "../sfx/index.ts";
+import { DEFAULT_SEED, RECORDED_SFX, SFX_PRESETS } from "../sfx/index.ts";
 import { clipEnd, trackById } from "../model/ops.ts";
 import { framesToSeconds, secondsToFrames } from "../model/time.ts";
 import type { EditProject, Sequence } from "../model/types.ts";
 import { findEvents, isDialogue, type SfxEvent, type SfxPart } from "./events.ts";
-import type { AutoSfxOptions, AutoSfxPlan, CatalogPreset, FrameRange, SfxIntensity, SfxPlacement, SfxRule, SfxSkipped } from "./types.ts";
+import type { AutoSfxOptions, AutoSfxPlan, CatalogPreset, FrameRange, SfxIntensity, SfxPlacement, SfxRule, SfxSkipped, SfxSource } from "./types.ts";
 
 export interface RuleInfo { id: SfxRule; label: string; hint: string; priority: number; on: boolean }
 
@@ -42,6 +45,24 @@ export const SPEECH_DUCK_DB = -6;
 export const TAKES = 6;
 /** Beats: at most this many hits, at least a second apart. */
 export const BEAT_CAP: Record<SfxIntensity, number> = { subtle: 8, normal: 16, punchy: 32 };
+
+export const SFX_SOURCES: { value: SfxSource; label: string; title: string }[] = [
+  { value: "generated", label: "Generated", title: "Only the sounds made by code on this PC" },
+  { value: "recorded", label: "Recorded", title: "Only Kenney's CC0 recordings (they have no whooshes, risers or typing)" },
+  { value: "both", label: "Both", title: "The recordings that fit join the generated sounds" },
+];
+
+/** The recorded sounds as catalogue entries: no parameters, one take, their own length and level. */
+export function recordedCatalog(): CatalogPreset[] {
+  return RECORDED_SFX.map((r) => ({ id: r.id, name: r.name, category: r.category, tags: [...r.tags], duration: r.duration, params: [], recorded: true, gainDb: r.gainDb }));
+}
+let defaultCatalog: CatalogPreset[] | null = null;
+const builtIn = () => (defaultCatalog ??= [...(SFX_PRESETS as unknown as CatalogPreset[]), ...recordedCatalog()]);
+
+/** The part of a library a source allows. */
+export function catalogFor(catalog: CatalogPreset[], source: SfxSource): CatalogPreset[] {
+  return source === "both" ? catalog : catalog.filter((p) => !!p.recorded === (source === "recorded"));
+}
 
 /** FNV-1a: a stable 32-bit hash. */
 export function hash32(s: string): number {
@@ -150,7 +171,8 @@ const overlaps = (a: FrameRange, rs: FrameRange[]) => rs.some((r) => r.from < a.
 export function planAutoSfx(seq: Sequence, project: Pick<EditProject, "media" | "sequences"> & { newsroom?: EditProject["newsroom"] }, opts: AutoSfxOptions = {}): AutoSfxPlan {
   const fps = seq.fps;
   const intensity: SfxIntensity = opts.intensity ?? "normal";
-  const catalog: CatalogPreset[] = opts.catalog ?? (SFX_PRESETS as unknown as CatalogPreset[]);
+  const source: SfxSource = opts.source === "generated" || opts.source === "recorded" ? opts.source : "both";
+  const catalog = catalogFor(opts.catalog ?? builtIn(), source);
   const rules = Object.fromEntries(RULES.map((r) => [r.id, opts.rules?.[r.id] ?? r.on])) as Record<SfxRule, boolean>;
   const range = resolveRange(seq, opts.range);
   const speech = merge(opts.speech ?? speechFromClips(seq));
@@ -196,18 +218,24 @@ export function planAutoSfx(seq: Sequence, project: Pick<EditProject, "media" | 
       // numbered parts of one event (a countdown's ticks) share their sound
       const h = hash32(`${seq.id}|${e.id}:${p.part.replace(/\d+$/, "")}`);
       const preset = pickPreset(catalog, p, intensity, h);
-      if (!preset) { skip(e, `No sound in the library is tagged ${p.tags.map((t) => t.join(" + ")).join(" or ")}`, p.hit, p.part); continue; }
+      if (!preset) {
+        const what = source === "recorded" ? "recorded sound" : source === "generated" ? "generated sound" : "sound in the library";
+        skip(e, `No ${what} is tagged ${p.tags.map((t) => t.join(" + ")).join(" or ")}`, p.hit, p.part);
+        continue;
+      }
       const { values, seconds, trimmed } = presetValues(preset, p, intensity);
       const duration = Math.max(1, F(seconds));
       const at = p.align === "start" ? p.hit : p.align === "centre" ? p.hit - Math.floor(duration / 2) : p.hit - duration;
       const body = { from: Math.max(at, p.hit - F(0.1)), to: Math.min(at + duration, p.hit + F(0.6)) };
       const ducked = overlaps(body.to > body.from ? body : { from: at, to: at + duration }, speech);
-      const gainDb = Math.round(clamp(INTENSITY_DB[intensity] + p.gain + (ducked ? SPEECH_DUCK_DB : 0), -48, 6) * 10) / 10;
+      const gainDb = Math.round(clamp(INTENSITY_DB[intensity] + p.gain + (ducked ? SPEECH_DUCK_DB : 0) + (preset.gainDb ?? 0), -48, 6) * 10) / 10;
       const short = Math.max(1, Math.round(duration / 4));
       const fadeIn = p.align === "start" ? 0 : Math.min(2, short);
       const fadeOut = trimmed ? Math.min(F(0.08) || 2, short) : p.align === "centre" ? Math.min(2, short) : 0;
       const label = preset.name || preset.id;
-      placements.push({ id: pid, rule: e.rule, sourceId: e.sourceId, at, hit: p.hit, duration, presetId: preset.id, values, seed: 1 + (h % TAKES), gainDb, fadeIn, fadeOut, ducked,
+      // a recording is one file: one take of it
+      const seed = preset.recorded ? DEFAULT_SEED : 1 + (h % TAKES);
+      placements.push({ id: pid, rule: e.rule, sourceId: e.sourceId, at, hit: p.hit, duration, presetId: preset.id, values, seed, gainDb, fadeIn, fadeOut, ducked,
         label, reason: p.reason, align: p.align, trim: trimmed });
       taken.push({ hit: p.hit, event: e.id, rule: e.rule, label: `"${label}"` });
       placed++;
@@ -219,14 +247,17 @@ export function planAutoSfx(seq: Sequence, project: Pick<EditProject, "media" | 
   }
   placements.sort((a, b) => a.hit - b.hit || a.id.localeCompare(b.id));
   skipped.sort((a, b) => a.hit - b.hit || a.id.localeCompare(b.id));
-  return { sequenceId: seq.id, fps, intensity, range, rules, placements, skipped, counts, found, replaces };
+  return { sequenceId: seq.id, fps, intensity, source, range, rules, placements, skipped, counts, found, replaces };
 }
 
 /** One paragraph for a model or a toast: sounds per rule, what was left out, what it replaces. */
 export function describeAutoSfx(plan: AutoSfxPlan, seq?: Pick<Sequence, "name">): string {
   const S = (f: number) => Math.round(framesToSeconds(f, plan.fps) * 100) / 100;
   const per = RULES.filter((r) => plan.counts[r.id]).map((r) => `${r.label.toLowerCase()} ${plan.counts[r.id]}`);
-  const bits = [`${plan.placements.length} sound effect${plan.placements.length === 1 ? "" : "s"}${seq ? ` for "${seq.name}"` : ""} at ${plan.intensity} intensity (${S(plan.range.from)}–${S(plan.range.to)} s)`];
+  const src = plan.source === "recorded" ? ", recorded sounds only" : plan.source === "generated" ? ", generated sounds only" : "";
+  const bits = [`${plan.placements.length} sound effect${plan.placements.length === 1 ? "" : "s"}${seq ? ` for "${seq.name}"` : ""} at ${plan.intensity} intensity${src} (${S(plan.range.from)}–${S(plan.range.to)} s)`];
+  const rec = plan.placements.filter((p) => p.presetId.startsWith("rec.")).length;
+  if (rec && plan.source !== "recorded") bits.push(`${rec} of them recorded (Kenney CC0)`);
   if (per.length) bits.push(per.join(", "));
   const ducked = plan.placements.filter((p) => p.ducked).length;
   if (ducked) bits.push(`${ducked} lowered 6 dB under speech`);

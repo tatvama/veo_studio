@@ -1,7 +1,8 @@
 /**
  * Media the page generates, written into the edit (docs/EDITOR.md §15.1): the bridge's
- * `editor.writeGeneratedMedia(editPath, name, bytes, kind)`. The SFX library's WAVs go to `<edit>\Audio\SFX\`
- * (generated video and images to `<edit>\Generated\…`). The name must be a plain, safe file name of that kind; the file
+ * `editor.writeGeneratedMedia(editPath, name, bytes, kind)`. The SFX library's WAVs, and the bundled recordings it
+ * copies as they are (Kenney CC0, `rec.<pack>.<name>.ogg`; any audio extension of mediaKindOf: .wav .mp3 .ogg …), go to
+ * `<edit>\Audio\SFX\` (generated video and images to `<edit>\Generated\…`). The name must be a plain, safe file name of that kind; the file
  * is at most 50 MB, is written atomically (`.part`, then a rename) and only ever under the edit's folder, and the same
  * content already there is reused instead of written again. The file then goes through the editor's own import path
  * (probe, waveform peaks, the /__media registry) and comes back as a MediaItem.
