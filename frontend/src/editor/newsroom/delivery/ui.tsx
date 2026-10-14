@@ -29,7 +29,7 @@ import { parseTable, type Table } from "./csv";
 import { cancelGroup, cancelJob, clearFinished, isActive, queueExport, revealJob, useDeliveryJobs, type DeliveryJob } from "./jobs";
 import { findSeamlessAsync, planLoop, SEAMLESS, seamCheck } from "./loops";
 import { deliveryName } from "./names";
-import { bothRatios, CODECS, generated, isAlpha, languageVersions, LOUDNESS_CHOICES, markedRange, transparent, tvDelivery, type Codec } from "./plan";
+import { bothRatios, CODECS, generated, languageVersions, LOUDNESS_CHOICES, markedRange, transparent, tvDelivery, type Codec } from "./plan";
 import { editLanguages, seqRatio } from "./prepare";
 import { planReel, REEL_CATEGORIES } from "./reel";
 import { planShorts, type PlannedShort } from "./shorts";

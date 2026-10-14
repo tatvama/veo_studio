@@ -89,7 +89,7 @@ before(async () => {
       case "/gzip": res.writeHead(200, { "content-type": "application/json", "content-encoding": "gzip" }); res.end(zlib.gzipSync(JSON.stringify({ data: { items: [1, 2] } }))); return;
       case "/latin": res.writeHead(200, { "content-type": "text/plain; charset=windows-1252" }); res.end(Buffer.from([0x93, 0x68, 0x69, 0x94])); return;
       case "/hop": res.writeHead(302, { location: n > 0 ? `/hop?n=${n - 1}` : "/csv", "set-cookie": "s=2" }); res.end(); return;
-      case "/away": res.writeHead(301, { location: String(u.searchParams.get("to")) }); res.end(); return;
+      case "/away": res.writeHead(301, { location: AWAY[Number(u.searchParams.get("i"))] ?? "/csv" }); res.end(); return;
       case "/big": res.writeHead(200, { "content-type": "text/plain", "content-length": String(5000) }); res.end("x".repeat(5000)); return;
       case "/stream": {
         res.writeHead(200, { "content-type": "text/plain" });
@@ -147,10 +147,13 @@ test("fetch: redirects are followed (at most 5) and cookies are never sent back"
   assert.match(many.error ?? "", /redirected too many times/);
 });
 
+/** Where the test server's /away?i=<n> redirects (a fixed list: the server never redirects to a value it is sent). */
+const AWAY = ["http://intranet.example/secret", "http://169.254.169.254/latest/", "http://[::1]:1/", "file:///etc/passwd", "http://localhost/"];
+
 test("fetch: a redirect to a private or local address is refused", async () => {
   const resolve = async (host: string) => (host === "intranet.example" ? [{ address: "10.0.0.5", family: 4 }] : [{ address: "93.184.216.34", family: 4 }]);
-  for (const to of ["http://intranet.example/secret", "http://169.254.169.254/latest/", "http://[::1]:1/", "file:///etc/passwd", "http://localhost/"]) {
-    const r = await fetchText(`${base}/away?to=${encodeURIComponent(to)}`, { ...local, resolve });
+  for (const [i, to] of AWAY.entries()) {
+    const r = await fetchText(`${base}/away?i=${i}`, { ...local, resolve });
     assert.equal(r.ok, false, to);
     assert.match(r.error ?? "", /private network|http or https/, to);
   }

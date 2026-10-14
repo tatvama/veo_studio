@@ -92,16 +92,16 @@ export async function libraryList(d: NewsroomDeps, k: NewsLibraryKind): Promise<
     if (!isLibraryId(id)) continue;
     const file = path.join(dir, n);
     try {
-      const st = await fs.stat(file);
-      if (!st.isFile()) continue;
+      const f = await readFileCapped(file, MAX_LIBRARY_BYTES);
+      if (!f.isFile) continue;
       let name = id;
-      if (st.size <= MAX_LIBRARY_BYTES) {
+      if (f.text !== null) {
         try {
-          const v = JSON.parse(await fs.readFile(file, "utf8")) as { name?: unknown };
+          const v = JSON.parse(f.text) as { name?: unknown };
           if (typeof v?.name === "string" && v.name.trim()) name = v.name.trim().slice(0, 200);
         } catch { /* listed by its id; reading it later says what's wrong */ }
       }
-      out.push({ id, name, path: file, modified: st.mtime.toISOString(), bytes: st.size });
+      out.push({ id, name, path: file, modified: f.mtime.toISOString(), bytes: f.size });
     } catch (e) {
       d.log(`newsroom library: ${n}: ${(e as Error).message}`);
     }
@@ -109,13 +109,24 @@ export async function libraryList(d: NewsroomDeps, k: NewsLibraryKind): Promise<
   return out.sort((a, b) => b.modified.localeCompare(a.modified) || a.name.localeCompare(b.name));
 }
 
+/** A file's size and type, and its text when it is a file of at most `max` bytes, read through one handle (so the
+ *  file can't change between the check and the read). */
+async function readFileCapped(file: string, max: number): Promise<{ isFile: boolean; size: number; mtime: Date; text: string | null }> {
+  const fh = await fs.open(file, "r");
+  try {
+    const st = await fh.stat();
+    if (!st.isFile() || st.size > max) return { isFile: st.isFile(), size: st.size, mtime: st.mtime, text: null };
+    return { isFile: true, size: st.size, mtime: st.mtime, text: await fh.readFile("utf8") };
+  } finally { await fh.close(); }
+}
+
 /** A library file's JSON, or null when there is none. */
 export async function libraryRead(d: NewsroomDeps, k: NewsLibraryKind, id: string): Promise<string | null> {
   const file = fileOf(d, k, id);
   try {
-    const st = await fs.stat(file);
-    if (st.size > MAX_LIBRARY_BYTES) throw new Error(`That ${WHAT[k]} is too large (over 32 MB).`);
-    return await fs.readFile(file, "utf8");
+    const f = await readFileCapped(file, MAX_LIBRARY_BYTES);
+    if (f.text === null) throw new Error(f.isFile ? `That ${WHAT[k]} is too large (over 32 MB).` : `That ${WHAT[k]} isn't a file.`);
+    return f.text;
   } catch (e) {
     if (isMissing(e)) return null;
     throw e;
@@ -162,10 +173,10 @@ export async function importFile(d: NewsroomDeps, k: NewsLibraryKind, dialogs: F
     filters: [{ name: k === "look" ? "Tatvam look" : "Tatvam graphic", extensions: [ext.slice(1)] }, { name: "All files", extensions: ["*"] }],
   });
   if (!picked) return null;
-  const st = await fs.stat(picked);
-  if (!st.isFile()) throw new Error("That isn't a file.");
-  if (st.size > MAX_LIBRARY_BYTES) throw new Error(`That file is too large to be a ${WHAT[k]} (over 32 MB).`);
-  const json = await fs.readFile(picked, "utf8");
+  const f = await readFileCapped(picked, MAX_LIBRARY_BYTES);
+  if (!f.isFile) throw new Error("That isn't a file.");
+  if (f.text === null) throw new Error(`That file is too large to be a ${WHAT[k]} (over 32 MB).`);
+  const json = f.text;
   jsonObject(json, k);
   const name = path.basename(picked).replace(/\.[^.]+$/, "");
   return { name, json };

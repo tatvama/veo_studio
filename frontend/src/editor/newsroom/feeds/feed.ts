@@ -87,8 +87,13 @@ export const childrenNamed = (n: XNode, name: string) => n.children.filter((c) =
 const BLOCK = /<\/?(p|div|br|li|ul|ol|h[1-6]|tr|td|th|table|blockquote|section|article|header|footer|figure|figcaption|hr)\b[^>]*>/gi;
 /** Plain text from text that may hold HTML (block tags become spaces, inline tags vanish, entities decoded, spaces collapsed). */
 export function plainText(s: string): string {
-  return decodeEntities(s.replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ").replace(BLOCK, " ").replace(/<\/?[a-z][^>]*>/gi, ""))
-    .replace(/\s+/g, " ").trim();
+  // removed until nothing is left to remove (a tag split around another one, "<scr<b>ipt>", comes back together)
+  let t = s, prev: string;
+  do {
+    prev = t;
+    t = t.replace(/<(script|style)[\s\S]*?<\/\1\s*>/gi, " ").replace(BLOCK, " ").replace(/<\/?[a-z][^>]*>/gi, "");
+  } while (t !== prev);
+  return decodeEntities(t).replace(/\s+/g, " ").trim();
 }
 
 /** RFC 822 / ISO dates → ISO text (the written text when it can't be read). */

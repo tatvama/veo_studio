@@ -73,7 +73,7 @@ export function findLists(v: unknown, max = 8): string[] {
       if (x.length && x.some(isObj)) out.push(p);
       if (d < 4 && x.length && isObj(x[0])) for (const [k, y] of Object.entries(x[0])) if (y && typeof y === "object") queue.push([y, `${p}[0].${k}`.replace(/^\./, ""), d + 1]);
     } else if (isObj(x) && d < 4) {
-      for (const [k, y] of Object.entries(x)) if (y && typeof y === "object") queue.push([y, /^[A-Za-z_$][\w$]*$/.test(k) ? (p ? `${p}.${k}` : k) : `${p}["${k.replace(/"/g, '\\"')}"]`, d + 1]);
+      for (const [k, y] of Object.entries(x)) if (y && typeof y === "object") queue.push([y, /^[A-Za-z_$][\w$]*$/.test(k) ? (p ? `${p}.${k}` : k) : `${p}["${k.replace(/[\\"]/g, "\\$&")}"]`, d + 1]);
     }
   }
   return out;

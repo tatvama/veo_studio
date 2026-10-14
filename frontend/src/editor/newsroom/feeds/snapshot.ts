@@ -29,7 +29,7 @@ export function parseSourceText(source: Pick<DataSource, "kind" | "root">, text:
   if (!text.trim()) throw new Error("The source is empty");
   const kind = detectKind(text);
   if (kind === "html") {
-    throw new Error(source.kind === "sheet" || /docs\.google\.com/.test(text.slice(0, 3000))
+    throw new Error(source.kind === "sheet" || text.slice(0, 3000).includes("docs.google.com")
       ? "This gave a web page, not data. In Google Sheets use File → Share → Publish to web, choose CSV, and paste that link."
       : "This gave a web page, not data. Use the address of the CSV, JSON or RSS file itself.");
   }
