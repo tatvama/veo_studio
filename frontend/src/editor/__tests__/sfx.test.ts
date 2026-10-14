@@ -1,6 +1,6 @@
 /**
  * The SFX engine (docs/EDITOR.md §15.1): the catalogue (counts per category, params, tags), parameters at their
- * extremes, determinism (sample hashes), the loudness reading, the WAV writer, and the media helpers (render → save →
+ * extremes, determinism (sample hashes on one machine, level fingerprints across machines), the loudness reading, the WAV writer, and the media helpers (render → save →
  * one bin, one undo step per placement on an SFX track). Every preset at its defaults is checked in sfx-render.test.ts.
  */
 import assert from "node:assert/strict";
@@ -83,26 +83,42 @@ test("parameters change the sound and stay in range; extremes render cleanly", (
 
 // ── determinism ─────────────────────────────────────────────────────────────────────────────────────────
 
-/** Sample hashes of ten presets at their defaults, seed 1: the same everywhere (bump SFX_ENGINE_VERSION and these
- *  together when a change to the engine changes the sound on purpose). */
+/**
+ * Fingerprints of ten presets at their defaults, seed 1: the RMS of every 4096-sample block per channel, in dB rounded
+ * to 0.1 dB. JavaScript engines may differ in the last bit of Math.pow and friends (Node 22 and 24 do, for the Shepard
+ * riser), which no one can hear, so the cross-machine check ignores float noise while a change to the sound still
+ * shows. Bump SFX_ENGINE_VERSION and these together when the engine changes a sound on purpose. Within one machine the
+ * samples are compared bit for bit (below).
+ */
 const GOLDEN: Record<string, string> = {
-  "whoosh.air_soft": "236f56e5668d3598",
-  "riser.shepard": "981c661d1c44aef1",
-  "impact.cinematic": "f29f060879e65882",
-  "subdrop.808": "ede6fb2a92ae544b",
-  "braam.classic": "4fcb76c37e63842e",
-  "ui.notification": "3459304f3ce4587e",
-  "typing.burst": "d1ea4736faf71093",
-  "glitch.burst": "879df51d0b3a64bd",
-  "amb.rain": "d1497e2e24e24551",
-  "crowd.applause": "1f08799239081c45",
+  "whoosh.air_soft": "56d4facd916160a9",
+  "riser.shepard": "ce94da46bb6d2c78",
+  "impact.cinematic": "ead4437b17febdb8",
+  "subdrop.808": "26c9eef56b0f4b81",
+  "braam.classic": "bf12b6fd0d4c9480",
+  "ui.notification": "bfb43f5ed7e824fe",
+  "typing.burst": "09bfb43234dfc2cf",
+  "glitch.burst": "bcbe1dc4d7f3a10d",
+  "amb.rain": "28c0a095aabb0c32",
+  "crowd.applause": "ab6bc810474a8f05",
+};
+const fingerprint = (ch: Float32Array[]) => {
+  const h = createHash("sha256");
+  for (const c of ch) for (let i = 0; i < c.length; i += 4096) {
+    const e = Math.min(c.length, i + 4096);
+    let s = 0;
+    for (let j = i; j < e; j++) s += c[j] * c[j];
+    h.update(`${s > 0 ? Math.round(100 * Math.log10(s / (e - i))) : "-"},`);
+  }
+  return h.digest("hex").slice(0, 16);
 };
 
 test("determinism: the same preset, values and seed give the same samples; a new seed a new take", () => {
   for (const [id, want] of Object.entries(GOLDEN)) {
-    const a = hashOf(renderSfx(id, {}, 1)), b = hashOf(renderSfx(id, {}, 1));
-    assert.equal(a, b, `${id} renders the same twice`);
-    if (want) assert.equal(a, want, `${id} renders the known samples`);
+    const take = renderSfx(id, {}, 1);
+    const a = hashOf(take), b = hashOf(renderSfx(id, {}, 1));
+    assert.equal(a, b, `${id} renders the same samples twice`);
+    if (want) assert.equal(fingerprint(take), want, `${id} sounds the same as the known take`);
     assert.notEqual(hashOf(renderSfx(id, {}, 2)), a, `${id}: seed 2 is a different take`);
   }
   assert.equal(sfxKey("whoosh.fast", {}, 1), sfxKey("whoosh.fast", { length: 0.38 }, 1), "defaults key the same as explicit defaults");
