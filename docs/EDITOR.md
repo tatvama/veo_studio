@@ -781,7 +781,9 @@ Decisions:
 - **Maps:** map boards use the user's own map image with animated pins. No built-in map of India (official borders
   need an approved source).
 - **No AI helpers** in this section.
-- **Sound effects:** templates carry sound hints (`sounds`). When the SFX branch (§15) is on main, auto SFX reads them.
+- **Sound effects:** templates carry sound hints (`sounds`), and auto SFX (§15.2) places them
+  (`autosfx/events.ts graphicEvents`): a stinger gets a whoosh plus a soft impact at its cut point; a strap, board or
+  layout a swish in and a reverse swish out. Graphics that loop (tickers, bugs, backgrounds) stay quiet.
 
 ### 16.1 Where things live
 

@@ -11,6 +11,7 @@ import { isBeatMarker } from "../model/snapping.ts";
 import { fpsExact } from "../model/time.ts";
 import type { EditProject, EffectInstance, Marker, Sequence, TimelineClip, TitleSpec, Track } from "../model/types.ts";
 import type { SfxRule } from "./types.ts";
+import { builtinTemplate } from "../newsroom/templates/index.ts";
 
 /** One sound of an event. */
 export interface SfxPart {
@@ -178,7 +179,7 @@ export interface FindOptions {
   fps: number;
   /** Include beat markers. */
   beats: boolean;
-  project: Pick<EditProject, "media" | "sequences">;
+  project: Pick<EditProject, "media" | "sequences"> & { newsroom?: EditProject["newsroom"] };
 }
 
 function transitionEvents(seq: Sequence, fps: number, out: SfxEvent[]) {
@@ -296,6 +297,46 @@ function titleEvents(seq: Sequence, fps: number, out: SfxEvent[]) {
   }
 }
 
+/**
+ * News Room graphics (docs/EDITOR.md §16): a stinger gets a whoosh plus a soft impact at its cut point; a strap, board
+ * or layout a swish as it comes in and a reverse swish as it leaves (its template's `sounds` hints come first).
+ * Graphics that loop for their whole length (tickers, bugs, backgrounds) stay quiet.
+ */
+function graphicEvents(seq: Sequence, fps: number, project: FindOptions["project"], out: SfxEvent[]) {
+  for (const t of tracksOf(seq, "video")) {
+    for (const c of onTrack(seq, t.id)) {
+      if (c.source.type !== "graphic") continue;
+      const id0 = c.source.gfx.template;
+      const tpl = project.newsroom?.templates?.[id0] ?? builtinTemplate(id0);
+      if (!tpl || tpl.loop) continue;
+      const name = short(c.name || tpl.name);
+      const stinger = tpl.cut !== undefined;
+      const rule: SfxRule = stinger ? "stingers" : "titles";
+      const id = `${rule}:${c.id}`;
+      if (!playable(seq, c)) { out.push({ id, rule, sourceId: c.id, hit: c.start, parts: [], skip: `"${name}" is disabled or on a hidden track` }); continue; }
+      const dur = c.duration / fps;
+      const hint = (tag?: string): string[][] => (tag ? [[tag]] : []);
+      const parts: SfxPart[] = [];
+      if (stinger) {
+        const at = Math.min(clipEnd(c) - 1, c.start + Math.round((tpl.cut ?? 0.5) * c.duration));
+        parts.push({ part: "whoosh", tags: [...hint(tpl.sounds?.in), ["whoosh"], ["swish"]], hit: at, align: "centre", length: r1(Math.min(dur, 1.6) + 0.2), gain: 0,
+          reason: `Stinger "${name}": a whoosh across the cover` });
+        parts.push({ part: "impact", tags: [...hint(tpl.sounds?.cut), ["impact"], ["hit"], ["boom"]], prefer: ["soft", "light", "small", "low", "thud", "muffled"], hit: at, align: "start", gain: -4,
+          reason: `Stinger "${name}": a soft impact when it covers the frame` });
+      } else {
+        const inDur = Math.min(tpl.timing.in, dur / 3), outDur = Math.min(tpl.timing.out, dur / 3);
+        parts.push({ part: "in", tags: [...hint(tpl.sounds?.in), ["swish"], ["whoosh"]], hit: c.start, align: "start", length: r1(Math.max(0.25, inDur + 0.1)), gain: -4,
+          reason: `"${name}" comes in (${r1(inDur)} s)` });
+        if (outDur > 0.05 && dur > inDur + outDur + 0.3) {
+          parts.push({ part: "out", tags: [["reverse", "swish"], ["reverse", "whoosh"], ...hint(tpl.sounds?.out), ["swish"]], hit: clipEnd(c), align: "end",
+            length: r1(Math.max(0.25, outDur + 0.1)), gain: -6, reason: `"${name}" goes out: a reverse swish` });
+        }
+      }
+      out.push({ id, rule, sourceId: c.id, hit: parts[0].hit, parts });
+    }
+  }
+}
+
 function punchInEvents(seq: Sequence, out: SfxEvent[]) {
   for (const t of tracksOf(seq, "video")) {
     const cs = onTrack(seq, t.id);
@@ -406,6 +447,7 @@ export function findEvents(seq: Sequence, o: FindOptions, depth = 0, seen: Set<s
   const out: SfxEvent[] = [];
   transitionEvents(seq, o.fps, out);
   titleEvents(seq, o.fps, out);
+  graphicEvents(seq, o.fps, o.project, out);
   punchInEvents(seq, out);
   retimeEvents(seq, o.fps, out);
   effectEvents(seq, out);
