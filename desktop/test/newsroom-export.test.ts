@@ -287,7 +287,10 @@ test("real encodes: ProRes 4444, WebM with alpha, PNG frames and a TV mp4 (legal
     const comps = seen.filter((j) => j.kind === "composition") as Extract<GpuRenderJob, { kind: "composition" }>[];
     assert.deepEqual(comps.map((j) => Boolean(j.news?.alpha)), [true, true, true, false, false]);
     assert.deepEqual(comps.map((j) => j.bits ?? 8), [8, 8, 8, 8, 8]);
-    assert.ok(!readdirSync(path.join(editDir, "Cache")).length, "the temp folders are gone");
+    // the queue marks a job done just before it deletes its temp folder: give the last one a moment (Windows)
+    const cache = path.join(editDir, "Cache");
+    for (let i = 0; i < 50 && readdirSync(cache).length; i++) await new Promise((r) => setTimeout(r, 100));
+    assert.ok(!readdirSync(cache).length, "the temp folders are gone");
   });
 
 test("TV loudness for real: a loud tone is brought to EBU R128 −23 LUFS (true peak under −1 dBTP); graphics-only is silent; cancel works",
