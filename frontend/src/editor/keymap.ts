@@ -14,8 +14,9 @@ import { seqEnd } from "./model/ops";
 import * as M from "./motionActions";
 import { playProgram, playSource, shuttleProgram } from "./playback/control";
 import { program, source } from "./playback/transport";
-import { clearSelection, ed, gesture, redo, select, seq, setTool, toggleSnapping, undo, type EditorState, type Tool } from "./store";
+import { clearSelection, ed, gesture, project, redo, select, seq, setTool, toggleSnapping, undo, type EditorState, type Tool } from "./store";
 import { closeMenu, typing } from "./ui";
+import { currentWorkspace } from "./workspaces";
 
 export interface KeyHandlers { save(): void; saveAs(): void; open(): void; newEdit(): void; importMedia(): void; exportSeq(): void; shortcuts(): void; laneWidth(): number; shortcutEditor?(): void }
 
@@ -73,6 +74,10 @@ type Run = (c: Ctx) => boolean | void;
 
 const tool = (t: Tool): Run => () => setTool(t);
 const RUN: Record<string, Run> = {
+  // News Room (docs/EDITOR.md §16.8): graphics in one key; the room's code loads on first use
+  "nr.strap": () => { void room().then((m) => m.quickAdd("strap")); }, "nr.ticker": () => { void room().then((m) => m.quickAdd("ticker")); },
+  "nr.breaking": () => { void room().then((m) => m.quickAdd("breaking")); }, "nr.layout": () => { void room().then((m) => m.quickAdd("layout")); },
+  "nr.wipe": () => { void room().then((m) => m.quickAdd("wipe")); },
   "tool.select": tool("select"), "tool.trackFwd": tool("trackFwd"), "tool.trackBack": tool("trackBack"), "tool.ripple": tool("ripple"), "tool.roll": tool("roll"),
   "tool.rate": tool("rate"), "tool.razor": tool("razor"), "tool.slip": tool("slip"), "tool.slide": tool("slide"), "tool.pen": tool("pen"), "tool.hand": tool("hand"),
   "tool.zoom": tool("zoom"), "tool.text": tool("text"),
@@ -124,12 +129,33 @@ export function handleKey(e: KeyboardEvent, h: KeyHandlers): boolean {
   // the "?" key: Shift+/ on most layouts
   const id = index.get(name) ?? (name === "?" || name === "Shift+?" ? index.get("Shift+/") : undefined);
   const run = id ? RUN[id] : undefined;
-  if (!run) return false;
+  if (!run) return newsKey(name, e);
   const st = ed();
   const src = st.focus === "source" && !!st.sourceId;
   if (run({ src, tr: src ? source : program, st, h }) === false) return false;
   e.preventDefault();
   return true;
+}
+
+// ── News Room quick keys (docs/EDITOR.md §16.8, additive) ────────────────────
+
+/**
+ * The News Room's quick keys (Alt + a letter no preset, browser or the desktop menu uses — the desktop menu takes
+ * Alt+F, E, V, W and H) are rebindable actions ("nr.*" in model/keybindings.ts). The graphics playlist sits on F1–F12
+ * outside the bindings: only while the News Room workspace is open or the timeline or program monitor has focus, and
+ * only for keys with a graphic on them, so the browser's own F-keys and any preset's F-keys still work.
+ */
+const room = () => import("./newsroom/room/actions");
+function newsKey(name: string, e: KeyboardEvent): boolean {
+  if (/^F([1-9]|1[0-2])$/.test(name)) {
+    const st = ed();
+    if (st.focus !== "timeline" && st.focus !== "program" && currentWorkspace() !== "news") return false;
+    if (!project().newsroom?.playlist?.some((x) => x.key === name)) return false;
+    e.preventDefault();
+    void room().then((m) => m.fireKey(name));
+    return true;
+  }
+  return false;
 }
 
 /** The shortcut list for Help → Keyboard shortcuts (the keys in use, grouped). */
@@ -145,6 +171,7 @@ function rebuildList() {
   }
   const extra: [string, [string, string][]] = ["Mouse", [["Alt+wheel", "Zoom at the pointer"], ["Shift+wheel", "Scroll in time"], ["Drag with Ctrl", "Insert instead of overwrite"],
     ["Drag with Alt", "Duplicate (on an edge: trim one side only)"], ["Ctrl+Alt drag", "Rearrange"], ["Ctrl+edge drag", "Ripple trim"]]];
+  groups.set("News Room", [...(groups.get("News Room") ?? []), ["F1–F12", "Add that playlist graphic at the playhead"]]);
   SHORTCUTS.splice(0, SHORTCUTS.length, ...groups.entries(), extra);
 }
 rebuildList();

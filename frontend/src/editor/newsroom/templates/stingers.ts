@@ -1,0 +1,82 @@
+/**
+ * Built-in "Stingers" templates (docs/EDITOR.md §16.4). Owner: nr-wipes. Ids "nr.stingers.<name>", stable. Each is a
+ * Wipe Designer spec (wipes/designer.ts) drawn by the "panels" kind: 0.9–1.6 s, both ratios, fully opaque around its
+ * `cut` (the tests prove it), with whoosh / impact sound hints. Colours are the look's, so every channel gets its own.
+ */
+import type { GfxTemplate } from "../types.ts";
+import { stingerTemplate, type WipeSpec } from "../wipes/designer.ts";
+
+type Row = [id: string, name: string, description: string, spec: Partial<WipeSpec>, tags?: string[], sounds?: GfxTemplate["sounds"]];
+
+const ROWS: Row[] = [
+  ["logo_wipe", "Logo wipe", "Two slanted panels sweep across and the channel logo lands on the cut.",
+    { layout: "stack", edge: "slant", depth: 0.25, count: 2, colors: ["secondary", "primary"], logo: true, flash: 0.25, hold: 0.5, seconds: 1.5, line: 6, lineColor: "accent" }, ["logo"]],
+  ["colour_bars", "Colour bar sweep", "Five bars in the look's colours race across one after another.",
+    { layout: "bars", edge: "straight", count: 5, colors: ["accent", "primary", "secondary"], stagger: 0.045, seconds: 1, hold: 0.13, ease: "expo", finish: "flat", blur: 0.4 }],
+  ["light_sweep", "Light sweep", "Glass panels with a bright light sweeping across on the cut.",
+    { layout: "stack", edge: "slant", depth: 0.35, count: 2, colors: ["secondary", "primary"], finish: "glass", sweep: true, blur: 0.5, seconds: 1.2, hold: 0.25 }, ["light"]],
+  ["breaking", "Breaking news", "Hard panels, a flash and BREAKING NEWS slamming in on a red plate.",
+    { layout: "stack", edge: "slant", depth: 0.3, count: 3, colors: ["breaking", "dark", "secondary"], text: "BREAKING NEWS", textPlate: "breaking", textStyle: "slam", flash: 0.8, hold: 0.6, seconds: 1.6, ease: "expo", line: 8, lineColor: "light", stagger: 0.06 },
+    ["breaking", "text"], { in: "whoosh", cut: "impact" }],
+  ["flip_3d", "3D panel flip", "Strips of colour flip over like cards, one after another.",
+    { layout: "flip", edge: "straight", count: 6, colors: ["primary", "secondary"], stagger: 0.04, seconds: 1.2, hold: 0.15 }, ["3d"]],
+  ["split_door", "Split doors", "Two doors close from the sides on the logo, then open again.",
+    { layout: "split", edge: "straight", count: 2, colors: ["accent", "primary"], logo: true, hold: 0.45, seconds: 1.5, line: 6, lineColor: "light", flash: 0.2 }, ["logo"]],
+  ["push_left", "Push left", "Three panels push in from the right.",
+    { layout: "stack", edge: "straight", count: 3, angle: 180, colors: ["accent", "secondary", "primary"], stagger: 0.08, seconds: 1, ease: "sharp" }],
+  ["push_up", "Push up", "Three panels push up from the bottom (good for vertical).",
+    { layout: "stack", edge: "straight", count: 3, angle: -90, colors: ["accent", "primary", "secondary"], stagger: 0.08, seconds: 1, ease: "sharp" }],
+  ["chevrons", "Chevrons", "Arrow-shaped panels drive across the frame.",
+    { layout: "stack", edge: "chevron", depth: 0.45, count: 3, colors: ["accent", "secondary", "primary"], stagger: 0.08, seconds: 1.15 }],
+  ["chevron_bars", "Chevron bars", "Arrow bars from the middle outwards.",
+    { layout: "bars", edge: "chevron", depth: 0.5, count: 4, colors: ["primary", "secondary"], order: "center", stagger: 0.05, seconds: 1.1 }],
+  ["blades", "Blades", "Tilted blades snap open like blinds.",
+    { layout: "blades", edge: "straight", count: 8, angle: 20, colors: ["primary", "secondary"], stagger: 0.035, seconds: 1.1, ease: "expo" }],
+  ["iris_logo", "Iris with logo", "Rings close in from the middle and the logo appears.",
+    { layout: "circles", edge: "straight", count: 3, colors: ["accent", "secondary", "primary"], logo: true, flash: 0.3, hold: 0.5, seconds: 1.5, line: 5, lineColor: "light" }, ["logo"]],
+  ["ink_splash", "Ink splash", "Brushed ink blots spread across the frame.",
+    { layout: "circles", edge: "brush", depth: 0.8, count: 2, colors: ["dark", "primary"], cx: 0.35, cy: 0.55, seconds: 1.3, hold: 0.2, finish: "flat", blur: 0.2 }, ["ink"]],
+  ["brush_stroke", "Brush stroke", "Two broad brush strokes sweep across.",
+    { layout: "stack", edge: "brush", depth: 0.7, count: 2, angle: -6, colors: ["accent", "primary"], finish: "flat", seconds: 1.2, stagger: 0.1 }, ["ink"]],
+  ["paper_tear", "Paper tear", "A torn sheet slides across with a light paper edge.",
+    { layout: "stack", edge: "torn", depth: 0.7, count: 2, colors: ["light", "primary"], line: 10, lineColor: "light", shadow: 0.7, finish: "flat", seconds: 1.3 }],
+  ["slices", "Slices", "Slanted slices fly in from both sides.",
+    { layout: "slices", edge: "slant", depth: 0.4, count: 6, colors: ["primary", "secondary"], stagger: 0.03, seconds: 1, ease: "expo" }],
+  ["diagonal_slices", "Diagonal slices", "Diagonal slices cross each other.",
+    { layout: "slices", edge: "straight", count: 5, angle: 35, colors: ["accent", "primary", "secondary"], stagger: 0.04, seconds: 1.1 }],
+  ["glass", "Glass panels", "Frosted glass panels with soft trails.",
+    { layout: "stack", edge: "slant", depth: 0.25, count: 3, colors: ["secondary", "primary", "secondary"], finish: "glass", blur: 0.6, shadow: 0.5, seconds: 1.3, hold: 0.2 }],
+  ["sports", "Sports energy", "Steep slanted bars punch in with an overshoot and a flash.",
+    { layout: "bars", edge: "slant", depth: 0.9, count: 4, angle: -12, ease: "back", overshoot: 0.6, colors: ["accent", "primary", "dark"], line: 6, lineColor: "light", stagger: 0.04, seconds: 1, flash: 0.3 },
+    ["sports"], { in: "whoosh", cut: "impact" }],
+  ["business", "Business clean", "Calm panels with a thin gold line and the logo.",
+    { layout: "stack", edge: "straight", count: 2, colors: ["secondary", "primary"], ease: "smooth", line: 4, lineColor: "accent", logo: true, hold: 0.45, seconds: 1.4, blur: 0.2, shadow: 0.2 },
+    ["business", "logo"], { in: "swish", cut: "swish" }],
+  ["election", "Election special", "Three bars drop in and ELECTION SPECIAL lands on a plate.",
+    { layout: "bars", edge: "slant", depth: 0.3, count: 3, angle: 90, colors: ["primary", "accent", "secondary"], text: "ELECTION SPECIAL", textPlate: "secondary", textStyle: "rise", hold: 0.5, seconds: 1.5, stagger: 0.06 },
+    ["election", "text"]],
+  ["weather", "Weather", "Wavy circles roll in from the top corner with WEATHER.",
+    { layout: "circles", edge: "wave", depth: 0.6, count: 2, colors: ["secondary", "primary"], cx: 0.85, cy: 0.15, text: "WEATHER", textStyle: "rise", hold: 0.45, seconds: 1.4, vertical: { cx: 0.8, cy: 0.12 } },
+    ["weather", "text"]],
+  ["tiles", "Tile mosaic", "Square tiles fill the frame from the middle.",
+    { layout: "tiles", edge: "straight", count: 10, order: "center", colors: ["primary", "secondary"], stagger: 0.03, seconds: 1.1, shadow: 0.1, vertical: { count: 6 } }],
+  ["diamonds", "Diamonds", "Diamonds sweep across the frame.",
+    { layout: "tiles", edge: "chevron", count: 8, order: "forward", colors: ["accent", "primary"], stagger: 0.03, seconds: 1.1, shadow: 0.1, vertical: { count: 5 } }],
+  ["dots", "Dots", "Round dots pop up all over.",
+    { layout: "tiles", edge: "round", count: 9, order: "random", colors: ["secondary", "primary"], stagger: 0.025, seconds: 1.1, shadow: 0.1, vertical: { count: 6 } }],
+  ["wave", "Wave", "Two wavy panels roll across.",
+    { layout: "stack", edge: "wave", depth: 0.6, count: 2, colors: ["accent", "primary"], seconds: 1.2 }],
+  ["round_drop", "Round drop", "Rounded panels drop from the top.",
+    { layout: "stack", edge: "round", depth: 0.5, count: 2, angle: 90, colors: ["accent", "secondary"], seconds: 1.15 }],
+  ["curtain_bars", "Curtain bars", "Bars drop from the middle outwards like a curtain.",
+    { layout: "bars", edge: "straight", count: 6, angle: 90, order: "center", colors: ["primary", "secondary"], stagger: 0.04, seconds: 1.05, vertical: { count: 4 } }],
+  ["flash_burst", "Flash burst", "Rings burst out of the middle with a white flash.",
+    { layout: "circles", edge: "straight", count: 4, colors: ["light", "accent", "primary", "secondary"], ease: "expo", flash: 0.6, seconds: 0.9, hold: 0.14, stagger: 0.05 },
+    ["flash"], { in: "whoosh", cut: "impact" }],
+  ["exclusive", "Exclusive", "Panels slide in from the right and EXCLUSIVE slides across.",
+    { layout: "stack", edge: "slant", depth: 0.4, count: 2, angle: 180, colors: ["dark", "primary"], text: "EXCLUSIVE", textStyle: "slide", line: 6, lineColor: "accent", hold: 0.5, seconds: 1.5 },
+    ["text"]],
+];
+
+export const STINGERS: GfxTemplate[] = ROWS.map(([id, name, description, spec, tags, sounds]) =>
+  stingerTemplate({ seed: id.length * 97 + 3, ...spec }, { id: `nr.stingers.${id}`, name, description, tags: ["stinger", ...(tags ?? [])], sounds }));

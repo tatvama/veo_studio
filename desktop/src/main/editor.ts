@@ -719,6 +719,17 @@ export class EditorManager {
       irFile: (p: IrPreset) => path.join(irDir, `${p}.wav`) }));
   }
 
+  /**
+   * additive (News Room delivery, newsroom/export.ts): the saved edit at runtime (media registered for the render
+   * window), its folder and the built-in impulse responses, for a news export.
+   */
+  async newsEdit(file: string): Promise<{ file: string; dir: string; project: EditProject; irFile(p: IrPreset): string }> {
+    const { file: abs, dir } = this.editFile(file);
+    const project = this.runtime(await this.readProject(abs), dir);
+    const irDir = await this.ensureIrs();
+    return { file: abs, dir, project, irFile: (p: IrPreset) => path.join(irDir, `${p}.wav`) };
+  }
+
   // ── local analysis (docs/EDITOR.md §8) ──
   async analyze(file: string, mediaId: string, kind: AnalyzeKind, opts: AnalyzeOptions = {}): Promise<AnalyzeResult> {
     const { dir } = this.editFile(file);

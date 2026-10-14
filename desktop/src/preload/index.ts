@@ -6,6 +6,7 @@ import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from "ele
 import { IPC, SHELL_IPC, type AppearanceState, type DesktopNotification, type DiskStatus, type JobsSummary, type ShellState, type UiStatus, type EditorJob, type MediaItem, type OfflineStatus, type ProxyStatus, type RenderJob, type SyncStatus, type TatvamDesktop, type ToolStatus,
   type UpdateState, type UpscaleJob, type UpscaleTool } from "../shared/types.ts";
 import { ASSISTANTS_IPC, type AssistantCall, type AssistantsState, type FolderPromptRequest } from "../shared/types.ts";
+import { NEWSROOM_IPC } from "../shared/types.ts";
 
 async function invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
   try {
@@ -242,6 +243,17 @@ const bridge: TatvamDesktop = {
     onCall: listen<AssistantCall>(ASSISTANTS_IPC.call),
     reply: (id, r) => invoke(ASSISTANTS_IPC.reply, id, r),
     jobUpdate: (id, patch) => invoke(ASSISTANTS_IPC.jobUpdate, id, patch),
+  },
+  newsroom: {
+    libraryList: (kind) => invoke(NEWSROOM_IPC.libraryList, kind),
+    libraryRead: (kind, id) => invoke(NEWSROOM_IPC.libraryRead, kind, id),
+    libraryWrite: (kind, id, json) => invoke(NEWSROOM_IPC.libraryWrite, kind, id, json),
+    libraryDelete: (kind, id) => invoke(NEWSROOM_IPC.libraryDelete, kind, id),
+    exportFile: (kind, json, name) => invoke(NEWSROOM_IPC.exportFile, kind, json, name),
+    importFile: (kind) => invoke(NEWSROOM_IPC.importFile, kind),
+    fetchText: (url) => invoke(NEWSROOM_IPC.fetchText, url),
+    readTextFile: (path) => invoke(NEWSROOM_IPC.readTextFile, path),
+    exportGraphics: (o) => invoke(NEWSROOM_IPC.exportGraphics, o),
   },
 };
 

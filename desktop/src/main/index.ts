@@ -12,6 +12,7 @@ import { Config } from "./config.ts";
 import { openConnectionWindow, registerConnectIpc, type ConnectDeps } from "./connect.ts";
 import { EditorManager } from "./editor.ts";
 import { InteropManager, registerInteropIpc } from "./editor-interop.ts";
+import { registerNewsroomIpc } from "./newsroom/ipc.ts";
 import { AudioToolsManager, registerAudioToolsIpc } from "./editor-audiotools.ts"; // audio-tools2 (additive)
 import { editorGeneratedHost, registerGeneratedIpc } from "./editor-generated.ts"; // sfx-synth (additive)
 import { editorDeepLink } from "./editor-model.ts";
@@ -285,6 +286,9 @@ async function start(): Promise<void> {
   });
   registerInteropIpc(ipcMain, (url) => wm.isGatewayUrl(url), interop,
     { export: IPC.editorInteropExport, import: IPC.editorInteropImport, findApps: IPC.editorInteropFindApps, openIn: IPC.editorInteropOpenIn });
+  // News Room (docs/EDITOR.md §16.9): look / template library, data fetch, graphics export
+  registerNewsroomIpc(ipcMain, (url) => wm.isGatewayUrl(url), { libraryRoot: () => config.get().libraryRoot, parent: () => pickParent(), log,
+    loadEdit: (f) => appCtx.editor.newsEdit(f), startNews: (input) => appCtx.renders.startNews(input) });
   // audio tools: breaths, room tone and the visualiser's spectrum frames (main/editor-audiotools.ts, docs/EDITOR.md §15.4)
   registerAudioToolsIpc(ipcMain, (url) => wm.isGatewayUrl(url), new AudioToolsManager({ editor: appCtx.editor, log }), IPC.editorAudioAnalysis);
   // generated media (the SFX library's WAVs) written into the edit (main/editor-generated.ts, docs/EDITOR.md §15.1)

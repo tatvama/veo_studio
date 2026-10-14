@@ -261,7 +261,29 @@ export interface RenderJobInput {
 export type GpuRenderJob =
   | { kind: "plan"; plan: unknown; w: number; h: number; fps: number; frames: number; bits?: 8 | 10 }
   | { kind: "composition"; project: EditProject; sequenceId: string; range: { in: number; out: number }; w: number; h: number; fps: number; frames: number;
-      bits?: 8 | 10 };
+      bits?: 8 | 10;
+      /** additive (News Room delivery, docs/EDITOR.md §16.11): what the window does to the edit before drawing it */
+      news?: NewsGpuOptions };
+
+/**
+ * additive (News Room delivery): a news export's drawing options for the GPU render window
+ * (frontend/src/editor/newsroom/delivery/window.ts applies them in this order: language, ratio, graphics only).
+ * `alpha`: the frame is drawn on a transparent background and sent as RGBA8 (W·H·4 bytes, straight alpha, rows top
+ * first, `engine.readRgba()`) instead of YUV.
+ */
+export interface NewsGpuOptions {
+  alpha?: boolean;
+  /** "graphics": only the News Room graphics tracks (`Track.gfxRole`); "all" (default): the whole picture. */
+  only?: "graphics" | "all";
+  /** With only "graphics": just these roles ("ticker", "bug" …) or clips (a loop of one ticker). */
+  roles?: string[]; clipIds?: string[];
+  /** The other ratio of a both-ratio edit (newsroom/companion.ts companionProject). */
+  ratio?: "16:9" | "9:16" | "1:1" | "4:5";
+  /** A language version: each graphic's `langs[lang]` values. */
+  lang?: string;
+  /** "#rrggbb" behind graphics-only pictures that aren't transparent. */
+  background?: string;
+}
 
 // ── Tatvam Editor document (docs/EDITOR.md §2; a copy of frontend/src/editor/model/types.ts, extras marked additive) ──
 
@@ -848,6 +870,8 @@ export interface TatvamDesktop {
   notifications: NotificationsBridge;
   /** additive (desktop-mcp): AI assistants over the local MCP server, auto edit and watch folders (docs/EDITOR.md §13) */
   assistants: AssistantsBridge;
+  /** additive (News Room, docs/EDITOR.md §16.9): look / template library, data fetch, graphics export */
+  newsroom: NewsroomBridge;
 }
 
 // ── local AI upscale (main/aiupscale.ts) ──
@@ -1433,4 +1457,79 @@ export const ASSISTANTS_IPC = {
   call: "tatvam:assistants.call",
   reply: "tatvam:assistants.reply",
   jobUpdate: "tatvam:assistants.jobUpdate",
+} as const;
+
+// ── News Room (docs/EDITOR.md §16.9; main/newsroom/**) ──
+
+export type NewsLibraryKind = "look" | "template";
+export interface NewsLibraryEntry { id: string; name: string; path: string; modified: string; bytes: number }
+export interface NewsFetchResult { ok: boolean; status: number; type: string; text: string; finalUrl: string; error?: string }
+export interface NewsExportOptions {
+  /** The saved edit (save first) and its sequence. */
+  editPath: string; sequenceId: string;
+  /** Sequence frames [in, out); default the whole sequence. */
+  range?: { in: number; out: number };
+  /** Transparent graphics: ProRes 4444, WebM VP9 with alpha, or a PNG sequence; "mp4" = an ordinary picture. */
+  codec: "prores4444" | "webm_alpha" | "png" | "mp4";
+  /** "graphics" = graphics tracks only on a transparent background; "all" = the whole picture. */
+  only: "graphics" | "all";
+  /** The other ratio of a both-ratio edit ("9:16"). */
+  ratio?: "16:9" | "9:16" | "1:1" | "4:5";
+  /** Language version ("hi"). */
+  lang?: string;
+  /** Output file or folder; none = <edit>\Exports\News\<name>. */
+  outPath?: string;
+  name?: string;
+  // ── additive (nr-delivery, docs/EDITOR.md §16.11) ──
+  /** With only "graphics": just these graphics roles ("ticker", "bug" …) or these clips (a loop of one ticker). */
+  roles?: string[]; clipIds?: string[];
+  /** mp4: the render preset (desktop render presets, e.g. "broadcast1080"); default by the output's size. */
+  preset?: string;
+  /** mp4: the loudness target (default by preset: EBU R128 for broadcast1080, else YouTube −14). */
+  loudness?: LoudnessPreset;
+  /** mp4: broadcast-safe picture (legal range: Y 16–235, Cb/Cr 16–240; 64–940 / 64–960 at 10 bits). */
+  legal?: boolean;
+  /** Graphics only into an mp4 (no alpha): this colour behind them ("#rrggbb", default black). */
+  background?: string;
+  /**
+   * Generated sequences (batch rows, news shorts, the preview reel) added to the saved edit for this export only
+   * (never saved); `sequenceId` may name one of them. They use the edit's media and templates.
+   */
+  sequences?: unknown[];
+  /** News Room templates the generated sequences use that the saved edit doesn't have yet (by id). */
+  templates?: Record<string, unknown>;
+}
+/**
+ * The export is queued as a render job (progress on `render.onProgress`, cancel with `render.cancel(jobId)`, show it with
+ * `render.reveal(jobId)`); `path` is where the file (or, for "png", the folder of frames) will be written.
+ */
+export interface NewsExportResult { path: string; frames: number; seconds: number; /** additive */ jobId?: string; w?: number; h?: number; fps?: number }
+export interface NewsroomBridge {
+  /** The user's looks and templates in <library>\News\Looks | Templates (one JSON file each). */
+  libraryList(kind: NewsLibraryKind): Promise<NewsLibraryEntry[]>;
+  libraryRead(kind: NewsLibraryKind, id: string): Promise<string | null>;
+  libraryWrite(kind: NewsLibraryKind, id: string, json: string): Promise<{ path: string }>;
+  libraryDelete(kind: NewsLibraryKind, id: string): Promise<void>;
+  /** Save dialog for a .tatvamlook / .tatvamgfx file; null = cancelled. */
+  exportFile(kind: NewsLibraryKind, json: string, suggestedName: string): Promise<string | null>;
+  /** Open dialog for a .tatvamlook / .tatvamgfx file; null = cancelled. */
+  importFile(kind: NewsLibraryKind): Promise<{ name: string; json: string } | null>;
+  /** GET a web address (http/https only, at most 10 MB, 20 s) from the main process (no CORS): RSS, JSON, sheet CSV. */
+  fetchText(url: string): Promise<NewsFetchResult>;
+  /** Reads a local text file (CSV, JSON, XML, TXT); no path = an open dialog; null = cancelled. */
+  readTextFile(path?: string): Promise<{ path: string; name: string; text: string } | null>;
+  /** Renders news graphics (transparent or not, a ratio, a language) to a file. */
+  exportGraphics(o: NewsExportOptions): Promise<NewsExportResult | null>;
+}
+/** IPC channels of the News Room group (main/newsroom/ipc.ts). */
+export const NEWSROOM_IPC = {
+  libraryList: "tatvam:newsroom.libraryList",
+  libraryRead: "tatvam:newsroom.libraryRead",
+  libraryWrite: "tatvam:newsroom.libraryWrite",
+  libraryDelete: "tatvam:newsroom.libraryDelete",
+  exportFile: "tatvam:newsroom.exportFile",
+  importFile: "tatvam:newsroom.importFile",
+  fetchText: "tatvam:newsroom.fetchText",
+  readTextFile: "tatvam:newsroom.readTextFile",
+  exportGraphics: "tatvam:newsroom.exportGraphics",
 } as const;

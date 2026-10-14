@@ -9,7 +9,7 @@ import { existsSync, promises as fsp, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type {
-  DesktopSettings, DuckingOptions, EditProject, GpuRenderJob, LoudnessPreset, RenderJob, RenderJobInput, RenderPreset, RenderState,
+  DesktopSettings, DuckingOptions, EditProject, GpuRenderJob, LoudnessPreset, NewsGpuOptions, RenderJob, RenderJobInput, RenderPreset, RenderState,
 } from "../shared/types.ts";
 import { writeFileAtomic } from "./config.ts";
 import { downloadTo, pool } from "./download.ts";
@@ -19,6 +19,7 @@ import type { IrPreset } from "./editor-irs.ts";
 import { editDims, framesToSeconds, renderName } from "./editor-model.ts";
 import { probeMedia, runFfmpeg, spawnFfmpegPipe, type FfmpegInfo, type FfProgress } from "./ffmpeg.ts";
 import type { Library } from "./library.ts";
+import { runNewsExport, type NewsRenderInput, type NewsRenderSpec } from "./newsroom/export.ts";
 import { dateToken, fitName, pathKey, safePart, uniquePath } from "./naming.ts";
 import {
   PRESETS, STAB_DETECT, concatArgs, concatList, draftDims, extractAudioArgs, finalArgs, finalEncoder, gpuFinalArgs, intermediateEncoder, mixArgs,
@@ -54,7 +55,8 @@ interface Band { step(id: string, args: string[], seconds?: number): Promise<voi
 /** What the GPU engine draws: a studio render plan, or a Tatvam Editor sequence (docs/EDITOR.md §5). */
 export type GpuSource =
   | { kind: "plan"; plan: RenderPlan }
-  | { kind: "composition"; project: EditProject; sequenceId: string; range: { in: number; out: number } };
+  | { kind: "composition"; project: EditProject; sequenceId: string; range: { in: number; out: number };
+      /** additive (News Room delivery): language, ratio, graphics only, alpha for the window */ news?: NewsGpuOptions };
 
 interface GpuSession {
   src: GpuSource; w: number; h: number; fps: number; frames: number; next: number; bits: 8 | 10;
@@ -69,6 +71,8 @@ export interface EditExportInput {
   loudness?: LoudnessPreset; ducking?: boolean | DuckingOptions; name?: string;
   /** the built-in impulse responses (reverb, guitar cabinet) */
   irFile?(preset: IrPreset): string;
+  /** additive (News Room delivery, newsroom/export.ts): a news render (RenderManager.startNews) */
+  news?: NewsRenderSpec;
 }
 
 /** Every storage key the plan refers to (the plan lists them in `keys`; this also covers older plans). */
@@ -93,7 +97,7 @@ export function gpuJob(src: GpuSource, size: { w: number; h: number; fps: number
   const { bits, ...rest } = size;
   const b = bits === 10 ? { bits: 10 as const } : {};
   if (src.kind === "plan") return { kind: "plan", plan: src.plan, ...rest, ...b };
-  return { kind: "composition", project: src.project, sequenceId: src.sequenceId, range: { ...src.range }, ...rest, ...b };
+  return { kind: "composition", project: src.project, sequenceId: src.sequenceId, range: { ...src.range }, ...rest, ...b, ...(src.news ? { news: src.news } : {}) };
 }
 
 /** An encoder that keeps 10 bits (HEVC main10, ProRes, x265 10-bit): the GPU frames are then asked for in 10 bits. */
@@ -514,31 +518,33 @@ export class RenderManager {
    */
   private async gpuFrames(job: RenderJob, src: GpuSource, o: { w: number; h: number; fps: number; frames: number; audio: string;
     ass: string | null; out: string; encoder: string[]; container: "mp4" | "mov"; ff: string; tmp: string; signal: AbortSignal;
-    meter: { set(prog: number, extra?: Partial<RenderJob>): void }; from: number; loudnorm?: string; audioBitrate?: string }): Promise<void> {
+    meter: { set(prog: number, extra?: Partial<RenderJob>): void }; from: number; loudnorm?: string; audioBitrate?: string;
+    /** additive (News Room delivery): RGBA8 frames (W·H·4 bytes) and the caller's own FFmpeg command for the frames */
+    rgba?: boolean; pipeArgs?(bits: 8 | 10): string[] }): Promise<void> {
     const open = this.deps.openRenderWindow;
     if (!open) throw new Error("The GPU engine needs the desktop app's render window");
     // FFmpeg starts on the first frame: its size says 8-bit I420 or 10-bit yuv420p10le (whatever the job asked for)
     let pipe: ReturnType<typeof spawnFfmpegPipe> | null = null;
     let inBits: 8 | 10 = 8;
     const want: 8 | 10 = isTenBitEncoder(o.encoder) ? 10 : 8;
-    const sizes = { 8: frameBytes(o.w, o.h, 8), 10: frameBytes(o.w, o.h, 10) };
+    const sizes = o.rgba ? { 8: o.w * o.h * 4, 10: o.w * o.h * 4 } : { 8: frameBytes(o.w, o.h, 8), 10: frameBytes(o.w, o.h, 10) };
     let win: { close(): void } | null = null;
     const t0 = Date.now();
     try {
       await new Promise<void>((resolve, reject) => {
         const session: GpuSession = {
-          src, w: o.w, h: o.h, fps: o.fps, frames: o.frames, next: 0, bits: want,
+          src, w: o.w, h: o.h, fps: o.fps, frames: o.frames, next: 0, bits: o.rgba ? 8 : want,
           frame: async (i, bytes) => {
             if (i !== session.next) throw new Error(`frame ${i} arrived, ${session.next} expected`);
             if (!pipe) {
               if (bytes.byteLength !== sizes[8] && bytes.byteLength !== sizes[10]) {
                 throw new Error(`frame ${i} has ${bytes.byteLength} bytes, ${sizes[want]} expected (${want}-bit ${o.w}×${o.h})`);
               }
-              inBits = bytes.byteLength === sizes[10] ? 10 : 8;
-              pipe = spawnFfmpegPipe(o.ff, gpuFinalArgs({ w: o.w, h: o.h, fps: o.fps, frames: o.frames, audio: o.audio, out: o.out, ass: o.ass,
+              inBits = bytes.byteLength === sizes[10] && !o.rgba ? 10 : 8;
+              pipe = spawnFfmpegPipe(o.ff, o.pipeArgs ? o.pipeArgs(inBits) : gpuFinalArgs({ w: o.w, h: o.h, fps: o.fps, frames: o.frames, audio: o.audio, out: o.out, ass: o.ass,
                 loudnorm: o.loudnorm, encoder: o.encoder, container: o.container, bits: inBits, audioBitrate: o.audioBitrate }), { signal: o.signal, cwd: o.tmp });
               job.warnings = job.warnings.filter((w) => !w.startsWith("The GPU engine sent 8-bit"));
-              if (want === 10 && inBits === 8) job.warnings.push("The GPU engine sent 8-bit frames: the 10-bit file has 8-bit picture detail");
+              if (want === 10 && inBits === 8 && !o.rgba) job.warnings.push("The GPU engine sent 8-bit frames: the 10-bit file has 8-bit picture detail");
             }
             if (bytes.byteLength !== sizes[inBits]) throw new Error(`frame ${i} has ${bytes.byteLength} bytes, ${sizes[inBits]} expected`);
             await pipe.write(bytes);
@@ -599,6 +605,7 @@ export class RenderManager {
   private async runEdit(job: RenderJob, signal: AbortSignal, tmpHolder: { dir?: string }): Promise<void> {
     const input = this.editJobs.get(job.id);
     if (!input) throw new Error("The edit isn't loaded any more: export again");
+    if (input.news) return this.runNews(job, input as NewsRenderInput, signal, tmpHolder); // additive (News Room delivery)
     const ffi = this.deps.ff();
     if (!ffi) throw new Error("FFmpeg wasn't found: set its path in Settings");
     const ff = ffi.path;
@@ -670,6 +677,52 @@ export class RenderManager {
     job.output = outPath;
     job.localVersion = Number(/_v(\d+)\.[^.]+$/.exec(name)?.[1] ?? 1);
     job.duration_s = Math.round((await probeMedia(ff, outPath)).duration * 100) / 100;
+  }
+
+  // ── News Room delivery (docs/EDITOR.md §16.11; newsroom/export.ts, owner nr-delivery) ──
+
+  /** Queue a News Room export (exportGraphics): an edit job whose picture, sound and file newsroom/export.ts makes. */
+  startNews(input: NewsRenderInput): string {
+    const seq = input.project.sequences.find((s) => s.id === input.sequenceId);
+    if (!seq) throw new Error("No such sequence");
+    if (!(input.range.out > input.range.in)) throw new Error("The export range is empty");
+    const job: RenderJob = {
+      id: randomUUID(), pid: 0, eid: 0, lang: input.news.gpu.lang ?? "", preset: input.preset, kind: "edit",
+      editPath: input.editPath, sequenceId: seq.id, sequenceName: seq.name,
+      options: { effects: true, captions: false, music: true, upscaled: false, localUpscale: false, upload: false, engine: "gpu" },
+      status: "queued", progress: 0, step: "Waiting", stepId: "queued", warnings: [], createdAt: nowIso(), upload: { state: "idle" }, uploaded: false,
+    };
+    this.editJobs.set(job.id, input);
+    this.jobs.push(job);
+    this.queue.push(job.id);
+    this.emit(job, true);
+    void this.next();
+    return job.id;
+  }
+
+  private async runNews(job: RenderJob, input: NewsRenderInput, signal: AbortSignal, tmpHolder: { dir?: string }): Promise<void> {
+    const ffi = this.deps.ff();
+    if (!ffi) throw new Error("FFmpeg wasn't found: set its path in Settings");
+    const ff = ffi.path;
+    const probe = await this.deps.probe();
+    const s = this.deps.settings();
+    const tmp = path.join(input.editDir, "Cache", `news-${job.id.slice(0, 8)}`);
+    tmpHolder.dir = tmp;
+    await fsp.mkdir(tmp, { recursive: true });
+    const n = input.news;
+    const meter = this.meter(job, Date.now(), 0.01, { ff, tmp, signal });
+    await runNewsExport(job, input, {
+      tmp, signal, meter,
+      run: (args) => runFfmpeg(ff, args, { signal, cwd: tmp }),
+      encoder: (id) => {
+        const p = PRESETS.find((x) => x.id === id);
+        return p ? finalEncoder(p, probe, s.encoder.prefer, s.encoder.hevc10bit) : null;
+      },
+      frames: (o) => this.gpuFrames(job, { kind: "composition", project: input.project, sequenceId: input.sequenceId, range: input.range, news: n.gpu },
+        { w: n.w, h: n.h, fps: n.fps, frames: n.frames, audio: "", ass: null, out: n.out, encoder: o.encoder, container: o.container, ff, tmp, signal, meter,
+          from: o.from, rgba: o.rgba, pipeArgs: o.pipeArgs }),
+      emit: (force) => this.emit(job, force),
+    });
   }
 
   /** Into Renders/ with the series name, the SRT beside it. */

@@ -147,7 +147,7 @@ export function presetValues(p: CatalogPreset, part: Pick<SfxPart, "length" | "m
 
 const overlaps = (a: FrameRange, rs: FrameRange[]) => rs.some((r) => r.from < a.to && a.from < r.to);
 
-export function planAutoSfx(seq: Sequence, project: Pick<EditProject, "media" | "sequences">, opts: AutoSfxOptions = {}): AutoSfxPlan {
+export function planAutoSfx(seq: Sequence, project: Pick<EditProject, "media" | "sequences"> & { newsroom?: EditProject["newsroom"] }, opts: AutoSfxOptions = {}): AutoSfxPlan {
   const fps = seq.fps;
   const intensity: SfxIntensity = opts.intensity ?? "normal";
   const catalog: CatalogPreset[] = opts.catalog ?? (SFX_PRESETS as unknown as CatalogPreset[]);

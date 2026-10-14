@@ -875,12 +875,17 @@ export function pasteAttributes(seq: Sequence, ctx: Ctx, from: TimelineClip, ids
 
 // ── tracks ───────────────────────────────────────────────────────────────────
 
+/** Renumbers track indexes and their automatic names (V1, A1 …); News Room graphics tracks (`gfxRole`) keep their
+ *  names and don't count, so pictures stay V1, V2 … with a Background track below them. */
 const reindex = (tracks: Track[]): Track[] => {
   const out: Track[] = [];
   for (const kind of ["video", "audio"] as const) {
+    let n = 0;
     tracks.filter((t) => t.kind === kind).sort((a, b) => a.index - b.index).forEach((t, i) => {
+      if (t.gfxRole) { out.push({ ...t, index: i }); return; }
+      n++;
       const auto = new RegExp(`^${kind === "video" ? "V" : "A"}\\d+$`).test(t.name);
-      out.push({ ...t, index: i, name: auto ? `${kind === "video" ? "V" : "A"}${i + 1}` : t.name });
+      out.push({ ...t, index: i, name: auto ? `${kind === "video" ? "V" : "A"}${n}` : t.name });
     });
   }
   return out;

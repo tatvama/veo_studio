@@ -105,7 +105,8 @@ export default function ProgramMonitor() {
       if (!e) return;
       await e.load(result, demoCustomSources());
       setWarnings([...new Set([...result.warnings, ...e.warnings()])]);
-      redraw();
+      // a clip that just arrived (a new video, a picture put in a layout's box) opens and decodes a moment later
+      redraw(2500);
     }, wait);
     return () => window.clearTimeout(id);
   }, [ready, result]);
@@ -123,17 +124,19 @@ export default function ProgramMonitor() {
   useEffect(() => { mixer.setMix(toAudioMix(p, s.id, { urlFor: audioUrlFor })); mixer.sync(program.time, program.playing, program.rate); }, [p, s.id, urls]);
   useEffect(() => () => mixer.stopAll(), []);
 
-  // drawing: every playback tick, and a short settle loop after a seek while paused (videos decode a moment later)
+  // drawing: every playback tick, and a short settle loop after a seek while paused (videos decode a moment later);
+  // a redraw while the loop runs extends it
   const settle = useRef(0);
-  function redraw() {
+  const settleUntil = useRef(0);
+  function redraw(settleMs = 700) {
     const e = eng.current;
     if (!e) return;
     e.draw(liveTime() ?? program.time, { playing: program.playing, rate: program.rate, resolution: resRef.current });
     if (!program.playing) {
-      const until = performance.now() + 700;
+      settleUntil.current = Math.max(settleUntil.current, performance.now() + settleMs);
       if (settle.current) return;
       const loop = () => {
-        if (program.playing || performance.now() > until || !eng.current) { settle.current = 0; return; }
+        if (program.playing || performance.now() > settleUntil.current || !eng.current) { settle.current = 0; return; }
         eng.current.draw(liveTime() ?? program.time, { playing: false, rate: 1, resolution: resRef.current });
         settle.current = requestAnimationFrame(loop);
       };

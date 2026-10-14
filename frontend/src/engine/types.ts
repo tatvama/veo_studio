@@ -28,6 +28,8 @@ export interface Composition {
   /** Drawn bottom → top (with "main" / "layer" tracks, tracks[0] is the main track). */
   tracks: Track[];
   background?: [number, number, number];
+  /** Draw on transparency instead of `background` (alpha exports of graphics: docs/EDITOR.md §16.11). */
+  transparent?: boolean;
   /** look id ("cinematic", "lut:<id>") → .cube URL; the renderer loads them on `load()`. */
   lutUrls?: Record<string, string>;
   /** Pixel-sized effects (sharpen, blur, glow radius) are multiplied by this: a preview drawn smaller than the export

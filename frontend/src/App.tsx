@@ -31,6 +31,8 @@ const RenderJob = lazy(() => import("./pages/desktop/RenderJob"));
 const SearchPage = lazy(() => import("./pages/SearchPage"));
 const KitGallery = import.meta.env.DEV ? lazy(() => import("./pages/dev/Kit")) : null;
 const EngineLab = lazy(() => import("./pages/dev/EngineLab"));
+/** News Room graphics lab (docs/EDITOR.md §16.12): dev builds only, works without signing in. */
+const GfxLab = import.meta.env.DEV ? lazy(() => import("./editor/newsroom/lab/GfxLab")) : null;
 const EditorHome = lazy(() => import("./editor/EditorHome"));
 const EditorRoute = lazy(() => import("./editor/EditorRoute"));
 
@@ -84,6 +86,9 @@ function AppRoutes() {
       </Suspense>
     );
   }
+
+  // News Room graphics lab (dev only): no sign-in, so template builders can screenshot it headless.
+  if (GfxLab && loc.pathname === "/editor/gfx-lab") return <Suspense fallback={null}><GfxLab /></Suspense>;
 
   if (isLoading || !data) {
     return <PageLoading />;

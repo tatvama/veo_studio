@@ -13,6 +13,7 @@ import type { CustomSource } from "../../engine/sources/source.ts";
 import { watchCanvas } from "../../engine/sources/canvasLoss.ts";
 import type { GeneratedSource } from "../model/toComposition.ts";
 import { drawTitle, ensureFont, titleFrameKey } from "./title.ts";
+import { drawGraphic, ensureGraphicAssets, graphicFrameKey } from "../newsroom/render/index.ts";
 
 type Canvas2D = { width: number; height: number; getContext(kind: "2d"): unknown };
 export type MakeCanvas = (w: number, h: number) => Canvas2D;
@@ -35,6 +36,7 @@ export function generatedPicture(g: GeneratedSource, makeCanvas: MakeCanvas = pa
     watchCanvas(c, () => { paint(); painted++; });
     return { kind: "canvas", width: g.width, height: g.height, still: true, version: () => painted, draw: () => c as unknown as TexImageSource };
   }
+  if (g.kind === "graphic") return graphicPicture(g, c, ctx);
   let fonts = 0, last = "", vKey = "", vNum = 0;
   let box: [number, number, number, number] | null = [0, 0, g.width, g.height];
   void ensureFont(g.spec).then(() => { fonts++; });
@@ -47,6 +49,29 @@ export function generatedPicture(g: GeneratedSource, makeCanvas: MakeCanvas = pa
       // static between its animations (and karaoke words): drawn once, and again after a reset
       const key = keyAt(t);
       if (key !== last) { last = key; box = drawTitle(ctx, g.spec, g.width, g.height, t, g.duration); }
+      return c as unknown as TexImageSource;
+    },
+    bounds: () => box,
+  };
+}
+
+/**
+ * A News Room broadcast graphic (docs/EDITOR.md §16.3), drawn like a title: version(t) changes only when the graphic's
+ * frame key does (a still graphic is drawn and uploaded once) or after a GPU reset; fonts and pictures that arrive late
+ * change the key, so the preview redraws (the export awaits them first).
+ */
+function graphicPicture(g: Extract<GeneratedSource, { kind: "graphic" }>, c: Canvas2D, ctx: G): CustomSource {
+  let last = "", vKey = "", vNum = 0;
+  let box: [number, number, number, number] | null = [0, 0, g.width, g.height];
+  void ensureGraphicAssets(g.input);
+  const restores = watchCanvas(c);
+  const keyAt = (t: number) => `${restores()}|${graphicFrameKey(g.input, g.width, g.height, t, g.duration)}`;
+  return {
+    kind: "canvas", width: g.width, height: g.height,
+    version(t: number) { const k = keyAt(t); if (k !== vKey) { vKey = k; vNum++; } return vNum; },
+    draw(t: number) {
+      const key = keyAt(t);
+      if (key !== last) { last = key; box = drawGraphic(ctx, g.input, g.width, g.height, t, g.duration); }
       return c as unknown as TexImageSource;
     },
     bounds: () => box,

@@ -536,7 +536,8 @@ export function finalArgs(opts: { video: string; audio: string; out: string; ass
 export function gpuFinalArgs(opts: { w: number; h: number; fps: number; frames: number; audio: string; out: string; ass?: string | null;
   fontsDir?: string | null; loudnorm?: string; encoder: string[]; container: "mp4" | "mov";
   /** 10: the frames are yuv420p10le (16-bit little-endian samples, value in the low 10 bits), else 8-bit I420 */ bits?: 8 | 10;
-  /** AAC rate (default 192k) */ audioBitrate?: string }): string[] {
+  /** AAC rate (default 192k) */ audioBitrate?: string;
+  /** additive (News Room TV delivery): broadcast-safe picture, see legalRange */ legal?: boolean }): string[] {
   const seconds = (opts.frames / opts.fps).toFixed(3);
   const args: string[] = ["-f", "rawvideo", "-pix_fmt", opts.bits === 10 ? "yuv420p10le" : "yuv420p", "-s", `${opts.w}x${opts.h}`, "-framerate", String(opts.fps),
     "-color_range", "tv", "-colorspace", "bt709", "-i", "pipe:0", "-i", opts.audio];
@@ -546,12 +547,21 @@ export function gpuFinalArgs(opts: { w: number; h: number; fps: number; frames: 
     vf = `ass='${escAssPath(opts.ass)}':shaping=complex`;
     if (opts.fontsDir) vf += `:fontsdir='${escAssPath(opts.fontsDir)}'`;
   }
-  args.push("-vf", `${vf ? `${vf},` : ""}${BT709_FRAME_TAGS}`);
+  args.push("-vf", `${vf ? `${vf},` : ""}${opts.legal ? `${legalRange(opts.bits === 10 ? 10 : 8)},` : ""}${BT709_FRAME_TAGS}`);
   const af = `${opts.loudnorm || "loudnorm=I=-14:TP=-1.5:LRA=11"},apad,atrim=0:${seconds}`;
   const audio = opts.container === "mov" ? ["-c:a", "pcm_s24le", "-ar", "48000"] : ["-c:a", "aac", "-b:a", opts.audioBitrate ?? "192k", "-ar", "48000"];
   args.push(...opts.encoder, "-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709", "-color_range", "tv",
     "-map", "0:v", "-map", "1:a", "-af", af, ...audio, "-frames:v", String(opts.frames), "-movflags", "+faststart", opts.out);
   return args;
+}
+
+/**
+ * additive (News Room TV delivery, docs/EDITOR.md §16.11): the broadcast-safe colour limiter on planar YUV, legal range
+ * (EBU R103): luma 16–235 and chroma 16–240 at 8 bits, 64–940 / 64–960 at 10 bits.
+ */
+export function legalRange(bits: 8 | 10): string {
+  const k = bits === 10 ? 4 : 1;
+  return `limiter=min=${16 * k}:max=${235 * k}:planes=1,limiter=min=${16 * k}:max=${240 * k}:planes=6`;
 }
 
 /** Tags on the frames themselves (FFmpeg 7 encoders take the frames' colour properties over -color_primaries / -color_trc). */
