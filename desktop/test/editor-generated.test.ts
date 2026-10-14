@@ -92,6 +92,28 @@ test("writeGeneratedMedia: into <edit>\\Audio\\SFX, probed and registered like a
   for (const f of [a.path, c.path, x.file, y.file, g.file]) assert.ok(f.startsWith(dir + path.sep), `${f} is inside the edit`);
 });
 
+test("recorded sounds: .ogg and .mp3 are audio names, copied into Audio\\SFX as they are and reused by content", async () => {
+  assert.equal(checkGeneratedName("rec.impact.impactsoft_heavy_000.ogg", "audio"), "rec.impact.impactsoft_heavy_000.ogg");
+  assert.equal(checkGeneratedName("rec.ui.click1.mp3", "audio"), "rec.ui.click1.mp3");
+  assert.equal(checkGeneratedName("Kenney Pop.OGG", "audio"), "Kenney Pop.OGG");
+  assert.throws(() => checkGeneratedName("rec.impact.x.ogg", "video"), /video file name/);
+  assert.throws(() => checkGeneratedName("../rec.x.ogg", "audio"), /safe file name/);
+  const { path: editPath } = await ed.create("Gen Edit Ogg", { width: 1920, height: 1080, fps: 25 });
+  const sfxDir = path.join(path.dirname(editPath), "Audio", "SFX");
+  // an Ogg page header and some bytes: the file is written as given, never transcoded
+  const ogg = new Uint8Array([...Buffer.from("OggS"), 0, 2, ...Array.from({ length: 200 }, (_, i) => (i * 7) & 0xff)]);
+  const a = await writeGeneratedMedia(host, editPath, "rec.impact.impactsoft_heavy_000.ogg", ogg, "audio");
+  assert.equal(a.path, path.join(sfxDir, "rec.impact.impactsoft_heavy_000.ogg"));
+  assert.equal(a.kind, "audio");
+  assert.match(a.url ?? "", /\/__media\/[0-9a-f]{32}\/rec\.impact\.impactsoft_heavy_000\.ogg$/);
+  assert.deepEqual(readFileSync(a.path), Buffer.from(ogg));
+  assert.ok(probed.includes(a.path), "probed like an import");
+  assert.equal((await writeGeneratedMedia(host, editPath, "rec.impact.impactsoft_heavy_000.ogg", ogg, "audio")).path, a.path, "the same file again");
+  const m = await writeGeneratedMedia(host, editPath, "rec.ui.click1.mp3", new Uint8Array([0xff, 0xfb, 0x90, 0x64, 1, 2, 3]), "audio");
+  assert.equal(path.basename(m.path), "rec.ui.click1.mp3");
+  assert.deepEqual(readdirSync(sfxDir).sort(), ["rec.impact.impactsoft_heavy_000.ogg", "rec.ui.click1.mp3"]);
+});
+
 test("refused: unsafe names, edits not opened in Tatvam, empty or over 50 MB, not bytes", async () => {
   const { path: editPath } = await ed.create("Gen Edit 2", { width: 1920, height: 1080, fps: 25 });
   const dir = path.dirname(editPath);

@@ -9,6 +9,9 @@ export type SfxRule =
 
 export type SfxIntensity = "subtle" | "normal" | "punchy";
 
+/** Which sounds auto SFX picks from: the procedural ones, the recorded ones (Kenney CC0), or both (the default). */
+export type SfxSource = "generated" | "recorded" | "both";
+
 /** Frames of the sequence, [from, to). */
 export interface FrameRange { from: number; to: number }
 
@@ -22,8 +25,10 @@ export interface AutoSfxOptions {
   /** Where speech plays (sequence frames): from the silence analysis of the dialogue clips. Unset: the dialogue
    *  clips' extents. */
   speech?: FrameRange[];
-  /** The SFX library to choose from (default the built-in SFX_PRESETS). */
+  /** The SFX library to choose from (default the built-in SFX_PRESETS plus the recorded sounds, recordedCatalog()). */
   catalog?: CatalogPreset[];
+  /** Default "both": the recorded sounds that fit a part's tags join its candidates (chosen by the seed like the rest). */
+  source?: SfxSource;
 }
 
 /** What the planner needs of an SFX preset (editor/sfx SfxPreset). */
@@ -32,6 +37,10 @@ export interface CatalogPreset {
   params: { name: string; min: number; max: number; default: number }[];
   /** A seamless loop (ambiences, tick-tock): never a one-shot's pick when there is a one-shot. */
   loop?: boolean;
+  /** A recorded sound (a file, not a render): one take, and `gainDb` added to its clip gain. */
+  recorded?: boolean;
+  /** dB that bring the sound to the library's −16 LUFS (a recorded sound's measured gain; 0 for the procedural ones). */
+  gainDb?: number;
 }
 
 /** One sound to place. Times are sequence frames. */
@@ -74,6 +83,7 @@ export interface AutoSfxPlan {
   sequenceId: string;
   fps: number;
   intensity: SfxIntensity;
+  source: SfxSource;
   range: FrameRange;
   rules: Record<SfxRule, boolean>;
   placements: SfxPlacement[];
