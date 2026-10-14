@@ -9,7 +9,7 @@ import { Frame, RectangleVertical } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../../components/ui";
 import { demoCustomSources } from "../../demoSources";
-import { buildComposition, createPreview, type PreviewEngine } from "../../engine";
+import { buildComposition, createPreview, onPicturesRestored, type PreviewEngine } from "../../engine";
 import { seqEnd } from "../../model/ops";
 import { program, useFrame } from "../../playback/transport";
 import { ed, setFocus, urlFor, useEditor, useProject, useSequence } from "../../store";
@@ -127,6 +127,8 @@ function Monitor({ other }: { other: GfxRatio }) {
   }
   useEffect(() => program.onTick((t) => { if (program.playing) eng.current?.draw(t, { playing: true, rate: program.rate, resolution: resRef.current }); else redraw(); }), []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => program.subscribeState(() => { if (!program.playing) redraw(); }), []); // eslint-disable-line react-hooks/exhaustive-deps
+  // after a GPU reset the generated pictures draw again: show them now (engine/sources/canvasLoss.ts)
+  useEffect(() => onPicturesRestored(() => redraw()), []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const len = seqEnd(s);
   return (

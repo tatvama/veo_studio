@@ -17,6 +17,9 @@ import { ed, exec, project, seq, useEditor } from "../../editor/store";
 import { desktop, editorBridge, type AnalysisKindName, type AnalyzeMediaRef, type AutoEditStyle, type FolderListing, type MediaAnalysis } from "../../lib/desktop";
 import { MOODS } from "../../lib/moods";
 import { assistantsBridge, AUTO_EDIT_EVENT, errText, type OpenAutoEdit } from "../api";
+import { resolveSfxUrls, withAutoSfx } from "../../editor/autosfx/autoedit"; // auto-sfx: "Add sound effects" (additive)
+import { runAutoSfx } from "../../editor/autosfx/apply";
+import { makeHost } from "../../editor/host";
 import { buildAutoEdit, describePlan, formatSize, planAutoEdit, STYLES, styleById, type AutoEditOptions, type Format, type OrderChoice, type Plan, type PlanMedia, type TransitionsChoice } from "../autoedit";
 
 const LANGS = [["none", "No captions"], ["auto", "Captions: detect the language"], ["en", "English"], ["hi", "Hindi"], ["kn", "Kannada"], ["te", "Telugu"], ["ta", "Tamil"],
@@ -47,6 +50,7 @@ export default function AutoEditDialog({ open: openProp, onClose, folder: folder
   const [transitions, setTransitions] = useState<TransitionsChoice | "">("");
   const [order, setOrder] = useState<OrderChoice>("name");
   const [title, setTitle] = useState("");
+  const [sfx, setSfx] = useState<NonNullable<AutoEditOptions["sfx"]>>("none");
   const [phase, setPhase] = useState<Phase>("setup");
   const [progress, setProgress] = useState<{ done: number; total: number; current?: string; step: string } | null>(null);
   const [plan, setPlan] = useState<Plan | null>(null);
@@ -98,7 +102,7 @@ export default function AutoEditDialog({ open: openProp, onClose, folder: folder
 
   const options = (folderName: string, fps: number): AutoEditOptions => ({
     style, targetSeconds: Number(target) > 0 ? Number(target) : undefined, format: format || undefined, music, captions, mood: mood || undefined,
-    transitions: transitions || undefined, order, title: title.trim() || undefined, folder: folderName, fps,
+    transitions: transitions || undefined, order, title: title.trim() || undefined, folder: folderName, fps, sfx,
   });
 
   async function analyse() {
@@ -168,10 +172,25 @@ export default function AutoEditDialog({ open: openProp, onClose, folder: folder
     setProgress({ done: 0, total: 1, step: "Cutting the sequence" });
     try {
       if (inEditor && !work.fresh) {
-        exec(`Auto edit: ${styleById(plan.style).name}`, (p) => buildAutoEdit(p, plan).project);
+        const label = `Auto edit: ${styleById(plan.style).name}`;
+        if (plan.sfx) {
+          // auto-sfx: the sounds go onto the new sequence before it is committed, so it all is ONE undo step
+          setProgress({ done: 0, total: 1, step: "Adding sound effects" });
+          const base = project();
+          const built = buildAutoEdit(base, plan);
+          const withSfx = await withAutoSfx(built.project, work.path, built.sequenceId, plan.sfx).catch(() => null);
+          if (withSfx && project() === base) { exec(label, () => withSfx.project); resolveSfxUrls(withSfx.media); }
+          else {
+            // the edit changed while the sounds were made: the cut first, then its sounds as a second step
+            exec(label, (p) => buildAutoEdit(p, plan).project);
+            if (withSfx) await runAutoSfx(makeHost(), { intensity: plan.sfx }, { onMedia: resolveSfxUrls }).catch(() => undefined);
+          }
+        } else exec(label, (p) => buildAutoEdit(p, plan).project);
       } else {
         const r = buildAutoEdit(work.project, plan);
-        await editorBridge()!.save(work.path, forDisk(r.project));
+        let made = r.project;
+        if (plan.sfx) made = (await withAutoSfx(made, work.path, r.sequenceId, plan.sfx).catch(() => null))?.project ?? made; // auto-sfx
+        await editorBridge()!.save(work.path, forDisk(made));
         window.location.assign(`/editor/edit?path=${encodeURIComponent(work.path)}`);
       }
       setOpen(false);
@@ -246,6 +265,8 @@ export default function AutoEditDialog({ open: openProp, onClose, folder: folder
               <Field label="Order"><Select value={order} onChange={(e) => setOrder(e.target.value as OrderChoice)}>
                 <option value="name">Series order (names)</option><option value="date">Date taken</option><option value="timecode">Timecode</option><option value="content">Content (openers first)</option></Select></Field>
               <Field label={style === "highlights" ? "Hook title" : "Opening title"}><Input value={title} placeholder={style === "highlights" ? "From the best line" : "None"} onChange={(e) => setTitle(e.target.value)} /></Field>
+              <Field label="Add sound effects" hint="Whooshes, pops and hits made on this PC (Auto SFX)"><Select value={sfx} onChange={(e) => setSfx(e.target.value as NonNullable<AutoEditOptions["sfx"]>)}>
+                <option value="none">No</option><option value="subtle">Yes, subtle</option><option value="normal">Yes, normal</option><option value="punchy">Yes, punchy</option></Select></Field>
             </div>
             {!inEditor && <Alert tone="info">A new edit called after the folder is made in the library; Create opens it.</Alert>}
           </>

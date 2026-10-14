@@ -106,7 +106,16 @@ export type ClipSource =
    *  editor/audiofx/registry.ts GENERATORS (keyframeable Params; the desktop also takes bare values). */
   | { type: "generate"; generator: "tone" | "noise" | "dtmf"; params: Record<string, Param<unknown>> }
   /** Additive (News Room, §16): a broadcast graphic (template + filled-in values), drawn by editor/newsroom/render. */
-  | { type: "graphic"; gfx: GfxInstance };
+  | { type: "graphic"; gfx: GfxInstance }
+  /** Additive (audio-tools2, docs/EDITOR.md §15.4): an audio-reactive visualiser on a video track, drawn from the
+   *  precomputed spectrum of an audio clip of the same sequence (kept in sync with it) or of a media item (from
+   *  `offset` media seconds). Settings as editor/audiotools/visualizer.ts (unset = its defaults). */
+  | { type: "visualizer"; audioClipId?: string; mediaId?: string; style: VisualizerStyle; colors: string[]; gradient?: boolean;
+      glow?: number; smoothing?: number; freqMin?: number; freqMax?: number; sensitivity?: number; bars?: number;
+      box?: [number, number, number, number]; thickness?: number; background?: string; offset?: number; bands?: number };
+
+/** Additive (audio-tools2): the visualiser's drawing styles. */
+export type VisualizerStyle = "bars" | "mirror" | "line" | "circle" | "particles" | "fill";
 
 export interface Motion {
   /** Pixels in the sequence frame (centre = [width/2, height/2]). */
@@ -156,6 +165,12 @@ export interface TimelineClip {
   role?: AudioRole;
   /** Additive (News Room, §16): shown in a box of the screen layout on screen (its motion and crop come from it). */
   slot?: SlotBinding;
+  /** Additive (audio-tools2, §15.4): room tone that "Room-tone fill" placed in a gap (a normal clip; "Remove room
+   *  tone" takes these out again). */
+  roomTone?: boolean;
+  /** Additive (auto-sfx, docs/EDITOR.md §15.2): a sound effect auto SFX placed, with the rule and the edit event (clip,
+   *  transition or marker id) it came from. A re-run replaces these; clips without it are the user's and stay. */
+  autoSfx?: { rule: string; sourceId: string };
 }
 
 export interface Keyframe<T> {
@@ -218,6 +233,9 @@ export interface TitleLook {
   sub?: { text: string; size: number; color: string; font?: string; weight?: number };
   /** Counts from → to over the clip; "#" in the text is replaced by the number. */
   count?: { from: number; to: number };
+  /** Additive (presets-pack, §15.3): seconds between staggered units (letters, words or lines); unset = the in
+   *  animation spread over all of them. */
+  staggerStep?: number;
 }
 export interface ShapeSpec { kind: string; fill?: string; stroke?: string; strokeWidth?: number; radius?: number; emoji?: string; rotation?: number; direction?: "left" | "right" | "up" | "down" }
 

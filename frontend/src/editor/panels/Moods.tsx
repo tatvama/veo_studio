@@ -6,7 +6,7 @@
  * the AI, mood_suggest, when the AI tools have it) to preview and apply per scene range.
  */
 import { clsx } from "clsx";
-import { Check, Clapperboard, Copy, Eraser, Loader2, Music2, Sparkles, Wand2 } from "lucide-react";
+import { Clapperboard, Copy, Eraser, Loader2, Music2, Sparkles, Wand2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "../../components/ui";
@@ -15,19 +15,30 @@ import { MOODS, moodById, type MoodDef } from "../../lib/moods";
 import { transitionLabel } from "../dialogs";
 import { useEditorHost } from "../host";
 import { applyMood, clipMood, moodInstances, removeMood, scopeClips, type MoodScope } from "../moods/apply";
-import { renderLook } from "../moods/engineLooks";
+import { applyLook, lookById, lookInstances, LOOK_PACKS, looksOf, type LookPackId } from "../moods/packs/looks";
 import { sceneRanges, type SceneRange, type StudioScene } from "../moods/scenes";
-import { lutUrlFor, ScopePicker, scopeOf, Slider, Thumb, useClipFrame, useVisible, type ScopeChoice } from "../moods/ui";
+import { ScopePicker, scopeOf, Slider, type ScopeChoice } from "../moods/ui";
 import { clipEnd, ctxOf, tracksOf } from "../model/ops";
 import { framesToSeconds, toTimecode } from "../model/time";
-import type { Sequence } from "../model/types";
+import type { EffectInstance, Sequence } from "../model/types";
 import { program } from "../playback/transport";
 import { setFocus, useEditor, useSequence } from "../store";
+import { PreviewCard } from "../preview/Card";
+import { PreviewSwitch, usePreviewChoice } from "../preview/choice";
+import { chainItem } from "../preview/items";
+import type { LiveSpec } from "../preview/live";
 
 const LS = "tatvam-editor:moods";
-const lsRead = (): { intensity: number; transitions: boolean; titles: boolean } => {
-  try { return { intensity: 1, transitions: true, titles: true, ...JSON.parse(localStorage.getItem(LS) || "{}") }; } catch { return { intensity: 1, transitions: true, titles: true }; }
+type Cat = "moods" | LookPackId;
+const lsRead = (): { intensity: number; transitions: boolean; titles: boolean; cat: Cat } => {
+  const d = { intensity: 1, transitions: true, titles: true, cat: "moods" as Cat };
+  try { return { ...d, ...JSON.parse(localStorage.getItem(LS) || "{}") }; } catch { return d; }
 };
+/** What a card shows (moods, and the look packs' looks: docs/EDITOR.md §15.3), from data. */
+interface Card { id: string; label: string; blurb: string; swatch: [string, string]; instances: (k: number) => EffectInstance[] }
+const cardsOf = (cat: Cat): Card[] => cat === "moods"
+  ? MOODS.map((m) => ({ id: m.id, label: m.label, blurb: m.blurb, swatch: m.swatch, instances: (k: number) => moodInstances(m, k) }))
+  : looksOf(cat).map((l) => ({ id: `look.${l.id}`, label: l.label, blurb: l.blurb, swatch: l.swatch, instances: (k: number) => lookInstances(l, k) }));
 
 /** Average shot length (seconds) of the clips in a scope. */
 function avgShot(s: Sequence, scope: MoodScope): number | null {
@@ -41,7 +52,6 @@ export default function MoodsPanel() {
   const s = useSequence();
   const sel = useEditor((x) => x.selection);
   const root = useRef<HTMLDivElement>(null);
-  const visible = useVisible(root);
   const [opts, setOpts] = useState(lsRead);
   const [choice, setChoice] = useState<ScopeChoice>(sel.length ? "selection" : "sequence");
   const [picked, setPicked] = useState<string>(MOODS[0].id);
@@ -50,12 +60,11 @@ export default function MoodsPanel() {
   // thumbnails follow the intensity a moment after the slider stops
   const [thumbK, setThumbK] = useState(opts.intensity);
   useEffect(() => { const id = window.setTimeout(() => setThumbK(opts.intensity), 300); return () => window.clearTimeout(id); }, [opts.intensity]);
-  const frame = useClipFrame(240);
-  const thumbs = useMemo(() => {
-    if (!visible || !frame.canvas) return {} as Record<string, Promise<ImageBitmap | null>>;
-    return Object.fromEntries(MOODS.map((m) => [m.id, renderLook(frame.canvas!, moodInstances(m, thumbK), { lutUrl: lutUrlFor })]));
-  }, [visible, frame.canvas, thumbK]);
-  const original = useMemo(() => (visible && frame.canvas ? renderLook(frame.canvas, []) : null), [visible, frame.canvas]);
+  // preview-polish: the cards are rendered by the shared preview engine on the user's clip, else a sample that fits
+  const pc = usePreviewChoice("moods");
+  const cards = cardsOf(opts.cat);
+  const items = useMemo(() => Object.fromEntries(cards.map((m) => [m.id, chainItem(m.id.startsWith("look.") ? m.id : `mood.${m.id}`, `${m.label} ${m.blurb}`, m.instances, thumbK, 1.5)])), [opts.cat, thumbK]); // eslint-disable-line react-hooks/exhaustive-deps
+  const original = useMemo(() => chainItem("mood.original", "original", () => [], 1, 1), []);
 
   const scope = scopeOf(choice, s, sel);
   const count = scopeClips(s, scope, opts.titles).length;
@@ -64,6 +73,7 @@ export default function MoodsPanel() {
     return ms.size === 1 ? [...ms][0] : ms.size > 1 ? "mixed" : null;
   }, [s, choice, sel]);
   const mood = moodById(picked) ?? MOODS[0];
+  const look = lookById(picked);
   const avg = avgShot(s, scope);
 
   const apply = (m: MoodDef, sc: MoodScope = scope, what = choice === "selection" ? "selected clips" : choice === "track" ? "the track" : "the sequence") => {
@@ -78,6 +88,31 @@ export default function MoodsPanel() {
     if (!res.clips && !res.titles) { toast.message(choice === "selection" ? "Select video clips first" : "No video clips to give a mood to"); return; }
     toast.success(`${m.label} on ${what}: ${res.clips} clip${res.clips === 1 ? "" : "s"}${res.cuts ? `, ${res.cuts} transition${res.cuts === 1 ? "" : "s"}` : ""}${res.titles ? `, ${res.titles} title${res.titles === 1 ? "" : "s"}` : ""}`);
   };
+  const applyLookCard = (id: string) => {
+    const l = lookById(id);
+    if (!l) return;
+    let n = 0;
+    host.apply(`Look ${l.label}`, (d) => {
+      const i = d.sequences.findIndex((x) => x.id === d.activeSequenceId);
+      if (i < 0) return;
+      const r = applyLook(d.sequences[i], ctxOf(d), l, scope, opts.intensity);
+      d.sequences[i] = r.seq; n = r.clips;
+    });
+    if (!n) { toast.message(choice === "selection" ? "Select video clips first" : "No video clips to give a look to"); return; }
+    toast.success(`${l.label} on ${choice === "selection" ? "selected clips" : choice === "track" ? "the track" : "the sequence"}: ${n} clip${n === 1 ? "" : "s"}`);
+  };
+  const applyCard = (id: string) => { const m = moodById(id); if (m) apply(m); else applyLookCard(id); };
+  /** preview-polish: the Program monitor's live preview of a card (the same apply, on a copy of the edit). */
+  const liveFor = (id: string, label: string): LiveSpec => ({
+    key: `moods:${id}:${opts.intensity}:${choice}`, label, hint: "Double-click to apply",
+    mutate: (d) => {
+      const i = d.sequences.findIndex((x) => x.id === d.activeSequenceId);
+      if (i < 0) return;
+      const m = moodById(id), l = m ? undefined : lookById(id);
+      if (m) d.sequences[i] = applyMood(d.sequences[i], ctxOf(d), m, scope, { intensity: opts.intensity, transitions: opts.transitions, titles: opts.titles }).seq;
+      else if (l) d.sequences[i] = applyLook(d.sequences[i], ctxOf(d), l, scope, opts.intensity).seq;
+    },
+  });
   const remove = () => {
     let n = 0;
     host.apply("Remove mood", (d) => {
@@ -92,35 +127,44 @@ export default function MoodsPanel() {
     <div ref={root} className="pn" onPointerDown={() => setFocus("other")}>
       <div className="ed-bar flex-wrap gap-2">
         <ScopePicker value={choice} onChange={setChoice} count={sel.length} />
-        <span className="text-2xs text-dim">{count} clip{count === 1 ? "" : "s"}{current ? ` · now ${current === "mixed" ? "mixed moods" : moodById(current)?.label}` : ""}</span>
+        <span className="text-2xs text-dim">{count} clip{count === 1 ? "" : "s"}{current ? ` · now ${current === "mixed" ? "mixed moods" : moodById(current)?.label ?? lookById(current)?.label ?? current}` : ""}</span>
         <button type="button" className="ed-ibtn ml-auto" title="Remove the mood from these clips" onClick={remove}><Eraser className="size-3.5" /></button>
       </div>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-line px-3 py-2">
         <div className="min-w-[180px] flex-1"><Slider label="Intensity" value={opts.intensity} min={0} max={1.5} step={0.05} format={(v) => `${Math.round(v * 100)}%`} onChange={(v) => setOpts((o) => ({ ...o, intensity: v }))} /></div>
-        <label className="flex items-center gap-1.5 text-2xs text-mute"><input type="checkbox" checked={opts.transitions} onChange={(e) => setOpts((o) => ({ ...o, transitions: e.target.checked }))} />Transitions at cuts</label>
-        <label className="flex items-center gap-1.5 text-2xs text-mute"><input type="checkbox" checked={opts.titles} onChange={(e) => setOpts((o) => ({ ...o, titles: e.target.checked }))} />Title style</label>
+        {opts.cat === "moods" && <label className="flex items-center gap-1.5 text-2xs text-mute"><input type="checkbox" checked={opts.transitions} onChange={(e) => setOpts((o) => ({ ...o, transitions: e.target.checked }))} />Transitions at cuts</label>}
+        {opts.cat === "moods" && <label className="flex items-center gap-1.5 text-2xs text-mute"><input type="checkbox" checked={opts.titles} onChange={(e) => setOpts((o) => ({ ...o, titles: e.target.checked }))} />Title style</label>}
+        <PreviewSwitch pc={pc} className="ml-auto" />
+      </div>
+      <div className="flex flex-wrap gap-1 border-b border-line px-2 py-1.5">
+        {([["moods", "Moods", MOODS.length], ...LOOK_PACKS.map((p) => [p.id, p.label, looksOf(p.id).length])] as [Cat, string, number][]).map(([id, label, n]) => (
+          <button key={id} type="button" data-mood-cat={id} title={id === "moods" ? "Moods: a grade, transitions and a title style" : `${LOOK_PACKS.find((p) => p.id === id)?.blurb}: a grade only`}
+            onClick={() => { setOpts((o) => ({ ...o, cat: id })); setPicked(cardsOf(id)[0]?.id ?? MOODS[0].id); }} className={clsx("rounded-md px-2 py-0.5 text-2xs", opts.cat === id ? "bg-accent/20 text-accent-ink" : "text-mute hover:bg-hover")}>
+            {label}<span className="ml-1 text-dim">{n}</span>
+          </button>
+        ))}
       </div>
       <div className="pn-scroll">
-        <div className="grid gap-2 p-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(132px, 1fr))" }}>
-          <div className="rounded-lg border border-line p-1.5">
-            <Thumb promise={original} className="aspect-video" label={frame.clip ? (frame.loading ? "Reading the frame…" : "No picture") : "Put a clip on V1"} />
-            <p className="mt-1 truncate text-2xs text-dim" title={frame.clip?.name}>Original · {frame.clip?.name ?? "no clip"}</p>
-          </div>
-          {MOODS.map((m) => (
-            <button key={m.id} type="button" data-mood={m.id} title={`${m.blurb} — double-click to apply`}
-              className={clsx("group rounded-lg border p-1.5 text-left transition-colors", picked === m.id ? "border-accent bg-accent/10" : "border-line hover:border-dim/50")}
-              onClick={() => setPicked(m.id)} onDoubleClick={() => apply(m)}>
-              <div className="relative">
-                <Thumb promise={thumbs[m.id] ?? null} className="aspect-video" label={<span className="block h-full w-full" style={{ background: `linear-gradient(135deg, ${m.swatch[0]}, ${m.swatch[1]})` }} />} />
-                {current === m.id && <span className="absolute right-1 top-1 grid size-4 place-items-center rounded-full bg-accent text-black"><Check className="size-3" /></span>}
-              </div>
-              <p className="mt-1 flex items-center gap-1 text-xs font-medium"><span className="size-2 rounded-full" style={{ background: m.swatch[0] }} />{m.label}</p>
-              <p className="truncate text-[10px] text-dim">{m.blurb}</p>
-            </button>
+        <div className="pv-grid">
+          {pc.choice.mode === "clip" && (
+            <PreviewCard item={original} choice={pc.choice} name="Original" desc={pc.clipName ?? undefined} dot="var(--color-dim)" data={{ "mood-original": "" }}
+              title="Your clip at the playhead, without a mood" />
+          )}
+          {cards.map((m) => (
+            <PreviewCard key={m.id} item={items[m.id]} choice={pc.choice} name={m.label} desc={m.blurb} dot={m.swatch[0]} data={{ mood: m.id }}
+              selected={picked === m.id} applied={current === m.id} live={liveFor(m.id, m.label)}
+              title={`${m.blurb}. Move across to scrub the intensity, hold to play; double-click to apply`}
+              onClick={() => setPicked(m.id)} onDoubleClick={() => applyCard(m.id)} />
           ))}
         </div>
-        <MoodDetails mood={mood} avg={avg} onApply={() => apply(mood)} />
-        {s.source && <MoodPerScene seq={s} intensity={opts.intensity} onApply={(m, r) => apply(m, { kind: "range", from: r.from, to: r.to }, `scene ${r.scene.order}`)} />}
+        {opts.cat !== "moods" ? (look && (
+          <div className="mx-2 mb-2 flex items-center gap-2 rounded-lg border border-line p-3" data-look-details={look.id}>
+            <span className="text-sm font-semibold">{look.label}</span>
+            <span className="min-w-0 flex-1 truncate text-2xs text-dim" title={look.effects.map((e) => e.type.replace(/_/g, " ")).join(" → ")}>{look.blurb} · {look.effects.map((e) => (e.type === "look" ? `${String(e.params.look).replace(/_/g, " ")} LUT` : e.type.replace(/_/g, " "))).join(" → ")}</span>
+            <Button size="sm" variant="primary" icon={<Wand2 className="size-3.5" />} onClick={() => applyLookCard(look.id)}>Apply</Button>
+          </div>
+        )) : <MoodDetails mood={mood} avg={avg} onApply={() => apply(mood)} />}
+        {opts.cat === "moods" && s.source && <MoodPerScene seq={s} intensity={opts.intensity} onApply={(m, r) => apply(m, { kind: "range", from: r.from, to: r.to }, `scene ${r.scene.order}`)} />}
       </div>
     </div>
   );

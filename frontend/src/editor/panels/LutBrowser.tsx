@@ -13,13 +13,18 @@ import { api } from "../../lib/api";
 import { LOOKS } from "../effects";
 import { useEditorHost } from "../host";
 import { isMoodEffect } from "../moods/apply";
-import { renderLook } from "../moods/engineLooks";
 import { addFolder, hasFolderBridge, loadFolders, lookForFolderLut, reconnect, removeFolder, useLutFolders } from "../moods/lutFolders";
-import { lutUrlFor, Slider, Thumb, useClipFrame, useVisible } from "../moods/ui";
+import { Slider } from "../moods/ui";
 import { uid } from "../model/ids";
 import { tracksOf } from "../model/ops";
 import { importLut } from "../session";
 import { setFocus, useEditor, useProject, useSequence } from "../store";
+import { PreviewCard } from "../preview/Card";
+import { PreviewSwitch, usePreviewChoice } from "../preview/choice";
+import { categoryColor, lutItem } from "../preview/items";
+import type { LiveSpec } from "../preview/live";
+import { pickUserClip } from "../preview/samples";
+import { program } from "../playback/transport";
 
 const LS_FAV = "tatvam-editor:lut-favourites";
 const readFav = (): string[] => { try { return JSON.parse(localStorage.getItem(LS_FAV) || "[]"); } catch { return []; } };
@@ -34,7 +39,6 @@ export default function LutBrowser() {
   const s = useSequence();
   const sel = useEditor((x) => x.selection);
   const root = useRef<HTMLDivElement>(null);
-  const visible = useVisible(root);
   const [q, setQ] = useState("");
   const [group, setGroup] = useState<Group>("all");
   const [fav, setFav] = useState<string[]>(readFav);
@@ -65,10 +69,8 @@ export default function LutBrowser() {
   // the thumbnails at full strength a moment after the slider stops
   const [thumbK, setThumbK] = useState(strength);
   useEffect(() => { const id = window.setTimeout(() => setThumbK(strength), 300); return () => window.clearTimeout(id); }, [strength]);
-  const frame = useClipFrame(240);
-  const thumbs = useMemo(() => (visible && frame.canvas
-    ? Object.fromEntries(shown.filter((i) => !i.pending).map((i) => [i.id, renderLook(frame.canvas!, [{ type: "look", enabled: true, params: { look: { value: i.id }, lut_strength: { value: thumbK } } }], { lutUrl: lutUrlFor })]))
-    : {}) as Record<string, Promise<ImageBitmap | null>>, [visible, frame.canvas, thumbK, shown.map((i) => i.id + (i.pending ? "?" : "")).join()]);
+  // preview-polish: cards rendered by the shared preview engine, on the user's clip or a sample
+  const pc = usePreviewChoice("luts");
 
   const videoIds = () => {
     const vids = new Set(tracksOf(s, "video").map((t) => t.id));
@@ -101,6 +103,23 @@ export default function LutBrowser() {
     toast.success(`${label} on ${ids.length} clip${ids.length === 1 ? "" : "s"}${stack ? " (stacked)" : ""}`);
   };
   const toggleFav = (id: string) => setFav((f) => (f.includes(id) ? f.filter((x) => x !== id) : [...f, id]));
+  /** preview-polish: the Program monitor's live preview (the apply below, on a copy: the selection, else the clip under the playhead). */
+  const liveFor = (i: Item): LiveSpec | null => (i.pending || i.group === "folder" ? null : {
+    key: `luts:${i.id}:${strength}`, label: i.label, hint: "Double-click to apply",
+    mutate: (d) => {
+      const sq = d.sequences.find((x) => x.id === d.activeSequenceId);
+      if (!sq) return;
+      const vids = new Set(tracksOf(sq, "video").map((t) => t.id));
+      let ids = sq.clips.filter((c) => sel.includes(c.id) && vids.has(c.trackId) && c.source.type !== "title").map((c) => c.id);
+      if (!ids.length) { const u = pickUserClip(sq, [], program.frame); if (u) ids = [u.id]; }
+      for (const c of sq.clips) {
+        if (!ids.includes(c.id)) continue;
+        const own = c.effects.find((e) => e.type === "look" && !isMoodEffect(e));
+        const params = { look: { value: i.id }, lut_strength: { value: strength } };
+        if (own) own.params = { ...own.params, ...params }; else c.effects.unshift({ id: uid("e"), type: "look", enabled: true, params });
+      }
+    },
+  });
 
   return (
     <div ref={root} className="pn" onPointerDown={() => setFocus("other")}>
@@ -117,6 +136,7 @@ export default function LutBrowser() {
           ))}
         </div>
         <div className="min-w-[160px] flex-1"><Slider label="Strength" value={strength} min={0} max={1} step={0.05} format={(v) => `${Math.round(v * 100)}%`} onChange={setStrength} /></div>
+        <PreviewSwitch pc={pc} />
       </div>
       <div className="pn-scroll">
         {group === "folders" && (
@@ -132,20 +152,18 @@ export default function LutBrowser() {
             ))}
           </div>
         )}
-        <p className="px-3 pt-2 text-2xs text-dim">{frame.clip ? `${frame.clip.name} at the playhead${sel.length ? "" : " (select clips to apply)"}` : "No video clip to preview"}</p>
-        <div className="grid gap-2 p-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(124px, 1fr))" }}>
+        <p className="px-3 pt-2 text-2xs text-dim">{pc.choice.mode === "clip" ? `${pc.clipName ?? "Your clip"} at the playhead` : "On samples that fit each look"}{sel.length ? "" : " · select clips to apply"}</p>
+        <div className="pv-grid">
           {shown.map((i) => (
-            <div key={i.id} data-lut={i.id} className={clsx("group relative cursor-pointer rounded-lg border p-1.5", picked === i.id ? "border-accent bg-accent/10" : "border-line hover:border-dim/50")}
-              onClick={() => setPicked(i.id)} onDoubleClick={() => void apply(i.id, false)} title="Double-click to apply to the selection">
-              <Thumb promise={thumbs[i.id] ?? null} className="aspect-video" label={i.pending ? "Apply to preview" : undefined} />
-              <div className="mt-1 flex items-center gap-1">
-                <span className="min-w-0 flex-1 truncate text-2xs">{i.label}</span>
-                {i.group !== "preset" && <span className="max-w-[40%] truncate text-[9px] uppercase text-dim" title={i.folder}>{i.group === "folder" ? i.folder : i.group}</span>}
-                <button type="button" aria-label="Favourite" onClick={(e) => { e.stopPropagation(); toggleFav(i.id); }} className={clsx(fav.includes(i.id) ? "text-warn" : "text-dim opacity-0 group-hover:opacity-100")}>
-                  <Star className="size-3" fill={fav.includes(i.id) ? "currentColor" : "none"} />
-                </button>
-              </div>
-            </div>
+            <PreviewCard key={i.id} item={lutItem(i.id, i.label, thumbK)} choice={pc.choice} name={i.label} data={{ lut: i.id }}
+              dot={categoryColor(i.group, ["preset", "imported", "team", "folder"])} selected={picked === i.id}
+              meta={i.group !== "preset" ? <span className="max-w-[72px] truncate uppercase" title={i.folder}>{i.group === "folder" ? i.folder : i.group}</span> : undefined}
+              desc={i.pending ? "Apply to preview" : i.group === "preset" ? "Preset look" : i.group === "imported" ? "Imported LUT" : i.group === "team" ? "Team LUT" : "Folder LUT"}
+              live={liveFor(i)} title="Move across to scrub the strength, hold to play · double-click to apply to the selection"
+              onClick={() => setPicked(i.id)} onDoubleClick={() => void apply(i.id, false)}
+              corner={<button type="button" aria-label="Favourite" onClick={() => toggleFav(i.id)} className={clsx("grid size-5 place-items-center rounded bg-black/45", fav.includes(i.id) ? "text-warn" : "text-white/70 hover:text-white")}>
+                <Star className="size-3" fill={fav.includes(i.id) ? "currentColor" : "none"} />
+              </button>} />
           ))}
           {!shown.length && <p className="col-span-full p-4 text-center text-xs text-dim">{group === "fav" ? "Star looks to keep them here" : group === "team" ? (teamPid ? "The studio project has no LUTs" : "Team LUTs come with a studio project") : group === "folders" ? "No LUTs in your folders yet" : "Nothing matches"}</p>}
         </div>

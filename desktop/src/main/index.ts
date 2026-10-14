@@ -13,6 +13,8 @@ import { openConnectionWindow, registerConnectIpc, type ConnectDeps } from "./co
 import { EditorManager } from "./editor.ts";
 import { InteropManager, registerInteropIpc } from "./editor-interop.ts";
 import { registerNewsroomIpc } from "./newsroom/ipc.ts";
+import { AudioToolsManager, registerAudioToolsIpc } from "./editor-audiotools.ts"; // audio-tools2 (additive)
+import { editorGeneratedHost, registerGeneratedIpc } from "./editor-generated.ts"; // sfx-synth (additive)
 import { editorDeepLink } from "./editor-model.ts";
 import { locateFfmpeg, machineCheck, probeHardware, type FfmpegInfo } from "./ffmpeg.ts";
 import { Gateway } from "./gateway.ts";
@@ -39,6 +41,10 @@ import { isRelayRun, relayViaNode } from "./mcp/stdio.ts";
 if (process.env.TATVAM_USER_DATA) app.setPath("userData", process.env.TATVAM_USER_DATA);
 // laptops with two GPUs: the GPU engine and WebCodecs run on the dedicated card, not the built-in one
 if (process.env.TATVAM_INTEGRATED_GPU !== "1") app.commandLine.appendSwitch("force_high_performance_gpu");
+// a long editing session can see more than one GPU reset (a driver reset, the GPU process restarting): Chromium would
+// then block WebGL for the studio's origin until a restart, and the editor's monitors stop drawing. The GPU engine
+// restores its context and its pictures itself (frontend/src/engine/sources/canvasLoss.ts), so keep 3D APIs allowed.
+app.disableDomainBlockingFor3DAPIs();
 crashReporter.start({ uploadToServer: false, compress: true });
 const userData = app.getPath("userData");
 initLog(userData);
@@ -283,6 +289,10 @@ async function start(): Promise<void> {
   // News Room (docs/EDITOR.md §16.9): look / template library, data fetch, graphics export
   registerNewsroomIpc(ipcMain, (url) => wm.isGatewayUrl(url), { libraryRoot: () => config.get().libraryRoot, parent: () => pickParent(), log,
     loadEdit: (f) => appCtx.editor.newsEdit(f), startNews: (input) => appCtx.renders.startNews(input) });
+  // audio tools: breaths, room tone and the visualiser's spectrum frames (main/editor-audiotools.ts, docs/EDITOR.md §15.4)
+  registerAudioToolsIpc(ipcMain, (url) => wm.isGatewayUrl(url), new AudioToolsManager({ editor: appCtx.editor, log }), IPC.editorAudioAnalysis);
+  // generated media (the SFX library's WAVs) written into the edit (main/editor-generated.ts, docs/EDITOR.md §15.1)
+  registerGeneratedIpc(ipcMain, (url) => wm.isGatewayUrl(url), editorGeneratedHost(appCtx.editor), IPC.editorWriteGeneratedMedia);
 
   session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => {
     cb(wm.isGatewayUrl(wc.getURL()) && ["fullscreen", "clipboard-sanitized-write", "clipboard-read", "media", "notifications", "window-management",

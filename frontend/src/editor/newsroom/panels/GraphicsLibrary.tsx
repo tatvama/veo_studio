@@ -19,7 +19,9 @@ import { deleteTemplate } from "../library";
 import { ratioOf } from "../render/index";
 import { GFX_CATEGORIES } from "../templates/index";
 import type { GfxCategory, GfxRatio, GfxTemplate } from "../types";
-import { thumbnail } from "../../engine";
+import { PreviewFrame } from "../../preview/Card";
+import { usePreviewChoice, type PreviewChoice } from "../../preview/choice";
+import { transitionItem } from "../../preview/items";
 import { NEWS_TRANSITIONS, type NewsTransition } from "../wipes/apply";
 import { addNewsTransitionAtCut, addTemplateAt, addToPlaylist, host, isWipe } from "../room/actions";
 import { listenForGfxDrops, startGfxDrag, startTransitionDrag } from "../room/drag";
@@ -132,7 +134,7 @@ export default function GraphicsLibrary() {
               </div>
             ))}
             {transitions.length > 0 && <p className="col-span-full pt-1 text-2xs font-semibold uppercase tracking-wide text-dim">Transitions on the cut, in the look's colours</p>}
-            {transitions.map((x) => <TransitionCard key={x.id} x={x} />)}
+            {transitions.length > 0 && <TransitionCards list={transitions} />}
           </div>
         )}
       </div>
@@ -143,26 +145,21 @@ export default function GraphicsLibrary() {
 }
 
 
-/** A news transition: the engine's picture of it half-way; click (or drag) puts it on the nearest cut. */
-function TransitionCard({ x }: { x: NewsTransition }) {
-  const cv = useRef<HTMLCanvasElement>(null);
-  useEffect(() => {
-    let alive = true;
-    void thumbnail(x.type, "transition", 240).then((bmp) => {
-      const c = cv.current;
-      if (!alive || !bmp || !c) return;
-      c.width = bmp.width; c.height = bmp.height;
-      c.getContext("2d")?.drawImage(bmp, 0, 0);
-    });
-    return () => { alive = false; };
-  }, [x.type]);
+/** The news transitions, previewed on the user's clip (or the sample stills) like the Effects panel's transitions. */
+function TransitionCards({ list }: { list: NewsTransition[] }) {
+  const pc = usePreviewChoice("newsroom", { next: true });
+  return <>{list.map((x) => <TransitionCard key={x.id} x={x} choice={pc.choice} />)}</>;
+}
+
+/** A news transition: a live preview of it; click (or drag) puts it on the nearest cut. */
+function TransitionCard({ x, choice }: { x: NewsTransition; choice: PreviewChoice["choice"] }) {
   return (
     <div role="button" tabIndex={0} draggable data-news-transition={x.id} title={`${x.label}: click to put it on the nearest cut, or drag it onto a cut`}
       onClick={() => addNewsTransitionAtCut(x.id)} onKeyDown={(e) => { if (e.key === "Enter") addNewsTransitionAtCut(x.id); }}
       onDragStart={(e) => startTransitionDrag(e, x.id, x.label)}
       onContextMenu={(e) => { e.preventDefault(); openMenu(e, [{ label: "Add at the nearest cut", onClick: () => addNewsTransitionAtCut(x.id) }]); }}
       className="cursor-pointer rounded-lg border border-line p-1.5 text-left outline-none hover:border-accent/60 focus-visible:border-accent">
-      <canvas ref={cv} className="block aspect-video w-full rounded-md" style={{ background: "linear-gradient(135deg, #1e293b, #0f172a 55%, #312e81)" }} />
+      <PreviewFrame item={transitionItem(x.type)} choice={choice} className="block aspect-video w-full rounded-md" />
       <p className="mt-1 truncate text-2xs">{x.label}</p>
       <p className="truncate text-[10px] text-dim">Transition · {x.seconds} s</p>
     </div>

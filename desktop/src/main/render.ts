@@ -29,6 +29,9 @@ import {
 import { uploadFile } from "./upload.ts";
 import type { Upstream } from "./upstream.ts";
 
+/** Headroom under a loudness preset's true-peak ceiling before AAC: the encode overshoots most on sharp transients. */
+export const AAC_TP_MARGIN_DB = 1;
+
 export interface RenderDeps {
   upstream: Upstream;
   library: Library;
@@ -649,8 +652,8 @@ export class RenderManager {
         if (g === null) break;
         gain = g;
         const out = path.join(tmp, `mix_loud${pass}.wav`);
-        // half a dB under the ceiling: the AAC encode adds a little to the true peak
-        await band.step(`loud${pass}`, normalizeArgs(raw, out, gain, target.truePeak - 0.5), seconds);
+        // 1 dB under the ceiling: the AAC encode adds to the true peak, up to about 1 dB on sharp hits (SFX, drums)
+        await band.step(`loud${pass}`, normalizeArgs(raw, out, gain, target.truePeak - AAC_TP_MARGIN_DB), seconds);
         mix = out;
         measured = await measure(out);
       }

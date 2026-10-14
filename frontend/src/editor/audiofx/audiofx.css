@@ -12,7 +12,9 @@
 .afx-tabs { display: inline-flex; border: 1px solid var(--color-line); border-radius: 7px; overflow: hidden; }
 .afx-tabs button { height: 22px; padding: 0 9px; font-size: 11px; color: var(--color-mute); }
 .afx-tabs button.on { background: color-mix(in srgb, var(--color-accent) 18%, transparent); color: var(--color-ink); }
-.afx-add { border-bottom: 1px solid var(--color-line); background: color-mix(in srgb, var(--color-raised) 35%, transparent); max-height: 55%; overflow: auto; }
+/* the add list fills the panel between its bars (its own scroll); the stack under it keeps up to 40 % while it is open */
+.afx-add { flex: 1 1 0; min-height: 96px; border-bottom: 1px solid var(--color-line); background: color-mix(in srgb, var(--color-raised) 35%, transparent); overflow: auto; overscroll-behavior: contain; }
+.pn-scroll.afx-stack-adding { flex: 0 1 auto; max-height: 40%; }
 .afx-add .grp { padding: 6px 10px 2px; font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--color-dim); }
 .afx-add .it { display: flex; align-items: center; gap: 6px; width: 100%; padding: 3px 12px; text-align: left; font-size: 12px; }
 .afx-add .it:hover { background: color-mix(in srgb, var(--color-hover) 70%, transparent); }

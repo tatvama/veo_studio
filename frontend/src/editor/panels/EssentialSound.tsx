@@ -16,6 +16,7 @@ import { SOUND_ROLES, type SoundRole } from "../audiofx/registry";
 import type { TimelineClip } from "../model/types";
 import { setFocus, useEditor, useSequence } from "../store";
 import { showAudioEffects } from "./AudioEffects";
+import { openAudioTools } from "../audiotools/menu"; // audio-tools2 (additive)
 
 export default function EssentialSound() {
   const s = useSequence();
@@ -71,6 +72,13 @@ function RolePanel({ role, clips }: { role: SoundRole; clips: TimelineClip[] }) 
         <button type="button" className="ed-menubtn" disabled={busy} onClick={async () => { setBusy(true); try { await matchLoudness(clips, target); } finally { setBusy(false); } }}>
           {busy ? "Measuring…" : "Auto-match loudness"}
         </button>
+      </div>
+      {/* audio-tools2 (additive): the Audio Tools panel for this role */}
+      <div className="flex flex-wrap gap-1 px-2.5 pb-1">
+        <button type="button" className="ed-menubtn !text-2xs" onClick={() => openAudioTools("mix")} title="Every clip to its role's loudness, music ducked under dialogue">Auto mix…</button>
+        {role === "dialogue" && <button type="button" className="ed-menubtn !text-2xs" onClick={() => openAudioTools("roomtone")}>Room-tone fill…</button>}
+        {role === "dialogue" && <button type="button" className="ed-menubtn !text-2xs" onClick={() => openAudioTools("breaths")}>Breath remover…</button>}
+        {(role === "music" || role === "dialogue") && <button type="button" className="ed-menubtn !text-2xs" onClick={() => openAudioTools("visualizer")}>Visualiser…</button>}
       </div>
       {groups.map((g) => (
         <div key={g}>

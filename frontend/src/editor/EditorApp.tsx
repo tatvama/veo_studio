@@ -33,8 +33,12 @@ import { Fragment } from "react";
 import { kbd, MenuHost, openMenu, type MenuItem } from "./ui";
 import { DesktopEditorHooks, DesktopStatusSlot } from "../desktop/editorHooks"; // desktop shell: palette, guard, drops, status (additive)
 import { AssistantBanner, AssistantExecutor, AutoEditDialog, openAutoEdit } from "../automation"; // desktop-mcp: AI assistants and auto edit (additive)
+import AutoSfxDialog from "./autosfx/AutoSfxDialog"; // auto-sfx: sound effects where the edit calls for them (additive)
+import { openAutoSfx, removeAutoSfxCommand } from "./autosfx";
+import { makeHost } from "./host";
 import { startLutMigration } from "./moods/matchLuts";
 import { NewsroomOverlays } from "./newsroom/overlays"; // News Room full-window tools (docs/EDITOR.md §16)
+import { audioToolsMenu } from "./audiotools/menu"; // audio-tools2: auto mix, room tone, breaths, visualiser (additive)
 
 const Timeline = lazy(() => import("./timeline/Timeline"));
 const ProgramMonitor = lazy(() => import("./panels/ProgramMonitor"));
@@ -74,6 +78,8 @@ const AudioEffectsPanel = lazy(() => import("./panels/AudioEffects"));
 const EssentialSoundPanel = lazy(() => import("./panels/EssentialSound"));
 const LoudnessPanel = lazy(() => import("./panels/LoudnessMeter"));
 const SpectrumPanel = lazy(() => import("./panels/Spectrum"));
+const AudioToolsPanel = lazy(() => import("./audiotools/AudioToolsPanel")); // audio-tools2
+const SfxLibraryPanel = lazy(() => import("./panels/SfxLibrary")); // sfx-synth: the sound effects library (additive)
 
 const THEME: DockviewTheme = { name: "veo", className: "dockview-theme-veo", gap: 5, dndOverlayMounting: "absolute" };
 const LAYOUT_KEY = "tatvam-editor:layout:v1";
@@ -113,6 +119,8 @@ const PANELS: { id: string; title: string; focus: Focus; C: ComponentType }[] = 
   { id: "nr-data", title: "Data", focus: "other", C: NrData },
   { id: "nr-qc", title: "Graphics check", focus: "other", C: NrQc },
   { id: "nr-deliver", title: "News delivery", focus: "other", C: NrDeliver },
+  { id: "audiotools", title: "Audio Tools", focus: "other", C: AudioToolsPanel },
+  { id: "sfx", title: "Sound effects", focus: "other", C: SfxLibraryPanel },
 ];
 
 /** The AI panel from editor/ai (lazily, only when that module exists). */
@@ -327,6 +335,9 @@ export default function EditorApp() {
       { label: "Ripple trim next edit to playhead", shortcut: "W", onClick: () => A.rippleTrimTo("next") },
       { label: "Apply video transition", shortcut: kbd("Ctrl+D"), separator: true, onClick: () => A.defaultTransitions("video") },
       { label: "Apply audio crossfade", shortcut: kbd("Ctrl+Shift+D"), onClick: () => A.defaultTransitions("audio") },
+      { label: "Auto SFX…", separator: true, onClick: () => openAutoSfx() },
+      { label: "Remove auto sound effects", disabled: !s.clips.some((c) => c.autoSfx), onClick: () => { const n = removeAutoSfxCommand(makeHost()); toast.message(n ? `Removed ${n} auto sound effect${n === 1 ? "" : "s"}` : "No auto sound effects to remove"); } },
+      audioToolsMenu(),
       { label: "Magnetic timeline", separator: true, checked: !!s.magnetic, onClick: M.toggleMagnetic },
       { label: "Add video track", separator: true, onClick: () => A.addTrack("video") },
       { label: "Add audio track", onClick: () => A.addTrack("audio") },
@@ -391,6 +402,7 @@ export default function EditorApp() {
       <AssistantBanner />
       <AutoEditDialog />
       <NewsroomOverlays />
+      <AutoSfxDialog />
       <EpisodePicker open={epOpen} busy={epBusy} onClose={() => setEpOpen(false)} onPick={async (pid, eid) => {
         setEpBusy(true);
         const ok = await importEpisode(pid, eid);

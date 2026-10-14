@@ -1,0 +1,76 @@
+/* ════════════════════════════════════════════════════════════════════════════
+   Preview cards, frames and the audio wave bars (preview-polish). Tokens only (editor.css, index.css), so dark and
+   light both work; the picture frame itself stays dark, like a monitor.
+   ════════════════════════════════════════════════════════════════════════════ */
+
+.pv-grid { display: grid; gap: 8px; padding: 8px; grid-template-columns: repeat(auto-fill, minmax(var(--pv-min, 148px), 1fr)); }
+
+.pv-card {
+  position: relative; display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 5px; border-radius: 10px;
+  border: 1px solid var(--color-line); background: color-mix(in srgb, var(--color-raised) 55%, transparent);
+  text-align: left; cursor: pointer; outline: none;
+  transition: border-color .14s ease, background-color .14s ease, box-shadow .14s ease, transform .14s ease;
+}
+.pv-card:hover { border-color: color-mix(in srgb, var(--color-ink) 22%, var(--color-line)); background: var(--color-raised); box-shadow: 0 6px 18px -10px rgb(0 0 0 / .55); }
+.pv-card.is-selected { border-color: color-mix(in srgb, var(--color-accent) 75%, transparent); background: color-mix(in srgb, var(--color-accent) 9%, var(--color-raised)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-accent) 35%, transparent); }
+.pv-card:focus-visible { box-shadow: 0 0 0 2px var(--color-panel), 0 0 0 4px color-mix(in srgb, var(--color-accent) 70%, transparent); }
+
+.pv-frame { position: relative; width: 100%; aspect-ratio: 16 / 9; border-radius: 7px; overflow: hidden; background: #0b0d12; isolation: isolate; }
+.pv-frame::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: 3;
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / .09), inset 0 1px 0 rgb(255 255 255 / .06), inset 0 -18px 24px -20px rgb(0 0 0 / .55);
+}
+.pv-frame > canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.pv-frame-sm { border-radius: 4px; flex-shrink: 0; width: 44px; }
+.pv-frame-sm::after { box-shadow: inset 0 0 0 1px rgb(255 255 255 / .1); }
+
+.pv-skel {
+  position: absolute; inset: 0; z-index: 1;
+  background: linear-gradient(100deg, transparent 25%, rgb(255 255 255 / .07) 45%, transparent 65%), linear-gradient(135deg, #141924, #0b0d12);
+  background-size: 220% 100%, 100% 100%; animation: pv-shimmer 1.25s linear infinite;
+}
+@keyframes pv-shimmer { from { background-position: 120% 0, 0 0; } to { background-position: -120% 0, 0 0; } }
+.pv-none { position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; font-size: 10px; color: rgb(255 255 255 / .45); background: linear-gradient(135deg, #161b26, #0b0d12); }
+
+/* what the pointer scrubs (intensity, progress, in / hold / out) */
+.pv-hud { position: absolute; left: 5px; top: 5px; z-index: 4; padding: 1px 5px; border-radius: 4px; font-size: 9.5px; line-height: 14px; font-variant-numeric: tabular-nums;
+  color: rgb(255 255 255 / .92); background: rgb(0 0 0 / .55); backdrop-filter: blur(4px); pointer-events: none; }
+.pv-hud:empty { display: none; }
+.pv-applied { position: absolute; right: 5px; top: 5px; z-index: 4; display: grid; place-items: center; width: 16px; height: 16px; border-radius: 999px; background: var(--color-accent); color: #04121a; box-shadow: 0 1px 4px rgb(0 0 0 / .5); }
+.pv-corner { position: absolute; right: 4px; bottom: 4px; z-index: 4; display: flex; gap: 2px; }
+
+.pv-meta { min-width: 0; padding: 0 2px 1px; }
+.pv-name { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 11.5px; font-weight: 550; line-height: 15px; color: var(--color-ink); }
+.pv-dot { width: 7px; height: 7px; border-radius: 999px; flex-shrink: 0; box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-ink) 18%, transparent); }
+.pv-meta-r { margin-left: auto; flex-shrink: 0; font-size: 10px; font-weight: 400; color: var(--color-dim); font-variant-numeric: tabular-nums; }
+.pv-desc { margin-top: 1px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 10.5px; line-height: 14px; color: var(--color-dim); }
+
+.pv-pop { width: 248px; padding: 8px; border-radius: 10px; border: 1px solid var(--color-line); background: var(--color-raised); box-shadow: 0 16px 40px -12px rgb(0 0 0 / .6); }
+
+/* "Preview on: Your clip / Samples" */
+.pv-switch { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.pv-switch-label { font-size: 10.5px; color: var(--color-dim); white-space: nowrap; }
+.pv-switch .ed-seg > button:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ── audio previews: a mini waveform, live spectrum bars and a scrolling wave ─────────────────────────────── */
+.pv-wave { position: relative; display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; height: 20px; }
+.pv-wave svg, .pv-wave canvas { display: block; height: 18px; }
+.pv-wave .pv-ab { height: 16px; min-width: 38px; padding: 0 5px; border-radius: 4px; font-size: 9.5px; font-weight: 600; letter-spacing: .02em;
+  border: 1px solid var(--color-line); color: var(--color-mute); background: var(--color-panel); }
+.pv-wave .pv-ab[aria-pressed="true"] { border-color: color-mix(in srgb, var(--color-accent) 55%, transparent); color: var(--color-accent-ink); background: color-mix(in srgb, var(--color-accent) 12%, transparent); }
+.pv-wave .pv-play { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 999px; border: 1px solid var(--color-line); color: var(--color-mute); flex-shrink: 0; }
+.pv-wave .pv-play:hover { color: var(--color-ink); }
+.pv-wave .pv-play.on { border-color: color-mix(in srgb, var(--color-accent) 60%, transparent); background: color-mix(in srgb, var(--color-accent) 18%, transparent); color: var(--color-accent-ink); }
+.pv-wave-note { font-size: 9.5px; color: var(--color-dim); white-space: nowrap; }
+
+/* the Program monitor's live preview badge */
+.pv-live { position: absolute; left: 50%; top: 8px; transform: translateX(-50%); z-index: 6; display: flex; align-items: center; gap: 6px; max-width: calc(100% - 24px);
+  padding: 3px 9px; border-radius: 999px; font-size: 11px; color: rgb(255 255 255 / .92); background: rgb(0 0 0 / .62); backdrop-filter: blur(6px);
+  box-shadow: 0 0 0 1px rgb(255 255 255 / .1); pointer-events: none; white-space: nowrap; }
+.pv-live b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.pv-live i { font-style: normal; color: rgb(255 255 255 / .6); }
+.pv-live::before { content: ""; width: 7px; height: 7px; border-radius: 999px; background: var(--color-accent); box-shadow: 0 0 8px var(--color-accent); flex-shrink: 0; }
+
+@media (prefers-reduced-motion: reduce) { .pv-skel { animation: none; } .pv-card { transition: none; } }
+:root[data-motion="reduced"] .pv-skel { animation: none; }
+:root[data-motion="reduced"] .pv-card { transition: none; }
