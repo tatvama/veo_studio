@@ -90,7 +90,7 @@ test("levelling: gains within ±24 dB, never over −16 LUFS, and the projected 
 test("NOTICE.md lists every pack with its source, CC0 licence, ZIP SHA-256, size and file count, and credits Kenney", () => {
   const notice = readFileSync(path.join(DIR, "NOTICE.md"), "utf8");
   assert.match(notice, /CC0 1\.0/);
-  assert.match(notice, /creativecommons\.org\/publicdomain\/zero\/1\.0/);
+  assert.ok(notice.includes("https://creativecommons.org/publicdomain/zero/1.0/"), "links the CC0 deed");
   assert.match(notice, /Kenney/);
   for (const p of RECORDED_PACKS) {
     const at = notice.indexOf(`## ${p.label} (\`${p.id}/\`)`);
