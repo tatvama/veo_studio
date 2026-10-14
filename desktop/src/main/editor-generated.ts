@@ -79,10 +79,15 @@ export async function writeGenerated(dir: string, name: string, bytes: Uint8Arra
     const want = sha(bytes);
     for (const n of names.filter((x) => family.test(x)).sort()) {
       const f = path.join(folder, n);
+      // one handle for the size check and the read, so the file can't change in between
+      const h = await fsp.open(f, "r").catch(() => null);
+      if (!h) continue; // vanished or unreadable: not a match
       try {
-        const st = await fsp.stat(f);
-        if (st.isFile() && st.size === bytes.byteLength && sha(await fsp.readFile(f)) === want) return { file: f, reused: true };
-      } catch { /* vanished or unreadable: not a match */ }
+        const st = await h.stat();
+        if (st.isFile() && st.size === bytes.byteLength && sha(await h.readFile()) === want) return { file: f, reused: true };
+      } catch { /* unreadable: not a match */ } finally {
+        await h.close().catch(() => undefined);
+      }
     }
     const dest = uniquePath(path.join(folder, name), new Set(names.map((n) => pathKey(path.join(folder, n)))));
     if (!isInside(folder, dest) || path.dirname(dest) !== folder) throw new EditorError("Generated media stays inside the edit's folder");

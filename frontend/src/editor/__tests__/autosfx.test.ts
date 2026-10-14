@@ -29,7 +29,6 @@ const FPS = 25;
 const plan = (p: EditProject, o: Parameters<typeof planAutoSfx>[2] = {}) => planAutoSfx(p.sequences[0], p, { catalog: CATALOG, ...o });
 const of = (pl: AutoSfxPlan, rule: string) => pl.placements.filter((x) => x.rule === rule);
 const preset = (id: string) => CATALOG.find((x) => x.id === id)!;
-const sec = (f: number) => f / FPS;
 
 /** A one-clip-per-call builder for small sequences: m1/m2 alternating on V1, back to back, 4 s each. */
 function threeCuts(): { p: EditProject; s: Sequence } {

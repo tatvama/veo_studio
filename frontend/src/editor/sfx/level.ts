@@ -6,7 +6,7 @@
  * sound to −16 LUFS with its true peak at or below −1 dBTP. Very short sounds that can't reach the target under the
  * ceiling are soft-clipped into it. Pure: no DOM.
  */
-import { gatedLoudness, kWeighting, lufsOfPower, TRUE_PEAK_TAPS } from "../audiofx/loudness.ts";
+import { gatedLoudness, kWeighting, TRUE_PEAK_TAPS } from "../audiofx/loudness.ts";
 import { clamp, db, type Sig, type Stereo } from "./dsp.ts";
 
 export const TARGET_LUFS = -16;

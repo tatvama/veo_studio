@@ -9,7 +9,10 @@ interface Job { n: number; id: string; values: Record<string, number>; seed: num
 const scope = self as unknown as { postMessage(m: unknown, transfer?: Transferable[]): void; onmessage: ((e: MessageEvent<Job>) => void) | null };
 
 scope.onmessage = (e) => {
+  // a dedicated worker only hears its own page; anything else (or a malformed job) is ignored
+  if (e.origin && e.origin !== self.location.origin) return;
   const j = e.data;
+  if (!j || typeof j.id !== "string" || typeof j.n !== "number") return;
   try {
     const channels = renderSfx(j.id, j.values, j.seed);
     scope.postMessage({ n: j.n, channels, peaks: j.peaks > 0 ? peaksOf(channels, j.peaks) : [] }, channels.map((c) => c.buffer as ArrayBuffer));
