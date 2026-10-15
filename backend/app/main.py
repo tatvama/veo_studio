@@ -27,7 +27,7 @@ from .api import (admin, auth, bible, board, campaign, designs, desktop, edits, 
                   mcp_access, production, projects, rates, room, shots, work)
 from .api import ui as ui_api
 from .config import ROOT, get_settings
-from .db import Base, engine, get_db
+from .db import get_db
 from .middleware import RetryReads
 from .providers.base import ProviderError
 
