@@ -40,6 +40,11 @@ def register_images(db, ch: Character) -> list[CharacterAsset]:
     sheet = (db.query(CharacterAsset).filter(CharacterAsset.character_id == ch.id, CharacterAsset.archived.is_(False),
                                              CharacterAsset.kind.in_(REGISTER_KINDS))
              .order_by(CharacterAsset.id.desc()).all())
+    # Views cut out of an uploaded character board (origin "board:<source asset id>") are the uploader's own images,
+    # maybe of a real person, not AI-generated sheet views: never sent, like the uploaded photos themselves.
+    # TODO(feat/ai-upload-registration): when the board's source asset carries the "AI-generated, not a real person"
+    # attestation (ai_made), its crops become eligible here.
+    sheet = [a for a in sheet if not (a.origin or "").startswith("board")]
     rows = [a for a in sheet if a.approved] or sheet
     rows.sort(key=lambda a: REGISTER_KINDS.index(a.kind))
     out, kinds = [], set()

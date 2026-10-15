@@ -202,6 +202,30 @@ class KeyframeQCOut(BaseModel):
     notes: str = ""
 
 
+class BoardBox(BaseModel):
+    x: float = Field(description="left edge as a fraction of the board width (0-1)")
+    y: float = Field(description="top edge as a fraction of the board height (0-1)")
+    w: float = Field(description="width as a fraction of the board width (0-1)")
+    h: float = Field(description="height as a fraction of the board height (0-1)")
+
+
+class BoardBoxesOut(BaseModel):
+    """Where the separate pictures (panels) of a character board are."""
+    panels: list[BoardBox] = Field(default_factory=list)
+
+
+class BoardPanelLabel(BaseModel):
+    index: int = Field(description="1-based number of the image, in the order given")
+    kind: str = Field(description="front | three_quarter | profile | back | full_body | expression | outfit | other")
+    name: str = Field("", description="for an expression: one or two words (happy, angry, surprised); for an outfit: "
+                                      "a short name (school uniform); else empty")
+    description: str = Field("", description="under 15 words: what this picture shows")
+
+
+class BoardLabelsOut(BaseModel):
+    panels: list[BoardPanelLabel] = Field(default_factory=list)
+
+
 class SummaryOut(BaseModel):
     summary: str
 

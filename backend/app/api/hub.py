@@ -263,6 +263,27 @@ def video_engines(user: User = Depends(current_user), db: Session = Depends(get_
     return {"engines": out, "auto_first": auto,
             "google_first": settings_store.get_setting(db, "google_first") is not False}
 
+@router.get("/engines/image")
+def image_engines(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Image engines a character's reference pack can be made with (the per-character engine picker), with a price per
+    image and how many images one request can make (a whole board in one go). Auto = the team's image chain."""
+    from ..core import sheet_engine
+    pol = model_hub.policy(db).get("image", [])
+    out = []
+    for m in sheet_engine.image_engines(db):
+        d = {k: v for k, v in model_out(m).items() if k in ("id", "provider", "display_name", "family", "tier", "price_label",
+                                                             "price_source", "provider_mode", "route_key", "builtin")}
+        d.update(est_usd=round(model_hub.price_for(m), 4), group_max=model_hub.group_max(m),
+                 max_refs=int((m.capabilities or {}).get("max_refs") or 0), in_chain=m.id in pol,
+                 modes=(m.capabilities or {}).get("modes") or [])
+        out.append(d)
+    out.sort(key=lambda d: (not d["in_chain"], pol.index(d["id"]) if d["in_chain"] else 0, d["provider"] != "google",
+                            d["display_name"]))
+    first = model_hub.first_choice(db, "image", ["i2i", "t2i"])
+    return {"engines": out, "chain": pol, "auto_first": first[0].id if first else None,
+            "google_first": settings_store.get_setting(db, "google_first") is not False}
+
+
 @router.get("/shots/{sid}/engines")
 def shot_engines(sid: int, purpose: str = "video", user: User = Depends(current_user), db: Session = Depends(get_db)):
     """Engines that can make this shot, with an estimated price each — for the engine picker / shootout."""

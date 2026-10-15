@@ -112,6 +112,9 @@ class Character(Base, Serializable):
     name_pronunciation: Mapped[str] = mapped_column(String(120), default="")
     # signature gestures, posture, speaking style (fed into prompts)
     performance_notes: Mapped[str] = mapped_column(Text, default="")
+    # the image engine this character's sheet, expressions, lighting and outfits are made with (a Model Hub engine id
+    # picked by hand, used on that route only); "" = the team's image chain (core/sheet_engine.py)
+    sheet_engine: Mapped[str] = mapped_column(String(160), default="")
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
@@ -132,6 +135,11 @@ class CharacterAsset(Base, Serializable):
     version: Mapped[int] = mapped_column(Integer, default=1)
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    # where the image came from: "" generated (or an older row), "board" an uploaded character board (kind=source),
+    # "board:<source asset id>" a view cut out of that board (the uploader's own image, never sent to BytePlus)
+    origin: Mapped[str] = mapped_column(String(80), default="")
+    # extra facts: a board's detected panels {"board": {status, width, height, panels, method}}, a crop's box
+    meta: Mapped[Any] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
