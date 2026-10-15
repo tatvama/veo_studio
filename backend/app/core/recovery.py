@@ -20,6 +20,8 @@ DRAFT_RES = "480p"
 def seedance_ready(ch: Character | None) -> bool:
     """Registered with BytePlus and at least one image accepted: Seedance can use the character."""
     reg = ((ch.provider_assets or {}).get("byteplus") or {}) if ch else {}
+    if reg.get("withdrawn"):  # taken back (archived, or a real person's photo) while BytePlus still holds it: never used
+        return False
     return any(a.get("status") == "Active" and a.get("asset_id") for a in reg.get("assets") or [])
 
 

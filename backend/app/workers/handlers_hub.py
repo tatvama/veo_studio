@@ -5,6 +5,7 @@ import re
 import shutil
 import time
 import zipfile
+from functools import lru_cache
 
 from .. import settings_store
 from ..core import identity as identity_core
@@ -29,14 +30,22 @@ VARIATIONS = [
 
 # ── BytePlus asset library ───────────────────────────────────────────────────
 
-# the character sheet views BytePlus gets, best first (never "source": the library's AI-character groups must not
-# show a real person; real people verify themselves in the BytePlus console instead)
+# the character sheet views BytePlus gets, best first. Uploads ("source") go only when the user attested they are
+# AI-generated (CharacterAsset.ai_made): the library's AI-character groups must not show a real person; real people
+# verify themselves in the BytePlus console instead.
 REGISTER_KINDS = ["front", "three_quarter", "full_body", "profile", "outfit"]
 REGISTER_MAX = 4
+PHOTO_REASON = "Made from a photo of a real person: they verify themselves in the BytePlus console."
 
 
-def register_images(db, ch: Character) -> list[CharacterAsset]:
-    """The approved sheet views, or (like identity training) the whole AI-made sheet while none is approved yet."""
+def register_candidates(db, ch: Character) -> list[CharacterAsset]:
+    """Every image that could go to BytePlus, best first: the uploads attested as AI-made (the user's canonical
+    look, in upload order), then the approved sheet views, or (like identity training) the whole AI-made sheet while
+    none is approved yet, one image per view first. An upload of a real person never."""
+    own = (db.query(CharacterAsset).filter(CharacterAsset.character_id == ch.id, CharacterAsset.kind == "source",
+                                           CharacterAsset.ai_made.is_(True), CharacterAsset.approved.is_(True),
+                                           CharacterAsset.archived.is_(False))
+           .order_by(CharacterAsset.id).all())
     sheet = (db.query(CharacterAsset).filter(CharacterAsset.character_id == ch.id, CharacterAsset.archived.is_(False),
                                              CharacterAsset.kind.in_(REGISTER_KINDS))
              .order_by(CharacterAsset.id.desc()).all())
@@ -48,7 +57,52 @@ def register_images(db, ch: Character) -> list[CharacterAsset]:
             kinds.add(a.kind)
             out.append(a)
     out += [a for a in rows if a not in out]
-    return out[:REGISTER_MAX]
+    return own + out
+
+
+def register_images(db, ch: Character) -> list[CharacterAsset]:
+    """What a registration sends, before the image checks of register_plan(): the first REGISTER_MAX candidates."""
+    return register_candidates(db, ch)[:REGISTER_MAX]
+
+
+@lru_cache(maxsize=2048)
+def _image_size(path: str, mtime_ns: int, size: int) -> tuple[int, int]:
+    from PIL import Image
+    try:
+        with Image.open(path) as im:  # reads the header only
+            return im.size
+    except Exception:
+        return 0, 0
+
+
+def image_check(rel: str) -> tuple[str, str]:
+    """BytePlus's image limits for a stored image: ("ok" | "resize" | "skip", why). The size comes from the file
+    header (remembered per file version)."""
+    from ..providers.byteplus import image_fit
+    try:
+        p = get_storage().abs(rel)
+        info = p.stat()
+    except (OSError, ValueError):
+        return "skip", "The image file is missing"
+    w, h = _image_size(str(p), info.st_mtime_ns, info.st_size)
+    return image_fit(w, h, info.st_size)
+
+
+def register_plan(db, ch: Character) -> dict:
+    """What a registration sends now: up to REGISTER_MAX candidates that pass BytePlus's image limits, best first
+    ({"asset", "resize", "note"}; a too-large image goes as a smaller copy), and the candidates skipped on the way
+    ({"source_id", "kind", "reason"}: too small or an unusual shape)."""
+    send: list[dict] = []
+    skipped: list[dict] = []
+    for a in register_candidates(db, ch):
+        if len(send) >= REGISTER_MAX:
+            break
+        fit, why = image_check(a.path)
+        if fit == "skip":
+            skipped.append({"source_id": a.id, "kind": a.kind, "reason": why})
+        else:
+            send.append({"asset": a, "resize": fit == "resize", "note": why})
+    return {"send": send, "skipped": skipped}
 
 
 def _library():
@@ -59,9 +113,27 @@ def _library():
 
 
 def made_from_photo(db, ch: Character) -> bool:
-    """The character comes from someone's own photo (a real person): never registered automatically."""
+    """The character comes from a photo of a real person (an upload nobody attested is AI-generated): its face never
+    goes to the BytePlus asset library, by hand or by itself."""
     return db.query(CharacterAsset).filter(CharacterAsset.character_id == ch.id, CharacterAsset.kind == "source",
-                                           CharacterAsset.archived.is_(False)).count() > 0
+                                           CharacterAsset.ai_made.is_(False), CharacterAsset.archived.is_(False)).count() > 0
+
+
+def withdrawn(reg: dict | None) -> bool:
+    """A registration taken back for safety (archived, or an upload turned out to show a real person) whose removal
+    from BytePlus hasn't gone through yet: never used here, and only Remove applies to it."""
+    return bool((reg or {}).get("withdrawn"))
+
+
+def register_block_reason(db, ch: Character) -> str:
+    """Why this character can't be registered with BytePlus at all ("" = it can)."""
+    if ch.archived:
+        return "Archived characters aren't registered"
+    if withdrawn((ch.provider_assets or {}).get("byteplus")):
+        return "Removing it from BytePlus failed last time: press Remove from BytePlus again first"
+    if made_from_photo(db, ch):
+        return PHOTO_REASON
+    return ""
 
 
 def auto_register_reason(db, ch: Character) -> str:
@@ -74,12 +146,14 @@ def auto_register_reason(db, ch: Character) -> str:
         return "No BytePlus access key + secret"
     if mode == "live" and get_settings().storage_backend != "s3":
         return "BytePlus fetches images by link, which needs bucket storage"
-    if made_from_photo(db, ch):
-        return "Made from a photo: a real person verifies themselves in the BytePlus console"
-    images = register_images(db, ch)
-    if not images:
-        return "No character sheet yet"
+    block = register_block_reason(db, ch)
+    if block:
+        return block.rstrip(".")
     reg = (ch.provider_assets or {}).get("byteplus") or {}
+    skipped = {s.get("source_id") for s in reg.get("skipped") or []}  # BytePlus can't take these: don't ask again
+    images = [a for a in register_candidates(db, ch) if a.id not in skipped][:REGISTER_MAX]
+    if not images:
+        return "No character sheet or AI-made upload yet"
     have = {a.get("source_id") for a in reg.get("assets") or [] if a.get("status") in ("Active", "Processing")}
     if all(a.id in have for a in images):
         return "Already registered"
@@ -87,8 +161,8 @@ def auto_register_reason(db, ch: Character) -> str:
 
 
 def maybe_auto_register(db, user, ch: Character, project_id: int | None = None) -> int | None:
-    """Queue a BytePlus registration when the team asked for it to happen by itself (sheet approved, character
-    locked). Returns the job id, or None when nothing was queued."""
+    """Queue a BytePlus registration when the team asked for it to happen by itself (sheet approved, AI-made image
+    uploaded, character locked). Returns the job id, or None when nothing was queued."""
     from fastapi import HTTPException
 
     from ..core import generation, jobs
@@ -128,6 +202,8 @@ def byteplus_refresh(db, ch: Character) -> dict:
                          "registering" if any(a["status"] == "Processing" for a in assets) else "failed")
         if reg["status"] == "failed":
             reg["error"] = reg.get("error") or "No image is active in BytePlus any more"
+    if withdrawn(reg):
+        reg["status"] = "failed"  # taken back: whatever BytePlus still holds is never used here
     reg["assets"], reg["checked_at"] = assets, utcnow().isoformat() + "Z"
     pa = dict(ch.provider_assets or {})
     pa["byteplus"] = reg
@@ -157,11 +233,64 @@ def byteplus_remove(db, ch: Character) -> int:
     return removed
 
 
-def _save_reg(ctx: JobContext, cid: int, **values) -> dict:
+def _running_registrations(db, cid: int) -> list:
+    from ..core import jobs
+    from ..models import Job
+    return [j for j in db.query(Job).filter(Job.type == "byteplus_register", Job.status.in_(jobs.ACTIVE)).all()
+            if (j.payload or {}).get("character_id") == cid]
+
+
+def withdraw_byteplus(db, user, ch: Character, why: str, request=None) -> dict | None:
+    """Take a character out of the BytePlus asset library for safety: it was archived, or one of its uploads turned out
+    to be a real person's photo. Stops a registration that is running, stops using the registration here at once,
+    then deletes it from BytePlus. Best effort: when that fails, the registration stays (marked, never used) with the
+    error, so the team can press Remove from BytePlus again. Returns {"removed", "error"}, or None when the
+    character wasn't registered."""
+    from ..core import jobs
+    from ..core.audit import audit
+    running = _running_registrations(db, ch.id)
+    if running:
+        jobs.cancel_tree(db, [j.id for j in running])  # waiting runs end now; a running one stops at its next step
+        for j in running:
+            emit(db, j.project_id, "job.updated", {"job_id": j.id, "status": j.status}, commit=False)
+    reg = dict((ch.provider_assets or {}).get("byteplus") or {})
+    if not reg:
+        db.commit()
+        return None
+    reg["withdrawn"] = why
+    pa = dict(ch.provider_assets or {})
+    pa["byteplus"] = reg
+    ch.provider_assets = pa
+    db.commit()  # from here on Seedance ignores it and a run still uploading drops what it adds (see _save_reg)
+    try:
+        removed = byteplus_remove(db, ch)
+    except Exception as e:  # BytePlus refused or can't be reached: keep it marked, show why, Remove tries again
+        db.rollback()
+        msg = str(e)[:300]
+        reg = dict((ch.provider_assets or {}).get("byteplus") or {})
+        reg.update(status="failed", remove_error=msg, error=f"Couldn't remove it from BytePlus: {msg}"[:300])
+        pa = dict(ch.provider_assets or {})
+        pa["byteplus"] = reg
+        ch.provider_assets = pa
+        audit(db, user, "character.unregister_byteplus", ch.name, {"reason": why, "error": msg}, request=request,
+              commit=False)
+        db.commit()
+        return {"removed": 0, "error": msg}
+    audit(db, user, "character.unregister_byteplus", ch.name, {"assets": removed, "reason": why}, request=request)
+    return {"removed": removed, "error": ""}
+
+
+def _save_reg(ctx: JobContext, cid: int, *, claim: bool = False, **values) -> dict | None:
+    """Update this run's registration record. Only the run that claimed it writes (claim=True at the start), and
+    never into one that was taken back (withdraw_byteplus) or removed meanwhile: then it returns None and the run
+    must stop."""
     with SessionLocal() as db:
         c = db.get(Character, cid)
         pa = dict(c.provider_assets or {})
-        reg = {**(pa.get("byteplus") or {}), **values, "updated_at": utcnow().isoformat() + "Z"}
+        cur = pa.get("byteplus") or {}
+        if withdrawn(cur) or c.archived or (not claim and cur.get("job_id") != ctx.job_id):
+            return None
+        reg = {**cur, **values, "updated_at": utcnow().isoformat() + "Z"}
         pa["byteplus"] = reg
         c.provider_assets = pa
         db.commit()
@@ -171,9 +300,9 @@ def _save_reg(ctx: JobContext, cid: int, **values) -> dict:
 
 @handler("byteplus_register")
 def byteplus_register(ctx: JobContext) -> dict:
-    """Register a character's approved sheet images in the BytePlus asset library (one AI-character group per
-    character). Seedance then takes them as asset:// references, the sanctioned way to keep an AI character
-    consistent without its real-person filter blocking the clip."""
+    """Register a character's AI-made images (attested uploads, approved sheet views) in the BytePlus asset library
+    (one AI-character group per character). Seedance then takes them as asset:// references, the sanctioned way to
+    keep an AI character consistent without its real-person filter blocking the clip."""
     cid = ctx.payload["character_id"]
     try:
         return _byteplus_register(ctx, cid)
@@ -187,22 +316,42 @@ def byteplus_register(ctx: JobContext) -> dict:
         raise
 
 
+def _drop_asset(lib, asset_id: str) -> None:
+    """Delete an asset this run just added to a registration that was taken back meanwhile."""
+    if lib is None:
+        return
+    try:
+        lib.delete_asset(asset_id)
+    except Exception as e:
+        print(f"[byteplus] couldn't delete asset {asset_id} after the registration was withdrawn: {e}")
+
+
 def _byteplus_register(ctx: JobContext, cid: int) -> dict:
     from ..config import get_settings
-    from ..providers.byteplus import AssetLibrary
+    from ..providers.byteplus import AssetLibrary, library_copy
     st = get_storage()
     mock = provider_mode("byteplus_iam") == "mock"
     with SessionLocal() as db:
         ch = db.get(Character, cid)
         name = ch.name
-        images = [(a.id, a.kind, a.path) for a in register_images(db, ch)]
+        block = register_block_reason(db, ch)  # e.g. archived, or a real person's photo, since this was queued
+        plan = register_plan(db, ch)
+        images = [(p["asset"].id, p["asset"].kind, p["asset"].path, p["resize"]) for p in plan["send"]]
         reg = dict((ch.provider_assets or {}).get("byteplus") or {})
         qpm = max(1, int(settings_store.get_setting(db, "byteplus_asset_qpm") or 3))
+    if block:
+        raise ProviderError(block, provider="byteplus")
     if not images:
-        raise ProviderError("Make this character's sheet (front, three-quarter, full body) first")
+        why = "; ".join(s["reason"] for s in plan["skipped"])
+        raise ProviderError(f"None of {name}'s images fits BytePlus: {why}" if why else
+                            "Make this character's sheet (front, three-quarter, full body) or upload an AI-made image first")
+    order = {aid: i for i, (aid, *_rest) in enumerate(images)}
     assets = [a for a in reg.get("assets") or [] if a.get("status") in ("Active", "Processing")]
+    assets.sort(key=lambda a: order.get(a.get("source_id"), len(order)))  # best first: Seedance takes the first few
     done = {a.get("source_id") for a in assets}
-    _save_reg(ctx, cid, status="registering", job_id=ctx.job_id, error="", assets=assets)
+    if _save_reg(ctx, cid, claim=True, status="registering", job_id=ctx.job_id, error="", assets=assets,
+                 skipped=plan["skipped"]) is None:
+        raise Cancelled()
     s = get_settings()
     lib = None if mock else AssetLibrary(settings_store.api_key("byteplus_iam"), s.byteplus_region, s.byteplus_project)
     group = reg.get("group_id") or ""
@@ -210,11 +359,12 @@ def _byteplus_register(ctx: JobContext, cid: int) -> dict:
         ctx.progress(0.05, "Creating the character's group in BytePlus")
         slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40] or "character"
         group = f"mock-group-{cid}" if mock else lib.ensure_group(f"tatvam-{cid}-{slug}", f"Tatvam AI Studio character: {name}")
-        _save_reg(ctx, cid, group_id=group)
+        if _save_reg(ctx, cid, group_id=group) is None:
+            raise Cancelled()
     todo = [im for im in images if im[0] not in done]
-    for i, (aid, kind, path) in enumerate(todo):
+    for i, (aid, kind, path, resize) in enumerate(todo):
         ctx.check_cancel()
-        ctx.progress(0.1 + 0.5 * i / max(len(todo), 1), f"Uploading {kind.replace('_', ' ')} view ({i + 1}/{len(todo)})")
+        ctx.progress(0.1 + 0.5 * i / max(len(todo), 1), f"Uploading {kind.replace('_', ' ')} image ({i + 1}/{len(todo)})")
         if i:  # the library allows only a few uploads a minute on the Entry tier
             wait_until = time.time() + 60.0 / qpm
             while time.time() < wait_until and not mock:
@@ -223,13 +373,22 @@ def _byteplus_register(ctx: JobContext, cid: int) -> dict:
         if mock:
             asset_id, status = f"asset-mock-{cid}-{aid}", "Active"
         else:
-            url = st.public_url(st.abs(path))
+            tmp = st.tmp_dir() if resize else None
+            try:  # a too-large image goes as a smaller copy (the stored original stays as it is)
+                url = st.public_url(library_copy(st.abs(path), tmp) if tmp else st.abs(path))
+            finally:
+                if tmp:
+                    shutil.rmtree(tmp, ignore_errors=True)
             if not url:
                 raise ProviderError("BytePlus downloads the images by link, which needs bucket storage "
                                     "(STORAGE_BACKEND=s3 with the R2 settings)")
             asset_id, status = lib.create_asset(group, url, f"{name} {kind.replace('_', ' ')}"), "Processing"
-        assets.append({"asset_id": asset_id, "source_id": aid, "path": path, "kind": kind, "status": status, "error": ""})
-        _save_reg(ctx, cid, assets=assets)
+        assets.append({"asset_id": asset_id, "source_id": aid, "path": path, "kind": kind, "status": status, "error": "",
+                       **({"resized": True} if resize else {})})
+        assets.sort(key=lambda a: order.get(a.get("source_id"), len(order)))  # best first: Seedance takes the first few
+        if _save_reg(ctx, cid, assets=assets) is None:
+            _drop_asset(lib, asset_id)  # taken back while uploading: don't leave it in the library
+            raise Cancelled()
     deadline = time.time() + 900
     while any(a["status"] == "Processing" for a in assets):
         ctx.check_cancel()
@@ -245,15 +404,18 @@ def _byteplus_register(ctx: JobContext, cid: int) -> dict:
                 if a["status"] == "Failed":
                     a["error"] = str(info.get("FailedReason") or info.get("ErrorMessage") or info.get("Error") or
                                      "rejected by BytePlus review")[:200]
-        _save_reg(ctx, cid, assets=assets)
+        if _save_reg(ctx, cid, assets=assets) is None:
+            raise Cancelled()
     active = [a for a in assets if a["status"] == "Active"]
     failed = [a for a in assets if a["status"] == "Failed"]
     if not active:
         reg = _save_reg(ctx, cid, status="failed", error="; ".join(a["error"] for a in failed)[:300] or "No image was accepted")
-        raise ProviderError(f"BytePlus accepted none of {name}'s images: {reg['error']}", provider="byteplus")
-    _save_reg(ctx, cid, status="ready", error=f"{len(failed)} image(s) rejected" if failed else "",
-              registered_at=utcnow().isoformat() + "Z")
-    return {"character_id": cid, "group_id": group, "active": len(active), "failed": len(failed)}
+        raise ProviderError(f"BytePlus accepted none of {name}'s images: {(reg or {}).get('error', '')}", provider="byteplus")
+    if _save_reg(ctx, cid, status="ready", error=f"{len(failed)} image(s) rejected" if failed else "",
+                 registered_at=utcnow().isoformat() + "Z") is None:
+        raise Cancelled()
+    return {"character_id": cid, "group_id": group, "active": len(active), "failed": len(failed),
+            "skipped": len(plan["skipped"])}
 
 
 @handler("model_sync")

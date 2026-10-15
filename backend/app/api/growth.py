@@ -417,27 +417,68 @@ def train_identity(cid: int, body: TrainIn, request: Request, user: User = Depen
     return jobs.submit(db, user, p, [generation.train_identity_spec(db, body.project_id, ch)])
 
 
+def _storage_block(mode: str) -> str:
+    if mode == "missing":
+        return "Add the BytePlus access key and secret in Settings → AI services first"
+    if mode == "live" and get_settings().storage_backend != "s3":
+        return "BytePlus downloads the images by link, which needs bucket storage (STORAGE_BACKEND=s3)"
+    return ""
+
+
 @router.post("/characters/{cid}/register/byteplus")
 def register_byteplus(cid: int, body: TrainIn, request: Request, user: User = Depends(require("creator")),
                       db: Session = Depends(get_db)):
-    """Register the character's approved sheet images in the BytePlus asset library, so Seedance can use them."""
+    """Register the character's AI-made images (attested uploads, approved sheet views) in the BytePlus asset library,
+    so Seedance can use them. Never a character made from a photo of a real person: they verify themselves in the
+    BytePlus console."""
     from ..providers.services import provider_mode
-    from ..workers.handlers_hub import register_images
+    from ..workers.handlers_hub import register_block_reason, register_plan
     ch = get_or_404(db, Character, cid)
-    mode = provider_mode("byteplus_iam")
-    if mode == "missing":
-        raise HTTPException(400, "Add the BytePlus access key and secret in Settings → AI services first")
-    if mode == "live" and get_settings().storage_backend != "s3":
-        raise HTTPException(400, "BytePlus downloads the images by link, which needs bucket storage (STORAGE_BACKEND=s3)")
-    if not register_images(db, ch):
-        raise HTTPException(400, "Make this character's sheet (front, three-quarter, full body) first")
+    setup = _storage_block(provider_mode("byteplus_iam"))
+    if setup:
+        raise HTTPException(400, setup)
+    block = register_block_reason(db, ch)
+    if block:
+        raise HTTPException(409, block)
+    plan = register_plan(db, ch)
+    if not plan["send"]:
+        if plan["skipped"]:
+            raise HTTPException(400, "None of the images fits BytePlus: " + "; ".join(s["reason"] for s in plan["skipped"])[:300])
+        raise HTTPException(400, "Make this character's sheet (front, three-quarter, full body) or upload an AI-made image first")
     from ..models import Job
     running = db.query(Job).filter(Job.type == "byteplus_register", Job.status.in_(jobs.ACTIVE)).all()
     if any((j.payload or {}).get("character_id") == cid for j in running):
         raise HTTPException(409, "Already registering")
     p = db.get(Project, body.project_id) if body.project_id else None
-    audit(db, user, "character.register_byteplus", ch.name, request=request, commit=False)
+    audit(db, user, "character.register_byteplus", ch.name, {"images": [x["asset"].id for x in plan["send"]]}, request=request,
+          commit=False)
     return jobs.submit(db, user, p, [generation.byteplus_register_spec(body.project_id, ch)])
+
+
+@router.get("/characters/{cid}/byteplus/plan")
+def byteplus_plan(cid: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """What registering would send now (best first, checked against BytePlus's image limits), what is skipped and
+    why, and why the character can't be registered at all ("blocked", "" = it can)."""
+    from ..providers.services import provider_mode
+    from ..workers.handlers_hub import REGISTER_MAX, register_block_reason, register_plan
+    ch = get_or_404(db, Character, cid)
+    plan = register_plan(db, ch)
+    reg = (ch.provider_assets or {}).get("byteplus") or {}
+    held = {a.get("source_id"): a.get("status") for a in reg.get("assets") or [] if a.get("status") in ("Active", "Processing")}
+    assets = {a.id: a for a in db.query(CharacterAsset).filter(CharacterAsset.id.in_([s["source_id"] for s in plan["skipped"]]))}
+
+    def row(a: CharacterAsset) -> dict:
+        return {"id": a.id, "kind": a.kind, "label": a.label, "url": url(a.path), "ai_made": bool(a.ai_made)}
+
+    return {
+        "blocked": register_block_reason(db, ch),
+        "setup": _storage_block(provider_mode("byteplus_iam")),
+        "max": REGISTER_MAX,
+        "images": [{**row(x["asset"]), "resize": x["resize"], "note": x["note"], "registered": held.get(x["asset"].id, "")}
+                   for x in plan["send"]],
+        "skipped": [{**(row(assets[s["source_id"]]) if s["source_id"] in assets else {"id": s["source_id"], "kind": s["kind"]}),
+                     "reason": s["reason"]} for s in plan["skipped"]],
+    }
 
 
 @router.post("/characters/{cid}/byteplus/refresh")
@@ -469,6 +510,13 @@ def remove_byteplus(cid: int, request: Request, user: User = Depends(require("cr
     try:
         removed = byteplus_remove(db, ch)
     except ProviderError as e:
+        db.rollback()
+        reg = dict((ch.provider_assets or {}).get("byteplus") or {})
+        if reg.get("withdrawn"):  # still couldn't remove a registration taken back for safety: keep saying so
+            reg.update(remove_error=str(e)[:300], error=f"Couldn't remove it from BytePlus: {e}"[:300])
+            ch.provider_assets = {**(ch.provider_assets or {}), "byteplus": reg}
+            db.commit()
+            emit(db, None, "bible.updated", {"character_id": cid})
         raise HTTPException(502, str(e)[:300]) from e
     audit(db, user, "character.unregister_byteplus", ch.name, {"assets": removed}, request=request)
     emit(db, None, "bible.updated", {"character_id": cid})

@@ -16,6 +16,7 @@ import hmac
 import json
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import quote
 
@@ -148,6 +149,45 @@ class ArkClient:
 
 
 # ── asset library (access key + secret) ──────────────────────────────────────
+
+# what the library takes as an image asset: each side 300–6000 px, width / height 0.4–2.5, under 30 MB
+ASSET_MIN_SIDE, ASSET_MAX_SIDE = 300, 6000
+ASSET_MIN_RATIO, ASSET_MAX_RATIO = 0.4, 2.5
+ASSET_MAX_BYTES = 30 * 1024 * 1024
+
+
+def image_fit(width: int, height: int, size_bytes: int) -> tuple[str, str]:
+    """Whether the asset library takes an image as it is: ("ok", ""), ("resize", why) when a smaller copy has to go
+    instead, or ("skip", why) when it can't be sent at all (too small, or too long and thin)."""
+    if width <= 0 or height <= 0:
+        return "skip", "Can't read this image"
+    if min(width, height) < ASSET_MIN_SIDE:
+        return "skip", f"Too small ({width}×{height} px): BytePlus needs at least {ASSET_MIN_SIDE} px on each side"
+    ratio = width / height
+    if not ASSET_MIN_RATIO <= ratio <= ASSET_MAX_RATIO:
+        return "skip", (f"Unusual shape ({width}×{height} px): BytePlus takes images from {ASSET_MIN_RATIO} to "
+                        f"{ASSET_MAX_RATIO} times as wide as they are tall")
+    if max(width, height) > ASSET_MAX_SIDE or size_bytes >= ASSET_MAX_BYTES:
+        return "resize", f"Larger than BytePlus takes ({width}×{height} px): a smaller copy is sent"
+    return "ok", ""
+
+
+def library_copy(src: Path, dest_dir: Path) -> Path:
+    """A copy of `src` the asset library takes: at most ASSET_MAX_SIDE px per side and under ASSET_MAX_BYTES (JPEG).
+    Only for images image_fit() says to resize: the shape stays the same, so the short side stays above the minimum."""
+    from PIL import Image, ImageOps
+    with Image.open(src) as im:
+        im = ImageOps.exif_transpose(im)
+        img = im.convert("RGB")
+    scale = min(1.0, ASSET_MAX_SIDE / max(img.size))
+    out = Path(dest_dir) / f"{Path(src).stem}_byteplus.jpg"
+    while True:
+        size = (max(1, round(img.width * scale)), max(1, round(img.height * scale)))
+        (img.resize(size, Image.LANCZOS) if size != img.size else img).save(out, "JPEG", quality=90)
+        if out.stat().st_size < ASSET_MAX_BYTES or min(size) <= ASSET_MIN_SIDE:
+            return out
+        scale *= 0.8
+
 
 def _q(v: str) -> str:
     return quote(v, safe="-_.~")
