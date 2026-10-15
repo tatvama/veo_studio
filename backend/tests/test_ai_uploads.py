@@ -246,14 +246,16 @@ def test_archiving_removes_from_byteplus(client, monkeypatch):
 
     monkeypatch.setattr(hub, "byteplus_remove", down)
     out = ok(c.patch(f"/api/characters/{cid2}", headers=H, json={"archived": True}))
-    assert out["byteplus_removal"]["error"] and out["seedance_ready"] is False
+    assert out["byteplus_removal"]["error"] == hub.REMOVE_FAILED and out["seedance_ready"] is False
     reg = out["provider_assets"]["byteplus"]
     assert reg["withdrawn"] == "archived" and reg["status"] == "failed" and "Couldn't remove" in reg["error"]
     assert byteplus_assets([path]) == {}  # never used again here
-    assert c.delete(f"/api/characters/{cid2}/byteplus", headers=H).status_code == 502  # still down: still marked
+    still_down = c.delete(f"/api/characters/{cid2}/byteplus", headers=H)
+    assert still_down.status_code == 502  # still down: still marked
     assert _reg(cid2)["withdrawn"] == "archived"
     monkeypatch.undo()
-    assert ok(c.delete(f"/api/characters/{cid2}/byteplus", headers=H))["removed"] == 1
+    removed = ok(c.delete(f"/api/characters/{cid2}/byteplus", headers=H))
+    assert removed["removed"] == 1
     assert _reg(cid2) == {}
 
 
