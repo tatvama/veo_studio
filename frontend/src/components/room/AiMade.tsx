@@ -112,7 +112,7 @@ export function UploadAttestations({ character: c, uploads, canAttest, canUnatte
         })}
       </ul>
       <ConfirmDialog open={!!confirm} onClose={() => !busy && setConfirm(null)} busy={busy} danger={!!confirm?.ai_made && registered}
-        title={confirm?.ai_made ? t("Mark this image as a real person's photo?") : t("Mark this image as AI-generated?")}
+        title={confirm?.ai_made ? t("Mark as a real person's photo?") : t("Mark as AI-generated?")}
         confirmLabel={confirm?.ai_made ? (registered ? t("Mark and remove from BytePlus") : t("Mark as a real person")) : t("Yes, it's AI-generated")}
         icon={confirm?.ai_made ? <UserRound className="size-4" /> : <Sparkles className="size-4" />} onConfirm={apply}>
         {confirm?.ai_made ? (
