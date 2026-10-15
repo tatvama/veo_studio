@@ -13,8 +13,8 @@ import { Button } from "../../components/ui";
 import { videoEffects, type EffectDef } from "../effects";
 import { useEditorHost } from "../host";
 import { isMoodEffect } from "../moods/apply";
-import { analyzeWb, engineScopes, lookCaps, matchLook, type LookCaps } from "../moods/engineLooks";
-import { readProgramFrame } from "../moods/programTap";
+import { analyzeWb, lookCaps, matchLook, type LookCaps } from "../moods/engineLooks";
+import { hasProgramScopes, readProgramFrame, readProgramScope } from "../moods/programTap";
 import { scopeImage, type ScopeKind } from "../moods/scopes";
 import { clipTime, useVisible } from "../moods/ui";
 import { uid } from "../model/ids";
@@ -60,16 +60,18 @@ function graticule(g: CanvasRenderingContext2D, kind: ScopeKind, W: number, H: n
   g.restore();
 }
 
-/** Draws one scope of the program frame into a canvas; resolves false when there's no frame yet. */
+/** Draws one scope of the program frame into a canvas; resolves false when there's no frame yet. The monitor's engine
+ *  draws it on the GPU from the frame it holds (no read-back); without that, the frame is read back and the scope is
+ *  computed here (moods/scopes.ts). */
 async function paintScope(c: HTMLCanvasElement, kind: ScopeKind, caps: LookCaps | null): Promise<boolean> {
-  const f = readProgramFrame();
-  if (!f) return false;
+  const gpu = caps?.computeScopes && hasProgramScopes() ? await readProgramScope(kind) : null;
+  const f = gpu ? null : readProgramFrame();
+  if (!gpu && !f) return false;
   const W = c.width, H = c.height;
   const g = c.getContext("2d")!;
   g.clearRect(0, 0, W, H);
-  const gpu = caps?.computeScopes ? await engineScopes(kind, f) : null;
   if (gpu) { g.drawImage(gpu, 0, 0, W, H); gpu.close(); }
-  else g.putImageData(new ImageData(scopeImage(kind, f, W, H), W, H), 0, 0);
+  else g.putImageData(new ImageData(scopeImage(kind, f!, W, H), W, H), 0, 0);
   graticule(g, kind, W, H);
   return true;
 }

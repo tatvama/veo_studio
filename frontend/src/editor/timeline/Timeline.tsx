@@ -132,6 +132,9 @@ export default function TimelinePanel() {
     window.addEventListener("keydown", key, true);
     drag.current = { move, up, cancel };
   };
+  // unmounted mid-drag (a workspace switch, the panel closing): the gesture is cancelled and its window keydown
+  // listener (capturing Esc) and element listeners go with it
+  useEffect(() => () => { drag.current?.cancel(); drag.current = null; }, []);
   const points = (exclude: string[]) => {
     const st0 = ed();
     if (!st0.snapping) return [] as SnapPoint[];

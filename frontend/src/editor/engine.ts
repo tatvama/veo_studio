@@ -9,7 +9,7 @@
  * With FEATURES.videoTracks the engine draws titles and mattes itself; without it they're drawn here (Canvas2D) and
  * handed over as custom sources. The demo's procedural media always comes in as custom sources.
  */
-import type { Composition, CustomSource, EffectInfo, EffectParamDef, Engine, TransitionInfo } from "../engine";
+import type { Composition, CustomSource, EffectInfo, EffectParamDef, Engine, ScopeKind, ScopeOptions, TransitionInfo } from "../engine";
 import type { EditProject } from "./model/types";
 import { toComposition, toVideoComposition, type CompositionOptions, type CompositionResult, type GeneratedSource } from "./model/toComposition";
 import { isExtendedTitle } from "./render/title";
@@ -184,7 +184,13 @@ export interface PreviewEngine {
   warnings(): string[];
   lastMs(): number;
   dispose(): void;
-  /** Additive (editor-looks, Scopes): the last frame drawn as RGBA (rows top first) at its render size. */
+  /** What this engine build can do beyond drawing (the panels pick their path from it). */
+  readonly caps: { computeScopes: boolean };
+  /** A scope of the last frame drawn, computed on the GPU from the frame as it is (no read-back of the frame): the
+   *  Scopes panel's path when caps.computeScopes. Resolves null when nothing was drawn yet. */
+  computeScopes(kind: ScopeKind, opts?: ScopeOptions): Promise<ImageBitmap | null>;
+  /** The last frame drawn as RGBA (rows top first) at its render size: a full-frame read-back (8 MB at 1080p), the
+   *  CPU fallback for scopes and the audio tools' picture tap. */
   readFrame(): { data: Uint8Array; width: number; height: number } | null;
 }
 
@@ -196,8 +202,10 @@ export async function createPreview(canvas: HTMLCanvasElement, width: number, he
   let disposed = false;
   let lastKey = "";
   let chain: Promise<void> = Promise.resolve();
+  const computeScopes = typeof eng.computeScopes === "function";
   return {
     canvas,
+    caps: { computeScopes },
     load(r, extra) {
       // the generated pictures too: a template title's spec lives there, not in the composition (an edit of its text
       // changes nothing else, and the monitor would keep the old words)
@@ -224,6 +232,10 @@ export async function createPreview(canvas: HTMLCanvasElement, width: number, he
     warnings: () => eng.warnings,
     lastMs: () => eng.stats.lastMs,
     dispose() { disposed = true; try { eng.dispose(); } catch { /* lost context */ } },
+    async computeScopes(kind, opts) {
+      if (!loaded || disposed || !computeScopes) return null;
+      try { return await eng.computeScopes(kind, opts); } catch { return null; }
+    },
     readFrame() {
       if (!loaded || disposed) return null;
       try {
