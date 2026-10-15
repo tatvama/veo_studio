@@ -24,6 +24,7 @@ import { api } from "../../lib/api";
 import { LANG_NAMES, LANG_SHORT, secs } from "../../lib/format";
 import { useT } from "../../lib/i18n";
 import { useEpisode, useHookInsights, useSettings } from "../../lib/queries";
+import { useBusyAction } from "../../lib/useBusyAction";
 import type { SubmitResult } from "../../lib/types";
 import { useProjectCtx } from "./context";
 
@@ -62,6 +63,7 @@ export default function ExportPage() {
   const { project, eid, lang, canEdit, canProduce, setEpisode } = useProjectCtx();
   const qc = useQueryClient();
   const { generate, submit } = useGenerate();
+  const { busy, run: guard } = useBusyAction(); // one "Render again" at a time: a double click must not queue two renders
   const { data: ep, isLoading, isError, refetch, isFetching } = useEpisode(eid, lang);
   const { data: settings } = useSettings();
   const { data: insights } = useHookInsights();
@@ -141,12 +143,13 @@ export default function ExportPage() {
     }
   };
 
-  const rerender = (x: RenderRow) => generate(eid, {
+  const rerenderKey = (x: RenderRow) => `rerender:${x.id}`;
+  const rerender = (x: RenderRow) => guard(rerenderKey(x), () => generate(eid, {
     action: x.kind === "final" ? "export" : "animatic", language: x.language, preset: x.preset,
     captions: x.options?.captions !== false, music: x.options?.music !== false, publish: false,
   }, x.kind === "final"
     ? t("Export {preset} [{lang}]", { preset: t(presets[x.preset]?.label ?? x.preset), lang: LANG_SHORT[x.language] ?? x.language })
-    : t("Animatic [{lang}]", { lang: LANG_SHORT[x.language] ?? x.language }));
+    : t("Animatic [{lang}]", { lang: LANG_SHORT[x.language] ?? x.language })));
 
   const refreshMetrics = () => submit(() => api.post<SubmitResult>("/api/metrics/refresh"), t("YouTube analytics"));
   const filterOptions: { value: Filter; label: string }[] = [
@@ -209,7 +212,7 @@ export default function ExportPage() {
                   <ExportCard key={x.id} x={x} pid={project.id} preset={presets[x.preset]} canProduce={canProduce} canEdit={canEdit}
                     metrics={metricsById[x.id]} upload={uploads.find((j) => Number(j.payload?.export_id) === x.id) ?? null}
                     onPlay={() => setPlaying(x)} onPublish={() => setPublishing(x)} onLinks={() => setSharing(x)}
-                    onApprove={() => approve(x)} onRerender={() => rerender(x)} onMarketing={goMarketing} />
+                    onApprove={() => approve(x)} onRerender={() => void rerender(x)} rerendering={busy === rerenderKey(x)} onMarketing={goMarketing} />
                 ))}
               </AnimatePresence>
             </div>
