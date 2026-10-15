@@ -1,10 +1,16 @@
-/* VEO Studio service worker.
- * - /assets/* (hashed build files): cache-first.
- * - Page navigations: network-first, falling back to the cached app shell (/index.html) when offline.
+/* Tatvam Studio service worker.
+ * - Install: precache the app shell (/index.html, manifest, icons) and every JS/CSS file of this build, so any page
+ *   still opens offline. The list and the build id are injected by the build (vite.config.ts → serviceWorker()),
+ *   which also makes this file change per build, so the browser installs the new worker and its new precache.
+ * - /assets/* (hashed, immutable): cache-first; fonts, images and wasm are cached as they are first used.
+ * - Page navigations: network-first, falling back to the cached app shell when offline.
+ * - Activate: drop every cache that is not this build's (old builds' assets go in one sweep, no count-based trim
+ *   that could evict the shell's own chunks).
  * - Never touches /api/*, /media/*, websockets or any non-GET request.
- * Bump VERSION to drop old caches on the next activation.
  */
-const VERSION = "veo-studio-v2.1";
+const BUILD_ID = "__BUILD_ID__";
+const BUILD_ASSETS = /* __BUILD_ASSETS__ */ [];
+const VERSION = `veo-studio-${BUILD_ID}`;
 const SHELL_CACHE = `${VERSION}-shell`;
 const ASSET_CACHE = `${VERSION}-assets`;
 const SHELL_URL = "/index.html";
@@ -12,9 +18,11 @@ const PRECACHE = [SHELL_URL, "/manifest.webmanifest", "/favicon.svg", "/icon.svg
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
-    caches.open(SHELL_CACHE)
-      .then((cache) => cache.addAll(PRECACHE).catch(() => undefined))
-      .then(() => self.skipWaiting()),
+    Promise.all([
+      caches.open(SHELL_CACHE).then((cache) => cache.addAll(PRECACHE).catch(() => undefined)),
+      // one failed file (a proxy hiccup) must not fail the install: that file is simply fetched on first use
+      caches.open(ASSET_CACHE).then((cache) => Promise.all(BUILD_ASSETS.map((url) => cache.add(url).catch(() => undefined)))),
+    ]).then(() => self.skipWaiting()),
   );
 });
 
@@ -49,22 +57,12 @@ async function networkFirstPage(request) {
   }
 }
 
-const MAX_ASSETS = 120; // hashed files from old builds pile up; keep the newest N
-
-async function trim(cache) {
-  const keys = await cache.keys();
-  for (let i = 0; i < keys.length - MAX_ASSETS; i++) await cache.delete(keys[i]);
-}
-
 async function cacheFirstAsset(request) {
   const cache = await caches.open(ASSET_CACHE);
   const hit = await cache.match(request);
   if (hit) return hit;
   const res = await fetch(request);
-  if (res.ok && res.type === "basic") {
-    await cache.put(request, res.clone());
-    trim(cache);
-  }
+  if (res.ok && res.type === "basic") await cache.put(request, res.clone());
   return res;
 }
 
