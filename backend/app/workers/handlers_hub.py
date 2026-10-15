@@ -35,6 +35,7 @@ VARIATIONS = [
 # verify themselves in the BytePlus console instead.
 REGISTER_KINDS = ["front", "three_quarter", "full_body", "profile", "outfit"]
 REGISTER_MAX = 4
+REMOVE_FAILED = "BytePlus didn't confirm the removal (the BytePlus panel shows why)"
 PHOTO_REASON = "Made from a photo of a real person: they verify themselves in the BytePlus console."
 
 
@@ -276,7 +277,9 @@ def withdraw_byteplus(db, user, ch: Character, why: str, request=None) -> dict |
         audit(db, user, "character.unregister_byteplus", ch.name, {"reason": why, "error": msg}, request=request,
               commit=False)
         db.commit()
-        return {"removed": 0, "error": msg}
+        # the caller answers the browser: a fixed line there, the reason itself stays on the registration (shown in the
+        # BytePlus panel) and in the audit log
+        return {"removed": 0, "error": REMOVE_FAILED}
     audit(db, user, "character.unregister_byteplus", ch.name, {"assets": removed, "reason": why}, request=request)
     return {"removed": removed, "error": ""}
 

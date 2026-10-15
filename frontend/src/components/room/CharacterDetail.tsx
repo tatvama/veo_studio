@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Archive, ArchiveRestore, ImagePlus, Images, Lock, LockOpen, Mic, ScanFace, Shirt, ShieldAlert, ShieldCheck, Smile, SunMedium, Upload, UserRound, Wand2 } from "lucide-react";
+import { Archive, ArchiveRestore, ImagePlus, Images, Lock, LockOpen, Shirt, ShieldAlert, ShieldCheck, Smile, SunMedium, Upload, UserRound, Wand2 } from "lucide-react";
 import { motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
