@@ -22,10 +22,13 @@ from .worker import Cancelled, JobContext, handler
 
 @handler("critic_loop")
 def critic_loop(ctx: JobContext) -> dict:
-    """Critic scores the draft; if below the bar, the writer rewrites with the notes. Repeats up to N rounds."""
+    """Critic scores the draft; if below the bar, the writer rewrites with the notes. Repeats up to N rounds.
+    keep_script: score only (one round, no rewrite), for a script that is the user's own words."""
     with SessionLocal() as db:
         rounds = int(ctx.payload.get("rounds") or settings_store.get_setting(db, "critic_rounds") or 1)
         bar = float(settings_store.get_setting(db, "critic_min_score") or 7.5)
+    if ctx.payload.get("keep_script"):
+        rounds = 0
     history: list[dict] = []
     for r in range(rounds + 1):
         ctx.check_cancel()
@@ -226,9 +229,12 @@ def _autopilot_run(ctx: JobContext, stop_at: int, pause_after: list[str], mark) 
             elif stage == "script" and not (episode.script or {}).get("scenes"):
                 studio.generate_script(db, user, episode)
             elif stage == "critic" and not (episode.critic or {}).get("overall"):
+                keep = studio.users_script_reason(db, project, episode)
+                if keep:  # the user's words: the editor scores them, the writer leaves them alone
+                    mark(stage, "running", f"kept your script ({keep}); scoring only")
                 db.commit()
-                run_children([{"type": "critic_loop", "payload": {}, "episode_id": episode.id, "estimate": 0.0,
-                               "label": "Critic loop"}], "Script editor")
+                run_children([{"type": "critic_loop", "payload": {"keep_script": bool(keep)}, "episode_id": episode.id,
+                               "estimate": 0.0, "label": "Critic review" if keep else "Critic loop"}], "Script editor")
             elif stage == "scenes":
                 from ..models import Scene
                 if not db.query(Scene).filter(Scene.episode_id == episode.id, Scene.goal != "").count():
