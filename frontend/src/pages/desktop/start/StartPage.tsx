@@ -167,7 +167,11 @@ function RecentProjects() {
 
 function WhatsNewCard() {
   const [notes, setNotes] = useState<Notes | null>(null);
-  useEffect(() => { void loadNotes().then(setNotes); }, []);
+  useEffect(() => {
+    let alive = true;
+    void loadNotes().then((n) => { if (alive) setNotes(n); });
+    return () => { alive = false; };
+  }, []);
   return (
     <Card title={`What's new${notes?.version ? ` in ${notes.version}` : ""}`} icon={<Sparkles />}
       actions={notes?.text ? <Button size="sm" variant="ghost" onClick={() => setOverlay("whatsnew")}>Read all</Button> : undefined}>

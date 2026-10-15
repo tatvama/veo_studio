@@ -1,7 +1,9 @@
 """Assembles an episode into one MP4 (final export or cheap animatic), per language (PLAN §4 stages 7, 10, 11)."""
 from __future__ import annotations
 
+import os
 import shutil
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -274,6 +276,26 @@ def _end_card(project: Project, db: Session, w: int, h: int, tmp: Path) -> tuple
     return out, float((kit.end_card or {}).get("seconds") or 3)
 
 
+def segment_workers() -> int:
+    """How many segment clips are built at once: half the cores (each is an FFmpeg process of its own)."""
+    return max(1, (os.cpu_count() or 2) // 2)
+
+
+def render_segments(items: list, make) -> list[Path]:
+    """`make(i, item)` for every item, side by side, results in order. The first failure (in order) raises as it
+    would have one at a time, and the clips not started yet are dropped."""
+    out: list[Path] = []
+    with ThreadPoolExecutor(max_workers=segment_workers(), thread_name_prefix="seg") as ex:
+        futures = [ex.submit(make, i, item) for i, item in enumerate(items)]
+        try:
+            for f in futures:
+                out.append(f.result())
+        except BaseException:
+            ex.shutdown(wait=False, cancel_futures=True)
+            raise
+    return out
+
+
 def render(db: Session, episode: Episode, lang: str, preset: str, kind: str, options: dict[str, Any],
            out_rel_base: str) -> dict[str, Any]:
     """Render to storage. Returns {path, srt_path, thumbnail_path, duration, warnings, peaks}."""
@@ -294,8 +316,8 @@ def render(db: Session, episode: Episode, lang: str, preset: str, kind: str, opt
             warnings += fxlib.fallback_warnings(tm.sg.shot.code, tm.fx, tm.transition is not None)
         lengths = [tm.seg_len for tm in timed]
         transitions: list[tuple[str, float] | None] = [tm.transition for tm in timed]
-        clips: list[Path] = []
-        for i, tm in enumerate(timed):
+
+        def make_segment(i: int, tm) -> Path:  # one clip per segment; every file name carries i, so they run side by side
             out = tmp / f"seg_{i:03}.mp4"
             sg, fx, seg_len = tm.sg, tm.fx, tm.seg_len
             if sg.source_kind == "still":
@@ -309,7 +331,9 @@ def render(db: Session, episode: Episode, lang: str, preset: str, kind: str, opt
                                   audio_override=sg.audio_override, mix_extra=sg.extra_audio,
                                   keep_src_audio=sg.keep_src_audio, src_audio_gain_db=sg.src_gain_db, center=center,
                                   fx=fx, luts=luts)
-            clips.append(out)
+            return out
+
+        clips: list[Path] = render_segments(timed, make_segment)
         card = _end_card(project, db, w, h, tmp) if kind == "final" else None
         if card:
             out = tmp / "seg_endcard.mp4"

@@ -7,6 +7,7 @@ import { Avatar, Badge, Button, Empty, Metric, Panel, SearchField, Skeleton } fr
 import { api } from "../../../lib/api";
 import { useT } from "../../../lib/i18n";
 import { useConsents } from "../../../lib/queries";
+import { LoadError } from "../../project/production/LoadError";
 import type { Character } from "../../../lib/types";
 import { ChipGroup } from "../shared/ChipGroup";
 import { Pill } from "../shared/Pill";
@@ -22,7 +23,7 @@ const STATE_RANK: Record<ExpiryState, number> = { expired: 0, soon: 1, valid: 2,
 export function Consents({ canAdd }: { canAdd: boolean }) {
   const t = useT();
   const qc = useQueryClient();
-  const { data, isLoading } = useConsents();
+  const { data, isLoading, isError, refetch } = useConsents();
   const [adding, setAdding] = useState(false);
   const [filter, setFilter] = useState<"all" | "valid" | "soon" | "expired">("all");
   const [text, setText] = useState("");
@@ -97,6 +98,8 @@ export function Consents({ canAdd }: { canAdd: boolean }) {
 
         {isLoading ? (
           <div aria-busy="true" className="space-y-2 p-3">{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-8 w-full" style={{ opacity: 1 - i * 0.12 }} />)}</div>
+        ) : isError && !data ? (
+          <LoadError what={t("the consents")} onRetry={() => void refetch()} compact />
         ) : !rows.length ? (
           <div className="p-4"><Empty icon={<FileCheck className="size-8" />} title={t("No consents recorded")}
             sub={t("Keep a signed release for every real person whose voice or likeness you clone, and for licensed music.")}

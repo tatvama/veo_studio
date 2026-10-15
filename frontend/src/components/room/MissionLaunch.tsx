@@ -7,6 +7,7 @@ import { api } from "../../lib/api";
 import { cn } from "../../lib/cn";
 import { tr, useT } from "../../lib/i18n";
 import { useSettings } from "../../lib/queries";
+import { useBusyAction } from "../../lib/useBusyAction";
 import type { AutopilotState, Project } from "../../lib/types";
 import { defaultStops } from "../AutopilotPanel";
 import { useGenerate } from "../Generate";
@@ -39,7 +40,8 @@ export function MissionLaunch({ project, eid, canEdit, index }: { project: Proje
   };
   const [target, setTarget] = useState<string>("final");
   const [stops, setStops] = useState<string[] | null>(null);
-  const [busy, setBusy] = useState(false);
+  // one paid action at a time: a double click on Run / Continue must not start Autopilot twice
+  const { busy, run: guard } = useBusyAction();
   const chosenStops = stops ?? defaultStops(milestones, target);
   const running = ap.status === "running";
   const paused = ap.status === "paused";
@@ -54,18 +56,15 @@ export function MissionLaunch({ project, eid, canEdit, index }: { project: Proje
   /** which milestone the stepper runs to: the active run's, else the one about to be launched */
   const reachIdx = milestones.findIndex((m) => m.id === (ap.status ? ap.through : target));
 
-  const run = () => generate(eid, { action: "autopilot", through: target, pause_after: chosenStops.filter((s) => s !== target) },
-    tr("Autopilot → {m}", { m: tr(targetLabel) }));
-  const resume = () => generate(eid, { action: "autopilot", resume: true }, tr("Autopilot: continue"));
-  const stop = async () => {
+  const run = () => guard("run", () => generate(eid, { action: "autopilot", through: target, pause_after: chosenStops.filter((s) => s !== target) },
+    tr("Autopilot → {m}", { m: tr(targetLabel) })));
+  const resume = () => guard("resume", () => generate(eid, { action: "autopilot", resume: true }, tr("Autopilot: continue")));
+  const stop = () => guard("stop", async () => {
     if (!ap.job_id) return;
-    setBusy(true);
-    try {
-      await api.post(`/api/jobs/${ap.job_id}/cancel`, {});
-      toast.info(tr("Stopping Autopilot after the current step"));
-      qc.invalidateQueries({ queryKey: ["project", project.id] });
-    } catch { /* api toasts */ } finally { setBusy(false); }
-  };
+    await api.post(`/api/jobs/${ap.job_id}/cancel`, {});
+    toast.info(tr("Stopping Autopilot after the current step"));
+    qc.invalidateQueries({ queryKey: ["project", project.id] });
+  });
   const toggleStop = (id: string) => setStops(chosenStops.includes(id) ? chosenStops.filter((x) => x !== id) : [...chosenStops, id]);
 
   const status = running ? <Badge tone="ai"><span className="eq" aria-hidden><i /><i /><i /><i /></span>{t("Running")}</Badge>
@@ -133,7 +132,7 @@ export function MissionLaunch({ project, eid, canEdit, index }: { project: Proje
               <p className="mt-1 text-xs text-mute">{t("Check it and change anything you like. When you're happy, continue{next}.", { next: nextAfterPause ? ` ${tr("to {m}", { m: tr(nextAfterPause.label) })}` : "" })}</p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <Link to={`/p/${project.id}/${pausedAt.tab}`}><Button size="sm" iconRight={<ArrowRight className="size-3.5" />}>{t("Review {m}", { m: t(pausedAt.label) })}</Button></Link>
-                {canEdit && <Button size="sm" variant="primary" icon={<Play className="size-3.5" />} onClick={resume}>{t("Continue")}</Button>}
+                {canEdit && <Button size="sm" variant="primary" icon={<Play className="size-3.5" />} loading={busy === "resume"} disabled={!!busy} onClick={resume}>{t("Continue")}</Button>}
               </div>
             </div>
           )}
@@ -161,14 +160,14 @@ export function MissionLaunch({ project, eid, canEdit, index }: { project: Proje
                   options={milestones.map((m) => ({ value: m.id, label: t(m.label), title: t(m.description) }))} />
                 {targetIdx > 0 && <p className="text-2xs text-dim">{t("Click a gate between two steps to stop there for your approval.")}</p>}
               </div>
-              <Button variant="primary" icon={<Rocket className="size-4" />} onClick={run}>
+              <Button variant="primary" icon={<Rocket className="size-4" />} loading={busy === "run"} disabled={!!busy} onClick={run}>
                 {ended ? t("Try again → {m}", { m: t(targetLabel) }) : t("Run → {m}", { m: t(targetLabel) })}
               </Button>
             </div>
           )}
           {canEdit && running && (
             <div className="border-t border-line pt-4">
-              <Button variant="outline" loading={busy} icon={<Square className="size-3.5" />} onClick={stop}>{t("Stop after this step")}</Button>
+              <Button variant="outline" loading={busy === "stop"} disabled={!!busy} icon={<Square className="size-3.5" />} onClick={stop}>{t("Stop after this step")}</Button>
             </div>
           )}
 

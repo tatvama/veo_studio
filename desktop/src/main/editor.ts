@@ -42,7 +42,8 @@ import {
   mediaKindOf, newProject, safeEditName, sequenceEnd, toDisk, toRuntime, uid, validatePreset, validateProject, VIDEO_EXTS, AUDIO_EXTS, IMAGE_EXTS,
 } from "./editor-model.ts";
 import { runFfmpeg, type FfmpegInfo } from "./ffmpeg.ts";
-import { PRESETS } from "./render-args.ts";
+import { gpuGate } from "./gpu-gate.ts";
+import { hwDecodeArgs, PRESETS } from "./render-args.ts";
 import { mimeOf } from "./gateway.ts";
 import { pathKey, safeFileName, safePart, uniquePath } from "./naming.ts";
 import { proxyArgs } from "./proxies.ts";
@@ -94,6 +95,8 @@ export interface EditorDeps {
   signedIn?(): Promise<boolean>;
   /** the encoder preference (settings.encoder.prefer) */
   prefer?(): "auto" | "nvenc" | "qsv" | "amf" | "software";
+  /** settings.encoder.hwDecode: decode proxy sources on the graphics card (default on) */
+  hwDecode?(): boolean;
   /** the user's LUT folders (settings.lutFolders) */
   lutFolders?(): string[];
   setLutFolders?(list: string[]): void;
@@ -102,6 +105,8 @@ export interface EditorDeps {
 interface Recent { path: string; opened: string }
 
 const MAX_RECENTS = 20;
+/** Paths a page may import are remembered for the session, the oldest dropped past this many. */
+const MAX_GRANTED = 20_000;
 /** The impulse responses' recipe in the audio preview cache key (a changed preset renders afresh). */
 const IR_SIG = createHash("sha1").update(JSON.stringify(IR_PRESETS)).digest("hex").slice(0, 12);
 /** The slow-motion clip's encoder: H.264 at a high constant quality on the fastest hardware (the editor decodes it everywhere). */
@@ -132,6 +137,9 @@ export class EditorManager {
   /** pathKeys of edit folders and files that may be read and written this session. */
   private dirs = new Set<string>();
   private files = new Set<string>();
+  /** pathKeys of files a native dialog returned or Explorer dropped, and of folders chosen or dropped: what a page may import. */
+  private granted = new Set<string>();
+  private grantedDirs = new Set<string>();
   /** /__media ids → absolute files, and back. */
   private reg = new Map<string, string>();
   private byFile = new Map<string, string>();
@@ -171,6 +179,35 @@ export class EditorManager {
 
   private allowDir(dir: string): void {
     this.dirs.add(pathKey(path.resolve(dir)));
+  }
+
+  // ── what a page may import: only paths that came back from a native dialog or an Explorer drop ──
+  /** Files a native dialog returned or the user dropped (ipc.ts, shell.ts, the preload's pathsForDrop). */
+  grantPaths(paths: string[]): void {
+    for (const p of paths) {
+      if (typeof p !== "string" || !path.isAbsolute(p)) continue;
+      this.granted.add(pathKey(path.resolve(p)));
+      if (this.granted.size > MAX_GRANTED) this.granted.delete(this.granted.values().next().value!); // the oldest goes first
+    }
+  }
+
+  /** A folder the user chose or dropped: everything in it (and below) may be imported. */
+  grantFolder(dir: string): void {
+    if (typeof dir === "string" && path.isAbsolute(dir)) this.grantedDirs.add(pathKey(path.resolve(dir)));
+  }
+
+  /** Whether a page may import `file` into the edit in `editDir`: granted, in a granted folder, in the edit's own folder, or already an edit's media. */
+  mayImport(file: string, editDir?: string): boolean {
+    const k = pathKey(path.resolve(file));
+    if (this.granted.has(k) || this.files.has(k)) return true;
+    if (editDir && isInside(editDir, file)) return true;
+    return this.mayImportFolder(path.dirname(file));
+  }
+
+  /** Whether `dir` is a granted folder or inside one. */
+  mayImportFolder(dir: string): boolean {
+    for (const d of this.grantedDirs) if (isInside(d, dir)) return true;
+    return false;
   }
 
   private allowMedia(file: string): void {
@@ -440,16 +477,25 @@ export class EditorManager {
   }
 
 
-  async importMedia(file: string, files?: string[]): Promise<MediaItem[]> {
+  /**
+   * Import files into an edit. `fromPage` (the bridge): every path must have come back from a native dialog or an Explorer
+   * drop this session (grantPaths / grantFolder), sit in the edit's own folder, or already be an edit's media; a path the
+   * page made up is refused. In-process callers (the MCP server after its own folder checks, interchange imports) leave it off.
+   */
+  async importMedia(file: string, files?: string[], opts: { fromPage?: boolean } = {}): Promise<MediaItem[]> {
     const { file: abs, dir } = this.editFile(file);
     let list = Array.isArray(files) ? files.filter((f) => typeof f === "string" && f) : [];
-    if (!list.length) list = await this.deps.dialogs.openFiles({ title: "Import media", filters: MEDIA_FILTERS, multi: true });
+    if (!list.length) {
+      list = await this.deps.dialogs.openFiles({ title: "Import media", filters: MEDIA_FILTERS, multi: true });
+      this.grantPaths(list);
+    }
     if (!list.length) return [];
     const bad: string[] = [];
     const good: string[] = [];
     for (const f of list) {
       const p = path.resolve(f);
       if (!path.isAbsolute(f)) bad.push(`${f}: not a full path`);
+      else if (opts.fromPage && !this.mayImport(p, dir)) bad.push(`${path.basename(p)}: wasn't chosen in a file dialog or dropped from Explorer, so it can't be imported`);
       else if (!mediaKindOf(p)) bad.push(`${path.basename(p)}: not a video, audio or image file the editor imports`);
       else {
         try {
@@ -545,8 +591,18 @@ export class EditorManager {
     await fsp.mkdir(cache, { recursive: true });
     const out = path.join(cache, `proxy_${short}.mp4`);
     const part = `${out}.part.mp4`;
-    const nvenc = Boolean((await this.deps.probeHw().catch(() => ({} as Record<string, boolean>))).h264_nvenc);
-    await this.tools().run(proxyArgs(src, part, nvenc, short));
+    const probe = await this.deps.probeHw().catch(() => ({} as Record<string, boolean>));
+    const nvenc = Boolean(probe.h264_nvenc);
+    const hw = hwDecodeArgs(probe, this.deps.hwDecode?.() !== false);
+    // one GPU slot (shared with renders and the local tools); hardware decode falls back to the processor
+    const encode = (hwaccel: string[]) => gpuGate.run(() => this.tools().run(proxyArgs(src, part, nvenc, short, hwaccel)));
+    try {
+      await encode(hw);
+    } catch (e) {
+      if (!hw.length) throw e;
+      this.deps.log(`editor proxy ${it.name}: hardware decoding failed, decoding on the processor (${(e as Error).message.slice(0, 160)})`);
+      await encode([]);
+    }
     await fsp.rm(out, { force: true });
     await retry(() => fsp.rename(part, out));
     this.proxies.set(it.id, out);
@@ -908,6 +964,7 @@ export class EditorManager {
       const work = path.join(dir, "Cache", `rife-${job.id.slice(0, 8)}`);
       const inDir = path.join(work, "in");
       const outDir = path.join(work, "out");
+      let releaseGpu: (() => void) | null = null;
       try {
         // 1. room for the frames
         const need = interpDiskBytes(it.width || 1920, it.height || 1080, est, Math.round(est * (opts.factor ?? 2)));
@@ -926,7 +983,8 @@ export class EditorManager {
         const inFrames = (await fsp.readdir(inDir)).filter((n) => n.endsWith(".png")).length;
         if (inFrames < 2) throw new EditorError("The clip has fewer than two frames there");
         const plan = interpPlan(it.fps || 24, inFrames, opts);
-        // 3. RIFE on the dedicated card
+        // 3. RIFE on the dedicated card: one GPU slot for it and the encode after it
+        releaseGpu = await gpuGate.acquire(c.signal);
         const gpu = pickGpu(await lt.vulkanGpus("rife"));
         const w = it.width || 1920;
         const h = it.height || 1080;
@@ -965,12 +1023,15 @@ export class EditorManager {
         await tools.run(rifeEncodeArgs({ framesDir: outDir, fpsArg: plan.fpsArg, fps: fn / (fd || 1), frames: plan.outFrames, source: src, in: inS, out: outS,
           stretch: plan.stretch, audio: opts.dropAudio ? "drop" : "stretch", hasAudio: it.hasAudio, outFile: part, enc: enc.args, w, h }), { signal: c.signal });
         await retry(() => fsp.rename(part, outFile));
+        releaseGpu();
+        releaseGpu = null;
         // 5. into the edit
         c.update({ status: "importing", step: "Adding it to the project", progress: 0.97 }, true);
         const item = await this.ingest(dir, outFile, { copy: false, name: path.basename(outFile), keep: { binId: it.binId } });
         c.update({ resultMediaId: item.id }, true);
         return item;
       } finally {
+        releaseGpu?.();
         release();
         await fsp.rm(work, { recursive: true, force: true, maxRetries: 3 }).catch(() => undefined);
       }
@@ -1036,6 +1097,8 @@ export class EditorManager {
         let log = "";
         const env = { ...process.env };
         if (useCuda) env.PATH = [...lt.cudaDirs(), env.PATH ?? ""].join(path.delimiter);
+        // the CUDA build shares the card with renders: one GPU slot while it runs (the CPU build needs none)
+        const releaseGpu = useCuda ? await gpuGate.acquire(c.signal) : () => undefined;
         await run(exe, whisperArgs({ model, wav, outBase: path.join(work, "out"), language, threads: whisperThreads(os.cpus().length), gpu: useCuda,
           translate: Boolean(opts?.translate), prompt: typeof opts?.prompt === "string" ? opts.prompt : undefined }), {
           cwd: path.dirname(exe), signal: c.signal, env,
@@ -1047,7 +1110,7 @@ export class EditorManager {
             c.update({ progress: Math.round((0.05 + 0.92 * p) * 1000) / 1000, step: `Transcribing: ${Math.round(p * 100)}%`,
               speed: secs > 0 && p > 0 ? Math.round(((p * length) / secs) * 10) / 10 : undefined, eta_s: p > 0.02 ? Math.round((secs / p) * (1 - p)) : undefined });
           },
-        });
+        }).finally(releaseGpu);
         if (c.signal.aborted) throw new Error("cancelled");
         const procSecs = (Date.now() - t1) / 1000;
         const device: "cuda" | "cpu" = useCuda && !noGpuInLog(log) ? "cuda" : "cpu";

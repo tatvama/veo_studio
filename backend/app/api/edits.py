@@ -41,14 +41,13 @@ def edit_of(db: Session, pid: int) -> Project:
 
 
 def find_edit(db: Session, edit_id: str) -> Project | None:
-    for p in db.query(Project).filter(Project.type == EDIT_TYPE).order_by(Project.id).all():
-        if (p.brief or {}).get("edit_id") == edit_id:
-            return p
-    return None
+    """The edit's studio project: one indexed lookup on projects.edit_id (the oldest when an old database somehow has
+    two; db_migrate fills the column from brief.edit_id for projects made before it existed)."""
+    return (db.query(Project).filter(Project.type == EDIT_TYPE, Project.edit_id == edit_id).order_by(Project.id).first())
 
 
 def edit_out(db: Session, p: Project) -> dict:
-    return {"id": p.id, "name": p.title, "edit_id": (p.brief or {}).get("edit_id"), "type": p.type,
+    return {"id": p.id, "name": p.title, "edit_id": p.edit_id or (p.brief or {}).get("edit_id"), "type": p.type,
             "owner": user_brief(db.get(User, p.created_by)) if p.created_by else None,
             "spent_usd": round(budget.spent(db, project_id=p.id), 4), "budget_cap_usd": p.budget_cap_usd,
             "created_at": _iso(p.created_at), "updated_at": _iso(p.updated_at)}
@@ -69,7 +68,7 @@ def ensure_edit(body: EditIn, user: User = Depends(require("creator")), db: Sess
         p = Project(title=name, type=EDIT_TYPE, concept=f"Tatvam Editor edit “{name}”", aspect="16:9", languages=["en"],
                     primary_language="en", quality_mode=settings_store.get_setting(db, "default_quality_mode") or "saver",
                     agent_mode="copilot", workflow="shots", created_by=user.id, brief={"edit_id": body.edit_id},
-                    status="edit")
+                    edit_id=body.edit_id, status="edit")
         db.add(p)
         db.commit()
     elif p.title != name:  # the edit was renamed on the PC

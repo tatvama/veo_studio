@@ -16,6 +16,7 @@ import { secs } from "../../lib/format";
 import type { ShotFx } from "../../lib/fx";
 import { useT } from "../../lib/i18n";
 import { useEpisode, useSettings } from "../../lib/queries";
+import { useBusyAction } from "../../lib/useBusyAction";
 import type { Episode, Shot, SubmitResult } from "../../lib/types";
 import { useProjectCtx } from "./context";
 import { RailSeg, RailToggle, Rng } from "./production/instruments";
@@ -51,6 +52,7 @@ function TimelineEditor({ embedded }: { embedded: boolean }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const { generate, submit } = useGenerate();
+  const { busy, run: guard } = useBusyAction(); // paid actions once at a time (Enter + click on Compose must not compose twice)
   const { data: ep, isLoading, isError, refetch } = useEpisode(eid, lang);
   const { data: settingsData } = useSettings();
   const [pps, setPpsState] = useState(() => clamp(Number(lsGet("veo-timeline-pps")) || 18, MIN_PPS, MAX_PPS));
@@ -409,8 +411,8 @@ function TimelineEditor({ embedded }: { embedded: boolean }) {
               )}
             </AnimatePresence>
             <MixCard lang={lang} db={musicDb} duck={settings.duck !== false} canEdit={canEdit} onVolume={onVolume} onDuck={(v) => patchSettings({ duck: v })} />
-            <MusicCard music={ep.music ?? []} canEdit={canEdit} prompt={musicPrompt} setPrompt={setMusicPrompt} eid={eid}
-              onCompose={() => generate(eid, { action: "music", prompt: musicPrompt }, t("Music"))} />
+            <MusicCard music={ep.music ?? []} canEdit={canEdit} prompt={musicPrompt} setPrompt={setMusicPrompt} eid={eid} composing={busy === "music"}
+              onCompose={() => void guard("music", () => generate(eid, { action: "music", prompt: musicPrompt }, t("Music")))} />
           </div>
         </div>
 

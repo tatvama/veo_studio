@@ -116,11 +116,11 @@ function JobLine({ icon, label, job, tone = "accent" }: { icon: React.ReactNode;
 }
 
 export default function ExportCard({
-  x, pid, preset, canProduce, canEdit, metrics, upload, onPlay, onPublish, onLinks, onApprove, onRerender, onMarketing,
+  x, pid, preset, canProduce, canEdit, metrics, upload, onPlay, onPublish, onLinks, onApprove, onRerender, rerendering, onMarketing,
 }: {
   x: RenderRow; pid: number; preset?: PresetInfo; canProduce: boolean; canEdit: boolean; metrics?: ExportMetrics;
   job?: Job | null; upload?: Job | null; onPlay: () => void; onPublish: () => void; onLinks: () => void;
-  onApprove: () => Promise<void>; onRerender?: () => void; onMarketing?: () => void;
+  onApprove: () => Promise<void>; onRerender?: () => void; /** A re-render of this export is being submitted. */ rerendering?: boolean; onMarketing?: () => void;
 }) {
   const t = useT();
   const nav = useNavigate();
@@ -162,7 +162,7 @@ export default function ExportCard({
     },
     !!yt?.url && primary !== "youtube" && { label: t("Open on YouTube"), icon: <ExternalLink className="size-4" />, onClick: openYouTube },
     !!onMarketing && { label: t("Marketing pack"), icon: <Megaphone className="size-4" />, onClick: onMarketing, separator: true },
-    !!onRerender && canEdit && { label: t("Render again"), icon: <RefreshCw className="size-4" />, onClick: onRerender, separator: true },
+    !!onRerender && canEdit && { label: t("Render again"), icon: <RefreshCw className="size-4" />, onClick: onRerender, disabled: rerendering, separator: true },
   ];
 
   const spec = [
@@ -265,7 +265,7 @@ export default function ExportCard({
         </div>
       )}
       {failed && onRerender && canEdit && (
-        <Button size="sm" variant="outline" className="mt-3 max-sm:h-10" icon={<RefreshCw className="size-3.5" />} onClick={onRerender}>{t("Render again")}</Button>
+        <Button size="sm" variant="outline" className="mt-3 max-sm:h-10" icon={<RefreshCw className="size-3.5" />} loading={rerendering} onClick={onRerender}>{t("Render again")}</Button>
       )}
     </motion.article>
   );

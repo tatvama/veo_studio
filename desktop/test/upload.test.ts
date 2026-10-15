@@ -15,7 +15,7 @@ writeFileSync(file, data);
 after(() => rmSync(tmp, { recursive: true, force: true }));
 
 /** A fake Render Center upload endpoint (backend/app/api/desktop.py semantics), with knobs for flaky behaviour. */
-function fakeServer(opts: { chunk: number; failOnce?: number; skewOnce?: boolean }) {
+function fakeServer(opts: { chunk: number; failOnce?: number; skewOnce?: boolean; stuck?: boolean }) {
   const st = { received: Buffer.alloc(0), size: 0, puts: 0, completeBody: "", initBody: {} as Record<string, unknown>, cookie: "", failed: false, skewed: false };
   const srv = http.createServer((req, res) => {
     const chunks: Buffer[] = [];
@@ -33,6 +33,7 @@ function fakeServer(opts: { chunk: number; failOnce?: number; skewOnce?: boolean
       if (req.method === "PUT" && u.pathname === "/api/renders/uploads/u1") {
         st.puts++;
         if (opts.failOnce && st.puts === opts.failOnce && !st.failed) { st.failed = true; return json(503, { detail: "busy" }); }
+        if (opts.stuck) return json(409, { detail: "wrong offset", received: 0 }); // a server that never takes the chunk it asks for
         const off = Number(u.searchParams.get("offset"));
         if (opts.skewOnce && !st.skewed && st.received.length > 0) { // the server already had more than the client thinks
           st.skewed = true;
@@ -96,5 +97,13 @@ test("resume after a restart: GET the status, send only the rest", async () => {
     await uploadFile(up, { eid: 3, file, meta, uploadId: "u1" });
     assert.equal(st.puts - before, 1, "the remaining 60 kB in one default-size chunk");
     assert.ok(st.received.equals(data));
+  });
+});
+
+test("a server that keeps answering 409 at the same offset fails the upload after 5 tries instead of looping", async () => {
+  await withServer({ chunk: 30_000, stuck: true }, async (up, st) => {
+    await assert.rejects(uploadFile(up, { eid: 3, file, meta }), (e: Error) => /upload stuck: the server rejected the chunk at byte 0 5 times/.test(e.message));
+    assert.equal(st.puts, 5);
+    assert.equal(st.completeBody, "", "complete was never called");
   });
 });

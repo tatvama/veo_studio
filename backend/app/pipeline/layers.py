@@ -285,8 +285,7 @@ def overlay(body: Path, pics: list[dict], w: int, h: int, out: Path) -> Path:
     if not pics:
         return body
     args, graph, label = overlay_graph(pics, w, h)
-    ff.run(["-i", body, *args, "-filter_complex", graph, "-map", f"[{label}]", "-an", "-c:v", "libx264", "-preset", "veryfast",
-            "-crf", "20", "-pix_fmt", "yuv420p", out], timeout=3600)
+    ff.run(["-i", body, *args, "-filter_complex", graph, "-map", f"[{label}]", "-an", *ff.h264_args(20), out], timeout=3600)
     return out  # picture only: the final mix supplies the sound
 
 

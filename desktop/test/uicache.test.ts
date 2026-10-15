@@ -153,23 +153,24 @@ test("source choice", () => {
   assert.equal(uiLabel({ serving: "bundled", online: true, appVersion: "3.1.0" }), "Built into the app 3.1.0");
 });
 
-test("migration: the old default bundled moves to auto; a chosen one stays", () => {
-  assert.deepEqual(migrateSettings({ uiSource: "bundled" }), { value: { uiSource: "auto" }, migrated: true });
-  assert.equal(migrateSettings({ uiSource: "bundled", uiSourceChosen: true }).migrated, false);
-  assert.equal(migrateSettings({ uiSource: "server" }).migrated, false);
+test("migration: server screens are opt-in; an unchosen auto or server moves to bundled, a chosen one stays", () => {
+  assert.deepEqual(migrateSettings({ uiSource: "auto" }), { value: { uiSource: "bundled" }, migrated: true });
+  assert.deepEqual(migrateSettings({ uiSource: "server" }), { value: { uiSource: "bundled" }, migrated: true });
+  assert.equal(migrateSettings({ uiSource: "auto", uiSourceChosen: true }).migrated, false);
+  assert.equal(migrateSettings({ uiSource: "bundled" }).migrated, false);
   const docs = fresh("docs");
   const d = defaultSettings({ documents: docs, env: {} });
-  assert.equal(d.uiSource, "auto");
+  assert.equal(d.uiSource, "bundled");
   assert.equal(sanitize({ uiSource: "auto" }, d).uiSource, "auto");
-  // a settings.json from before §4.3, with the old default written out
+  // a settings.json from the weeks when "auto" was written as the default
   const ud = fresh("ud-migrate");
-  writeFileSync(path.join(ud, "settings.json"), JSON.stringify({ serverUrl: "http://localhost:8100", uiSource: "bundled", libraryRoot: "D:\\Lib" }));
+  writeFileSync(path.join(ud, "settings.json"), JSON.stringify({ serverUrl: "http://localhost:8100", uiSource: "auto", libraryRoot: "D:\\Lib" }));
   const c = new Config(ud, docs, {});
-  assert.equal(c.get().uiSource, "auto");
-  assert.equal(JSON.parse(readFileSync(path.join(ud, "settings.json"), "utf8")).uiSource, "auto"); // saved back
+  assert.equal(c.get().uiSource, "bundled");
+  assert.equal(JSON.parse(readFileSync(path.join(ud, "settings.json"), "utf8")).uiSource, "bundled"); // saved back
   assert.equal(c.get().libraryRoot, "D:\\Lib");
-  c.set({ uiSource: "bundled", uiSourceChosen: true });
-  assert.equal(new Config(ud, docs, {}).get().uiSource, "bundled"); // a choice survives the next start
+  c.set({ uiSource: "auto", uiSourceChosen: true });
+  assert.equal(new Config(ud, docs, {}).get().uiSource, "auto"); // a choice survives the next start
   assert.equal(c.get().appearance.theme, "dark");
   assert.equal(c.set({ appearance: { scale: 133 } as never }).appearance.scale, 135);
 });

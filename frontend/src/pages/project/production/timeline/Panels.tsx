@@ -233,8 +233,9 @@ function MusicRow({ m, canEdit, selecting, onUse }: { m: AudioAsset; canEdit: bo
   );
 }
 
-export function MusicCard({ music, canEdit, prompt, setPrompt, onCompose, eid }: {
-  music: AudioAsset[]; canEdit: boolean; prompt: string; setPrompt: (v: string) => void; onCompose: () => void; eid: number;
+export function MusicCard({ music, canEdit, prompt, setPrompt, onCompose, composing, eid }: {
+  music: AudioAsset[]; canEdit: boolean; prompt: string; setPrompt: (v: string) => void; onCompose: () => void;
+  /** A compose is in flight (estimate → cost dialog): Enter and the button do nothing until it settles. */ composing?: boolean; eid: number;
 }) {
   const t = useT();
   const qc = useQueryClient();
@@ -261,8 +262,8 @@ export function MusicCard({ music, canEdit, prompt, setPrompt, onCompose, eid }:
       {canEdit && (
         <div className="flex gap-2">
           <Input placeholder={t("Describe the music (optional)")} aria-label={t("Describe the music (optional)")} value={prompt} onChange={(e) => setPrompt(e.target.value)} className="!h-8"
-            onKeyDown={(e) => { if (e.key === "Enter") onCompose(); }} />
-          <Button size="sm" icon={<Sparkles className="size-3.5" />} onClick={onCompose}>{t("Compose")}</Button>
+            onKeyDown={(e) => { if (e.key === "Enter" && !composing) onCompose(); }} />
+          <Button size="sm" icon={<Sparkles className="size-3.5" />} loading={composing} onClick={onCompose}>{t("Compose")}</Button>
         </div>
       )}
     </Panel>

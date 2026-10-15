@@ -447,7 +447,11 @@ export function UpdatesSection() {
   const st = useShellState();
   const [busy, setBusy] = useState(false);
   const [notes, setNotes] = useState<Notes | null>(null);
-  useEffect(() => { void loadNotes().then(setNotes); }, []);
+  useEffect(() => {
+    let alive = true;
+    void loadNotes().then((n) => { if (alive) setNotes(n); });
+    return () => { alive = false; };
+  }, []);
   const check = async () => {
     setBusy(true);
     const s = await d()?.app.checkForUpdates().catch((e) => { toast.error(errText(e)); return null; });

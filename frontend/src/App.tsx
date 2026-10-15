@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { WifiOff } from "lucide-react";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { lazy, Suspense, useEffect } from "react";
 import { Navigate, Route, Routes, useLocation, useNavigate } from "react-router-dom";
@@ -7,12 +8,15 @@ import { Shell } from "./components/Shell";
 import { DesktopMenu } from "./components/shell/DesktopMenu";
 import { ErrorBoundary } from "./components/shell/ErrorBoundary";
 import { useMotionPref } from "./components/shell/theme";
-import { PageSkeleton } from "./components/ui";
+import { Button, Empty, PageSkeleton } from "./components/ui";
+import { ApiError } from "./lib/api";
+import { useT } from "./lib/i18n";
 import { useAuthStatus } from "./lib/queries";
 import Home from "./pages/Home";
-import Login, { takeReturnPath } from "./pages/Login";
+import { takeReturnPath } from "./pages/login/returnPath";
 
 // Pages load on first visit, so the first screen (and public review links) stay light.
+const Login = lazy(() => import("./pages/Login"));
 const ApprovalsPage = lazy(() => import("./pages/admin/Approvals"));
 const AuditPage = lazy(() => import("./pages/admin/Audit"));
 const CostsPage = lazy(() => import("./pages/admin/Costs"));
@@ -30,7 +34,7 @@ const PanelApp = lazy(() => import("./pages/desktop/PanelApp"));
 const RenderJob = lazy(() => import("./pages/desktop/RenderJob"));
 const SearchPage = lazy(() => import("./pages/SearchPage"));
 const KitGallery = import.meta.env.DEV ? lazy(() => import("./pages/dev/Kit")) : null;
-const EngineLab = lazy(() => import("./pages/dev/EngineLab"));
+const EngineLab = import.meta.env.DEV ? lazy(() => import("./pages/dev/EngineLab")) : null;
 /** News Room graphics lab (docs/EDITOR.md §16.12): dev builds only, works without signing in. */
 const GfxLab = import.meta.env.DEV ? lazy(() => import("./editor/newsroom/lab/GfxLab")) : null;
 const EditorHome = lazy(() => import("./editor/EditorHome"));
@@ -42,6 +46,20 @@ export function PageLoading() {
     <motion.div className="h-full overflow-hidden" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.15, duration: 0.25 }}>
       <PageSkeleton />
     </motion.div>
+  );
+}
+
+/** The auth check failed (server down, network off): say so instead of spinning forever, and offer a retry. */
+function ServerUnreachable({ error, retrying, onRetry }: { error: unknown; retrying: boolean; onRetry: () => void }) {
+  const t = useT();
+  return (
+    <div className="grid h-full min-h-dvh place-items-center p-6">
+      <div className="w-full max-w-md">
+        <Empty icon={<WifiOff className="size-7" />} title={t("Can't reach the studio server")}
+          sub={error instanceof ApiError ? error.message : t("Check that the server is running and your connection is up, then try again.")}
+          action={<Button variant="primary" loading={retrying} onClick={onRetry}>{t("Try again")}</Button>} />
+      </div>
+    </div>
   );
 }
 
@@ -59,7 +77,7 @@ function AppRoutes() {
   const loc = useLocation();
   const navigate = useNavigate();
   const isPublicReview = loc.pathname.startsWith("/review/");
-  const { data, isLoading } = useAuthStatus();
+  const { data, isLoading, isError, error, isFetching, refetch } = useAuthStatus();
 
   useEffect(() => {
     const h = () => qc.invalidateQueries({ queryKey: ["auth"] });
@@ -90,10 +108,17 @@ function AppRoutes() {
   // News Room graphics lab (dev only): no sign-in, so template builders can screenshot it headless.
   if (GfxLab && loc.pathname === "/editor/gfx-lab") return <Suspense fallback={null}><GfxLab /></Suspense>;
 
+  if (isError && !data) return <ServerUnreachable error={error} retrying={isFetching} onRetry={() => void refetch()} />;
   if (isLoading || !data) {
     return <PageLoading />;
   }
-  if (!data.user) return <Login setupNeeded={data.setup_needed} googleEnabled={data.google_enabled} />;
+  if (!data.user) {
+    return (
+      <Suspense fallback={<PageLoading />}>
+        <Login setupNeeded={data.setup_needed} googleEnabled={data.google_enabled} />
+      </Suspense>
+    );
+  }
 
   // The hidden window of a desktop GPU render (docs/ENGINE.md §5): just the engine, no shell.
   if (loc.pathname === "/desktop/render-job") return <Suspense fallback={null}><RenderJob /></Suspense>;
@@ -169,7 +194,7 @@ function AppRoutes() {
               <Route path="/oauth/consent" element={<OAuthConsentPage />} />
               <Route path="/p/:pid/*" element={<ProjectLayout />} />
               {KitGallery && <Route path="/dev/kit" element={<KitGallery />} />}
-              <Route path="/dev/engine" element={<EngineLab />} />
+              {EngineLab && <Route path="/dev/engine" element={<EngineLab />} />}
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
             </Suspense>

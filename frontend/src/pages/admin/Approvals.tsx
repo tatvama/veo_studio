@@ -266,6 +266,7 @@ export default function ApprovalsPage() {
     const key = (s: string) => ["approvals", s];
     const before = qc.getQueryData<ApprovalRow[]>(key("pending"));
     const to = approve ? "approved" : "rejected";
+    const beforeTo = qc.getQueryData<ApprovalRow[]>(key(to));
     qc.setQueryData<ApprovalRow[]>(key("pending"), (old) => old?.filter((x) => x.id !== a.id));
     qc.setQueryData<ApprovalRow[]>(key(to), (old) => old && [{ ...a, status: to, decided_at: new Date().toISOString(), decided_by: me?.id ?? null }, ...old]);
     try {
@@ -273,7 +274,9 @@ export default function ApprovalsPage() {
       if (approve) toast.success(tr("Approved {usd}", { usd: usd(a.amount_usd) }), { description: tr("The work has been queued and will start shortly.") });
       else toast.success(tr("Request rejected"), { description: tr("The waiting work was cancelled. Nothing was charged.") });
     } catch {
-      if (before) qc.setQueryData(key("pending"), before); // the api helper already showed the error
+      // the api helper already showed the error: put the card back and take it out of the other tab again
+      if (before) qc.setQueryData(key("pending"), before);
+      qc.setQueryData(key(to), beforeTo);
     } finally {
       setBusy(false);
       await Promise.all([

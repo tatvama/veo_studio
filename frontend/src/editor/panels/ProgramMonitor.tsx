@@ -21,7 +21,7 @@ import { program, useFrame, usePlayState } from "../playback/transport";
 import { audioUrlFor, ed, setFocus, urlFor, useEditor, useProject, useSequence } from "../store";
 import { IBtn, TimecodeField } from "../ui";
 import { fitSize, ScrubBar, TransportButtons } from "./monitor";
-import { setProgramReader } from "../moods/programTap";
+import { setProgramReader, setProgramScopes } from "../moods/programTap";
 import { MotionOverlay } from "./MotionOverlay";
 import { liveTime, setLiveDrawer, useLiveProject } from "../preview/live"; // preview-polish: live previews (additive)
 import { LiveBadge } from "../preview/LiveBadge";
@@ -65,9 +65,16 @@ export default function ProgramMonitor() {
     c.className = "block";
     holder.current?.appendChild(c);
     createPreview(c, Math.max(2, s.width), Math.max(2, s.height))
-      .then((e) => { if (!alive) { e.dispose(); return; } eng.current = e; setProgramReader(() => eng.current?.readFrame() ?? null); setReady(true); })
+      .then((e) => {
+        if (!alive) { e.dispose(); return; }
+        eng.current = e;
+        setProgramReader(() => eng.current?.readFrame() ?? null);
+        // the scopes draw from the engine's frame on the GPU when it can (else they read the frame back)
+        setProgramScopes(e.caps.computeScopes ? (kind) => eng.current?.computeScopes(kind) ?? Promise.resolve(null) : null);
+        setReady(true);
+      })
       .catch((e) => setFailed((e as Error).message || "WebGL2 isn't available"));
-    return () => { alive = false; setProgramReader(null); eng.current?.dispose(); eng.current = null; c.remove(); setReady(false); };
+    return () => { alive = false; setProgramReader(null); setProgramScopes(null); eng.current?.dispose(); eng.current = null; c.remove(); setReady(false); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -88,10 +95,18 @@ export default function ProgramMonitor() {
     if (c) { c.style.width = `${disp.w}px`; c.style.height = `${disp.h}px`; }
   }, [disp.w, disp.h, ready]);
 
-  // the sequence → a composition, loaded (debounced while it changes quickly, e.g. during a drag)
+  // the sequence → a composition, loaded. The build itself waits for the debounce (220 ms during a drag, 40 ms
+  // otherwise): a gesture moving every frame changes `shown` every frame, and building the composition each time
+  // (nested sequences, titles, keyframes) is the expensive part, not the load.
   // preview-polish: while a card's live preview shows, the monitor draws a copy of the edit with it applied
   const shown = useLiveProject(p);
-  const result = useMemo(() => buildComposition(shown, s.id, { urlFor, lutUrl }), [shown, s.id, urls, ready]);
+  const [settled, setSettled] = useState(() => ({ shown, sid: s.id, urls }));
+  useEffect(() => {
+    const wait = ed().h.gesture ? 220 : 40;
+    const id = window.setTimeout(() => setSettled({ shown, sid: s.id, urls }), wait);
+    return () => window.clearTimeout(id);
+  }, [shown, s.id, urls]);
+  const result = useMemo(() => buildComposition(settled.shown, settled.sid, { urlFor, lutUrl }), [settled, ready]);
   useEffect(() => {
     if (!ready) return;
     setLiveDrawer((t, r) => { const e = eng.current; if (!e) return 0; e.draw(t, { playing: false, rate: 1, resolution: r * resRef.current }); return e.lastMs(); });
@@ -99,16 +114,16 @@ export default function ProgramMonitor() {
   }, [ready]);
   useEffect(() => {
     if (!ready) return;
-    const wait = ed().h.gesture ? 220 : 40;
-    const id = window.setTimeout(async () => {
-      const e = eng.current;
-      if (!e) return;
-      await e.load(result, demoCustomSources());
-      setWarnings([...new Set([...result.warnings, ...e.warnings()])]);
+    let alive = true;
+    const e = eng.current;
+    if (!e) return;
+    void e.load(result, demoCustomSources()).then(() => {
+      if (!alive || !eng.current) return;
+      setWarnings([...new Set([...result.warnings, ...eng.current.warnings()])]);
       // a clip that just arrived (a new video, a picture put in a layout's box) opens and decodes a moment later
       redraw(2500);
-    }, wait);
-    return () => window.clearTimeout(id);
+    });
+    return () => { alive = false; };
   }, [ready, result]);
 
   // titles: their fonts load on first use; draw again once they're in

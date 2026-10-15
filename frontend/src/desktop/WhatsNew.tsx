@@ -160,7 +160,12 @@ export function WhatsNew() {
   const { overlay } = useShellUi();
   const open = overlay === "whatsnew";
   const [notes, setNotes] = useState<Notes | null>(null);
-  useEffect(() => { if (open && !notes) void loadNotes().then(setNotes); }, [open, notes]);
+  useEffect(() => {
+    if (!open || notes) return;
+    let alive = true;
+    void loadNotes().then((n) => { if (alive) setNotes(n); });
+    return () => { alive = false; };
+  }, [open, notes]);
   return (
     <Modal open={open} onClose={() => setOverlay(null)} size="lg"
       title={<span className="flex items-center gap-2"><Sparkles className="size-4 text-accent-ink" />What's new in Tatvam Studio {notes?.version ?? ""}</span>}

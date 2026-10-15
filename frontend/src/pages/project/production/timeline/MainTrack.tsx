@@ -110,7 +110,8 @@ export function MainClip({ clip, pps, selected, canEdit, trimMode, hasPrev, hold
           clip.kind === "still" && "opacity-70", isDragging && "z-20 opacity-90 shadow-lift")}>
         <div aria-hidden className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/60 via-transparent to-black/50" />
         <span className="mono absolute left-2 top-0.5 rounded-[3px] bg-black/70 px-1 text-2xs font-semibold leading-4 tracking-wide text-white">{code}</span>
-        {fxOn && w > 76 && <span className={clsx("mono absolute top-0.5 rounded-[3px] bg-accent px-1 text-2xs font-bold leading-4 text-[var(--on-accent)]", w > 40 ? "right-7" : "right-2")}>fx</span>}
+        {/* shown only on clips wide enough to also have the actions button, so it always sits to its left */}
+        {fxOn && w > 76 && <span className="mono absolute right-7 top-0.5 rounded-[3px] bg-accent px-1 text-2xs font-bold leading-4 text-[var(--on-accent)]">fx</span>}
         {w > 70 && <span className="mono absolute bottom-0.5 right-2 text-2xs font-medium tabular-nums leading-4 text-white/90">{clip.duration.toFixed(1)}s</span>}
         {kindTag && w > 90 && <span className="mono absolute bottom-0.5 left-2 rounded-[3px] bg-black/70 px-1 text-2xs font-medium leading-4 text-white/90">{t(kindTag)}</span>}
         {live && <span className="mono absolute left-1/2 top-1/2 z-[5] -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded border border-accent/40 bg-black/85 px-1.5 py-0.5 text-2xs text-white">{live}</span>}

@@ -5,6 +5,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { AppearanceSettings, DesktopSettings, Workspace } from "../shared/types.ts";
+import { defaultGpuSlots } from "./gpu-gate.ts";
 import { DEFAULT_TEMPLATES } from "./naming.ts";
 import { defaultAssistants, sanitizeAssistants } from "./mcp/settings.ts";
 
@@ -18,19 +19,25 @@ export const BUILTIN_WORKSPACES: Workspace[] = [
   { id: "story", name: "Story", builtIn: true, mainDisplay: 0, panels: [{ panel: "bible", display: 1 }, { panel: "media", display: 0 }] },
 ];
 
+export const DEFAULT_SERVER_URL = "http://localhost:8100";
+
 export function defaultSettings(opts: { documents: string; env?: Record<string, string | undefined> }): DesktopSettings {
   const env = opts.env ?? process.env;
+  let serverUrl = DEFAULT_SERVER_URL;
+  if (env.TATVAM_SERVER) {
+    try { serverUrl = normalizeServerUrl(env.TATVAM_SERVER); } catch { /* a plain-http public address: the app starts on the default and the Studio server window says why */ }
+  }
   return {
-    serverUrl: normalizeServerUrl(env.TATVAM_SERVER || "http://localhost:8100"),
+    serverUrl,
     gatewayPort: DEFAULT_GATEWAY_PORT,
-    uiSource: "auto",
+    uiSource: "bundled",
     appearance: { ...DEFAULT_APPEARANCE },
     libraryRoot: path.join(opts.documents, "Tatvam Projects"),
     projectFolders: {},
     naming: { ...DEFAULT_TEMPLATES },
     pullScope: "approved",
     proxyMode: false,
-    encoder: { prefer: "auto", hevc10bit: true, intermediateCq: 16 },
+    encoder: { prefer: "auto", hevc10bit: true, intermediateCq: 16, hwDecode: true, gpuSlots: defaultGpuSlots(env) },
     ffmpegPath: "",
     workspaces: BUILTIN_WORKSPACES.map((w) => structuredClone(w)),
     windowState: { panels: {} },
@@ -63,19 +70,59 @@ export function sanitizeAppearance(input: unknown, base: AppearanceSettings = DE
 }
 
 /**
- * Settings files from before docs/DESKTOP.md §4.3: `uiSource: "bundled"` was the default, so unless the user picked it
- * in the Studio server window (`uiSourceChosen`) it moves to the new default "auto". "server" was always a choice.
+ * Screens from the server are opt-in (docs/DESKTOP.md §4.3): for a while "auto" was written as the default, so a
+ * settings file whose `uiSource` is "auto" or "server" without the user's choice (`uiSourceChosen`, set by the Studio
+ * server window) moves back to "bundled". A chosen source stays.
  */
 export function migrateSettings(stored: unknown): { value: unknown; migrated: boolean } {
   if (typeof stored !== "object" || stored === null || Array.isArray(stored)) return { value: stored, migrated: false };
   const o = stored as Record<string, unknown>;
-  if (o.uiSource === "bundled" && o.uiSourceChosen !== true) return { value: { ...o, uiSource: "auto" }, migrated: true };
+  if ((o.uiSource === "auto" || o.uiSource === "server") && o.uiSourceChosen !== true) return { value: { ...o, uiSource: "bundled" }, migrated: true };
   return { value: stored, migrated: false };
 }
 
+/** localhost, *.localhost, 127.0.0.0/8 and ::1: a server on this PC. */
+export function isLoopbackHost(hostname: string): boolean {
+  const h = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return h === "localhost" || h.endsWith(".localhost") || h === "::1" || h === "::ffff:127.0.0.1" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h);
+}
+
+/** 10/8, 172.16/12, 192.168/16 (also IPv4-mapped), fc00::/7 and *.local: a server on the local network. */
+export function isPrivateNetworkHost(hostname: string): boolean {
+  const h = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (h.endsWith(".local")) return true;
+  const v4 = /^(?:::ffff:)?(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(h);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+  }
+  if (h.includes(":")) {
+    const first = Number.parseInt(h.split(":")[0] || "0", 16);
+    return (first & 0xfe00) === 0xfc00;
+  }
+  return false;
+}
+
+/** May a server at this host be reached over plain http? Only on this PC or on the local network. */
+export function allowsPlainHttp(hostname: string): boolean {
+  return isLoopbackHost(hostname) || isPrivateNetworkHost(hostname);
+}
+
+/**
+ * The server origin from what the user typed. Every call to the server carries the session cookie and the gateway runs
+ * the server's answers (and, when chosen, its screens), so a server on the public internet must be reached over https:
+ * a bare host name gets https://, and an explicit http:// to a public address is refused with a message the Studio
+ * server window shows. Plain http stays allowed on this PC and on the local network (studio LAN servers).
+ */
 export function normalizeServerUrl(u: string): string {
   const s = u.trim().replace(/\/+$/, "");
-  const url = new URL(/^https?:\/\//i.test(s) ? s : `http://${s}`);
+  const explicit = /^[a-z][a-z0-9+.-]*:\/\//i.test(s);
+  let url = new URL(explicit ? s : `http://${s}`);
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("The server address must start with https:// (or http:// for a server on this PC or the local network)");
+  if (url.protocol === "http:" && !allowsPlainHttp(url.hostname)) {
+    if (explicit) throw new Error(`${url.host} must be reached over https://: plain http is only allowed for a server on this PC or the local network`);
+    url = new URL(`https://${s}`);
+  }
   return url.origin;
 }
 
@@ -108,6 +155,8 @@ export function sanitize(input: unknown, defaults: DesktopSettings): DesktopSett
     if (["auto", "nvenc", "qsv", "amf", "software"].includes(e.prefer as string)) s.encoder.prefer = e.prefer as DesktopSettings["encoder"]["prefer"];
     if (typeof e.hevc10bit === "boolean") s.encoder.hevc10bit = e.hevc10bit;
     if (typeof e.intermediateCq === "number" && e.intermediateCq >= 0 && e.intermediateCq <= 51) s.encoder.intermediateCq = Math.round(e.intermediateCq);
+    if (typeof e.hwDecode === "boolean") s.encoder.hwDecode = e.hwDecode;
+    if (typeof e.gpuSlots === "number" && e.gpuSlots >= 1 && e.gpuSlots <= 8) s.encoder.gpuSlots = Math.round(e.gpuSlots);
   }
   if (typeof input.ffmpegPath === "string") s.ffmpegPath = input.ffmpegPath;
   if (Array.isArray(input.workspaces)) {
