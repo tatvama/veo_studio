@@ -142,7 +142,9 @@ def test_split_board_labels_and_saves_views(client: TestClient):
         assert [a.kind for a in crops] == ["front", "three_quarter", "back", "full_body", "expression", "expression", "outfit"]
         assert crops[5].label == "furious" and crops[6].outfit == "board outfit" and crops[6].view == "full_body"
         assert crops[0].meta["box"]["w"] == panels[0]["w"]
-        assert Image.open(get_abs(crops[0].path)).size == (panels[0]["w"], panels[0]["h"])
+        with Image.open(get_abs(crops[0].path)) as im:
+            crop_size = im.size
+        assert crop_size == (panels[0]["w"], panels[0]["h"])
         assert db.query(Costume).filter(Costume.character_id == cid, Costume.name == "board outfit").count() == 1
         ch = db.get(Character, cid)
         # SAFETY: crops of an uploaded board are never sent to BytePlus as AI-generated sheet views
