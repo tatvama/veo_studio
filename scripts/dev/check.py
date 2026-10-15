@@ -78,6 +78,8 @@ def main() -> None:
             results.append(("engine tests", step("GPU engine unit tests (node --test)", [npm, "run", "test:engine"], fe)))
         if not a.fast and '"test:editor"' in (fe / "package.json").read_text(encoding="utf-8"):
             results.append(("editor tests", step("Editor unit tests (node --test)", [npm, "run", "test:editor"], fe)))
+        if not a.fast and '"test:lib"' in (fe / "package.json").read_text(encoding="utf-8"):
+            results.append(("lib tests", step("Frontend lib unit tests (node --test)", [npm, "run", "test:lib"], fe)))
 
     if (a.desktop or both) and (HERE / "desktop" / "package.json").exists():
         npm = shutil.which("npm")

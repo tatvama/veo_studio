@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { receiveAgentProgress } from "./agentProgress";
 import { receivePresence, setLiveSender } from "./collab";
+import { createReconnector } from "./reconnect";
 
 /** Streams server events over WebSocket and refreshes the affected queries, so every teammate sees changes live. */
 export function useLiveEvents(projectId: number | null) {
@@ -10,9 +11,10 @@ export function useLiveEvents(projectId: number | null) {
   useEffect(() => {
     let ws: WebSocket | null = null;
     let closed = false;
-    let retry = 1000;
-    let timer: ReturnType<typeof setTimeout> | null = null;
+    let timer: ReturnType<typeof setTimeout> | null = null; // the flush debounce
     let pending = new Set<string>();
+    // one pending reconnect at a time, cancelled by cleanup: a socket for the old project must never come back
+    const reconnect = createReconnector(() => connect(), { initial: 1000, max: 15000 });
 
     const flush = () => {
       const keys = pending;
@@ -26,10 +28,11 @@ export function useLiveEvents(projectId: number | null) {
     };
 
     const connect = () => {
+      if (closed) return;
       const proto = location.protocol === "https:" ? "wss" : "ws";
       ws = new WebSocket(`${proto}://${location.host}/api/ws${projectId ? `?project_id=${projectId}` : ""}`);
       ws.onopen = () => {
-        retry = 1000;
+        reconnect.reset();
         const sock = ws;
         setLiveSender((msg) => { if (sock && sock.readyState === WebSocket.OPEN) sock.send(JSON.stringify(msg)); });
       };
@@ -77,13 +80,13 @@ export function useLiveEvents(projectId: number | null) {
       ws.onclose = () => {
         setLiveSender(null);
         if (closed) return;
-        setTimeout(connect, retry);
-        retry = Math.min(retry * 2, 15000);
+        reconnect.schedule();
       };
     };
     connect();
     return () => {
       closed = true;
+      reconnect.stop();
       if (timer) clearTimeout(timer);
       ws?.close();
     };

@@ -50,6 +50,7 @@ export default function BriefPage() {
   const [justSaved, setJustSaved] = useState(false);
   const dirtyRef = useRef(false);
   const lastId = useRef(project.id);
+  const autopilotStarted = useRef(false);
 
   // Pull server changes in, but never throw away unsaved local edits (e.g. when Trend scout updates the project).
   useEffect(() => {
@@ -67,14 +68,17 @@ export default function BriefPage() {
   }, [project.id, project.updated_at, JSON.stringify(project.brief?.trends ?? null)]);
 
   // Started from Home with "Make it for me": run to the chosen milestone, stopping for approval at each one before it.
+  // The effect runs twice under StrictMode and again when settings refetch: the ref makes sure Autopilot starts once.
   useEffect(() => {
     const want = params.get("autopilot");
-    if (!want || !settings) return;
+    if (!want || !settings || autopilotStarted.current) return;
+    autopilotStarted.current = true;
     setParams({}, { replace: true });
     const ms = settings.catalog.autopilot?.milestones ?? [];
     const target = ms.some((m) => m.id === want) ? want : "final";
     generate(eid, { action: "autopilot", through: target, pause_after: defaultStops(ms, target) },
-      tr("Autopilot → {m}", { m: tr(ms.find((m) => m.id === target)?.label ?? target) }));
+      tr("Autopilot → {m}", { m: tr(ms.find((m) => m.id === target)?.label ?? target) }))
+      .catch(() => { /* the api layer toasted */ });
   }, [settings]);
 
   useEffect(() => {

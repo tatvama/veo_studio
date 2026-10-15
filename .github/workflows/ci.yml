@@ -80,6 +80,9 @@ jobs:
       - name: Editor unit tests (node --test)
         run: npm run test:editor
 
+      - name: Frontend lib unit tests (node --test)
+        run: npm run test:lib
+
   desktop:
     name: Desktop app (typecheck + tests)
     runs-on: ubuntu-latest

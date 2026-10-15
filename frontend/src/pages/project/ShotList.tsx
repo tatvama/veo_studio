@@ -41,7 +41,9 @@ export default function ShotListPage() {
   const qc = useQueryClient();
   const { project, eid, canEdit } = useProjectCtx();
   const [params, setParams] = useSearchParams();
-  const { data: board, isLoading, isError, refetch } = useBoard(eid);
+  const [dirty, setDirty] = useState(false);
+  // keeps statuses fresh while jobs run; paused while the list has unsaved edits (and by react-query while the tab is hidden)
+  const { data: board, isLoading, isError, refetch } = useBoard(eid, { refetchInterval: dirty ? false : 20_000 });
   const { data: projectCast } = useCharacters(project.id);
   const { data: library } = useCharacters();
   const { data: engines } = useVideoEngines();
@@ -49,7 +51,6 @@ export default function ShotListPage() {
   const { data: allLocs } = useLocations();
   const { generate } = useGenerate();
   const [scenes, setScenes] = useState<BoardScene[]>([]);
-  const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [importing, setImporting] = useState(params.get("import") === "1");
   const [produce, setProduce] = useState(false);
@@ -66,11 +67,6 @@ export default function ShotListPage() {
   useEffect(() => {
     if (board && !dirtyRef.current) { setScenes(withKeys(board.scenes)); versionRef.current = board.version; }
   }, [board]);
-  useEffect(() => {
-    if (dirty) return;
-    const h = window.setInterval(() => void refetch(), 20_000);
-    return () => window.clearInterval(h);
-  }, [dirty, refetch]);
   useEffect(() => {
     if (params.get("import") === "1") { params.delete("import"); setParams(params, { replace: true }); }
   }, []);
