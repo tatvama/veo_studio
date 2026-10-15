@@ -265,14 +265,12 @@ export default function ShotDrawer({ shotId, onClose, onPrev, onNext, position, 
               <div className="flex items-center gap-2">
                 {(hasLines || shot.narration?.[lang]) && (
                   <div className="inline-flex">
-                    {(hasLines || shot.narration?.[lang]) ? (
-                      <Button size="sm" className={clsx(shot.video && hasLines && "rounded-r-none")} icon={<Mic className="size-3.5" />} loading={busy === "voice"}
-                        onClick={() => act("voice", t("Voice"), { language: lang })}>{t("Voice {lang}", { lang: langShort })}</Button>
-                    ) : null}
-                    {shot.video && hasLines ? (
-                      <Button size="sm" className={clsx((hasLines || shot.narration?.[lang]) && "-ml-px rounded-l-none")} icon={<AudioLines className="size-3.5" />} loading={busy === "lipsync"}
+                    <Button size="sm" className={clsx(shot.video && hasLines && "rounded-r-none")} icon={<Mic className="size-3.5" />} loading={busy === "voice"}
+                      onClick={() => act("voice", t("Voice"), { language: lang })}>{t("Voice {lang}", { lang: langShort })}</Button>
+                    {shot.video && hasLines && (
+                      <Button size="sm" className="-ml-px rounded-l-none" icon={<AudioLines className="size-3.5" />} loading={busy === "lipsync"}
                         onClick={() => act("lipsync", t("Lip-sync"), lipBody())}>{t("Lip-sync {lang}", { lang: langShort })}</Button>
-                    ) : null}
+                    )}
                   </div>
                 )}
                 {shot.video && (
