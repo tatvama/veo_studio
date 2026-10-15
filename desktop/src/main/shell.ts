@@ -542,6 +542,7 @@ export class DesktopShell {
         media = (await fsp.readdir(abs, { withFileTypes: true })).filter((e) => e.isFile() && mediaKindOf(e.name)).map((e) => path.join(abs, e.name))
           .sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).slice(0, 2000);
       } catch { media = []; }
+      this.deps.ctx().editor.grantFolder(abs); // the user dropped or picked it: the page may import what's in it
       return { path: abs, name, type: "folder", ext: "", media };
     }
     const ext = path.extname(abs).slice(1).toLowerCase();
@@ -550,7 +551,10 @@ export class DesktopShell {
       return { path: abs, name, type: "edit", ext };
     }
     if (TIMELINE_EXTS.includes(ext)) return { path: abs, name, type: "timeline", ext };
-    if (mediaKindOf(abs)) return { path: abs, name, type: "media", ext };
+    if (mediaKindOf(abs)) {
+      this.deps.ctx().editor.grantPaths([abs]); // dropped from Explorer: the page may import it
+      return { path: abs, name, type: "media", ext };
+    }
     return { path: abs, name, type: "other", ext };
   }
 
@@ -687,7 +691,7 @@ export class DesktopShell {
     if (scope === "all") {
       const d = defaultSettings({ documents: app.getPath("documents") });
       config.set({ naming: d.naming, pullScope: d.pullScope, proxyMode: d.proxyMode, encoder: d.encoder, autoSync: d.autoSync, editorBackups: d.editorBackups,
-        uiSource: "auto", uiSourceChosen: false });
+        uiSource: "bundled", uiSourceChosen: false });
       void this.deps.uiCache.check("reset");
     }
     this.applyAppearance();

@@ -39,11 +39,36 @@ def user_brief(u: User | None) -> dict | None:
     return {"id": u.id, "name": u.name or u.email.split("@")[0], "email": u.email, "role": u.role} if u else None
 
 
-def shot_out(db: Session, s: Shot, project: Project, lang: str | None = None) -> dict:
+def shot_maps(db: Session, shot_ids: list[int]) -> tuple[dict[int, list[str]], dict[int, int]]:
+    """For many shots at once (an episode's): {shot id: types of its queued/running jobs} and {shot id: open comments}.
+    Two queries for the whole list instead of two per shot; hand them to shot_out."""
+    if not shot_ids:
+        return {}, {}
+    active: dict[int, list[str]] = {}
+    for sid, t in (db.query(Job.shot_id, Job.type).filter(Job.shot_id.in_(shot_ids), Job.status.in_(("queued", "running")))
+                   .order_by(Job.id).all()):
+        active.setdefault(sid, []).append(t)
+    counts = dict(db.query(Comment.target_id, func.count(Comment.id))
+                  .filter(Comment.target_type == "shot", Comment.target_id.in_(shot_ids), Comment.resolved.is_(False))
+                  .group_by(Comment.target_id).all())
+    return active, counts
+
+
+def shot_out(db: Session, s: Shot, project: Project, lang: str | None = None, *,
+             active_jobs: dict[int, list[str]] | None = None, comment_counts: dict[int, int] | None = None) -> dict:
+    """One shot as the API shows it. `active_jobs` / `comment_counts` (shot_maps) save the two per-shot queries when a
+    whole episode is listed; a single shot looks them up itself."""
     lang = lang or project.primary_language
-    active = [j.type for j in db.query(Job.type).filter(Job.shot_id == s.id, Job.status.in_(("queued", "running"))).all()]
-    n_comments = db.query(func.count(Comment.id)).filter(Comment.target_type == "shot", Comment.target_id == s.id,
-                                                          Comment.resolved.is_(False)).scalar()
+    if active_jobs is None:
+        active = [j.type for j in db.query(Job.type).filter(Job.shot_id == s.id, Job.status.in_(("queued", "running")))
+                  .order_by(Job.id).all()]
+    else:
+        active = list(active_jobs.get(s.id, []))
+    if comment_counts is None:
+        n_comments = db.query(func.count(Comment.id)).filter(Comment.target_type == "shot", Comment.target_id == s.id,
+                                                              Comment.resolved.is_(False)).scalar()
+    else:
+        n_comments = int(comment_counts.get(s.id, 0))
     return s.to_dict(
         keyframe=take_out(current(db, s.id, "keyframe")),
         video=take_out(current(db, s.id, "video")),

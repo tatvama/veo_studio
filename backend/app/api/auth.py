@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import secrets
+import time
 from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
+from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -91,7 +93,30 @@ def change_password(body: PasswordIn, response: Response, user: User = Depends(c
 
 # ── Google sign-in (optional) ────────────────────────────────────────────────
 
-_states: dict[str, float] = {}
+_states: dict[str, float] = {}  # state -> when it was issued (time.time()); purged after STATE_TTL_S
+STATE_TTL_S = 10 * 60
+STATE_COOKIE = "veo_oauth_state"  # the same state, signed, in the browser that started the sign-in (login CSRF guard)
+_STATE_COOKIE_PATH = "/api/auth/google"
+
+
+def _state_signer() -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(get_settings().app_secret, salt="veo-google-state")
+
+
+def _purge_states(now: float | None = None) -> None:
+    now = time.time() if now is None else now
+    for k, issued in list(_states.items()):
+        if now - issued > STATE_TTL_S:
+            _states.pop(k, None)
+
+
+def _state_from_cookie(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    try:
+        return _state_signer().loads(raw, max_age=STATE_TTL_S)
+    except (BadSignature, SignatureExpired):
+        return None
 
 
 @router.get("/google/start")
@@ -99,19 +124,26 @@ def google_start():
     s = get_settings()
     if not s.google_client_id:
         raise HTTPException(404, "Google sign-in is not configured")
+    now = time.time()
+    _purge_states(now)
     state = secrets.token_urlsafe(24)
-    _states[state] = utcnow().timestamp()
+    _states[state] = now
     q = urlencode({"client_id": s.google_client_id, "redirect_uri": f"{s.public_base_url.rstrip('/')}/api/auth/google/callback",
                    "response_type": "code", "scope": "openid email profile", "state": state, "prompt": "select_account"})
-    return RedirectResponse(f"https://accounts.google.com/o/oauth2/v2/auth?{q}")
+    resp = RedirectResponse(f"https://accounts.google.com/o/oauth2/v2/auth?{q}")
+    resp.set_cookie(STATE_COOKIE, _state_signer().dumps(state), max_age=STATE_TTL_S, httponly=True, samesite="lax",
+                    secure=s.cookie_secure, path=_STATE_COOKIE_PATH)
+    return resp
 
 
 @router.get("/google/callback")
-def google_callback(code: str = "", state: str = "", db: Session = Depends(get_db)):
+def google_callback(request: Request, code: str = "", state: str = "", db: Session = Depends(get_db)):
     s = get_settings()
-    if not code or state not in _states:
+    _purge_states()
+    # the state must be the one this browser was given when it started (else someone else's sign-in is being
+    # pushed into this browser: it is left untouched) and one we issued that has not expired or been used
+    if not code or not state or _state_from_cookie(request.cookies.get(STATE_COOKIE)) != state or _states.pop(state, None) is None:
         raise HTTPException(400, "Invalid sign-in attempt")
-    _states.pop(state, None)
     tok = httpx.post("https://oauth2.googleapis.com/token", data={
         "code": code, "client_id": s.google_client_id, "client_secret": s.google_client_secret,
         "redirect_uri": f"{s.public_base_url.rstrip('/')}/api/auth/google/callback", "grant_type": "authorization_code"},
@@ -135,5 +167,6 @@ def google_callback(code: str = "", state: str = "", db: Session = Depends(get_d
     u.last_login_at = utcnow()
     db.commit()
     resp = RedirectResponse(s.frontend_origin if "localhost:5173" in s.frontend_origin else "/")
+    resp.delete_cookie(STATE_COOKIE, path=_STATE_COOKIE_PATH)
     set_session_cookie(resp, u)
     return resp

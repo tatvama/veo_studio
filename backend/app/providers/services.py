@@ -427,8 +427,7 @@ class Services:
         seconds = ff.duration(video)
         if _require("fal") == "mock":
             out = _tmp() / "upscale.mp4"
-            ff.run(["-i", video, "-vf", f"scale={w}:{h}:flags=lanczos,setsar=1", "-c:v", "libx264", "-preset", "veryfast",
-                    "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "copy", out])
+            ff.run(["-i", video, "-vf", f"scale={w}:{h}:flags=lanczos,setsar=1", *ff.h264_args(18), "-c:a", "copy", out])
             return MediaResult(out.read_bytes(), "mp4", Usage("fal", endpoint, "upscale", seconds, "seconds", 0.0, mock=True),
                                duration_s=ff.duration(out), remote_ref="mock://upscale")
         client = self.fal()
@@ -762,8 +761,7 @@ def _tail(video: Path, seconds: float) -> Path:
     if ff.duration(video) <= seconds + 0.5:
         return video
     out = _tmp() / "tail.mp4"
-    ff.run(["-sseof", f"-{seconds:.2f}", "-i", video, "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-            "-pix_fmt", "yuv420p", "-c:a", "aac", out])
+    ff.run(["-sseof", f"-{seconds:.2f}", "-i", video, *ff.h264_args(20), "-c:a", "aac", out])
     return out
 
 

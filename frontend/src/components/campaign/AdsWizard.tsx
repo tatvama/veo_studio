@@ -389,7 +389,7 @@ export default function AdsWizard({ project, episode, eid, canEdit, index, onSta
           {step < 2 ? (
             <Button variant="primary" disabled={!canNext} iconRight={<ChevronRight className="size-4" />} onClick={() => go((step + 1) as Step)}>{t("Next")}</Button>
           ) : (
-            <Button variant="primary" className="px-5" loading={starting} disabled={!est || estLoading || !!estError || (est && !est.budget.ok && !est.budget.needs_role)}
+            <Button variant="primary" className="px-5" loading={starting} disabled={!est || estLoading || !!estError || (!est.budget.ok && !est.budget.needs_role)}
               icon={est && est.total_usd > 0 ? <Coins className="size-4" /> : <Rocket className="size-4" />} onClick={run}>
               {est && !est.budget.ok && est.budget.needs_role ? t("Request approval") : est && est.total_usd > 0 ? t("Run campaign · {usd}", { usd: usd(est.total_usd) }) : t("Run campaign")}
             </Button>

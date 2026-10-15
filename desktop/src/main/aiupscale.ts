@@ -16,6 +16,7 @@ import type { LocalUpscaleEstimate, UpscaleJob, UpscaleModel, UpscaleState, Upsc
 import { writeFileAtomic } from "./config.ts";
 import { downloadTo } from "./download.ts";
 import { killTree, probeMedia, runFfmpeg, type FfmpegInfo } from "./ffmpeg.ts";
+import { gpuGate } from "./gpu-gate.ts";
 import type { Library } from "./library.ts";
 import { safePart } from "./naming.ts";
 import { finalEncoder, type PresetDef } from "./render-args.ts";
@@ -39,6 +40,9 @@ export const MODELS: Record<UpscaleModel, { name: string; scales: number[]; labe
 
 /** Output megapixels a second per model on a GTX 1660 Ti (measured 11 Oct 2026); replaced by this PC's own numbers. */
 const START_MPPS: Record<UpscaleModel, number> = { fast: 11.1, best: 1.65 };
+
+/** The probes (a 16×16 test image, Real-ESRGAN's device list) are killed after this long. */
+export const PROBE_TIMEOUT_MS = 30_000;
 
 // ── pure helpers (unit-tested) ──
 
@@ -177,15 +181,17 @@ export class LocalUpscaler {
     const tmp = path.join(this.deps.userData, "tools", "_probe");
     await fsp.mkdir(tmp, { recursive: true });
     const img = path.join(tmp, "probe.png");
-    await runFfmpeg(ff.path, ["-f", "lavfi", "-i", "color=c=black:s=16x16", "-frames:v", "1", img]);
+    await runFfmpeg(ff.path, ["-f", "lavfi", "-i", "color=c=black:s=16x16", "-frames:v", "1", img], { timeoutMs: PROBE_TIMEOUT_MS });
     const text = await new Promise<string>((res) => {
       let buf = "";
       const p = spawn(this.exe, ["-i", img, "-o", path.join(tmp, "out.png"), "-n", MODELS.fast.name, "-s", "2", "-v"],
         { cwd: this.dir, windowsHide: true });
+      // a Vulkan device that never answers would otherwise hang the probe (and every estimate) for good
+      const timer = setTimeout(() => { if (p.pid) killTree(p.pid); }, PROBE_TIMEOUT_MS);
       p.stdout.on("data", (d) => { buf += String(d); });
       p.stderr.on("data", (d) => { buf += String(d); });
-      p.on("error", () => res(buf));
-      p.on("close", () => res(buf));
+      p.on("error", () => { clearTimeout(timer); res(buf); });
+      p.on("close", () => { clearTimeout(timer); res(buf); });
     });
     await fsp.rm(tmp, { recursive: true, force: true }).catch(() => undefined);
     return parseGpus(text);
@@ -311,14 +317,8 @@ export class LocalUpscaler {
       input = path.join(folder, "Cache", "upscale-src", safePart(src.key.replace(/\//g, "_")).slice(-150));
       if (!existsSync(input)) await downloadTo(this.deps.upstream, `/media/${src.key.split("/").map(encodeURIComponent).join("/")}`, input, { signal });
     }
-    const info = await probeMedia(ffi.path, input);
-    const fps = await new Promise<number>((res) => {
-      const p = spawn(ffi.path, ["-hide_banner", "-i", input!], { windowsHide: true });
-      let buf = "";
-      p.stderr.on("data", (d) => { buf += String(d); });
-      p.on("close", () => res(fpsOf(buf)));
-      p.on("error", () => res(24));
-    });
+    const info = await probeMedia(ffi.path, input); // one `ffmpeg -i`: size, streams and the frame rate
+    const fps = info.fps || 24;
     if (!info.width || !info.height) throw new Error("Couldn't read the clip");
 
     const work = path.join(folder, "Cache", `upscale-${job.id.slice(0, 8)}`);
@@ -327,6 +327,7 @@ export class LocalUpscaler {
     await fsp.rm(work, { recursive: true, force: true });
     await fsp.mkdir(inDir, { recursive: true });
     await fsp.mkdir(outDir, { recursive: true });
+    let releaseGpu: (() => void) | null = null;
     try {
       // 2. frames out
       step("extracting", "Reading frames", 0.03);
@@ -335,15 +336,18 @@ export class LocalUpscaler {
       if (!frames) throw new Error("The clip has no frames");
       job.frames = frames;
 
-      // 3. Real-ESRGAN on the graphics card
+      // 3. Real-ESRGAN on the graphics card: one GPU slot for it and the encode after it (the card is shared with renders)
+      releaseGpu = await gpuGate.acquire(signal);
       if (this.gpus === null) this.gpus = await this.listGpus().catch(() => []);
       const gpu = pickGpu(this.gpus)?.index ?? 0;
       step("upscaling", `Upscaling ${frames} frames on the graphics card`, 0.05);
       const tUp = Date.now();
       await new Promise<void>((resolve, reject) => {
-        const p = spawn(this.exe, esrganArgs({ inDir, outDir, model: job.model, scale: job.scale, gpu }), { cwd: this.dir, windowsHide: true });
+        // stdout is dropped: nothing reads it, and a full pipe would block the engine mid-run (only stderr is kept, for the error tail)
+        const p = spawn(this.exe, esrganArgs({ inDir, outDir, model: job.model, scale: job.scale, gpu }),
+          { cwd: this.dir, windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
         let err = "";
-        p.stderr.on("data", (d) => { err = (err + String(d)).slice(-4000); });
+        p.stderr!.on("data", (d) => { err = (err + String(d)).slice(-4000); });
         const tick = setInterval(() => {
           void fsp.readdir(outDir).then((names) => {
             const done = names.filter((n) => n.endsWith(".jpg")).length;
@@ -377,6 +381,8 @@ export class LocalUpscaler {
       const enc = finalEncoder(UPSCALE_ENCODE, await this.deps.probe(), this.deps.prefer(), false);
       const out = path.join(work, `${safePart(job.code) || "shot"}_upscaled.mp4`);
       await runFfmpeg(ffi.path, encodeArgs({ framesDir: outDir, fps, source: input, out, w: job.to[0], h: job.to[1], enc: enc!.args }), { signal });
+      releaseGpu();
+      releaseGpu = null;
 
       // 5. to the server as the video's upscale take, and into the folder so the next sync needn't download it
       step("uploading", "Uploading to the studio", 0.95);
@@ -398,6 +404,7 @@ export class LocalUpscaler {
           name: path.basename(rel), folder: "Takes", kind: "upscale", role: "take", size: st.size, state: "ready", synced_at: nowIso() });
       }
     } finally {
+      releaseGpu?.();
       await fsp.rm(work, { recursive: true, force: true }).catch(() => undefined);
     }
   }

@@ -18,6 +18,7 @@ os.environ.update({
     "RUN_WORKER_IN_PROCESS": "true",
     "WORKER_CONCURRENCY": "4",
     "MCP_ALLOWED_HOSTS": "testserver",  # the MCP endpoint checks the Host header; TestClient sends this one
+    "VIDEO_ENCODER": "libx264",  # the software encoder on every machine: no probing for GPUs in tests
 })
 
 import pytest  # noqa: E402

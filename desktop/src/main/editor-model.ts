@@ -7,7 +7,8 @@
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import type { EditPreset, EditProject, MediaItem, Motion, Sequence, TimelineClip, Track } from "../shared/types.ts";
-import { pathKey, safePart } from "./naming.ts";
+import { safePart } from "./naming.ts";
+import { isInside } from "./paths.ts";
 
 export const EDIT_EXT = ".tatvamedit";
 export const FORMAT = "tatvam-edit";
@@ -179,11 +180,7 @@ export function validateProject(raw: unknown): EditProject {
 }
 
 // ── disk ↔ runtime ──
-export function isInside(dir: string, file: string): boolean {
-  const d = pathKey(path.resolve(dir));
-  const f = pathKey(path.resolve(file));
-  return f === d || f.startsWith(`${d}/`);
-}
+export { isInside };
 /** "Media/a.mp4" for a file inside the edit folder, else the absolute path. */
 export function relOrAbs(dir: string, file: string): string {
   return isInside(dir, file) ? path.relative(dir, file).split(path.sep).join("/") : file;

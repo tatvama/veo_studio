@@ -17,20 +17,24 @@ import { defaultLoudness, LOUDNESS, measureArgs, mixJobs, mixPlan, nextGain, nor
 import { parseEbur128 } from "./editor-analyze.ts";
 import type { IrPreset } from "./editor-irs.ts";
 import { editDims, framesToSeconds, renderName } from "./editor-model.ts";
-import { probeMedia, runFfmpeg, spawnFfmpegPipe, type FfmpegInfo, type FfProgress } from "./ffmpeg.ts";
+import { DEFAULT_STALL_MS, probeMedia, runFfmpeg, spawnFfmpegPipe, type FfmpegInfo, type FfProgress } from "./ffmpeg.ts";
+import { gpuGate } from "./gpu-gate.ts";
 import type { Library } from "./library.ts";
 import { runNewsExport, type NewsRenderInput, type NewsRenderSpec } from "./newsroom/export.ts";
 import { dateToken, fitName, pathKey, safePart, uniquePath } from "./naming.ts";
 import {
-  PRESETS, STAB_DETECT, concatArgs, concatList, draftDims, extractAudioArgs, finalArgs, finalEncoder, gpuFinalArgs, intermediateEncoder, mixArgs,
-  mixAudioArgs,
-  musicBedArgs, overlayArgs, presetDims, presetList, segmentArgs, stabilizeDetectArgs, stepWeights, stillArgs, xfadeArgs, type RenderPlan,
+  PRESETS, STAB_DETECT, concatArgs, concatList, draftDims, extractAudioArgs, finalArgs, finalEncoder, gpuFinalArgs, hwDecodeArgs, intermediateEncoder,
+  mixArgs, mixAudioArgs,
+  musicBedArgs, overlayArgs, presetDims, presetList, segmentArgs, stabilizeDetectArgs, stepWeights, stillArgs, xfadeArgs, type PlanSegment, type RenderPlan,
 } from "./render-args.ts";
 import { uploadFile } from "./upload.ts";
 import type { Upstream } from "./upstream.ts";
 
 /** Headroom under a loudness preset's true-peak ceiling before AAC: the encode overshoots most on sharp transients. */
 export const AAC_TP_MARGIN_DB = 1;
+
+/** A render step that reports no progress for this long is killed and the job fails (a stalled encoder or graphics driver). */
+export const RENDER_STALL_MS = DEFAULT_STALL_MS;
 
 export interface RenderDeps {
   upstream: Upstream;
@@ -48,9 +52,12 @@ export interface RenderDeps {
 interface AssembleCtx {
   ff: string; tmp: string; signal: AbortSignal; fps: number; inter: string[]; localUpscale: boolean; effects: boolean; music: boolean;
   luts: Record<string, string>; need(key: string): string;
+  /** decode the source clips on the graphics card (hwDecodeArgs); `on` turns false for the rest of the job after a failure */
+  hwaccel: { args: string[]; on: boolean };
 }
 
-interface Band { step(id: string, args: string[], seconds?: number): Promise<void> }
+/** `signal` (optional) overrides the band's: the segments that run side by side stop together when one fails. */
+interface Band { step(id: string, args: string[], seconds?: number, signal?: AbortSignal): Promise<void> }
 
 /** What the GPU engine draws: a studio render plan, or a Tatvam Editor sequence (docs/EDITOR.md §5). */
 export type GpuSource =
@@ -316,6 +323,7 @@ export class RenderManager {
     const enc = finalEncoder(preset, probe, s.encoder.prefer, s.encoder.hevc10bit);
     if (!enc) throw new Error(`${preset.label} can't be encoded on this PC`);
     const inter = intermediateEncoder(probe, s.encoder.prefer, s.encoder.intermediateCq);
+    const hw = { args: hwDecodeArgs(probe, s.encoder.hwDecode !== false), on: true };
     Object.assign(job, { w, h, fps, encoder: enc.name, codec: preset.codec });
     const o = job.options;
     const q = new URLSearchParams({ lang: job.lang, w: String(w), h: String(h), fps: String(fps), effects: o.effects ? "1" : "0",
@@ -337,7 +345,7 @@ export class RenderManager {
     const ctxFor = (m: Map<string, string>, p: RenderPlan): AssembleCtx => {
       const luts: Record<string, string> = {};
       for (const [id, k] of Object.entries(p.luts ?? {})) if (m.get(k)) luts[id] = m.get(k)!;
-      return { ff, tmp, signal, fps, inter: inter.args, localUpscale: o.localUpscale, effects: o.effects, music: o.music, luts,
+      return { ff, tmp, signal, fps, inter: inter.args, localUpscale: o.localUpscale, effects: o.effects, music: o.music, luts, hwaccel: hw,
         need: (k: string) => {
           const v = m.get(k);
           if (!v) throw new Error(`Missing media ${k}`);
@@ -396,23 +404,32 @@ export class RenderManager {
     };
     const band = (from: number, to: number, weights: { id: string; label: string; weight: number; seconds: number }[], label?: string): Band => {
       const sum = weights.reduce((a, x) => a + x.weight, 0) || 1;
-      let done = from;
+      // each step's fraction done: steps may run side by side (the segments), so the band's progress is their weighted sum
+      const fractions = new Map<string, number>();
+      const progress = () => {
+        let p = from;
+        for (const [id, frac] of fractions) p += ((weights.find((x) => x.id === id)?.weight ?? 0) / sum) * (to - from) * frac;
+        return p;
+      };
       return {
-        step: async (id, args, seconds) => {
+        step: async (id, args, seconds, signal = run.signal) => {
           const st = weights.find((x) => x.id === id);
-          const share = ((st?.weight ?? 0) / sum) * (to - from);
           job.stepId = id;
           job.step = label ? `${label} · ${st?.label ?? id}` : st?.label ?? id;
           this.emit(job, true);
           const expected = seconds ?? st?.seconds ?? 0;
-          await runFfmpeg(run.ff, args, {
-            signal: run.signal, cwd: run.tmp,
+          fractions.set(id, 0);
+          // one GPU slot per FFmpeg step: renders, proxies and the local tools share the card's few encode sessions
+          await gpuGate.run(() => runFfmpeg(run.ff, args, {
+            signal, cwd: run.tmp, stallMs: RENDER_STALL_MS,
             onProgress: (pr: FfProgress) => {
               job.speed = pr.speed;
-              set(done + share * (expected > 0 ? Math.min(1, pr.outTimeS / expected) : 0));
+              fractions.set(id, expected > 0 ? Math.min(1, pr.outTimeS / expected) : 0);
+              set(progress());
             },
-          });
-          done += share;
+          }), signal);
+          fractions.set(id, 1);
+          set(progress());
         },
       };
     };
@@ -422,46 +439,27 @@ export class RenderManager {
   /** Segments → end card → join → sound mix (and picture layers when `pictures`): the server's assembler, step by step. */
   private async assemble(job: RenderJob, plan: RenderPlan, w: number, h: number, c: AssembleCtx, band: Band, pictures: boolean):
     Promise<{ body: string; finalAudio: string; total: number }> {
-    const { ff, tmp, signal, fps, need, luts } = c;
+    const { ff, tmp, signal, fps, need } = c;
     const tag = pictures ? "" : "snd_";
-    // 1. segments
-    const clips: string[] = [];
-    const lengths: number[] = [];
-    const transitions: ([string, number] | null)[] = [];
-    for (let i = 0; i < plan.segments.length; i++) {
-      const seg = plan.segments[i];
-      const out = path.join(tmp, `${tag}seg_${String(i).padStart(3, "0")}.mp4`);
-      const extra = (seg.extra_audio ?? []).filter((a) => a.key).map((a) => ({ path: need(a.key), offset: a.offset, gain_db: a.gain_db }));
-      const override = seg.audio_override ? need(seg.audio_override) : null;
-      if (seg.source_kind === "still") {
-        let audio = override;
-        if (extra.length) {
-          audio = path.join(tmp, `${tag}segaud_${i}.wav`);
-          await runFfmpeg(ff, mixAudioArgs(override, extra, seg.seg_len, audio), { signal, cwd: tmp });
+    // 1. segments: independent of each other, so they run side by side, as many at once as the GPU gate has slots (each
+    //    step takes one), and land in the plan's order; one failure stops the others
+    const clips = plan.segments.map((_, i) => path.join(tmp, `${tag}seg_${String(i).padStart(3, "0")}.mp4`));
+    const lengths = plan.segments.map((s) => s.seg_len);
+    const transitions: ([string, number] | null)[] = plan.segments.map((s, i) => (i > 0 ? s.transition ?? null : null));
+    const together = new AbortController();
+    const onAbort = () => together.abort();
+    signal.addEventListener("abort", onAbort, { once: true });
+    try {
+      await pool(plan.segments.map((seg, i) => ({ seg, i })), Math.max(1, gpuGate.slots), async ({ seg, i }) => {
+        try {
+          await this.segment(job, plan, seg, i, clips[i], w, h, c, band, pictures, together.signal);
+        } catch (e) {
+          together.abort(); // the siblings stop too; the first error is the job's
+          throw e;
         }
-        await band.step(`seg${i}`, stillArgs({ image: need(seg.source), out, seconds: seg.seg_len, w, h, fps, audio, kenburns: seg.kenburns,
-          vf: seg.vf, vfPost: seg.vf_post, afFx: seg.af_fx, luts, enc: c.inter, localUpscale: c.localUpscale && !seg.upscaled }));
-      } else {
-        const src = need(seg.source);
-        const hasAudio = seg.has_audio ?? (await probeMedia(ff, src)).hasAudio;
-        let trf: string | null = null;
-        if (seg.stabilize && pictures) { // the sound-only pass doesn't need the picture stabilised
-          trf = path.join(tmp, `seg_${i}.trf`);
-          try {
-            await runFfmpeg(ff, stabilizeDetectArgs(seg, src, trf, plan.stabilize_filters?.detect ?? STAB_DETECT), { signal, cwd: tmp });
-          } catch (e) {
-            if (signal.aborted) throw e;
-            job.warnings.push(`${seg.code}: stabilising skipped (${(e as Error).message.slice(0, 160)})`);
-            trf = null;
-          }
-        }
-        const s2 = pictures || !seg.stabilize ? seg : { ...seg, stabilize: false };
-        await band.step(`seg${i}`, segmentArgs(s2, { w, h, fps, src, out, enc: c.inter, override, extra, hasAudio, luts,
-          localUpscale: c.localUpscale, trf, stabTransform: plan.stabilize_filters?.transform }));
-      }
-      clips.push(out);
-      lengths.push(seg.seg_len);
-      transitions.push(i > 0 ? seg.transition ?? null : null);
+      }, together.signal);
+    } finally {
+      signal.removeEventListener("abort", onAbort);
     }
     // 2. end card
     if (plan.end_card?.key) {
@@ -512,6 +510,55 @@ export class RenderManager {
     return { body, finalAudio, total };
   }
 
+  /** One segment of the plan (a still, or a trimmed and scaled clip with its sound graph) into `out`. */
+  private async segment(job: RenderJob, plan: RenderPlan, seg: PlanSegment, i: number, out: string, w: number, h: number, c: AssembleCtx, band: Band,
+    pictures: boolean, signal: AbortSignal): Promise<void> {
+    const { ff, tmp, fps, need, luts } = c;
+    const tag = pictures ? "" : "snd_";
+    const extra = (seg.extra_audio ?? []).filter((a) => a.key).map((a) => ({ path: need(a.key), offset: a.offset, gain_db: a.gain_db }));
+    const override = seg.audio_override ? need(seg.audio_override) : null;
+    if (seg.source_kind === "still") {
+      let audio = override;
+      if (extra.length) {
+        audio = path.join(tmp, `${tag}segaud_${i}.wav`);
+        await runFfmpeg(ff, mixAudioArgs(override, extra, seg.seg_len, audio), { signal, cwd: tmp });
+      }
+      await band.step(`seg${i}`, stillArgs({ image: need(seg.source), out, seconds: seg.seg_len, w, h, fps, audio, kenburns: seg.kenburns,
+        vf: seg.vf, vfPost: seg.vf_post, afFx: seg.af_fx, luts, enc: c.inter, localUpscale: c.localUpscale && !seg.upscaled }), undefined, signal);
+      return;
+    }
+    const src = need(seg.source);
+    const hasAudio = seg.has_audio ?? (await probeMedia(ff, src)).hasAudio;
+    let trf: string | null = null;
+    if (seg.stabilize && pictures) { // the sound-only pass doesn't need the picture stabilised
+      trf = path.join(tmp, `seg_${i}.trf`);
+      try {
+        await runFfmpeg(ff, stabilizeDetectArgs(seg, src, trf, plan.stabilize_filters?.detect ?? STAB_DETECT), { signal, cwd: tmp });
+      } catch (e) {
+        if (signal.aborted) throw e;
+        job.warnings.push(`${seg.code}: stabilising skipped (${(e as Error).message.slice(0, 160)})`);
+        trf = null;
+      }
+    }
+    const s2 = pictures || !seg.stabilize ? seg : { ...seg, stabilize: false };
+    const encode = (hwaccel: string[]) => band.step(`seg${i}`, segmentArgs(s2, { w, h, fps, src, out, enc: c.inter, override, extra, hasAudio, luts,
+      localUpscale: c.localUpscale, trf, stabTransform: plan.stabilize_filters?.transform, hwaccel }), undefined, signal);
+    // decode on the graphics card when the probe found one; the first failure turns it off for the rest of this job
+    if (c.hwaccel.on && c.hwaccel.args.length) {
+      try {
+        await encode(c.hwaccel.args);
+        return;
+      } catch (e) {
+        if (signal.aborted) throw e;
+        if (c.hwaccel.on) {
+          c.hwaccel.on = false;
+          job.warnings.push(`Hardware decoding failed on ${seg.code}, so this render decodes on the processor (${(e as Error).message.slice(0, 160)})`);
+        }
+      }
+    }
+    await encode([]);
+  }
+
   /**
    * The GPU path's picture (docs/ENGINE.md §5): FFmpeg waits on stdin with the preset's encoder, a hidden window runs the
    * engine over the full-size plan and hands over every frame (engine.frame), and each frame is written as it arrives.
@@ -530,6 +577,8 @@ export class RenderManager {
     const sizes = o.rgba ? { 8: o.w * o.h * 4, 10: o.w * o.h * 4 } : { 8: frameBytes(o.w, o.h, 8), 10: frameBytes(o.w, o.h, 10) };
     let win: { close(): void } | null = null;
     const t0 = Date.now();
+    // the engine's window and its encoder hold one GPU slot for the whole frame pass
+    const releaseGpu = await gpuGate.acquire(o.signal);
     try {
       await new Promise<void>((resolve, reject) => {
         const session: GpuSession = {
@@ -575,6 +624,7 @@ export class RenderManager {
       (pipe as ReturnType<typeof spawnFfmpegPipe> | null)?.kill();
       throw e;
     } finally {
+      releaseGpu();
       this.gpuSessions.delete(job.id);
       try { (win as { close(): void } | null)?.close(); } catch { /* already closed */ }
     }

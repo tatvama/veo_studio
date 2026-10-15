@@ -13,7 +13,7 @@ from ..db import get_db
 from ..events import emit
 from ..models import AudioAsset, Episode, Export, Project, Scene, Shot, Style, User
 from ..security import current_user, require
-from .common import audio_out, export_out, get_or_404, project_out, shot_out
+from .common import audio_out, export_out, get_or_404, project_out, shot_maps, shot_out
 
 router = APIRouter(prefix="/api", tags=["projects"])
 
@@ -185,7 +185,9 @@ def get_episode(eid: int, lang: str | None = None, user: User = Depends(current_
     scenes = db.query(Scene).filter(Scene.episode_id == eid).order_by(Scene.order).all()
     music = db.query(AudioAsset).filter(AudioAsset.episode_id == eid, AudioAsset.kind == "music").order_by(AudioAsset.id.desc()).all()
     exports = db.query(Export).filter(Export.episode_id == eid).order_by(Export.id.desc()).all()
-    return e.to_dict(scenes=[s.to_dict() for s in scenes], shots=[shot_out(db, s, p, lang) for s in shots],
+    active, n_comments = shot_maps(db, [s.id for s in shots])  # two queries for all shots, not two per shot
+    return e.to_dict(scenes=[s.to_dict() for s in scenes],
+                     shots=[shot_out(db, s, p, lang, active_jobs=active, comment_counts=n_comments) for s in shots],
                      music=[audio_out(a) for a in music], exports=[export_out(x) for x in exports],
                      total_duration_s=sum(s.duration_s for s in shots if s.include))
 

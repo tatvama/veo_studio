@@ -352,12 +352,15 @@ function useFocusTrap(active: boolean, ref: RefObject<HTMLElement | null>, retur
 
 const MODAL_W = { sm: "max-w-sm", md: "max-w-lg", lg: "max-w-3xl", xl: "max-w-5xl" } as const;
 
-export function Modal({ open, onClose, title, children, footer, wide, size }: {
+export function Modal({ open, onClose, closable = true, title, children, footer, wide, size }: {
   open: boolean; onClose: () => void; title: ReactNode; children: ReactNode; footer?: ReactNode; wide?: boolean; size?: keyof typeof MODAL_W;
+  /** False while the dialog is busy: Escape, the backdrop and the close button do nothing. */
+  closable?: boolean;
 }) {
   const t = useT();
   const titleId = useId();
   const dialog = useRef<HTMLDivElement>(null);
+  const close = closable ? onClose : undefined;
   // Keep the last open content so the exit animation doesn't flash empty when the caller clears its state.
   const last = useRef({ title, children, footer });
   if (open) last.current = { title, children, footer };
@@ -372,11 +375,11 @@ export function Modal({ open, onClose, title, children, footer, wide, size }: {
   useFocusTrap(open, dialog, opener);
 
   useEffect(() => {
-    if (!open) return;
-    const h = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    if (!open || !close) return;
+    const h = (e: KeyboardEvent) => e.key === "Escape" && close();
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [open, onClose]);
+  }, [open, close]);
 
   return createPortal(
     <AnimatePresence>
@@ -388,7 +391,7 @@ export function Modal({ open, onClose, title, children, footer, wide, size }: {
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.18 }}
-          onMouseDown={onClose}
+          onMouseDown={close}
         >
           <motion.div
             ref={dialog}
@@ -409,7 +412,7 @@ export function Modal({ open, onClose, title, children, footer, wide, size }: {
             <span aria-hidden className="edge-light pointer-events-none absolute inset-x-0 top-0 h-px" />
             <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-3.5">
               <h3 id={titleId} className="min-w-0 truncate font-semibold tracking-tight">{shown.title}</h3>
-              <IconButton title={t("Close")} onClick={onClose} className="-mr-1.5"><X className="size-4" /></IconButton>
+              <IconButton title={t("Close")} disabled={!closable} onClick={close} className="-mr-1.5"><X className="size-4" /></IconButton>
             </div>
             <div data-modal-body className="overflow-y-auto px-5 py-4">{shown.children}</div>
             {shown.footer && <div data-modal-footer className="flex flex-wrap justify-end gap-2 border-t border-line bg-raised/40 px-5 py-3">{shown.footer}</div>}

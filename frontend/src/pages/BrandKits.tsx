@@ -11,6 +11,7 @@ import { useAuthStatus, useBrandKits, useProjects } from "../lib/queries";
 import { ROLE_RANK, type BrandKit } from "../lib/types";
 import { KitEditor } from "./brand/KitEditor";
 import { KitList } from "./brand/KitList";
+import { LoadError } from "./project/production/LoadError";
 import "../styles/console.css";
 
 function NewKitModal({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (k: BrandKit) => void }) {
@@ -88,7 +89,7 @@ export default function BrandKitsPage() {
   const role = auth?.user?.role ?? "viewer";
   const canEdit = ROLE_RANK[role] >= ROLE_RANK.creator;
   const canDelete = ROLE_RANK[role] >= ROLE_RANK.producer;
-  const { data: kits, isLoading } = useBrandKits();
+  const { data: kits, isLoading, isError, refetch } = useBrandKits();
   const { data: projects } = useProjects();
   const [selected, setSelected] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
@@ -128,6 +129,8 @@ export default function BrandKitsPage() {
           <div className="grid gap-3 sm:grid-cols-[repeat(auto-fill,minmax(15.5rem,1fr))]">{Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-40 rounded-xl" />)}</div>
           <div className="grid gap-5 min-[900px]:grid-cols-[15rem_minmax(0,1fr)]"><Skeleton className="h-64 rounded-xl" /><Skeleton className="h-64 rounded-xl" /></div>
         </div>
+      ) : isError && !kits ? (
+        <LoadError what={t("brand kits")} onRetry={() => void refetch()} />
       ) : !list.length ? (
         <EmptyKits canEdit={canEdit} onNew={() => setCreating(true)} />
       ) : (

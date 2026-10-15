@@ -4,8 +4,9 @@
  * and cached by source hash (in parallel where KHR_parallel_shader_compile exists), one fullscreen triangle.
  * Texture rows are top first everywhere ("image space"); only the canvas present flips.
  */
-import { ShaderError, type Backend, type DrawCall, type Program, type RenderTarget, type Texture, type Texture3D, type UniformValue } from "./backend";
-import { notifyCanvasRestored } from "../sources/canvasLoss";
+import { ShaderError, type Backend, type DrawCall, type Program, type RenderTarget, type Texture, type Texture3D, type UniformValue } from "./backend.ts";
+import { TargetPool } from "./pool.ts";
+import { notifyCanvasRestored } from "../sources/canvasLoss.ts";
 
 const VS3 = `#version 300 es
 in vec2 a_pos;
@@ -85,9 +86,10 @@ export class WebGL2Backend implements Backend {
   private programs = new Map<string, GLProgram>();
   /** Fast path: the same fragment string again (no hashing). */
   private byFrag = [new Map<string, GLProgram>(), new Map<string, GLProgram>()];
-  private tickNo = 0;
-  private pool = new Map<string, GLTarget[]>();
-  private all = new Set<GLTarget>();
+  private pool = new TargetPool<GLTarget>();
+  /** Scratch arrays for array uniforms, one per length (gl.uniform*v copies at once, so they are reused per call). */
+  private scratchF = new Map<number, Float32Array>();
+  private scratchI = new Map<number, Int32Array>();
   private vao!: WebGLVertexArrayObject;
   /** No attributes: point clouds index their data by gl_VertexID (scopes). */
   private emptyVao!: WebGLVertexArrayObject;
@@ -109,7 +111,7 @@ export class WebGL2Backend implements Backend {
     if ("addEventListener" in canvas) {
       canvas.addEventListener("webglcontextlost", (e) => { e.preventDefault(); this.lost = true; }, false);
       canvas.addEventListener("webglcontextrestored", () => {
-        this.programs.clear(); this.byFrag[0].clear(); this.byFrag[1].clear(); this.pool.clear(); this.all.clear();
+        this.programs.clear(); this.byFrag[0].clear(); this.byFrag[1].clear(); this.pool.clear();
         this.init();
         this.lost = false;
         this.onRestore?.();
@@ -244,12 +246,10 @@ export class WebGL2Backend implements Backend {
     const format = opts.format ?? (this.floatTargets ? "rgba16f" : "rgba8");
     const levels = opts.mips ? Math.floor(Math.log2(Math.max(w, h))) + 1 : 1;
     const key = `${w}x${h}:${format}:${levels > 1 ? "m" : ""}`;
-    const free = this.pool.get(key);
-    if (free?.length) {
-      const t = free.pop()!;
-      t.used = this.tickNo;
-      if (t.mips) { gl.bindTexture(gl.TEXTURE_2D, t.tex); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); t.mips = false; }
-      return t;
+    const hit = this.pool.take(key);
+    if (hit) {
+      if (hit.mips) { gl.bindTexture(gl.TEXTURE_2D, hit.tex); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); hit.mips = false; }
+      return hit;
     }
     const tex = gl.createTexture()!;
     gl.bindTexture(gl.TEXTURE_2D, tex);
@@ -260,41 +260,33 @@ export class WebGL2Backend implements Backend {
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
     const st = gl.checkFramebufferStatus(gl.FRAMEBUFFER);
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    if (st !== gl.FRAMEBUFFER_COMPLETE) throw new Error(`Render target ${key} is incomplete (0x${st.toString(16)})`);
-    const t = new GLTarget(tex, fbo, w, h, format, levels);
-    t.used = this.tickNo;
-    this.all.add(t);
-    return t;
+    if (st !== gl.FRAMEBUFFER_COMPLETE) { gl.deleteFramebuffer(fbo); gl.deleteTexture(tex); throw new Error(`Render target ${key} is incomplete (0x${st.toString(16)})`); }
+    return this.pool.add(new GLTarget(tex, fbo, w, h, format, levels));
   }
 
   release(rt: RenderTarget | null | undefined): void {
-    if (!rt) return;
-    const t = rt as GLTarget;
-    if (!this.all.has(t)) return;
-    const list = this.pool.get(t.key) ?? [];
-    if (!list.includes(t)) list.push(t);
-    this.pool.set(t.key, list);
+    this.pool.release(rt as GLTarget | null | undefined);
   }
 
-  /** A new frame (for trimOld). */
-  tick(): void { this.tickNo++; }
+  /** A new frame (for trimOld and reclaim). */
+  tick(): void { this.pool.nextTick(); }
+
+  /** Releases the targets handed out since tick() that nobody released (a frame that threw half-way), except the ones
+   *  in `keep`. Returns how many went back to the pool. */
+  reclaim(keep?: Iterable<RenderTarget | null | undefined>): number {
+    return this.pool.reclaim(keep as Iterable<GLTarget | null | undefined> | undefined);
+  }
+
+  /** Targets alive (free or handed out), for the lab and tests. */
+  get targetCount(): number { return this.pool.size; }
+
+  private deleteTarget(t: GLTarget) { this.gl.deleteFramebuffer(t.fbo); this.gl.deleteTexture(t.tex); }
 
   /** Free pooled targets not handed out in the last `age` ticks (sizes that came and went: animated scale). */
-  trimOld(age: number): void {
-    const gl = this.gl;
-    for (const [k, list] of this.pool) {
-      const keep = list.filter((t) => this.tickNo - t.used <= age);
-      for (const t of list) if (!keep.includes(t)) { gl.deleteFramebuffer(t.fbo); gl.deleteTexture(t.tex); this.all.delete(t); }
-      if (keep.length) this.pool.set(k, keep); else this.pool.delete(k);
-    }
-  }
+  trimOld(age: number): void { this.pool.trimOld(age, (t) => this.deleteTarget(t)); }
 
   /** Free pooled targets nobody holds (after a size change). */
-  trim(): void {
-    const gl = this.gl;
-    for (const list of this.pool.values()) for (const t of list) { gl.deleteFramebuffer(t.fbo); gl.deleteTexture(t.tex); this.all.delete(t); }
-    this.pool.clear();
-  }
+  trim(): void { this.pool.trimFree((t) => this.deleteTarget(t)); }
 
   clear(rt: RenderTarget | null, rgba: [number, number, number, number]): void {
     const gl = this.gl;
@@ -395,25 +387,48 @@ export class WebGL2Backend implements Backend {
     gl.deleteShader(p.vs); gl.deleteShader(p.fs);
   }
 
+  /** Sets one uniform. Scalars take the direct path; arrays go through a reused scratch array of the uniform's exact
+   *  length (a Float32Array of that length is passed as it is), so a draw allocates nothing per uniform. */
   private set(p: GLProgram, name: string, v: UniformValue) {
     const u = p.uniforms.get(name);
     if (!u) return;
     const gl = this.gl;
-    const arr = typeof v === "number" ? [v] : typeof v === "boolean" ? [v ? 1 : 0] : Array.from(v as ArrayLike<number>, (x) => Number(x));
+    if (typeof v === "number" || typeof v === "boolean") {
+      const x = typeof v === "boolean" ? (v ? 1 : 0) : v;
+      switch (u.type) {
+        case gl.FLOAT: if (u.size > 1) gl.uniform1fv(u.loc, this.f32([x], u.size)); else gl.uniform1f(u.loc, x); return;
+        case gl.INT: case gl.BOOL: if (u.size > 1) gl.uniform1iv(u.loc, this.i32([x], u.size)); else gl.uniform1i(u.loc, Math.round(x)); return;
+        default: break;
+      }
+    }
+    const a: ArrayLike<number> = typeof v === "number" ? [v] : typeof v === "boolean" ? [v ? 1 : 0] : v;
     switch (u.type) {
-      case gl.FLOAT: u.size > 1 ? gl.uniform1fv(u.loc, arr) : gl.uniform1f(u.loc, arr[0] ?? 0); break;
-      case gl.FLOAT_VEC2: gl.uniform2fv(u.loc, pad(arr, 2 * u.size)); break;
-      case gl.FLOAT_VEC3: gl.uniform3fv(u.loc, pad(arr, 3 * u.size)); break;
-      case gl.FLOAT_VEC4: gl.uniform4fv(u.loc, pad(arr, 4 * u.size)); break;
-      case gl.INT: case gl.BOOL: u.size > 1 ? gl.uniform1iv(u.loc, arr.map(Math.round)) : gl.uniform1i(u.loc, Math.round(arr[0] ?? 0)); break;
-      case gl.INT_VEC2: case gl.BOOL_VEC2: gl.uniform2iv(u.loc, pad(arr, 2 * u.size).map(Math.round)); break;
-      case gl.INT_VEC3: case gl.BOOL_VEC3: gl.uniform3iv(u.loc, pad(arr, 3 * u.size).map(Math.round)); break;
-      case gl.INT_VEC4: case gl.BOOL_VEC4: gl.uniform4iv(u.loc, pad(arr, 4 * u.size).map(Math.round)); break;
-      case gl.FLOAT_MAT2: gl.uniformMatrix2fv(u.loc, false, pad(arr, 4)); break;
-      case gl.FLOAT_MAT3: gl.uniformMatrix3fv(u.loc, false, pad(arr, 9)); break;
-      case gl.FLOAT_MAT4: gl.uniformMatrix4fv(u.loc, false, pad(arr, 16)); break;
+      case gl.FLOAT: if (u.size > 1) gl.uniform1fv(u.loc, this.f32(a, u.size)); else gl.uniform1f(u.loc, num(a[0])); break;
+      case gl.FLOAT_VEC2: gl.uniform2fv(u.loc, this.f32(a, 2 * u.size)); break;
+      case gl.FLOAT_VEC3: gl.uniform3fv(u.loc, this.f32(a, 3 * u.size)); break;
+      case gl.FLOAT_VEC4: gl.uniform4fv(u.loc, this.f32(a, 4 * u.size)); break;
+      case gl.INT: case gl.BOOL: if (u.size > 1) gl.uniform1iv(u.loc, this.i32(a, u.size)); else gl.uniform1i(u.loc, Math.round(num(a[0]))); break;
+      case gl.INT_VEC2: case gl.BOOL_VEC2: gl.uniform2iv(u.loc, this.i32(a, 2 * u.size)); break;
+      case gl.INT_VEC3: case gl.BOOL_VEC3: gl.uniform3iv(u.loc, this.i32(a, 3 * u.size)); break;
+      case gl.INT_VEC4: case gl.BOOL_VEC4: gl.uniform4iv(u.loc, this.i32(a, 4 * u.size)); break;
+      case gl.FLOAT_MAT2: gl.uniformMatrix2fv(u.loc, false, this.f32(a, 4)); break;
+      case gl.FLOAT_MAT3: gl.uniformMatrix3fv(u.loc, false, this.f32(a, 9)); break;
+      case gl.FLOAT_MAT4: gl.uniformMatrix4fv(u.loc, false, this.f32(a, 16)); break;
       default: break;
     }
+  }
+
+  private f32(a: ArrayLike<number>, n: number): Float32Array {
+    if (a instanceof Float32Array && a.length === n) return a;
+    let s = this.scratchF.get(n);
+    if (!s) { s = new Float32Array(n); this.scratchF.set(n, s); }
+    return fillUniform(s, a, n, false);
+  }
+  private i32(a: ArrayLike<number>, n: number): Int32Array {
+    if (a instanceof Int32Array && a.length === n) return a;
+    let s = this.scratchI.get(n);
+    if (!s) { s = new Int32Array(n); this.scratchI.set(n, s); }
+    return fillUniform(s, a, n, true);
   }
 
   draw(call: DrawCall): void {
@@ -475,17 +490,43 @@ export class WebGL2Backend implements Backend {
     if (this.canvas.height !== h) this.canvas.height = h;
   }
 
+  /**
+   * Resolves once every program has finished compiling (or `ms` passed). With KHR_parallel_shader_compile the driver
+   * compiles in the background and COMPLETION_STATUS_KHR is polled, so the first frame doesn't stall on each shader
+   * in turn; without it programs compile at their first check() as before, and this resolves at once.
+   */
+  waitReady(programs: Program[], ms: number): Promise<void> {
+    if (!this.parallel) return Promise.resolve();
+    const pending = programs.filter((p) => !p.ready());
+    if (!pending.length) return Promise.resolve();
+    const until = performance.now() + Math.max(0, ms);
+    return new Promise<void>((res) => {
+      const poll = () => {
+        if (this.lost || performance.now() >= until || pending.every((p) => p.ready())) { res(); return; }
+        setTimeout(poll, 16);
+      };
+      setTimeout(poll, 0);
+    });
+  }
+
+  /** Whether shaders compile in the background here (KHR_parallel_shader_compile). */
+  get parallelCompile(): boolean { return this.parallel; }
+
   dispose(): void {
     const gl = this.gl;
-    for (const t of this.all) { gl.deleteFramebuffer(t.fbo); gl.deleteTexture(t.tex); }
-    this.all.clear(); this.pool.clear();
+    this.pool.clear((t) => this.deleteTarget(t));
     for (const p of this.programs.values()) gl.deleteProgram(p.prog);
     this.programs.clear(); this.byFrag[0].clear(); this.byFrag[1].clear();
     gl.getExtension("WEBGL_lose_context")?.loseContext();
   }
 }
 
-function pad(a: number[], n: number): number[] {
-  if (a.length >= n) return a.slice(0, n);
-  return a.concat(new Array(n - a.length).fill(0));
+const num = (x: unknown) => { const v = Number(x); return Number.isFinite(v) ? v : 0; };
+
+/** Copies `a` into the first `n` slots of `out` (missing values 0, extra ones dropped; rounded for integer uniforms). */
+export function fillUniform<T extends Float32Array | Int32Array>(out: T, a: ArrayLike<number>, n: number, round: boolean): T {
+  const m = Math.min(n, a.length);
+  for (let i = 0; i < m; i++) { const v = num(a[i]); out[i] = round ? Math.round(v) : v; }
+  for (let i = m; i < n; i++) out[i] = 0;
+  return out;
 }

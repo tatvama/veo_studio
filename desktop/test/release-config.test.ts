@@ -23,3 +23,12 @@ test("the update feed is the releases-only repository, and the release workflow 
   assert.match(workflow, /gh release upload "\$TAG" --repo "\$RELEASES_REPO" release\/\*\.exe release\/\*\.blockmap release\/latest\.yml/);
   assert.match(workflow, /secrets\.DESKTOP_RELEASES_TOKEN/);
 });
+
+test("updates are signature-checked against a pinned publisher, and the workflow signs when a certificate secret exists", () => {
+  const win = /^win:\n((?: {2}.+\n)+)/m.exec(builder)?.[1] ?? "";
+  assert.match(win, /^ {2}verifyUpdateCodeSignature: true$/m, "electron-updater verifies the downloaded installer's signature");
+  assert.match(win, /^ {2}publisherName:\n(?: {4}- .+\n)+/m, "the publisher the signature must come from");
+  assert.match(workflow, /CSC_LINK: \$\{\{ secrets\.WIN_CSC_LINK \|\| secrets\.CSC_LINK \}\}/);
+  assert.match(workflow, /CSC_KEY_PASSWORD: \$\{\{ secrets\.WIN_CSC_KEY_PASSWORD \|\| secrets\.CSC_KEY_PASSWORD \}\}/);
+  assert.match(workflow, /\[ -n "\$CSC_LINK" \] \|\| unset CSC_LINK CSC_KEY_PASSWORD/, "an unsigned build when no certificate is set");
+});
