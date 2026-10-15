@@ -6,6 +6,7 @@
  * size, then to the still. "Reduce motion" keeps scrubbing (the pointer drives it) but never plays loops.
  */
 import { watchCanvas } from "../../engine/sources/canvasLoss";
+import { memory } from "./cache";
 import { reducedMotion } from "./live";
 import { requestStill, requestStrip, stillBackoff, stillKey, stillTime, type FrameChoice, type PreviewItem, type Strip } from "./service";
 import { loopIndex, scrubProgress, stripIndex, titleTimeAt, titleTiming, LOOP_FPS } from "./scrub";
@@ -66,7 +67,15 @@ export class CardPlayer {
   constructor(cv: HTMLCanvasElement, onState: (s: CardState) => void, hud: HTMLElement | null = null) {
     this.cv = cv; this.onState = onState; this.hud = hud;
     // a GPU reset brings the card's canvas back blank (engine/sources/canvasLoss.ts): its still again
-    watchCanvas(cv, () => { this.lastDrawn = null; this.still = null; this.stillKey = ""; this.loadStill(); });
+    watchCanvas(cv, () => { this.lastDrawn = null; this.setStill(null); this.stillKey = ""; this.loadStill(); });
+  }
+
+  /** The still shown: held in the memory cache while it is (an evicted bitmap a card shows is not closed under it). */
+  private setStill(b: ImageBitmap | null) {
+    if (b === this.still) return;
+    if (this.still) memory.unhold(this.still);
+    if (b) memory.hold(b);
+    this.still = b;
   }
 
   /** What to show and at which size (device pixels, 16:9). */
@@ -92,7 +101,7 @@ export class CardPlayer {
     const choice = this.choice, size = this.size;
     const wanted = () => this.visible && my === this.gen;
     const show = (b: ImageBitmap) => {
-      this.still = b; this.stillKey = key;
+      this.setStill(b); this.stillKey = key;
       this.onState("ok");
       if (!this.hovering || this.p === null) this.paint(b);
     };
@@ -231,5 +240,5 @@ export class CardPlayer {
   /** The still's time for an item (titles: their hold pose). */
   static stillTime = stillTime;
 
-  dispose() { this.leave(); this.gen++; this.visible = false; window.clearTimeout(this.retryTimer); }
+  dispose() { this.leave(); this.gen++; this.visible = false; window.clearTimeout(this.retryTimer); this.setStill(null); this.lastDrawn = null; }
 }

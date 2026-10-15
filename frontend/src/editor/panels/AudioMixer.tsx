@@ -14,6 +14,7 @@ import { audioFxDef } from "../audiofx/registry";
 import { audioStack, type FxTarget } from "../audiofx/stack";
 import { tracksOf } from "../model/ops";
 import type { EffectInstance, Track } from "../model/types";
+import { useVisible } from "../moods/ui";
 import { mixer } from "../playback/audio";
 import { setFocus, useEditor, useSequence } from "../store";
 import { ScrubNumber } from "../ui";
@@ -48,15 +49,27 @@ export default function AudioMixer() {
   const s = useSequence();
   const ats = tracksOf(s, "audio");
   const sel = useEditor((x) => x.selection);
+  const root = useRef<HTMLDivElement>(null);
+  const visible = useVisible(root);
   const meters = useRef<Record<string, HTMLCanvasElement | null>>({});
   const holds = useRef<Record<string, { db: number; at: number }>>({});
   const [master, setMaster] = useState(mixer.masterDb);
   const [target, setTarget] = useState(-16);
   const [busy, setBusy] = useState(false);
+  const [live, setLive] = useState(!!mixer.ctx);
   const nSel = selectedAudioClips(s).filter((c) => c.source.type === "media").length;
+  // the meters animate only while the panel is on screen and the audio context exists (it wakes on the first play);
+  // before that they are painted empty once and the mixer is polled for its context
   useEffect(() => {
+    if (!visible || live) return;
+    const id = window.setInterval(() => { if (mixer.ctx) setLive(true); }, 500);
+    return () => window.clearInterval(id);
+  }, [visible, live]);
+  useEffect(() => {
+    if (!visible) return;
     let raf = 0;
     const draw = () => {
+      if (!mixer.ctx) { setLive(false); }
       const m = mixer.ctx ? mixer.meters() : { tracks: {}, master: 0 };
       const now = performance.now();
       const paint = (id: string, lin: number) => {
@@ -81,16 +94,16 @@ export default function AudioMixer() {
       };
       for (const t of ats) paint(t.id, m.tracks[t.id] ?? 0);
       paint("__master", m.master);
-      raf = requestAnimationFrame(draw);
+      if (mixer.ctx) raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(raf);
-  }, [ats.map((t) => t.id).join()]);
+  }, [ats.map((t) => t.id).join(), visible, live]);
 
   const match = async () => { setBusy(true); try { await matchLoudness(selectedAudioClips(), target); } finally { setBusy(false); } };
 
   return (
-    <div className="pn" onPointerDown={() => setFocus("mixer")}>
+    <div ref={root} className="pn" onPointerDown={() => setFocus("mixer")}>
       <div className="flex min-h-0 flex-1 overflow-x-auto">
         {ats.map((t) => <Strip key={t.id} t={t} fx={audioStack(s, { kind: "track", trackId: t.id })} meterRef={(el) => { meters.current[t.id] = el; }} />)}
         <div className="mx-strip !w-[112px] border-l border-line bg-raised/40">

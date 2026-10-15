@@ -30,7 +30,10 @@ back to the server, copies the `veo_session` cookie onto the gateway origin, and
 
 The table is `cut_locks`: `episode_id` (unique), `user_id`, `client` ("desktop" | "web"), `machine`, `acquired_at`
 and `heartbeat_at`. It lives in Postgres, so it survives restarts. A lock **does not expire on its own**: an editor
-can keep it through a long offline stretch. A producer or admin can force-release it.
+can keep it through a long offline stretch. A producer or admin can force-release it. The desktop app releases the
+cuts it still holds when it quits (`main/locks.ts`: the gateway notes every checkout, heartbeat, check-in and release
+it forwards; on quit each held lock is read back and `DELETE`d only if it is still ours and from this machine, best
+effort within 2.5 s). Closing the web page does not release a lock: there the heartbeat age shows how stale it is.
 
 | Method & path | Body | Result |
 | --- | --- | --- |
@@ -186,6 +189,8 @@ The upload is chunked, so a 4K master survives a flaky connection.
 
 Init may also send the plan's `fingerprint`. Over the size cap returns 413, a chunk past the declared size 400, and
 a wrong offset or an early complete 409 `{detail, received}`. The status call returns `{upload_id, received, size}`.
+The desktop resumes at the `received` a 409 names, but gives up after 5 consecutive 409s at the same byte ("upload
+stuck"), so a server that never takes the chunk it asks for can't keep it looping.
 The file keeps a `.mov` / `.mkv` / `.webm` extension from `filename` (ProRes masters), else `.mp4`. Unfinished
 uploads older than a week are cleared.
 
@@ -294,7 +299,7 @@ three takes (`…_001_SC02_SH001…`, `…_002_SC01_SH002…`, `…_003_SC01_SH0
 | Module | Job |
 | --- | --- |
 | `main/index.ts` | Lifecycle, single instance, the `tatvam://` deep link, wiring |
-| `main/config.ts` | `settings.json` in userData: `serverUrl`, `gatewayPort`, `uiSource` ("auto", "bundled" or "server", §4.3), `appearance`, `assistants`, `lutFolders`, `editorBackups`, `libraryRoot`, `projectFolders {pid: path}`, `naming {folder: template}`, `pullScope`, `proxyMode`, `encoder` preferences, `workspaces`, `windowState` |
+| `main/config.ts` | `settings.json` in userData: `serverUrl`, `gatewayPort`, `uiSource` ("bundled", the default, or the opt-in "auto" / "server", §4.3), `appearance`, `assistants`, `lutFolders`, `editorBackups`, `libraryRoot`, `projectFolders {pid: path}`, `naming {folder: template}`, `pullScope`, `proxyMode`, `encoder` preferences (`prefer`, `hevc10bit`, `intermediateCq`, `hwDecode` on by default, `gpuSlots` default 2), `workspaces`, `windowState` |
 | `main/gateway.ts` | The local HTTP gateway (§1): static UI with SPA fallback; `/api` and `/media` forwarded with streaming and Range; WebSocket upgrade forwarded; local-first `/media` (with a proxy file in proxy mode); offline cache and write queue |
 | `main/upstream.ts` | Server calls from the main process (session cookie and `X-Requested-With` added), plus the WebSocket listener that triggers re-syncs |
 | `main/library.ts` | Library root, project folders, folder skeleton, move, open, disk usage, clean |
@@ -303,10 +308,11 @@ three takes (`…_001_SC02_SH001…`, `…_002_SC01_SH002…`, `…_003_SC01_SH0
 | `main/sync.ts` | Manifest → download queue (3 at a time, resumable `.part` files, checked sizes) → series names → cleanup; progress events |
 | `main/watch.ts` | Watches the `Imports` folder; a file whose size has held steady is uploaded to `POST /episodes/{eid}/media` and marked ingested |
 | `main/ffmpeg.ts` | Finds FFmpeg (the path set in the Studio server window, `TATVAM_FFMPEG`, the bundled `resources/ffmpeg.exe`, then `ffmpeg-static` / the system one / the backend's imageio copy in dev, preferring 7.x: 6.1 lacks vidstab and some xfade transitions), probes the encoders, test-encodes on NVENC, QSV and AMF, and runs the machine check |
-| `main/proxies.ts` | 1080p proxies, made on NVENC when it is available |
+| `main/proxies.ts` | 1080p proxies, made on NVENC when it is available, decoded on the card, one GPU slot each |
+| `main/gpu-gate.ts` | **The GPU gate**: one process-wide semaphore (`encoder.gpuSlots`, default 2, `TATVAM_GPU_SLOTS`) that every encoder and GPU tool takes a slot from: render steps and the GPU frame pass, proxies (library and editor), the local upscaler, RIFE and CUDA Whisper. Consumer GeForce cards allow only a few NVENC sessions at once |
 | `main/aiupscale.ts` | **AI upscale on this PC** (§4.2): installs the pinned Real-ESRGAN build on demand, picks the Vulkan GPU, and runs frames out → Real-ESRGAN → HEVC back with the original sound → upload as the shot's upscale take |
 | `main/render-args.ts` | Pure FFmpeg argument builders for every render step, checked in tests against the arguments the server's `ffmpeg.py` / `layers.py` build |
-| `main/render.ts` | Runs a render plan locally at 4K with hardware encoding, reports progress and ETA, can cancel, writes into `Renders/` |
+| `main/render.ts` | Runs a render plan locally at 4K with hardware encoding (the segments side by side, as many as the GPU gate has slots, in the plan's order), reports progress and ETA, stops a step that makes no progress for 10 minutes, can cancel, writes into `Renders/` |
 | `main/upload.ts` | Chunked, resumable render upload |
 | `main/edl.ts`, `main/edits.ts` | Write a CMX3600 EDL (dissolves, M2 speed lines) and an FCPXML 1.10 of the cut into `Edits/` |
 | `main/offline.ts` | Pure logic of the offline cache and write queue (which writes queue, how they patch the cached GETs, replay order) |
@@ -333,6 +339,32 @@ the session cookie goes and which program runs, so only the native Studio server
 answers that window alone); folders change only through native folder dialogs. The gateway serves local media only
 to requests that carry the app's own session cookie and rejects unexpected `Host` headers (DNS rebinding).
 
+**Trust boundaries (tightened 15 October 2026).**
+- **A public server address must be https**: `normalizeServerUrl` accepts plain `http://` only on this PC
+  (`localhost`, `*.localhost`, `127.0.0.0/8`, `[::1]`) or on the local network (`10/8`, `172.16/12`, `192.168/16`,
+  `fc00::/7`, `*.local`), the same rule `uicache.originRule` applies to screens; a bare host name becomes `https://…`;
+  an explicit `http://` to a public address is refused with the reason (shown by the Studio server window). A stored
+  or `TATVAM_SERVER` address that breaks the rule falls back to `http://localhost:8100`. Every call carries the
+  session cookie and, when chosen, the server's screens run inside the app, so a server reached over the internet
+  needs a certificate.
+- **Screens from the server are opt-in.** `uiSource` defaults to `"bundled"`; "From the server, with an offline copy"
+  (`auto`) and "Always live from the server" (`server`) are labelled as running the server's own code and are chosen
+  in the Studio server window only (a settings file with an unchosen `auto` / `server` moves back to `bundled`). The
+  manifest's sha256 check and the origin rule of §4.3 still apply when they are chosen.
+- **A page imports only what the user handed over.** `editor.importMedia` from the bridge takes paths that came back
+  from a native file dialog, were dropped from Explorer (the preload registers a drop's real paths with the main
+  process before the page sees them, `IPC.editorGrantPaths`), sit in a folder the user chose or dropped (`shell.dropped`,
+  `assistants.chooseFolder`, the assistants' folders, watch folders, the library), lie inside the edit's own folder,
+  or already belong to an edit. Any other absolute path a page names is refused ("wasn't chosen in a file dialog or
+  dropped from Explorer"). In-process callers (the MCP server after its own folder checks, interchange imports) are
+  not gated.
+- **Deep links ask first.** `tatvam://editor?path=…` allow-lists the edit straight away only inside the library's
+  `Edits/` folder; for any other `.tatvamedit` a native dialog ("Open this edit?", with the full path) must be
+  accepted first, because opening an edit lets the editor read and serve every media file it lists.
+- **One path rule.** `main/paths.ts` `isInside(dir, file)` (the folder itself or below it, case-insensitive, either
+  slash; a sibling folder sharing the prefix is outside) is the only confinement check: the editor's allow-list,
+  `library.open`, the renders clean-up and the MCP server's `inside` all use it.
+
 ### 4.1 Encoder presets
 
 | id | Label | Size (16:9, swapped for 9:16) | Video | Notes |
@@ -347,7 +379,18 @@ to requests that carry the app's own session cookie and rejects unexpected `Host
 | `review1080` | Review 1080p (fast) | 1920×1080 | H.264 CQ 23 | |
 | `av1_4k` | AV1 4K (archive) | 3840×2160 | AV1 NVENC, only where supported (RTX 40 and up) | Hidden when the probe fails |
 
-- Intermediate segments use the fastest hardware H.264 encoder at CQ 16, falling back to x264 veryfast at CRF 16.
+- Intermediate segments use the fastest hardware H.264 encoder at CQ 16 (NVENC on its quickest preset `p2`: they are
+  thrown away after the join), falling back to x264 veryfast at CRF 16. The segments of a plan are independent, so they
+  encode side by side (`pool`, as many at once as the GPU gate has slots) and are joined in order; one failure stops the rest.
+- **Hardware decode** (`encoder.hwDecode`, default on): when the probe found NVENC, every source clip of a segment or
+  proxy is opened with `-hwaccel cuda` (`-hwaccel d3d11va` on Windows when only Quick Sync / AMF work). Without
+  `-hwaccel_output_format` the frames come back to system memory, so the CPU filter graphs (scale, crop, vidstab, LUTs,
+  xfade) are unchanged: the decode is the win. If a hardware-decoded encode fails, the step is retried on the CPU, the
+  job gets a warning and the rest of that job decodes in software.
+- **The GPU gate** (`main/gpu-gate.ts`): renders, proxies, the local upscaler and the editor's GPU tools each take one
+  slot (`encoder.gpuSlots`, default 2) before touching the card, so a render, an auto proxy and a slow-motion job can't
+  open more NVENC sessions than a GeForce allows. A render step with no FFmpeg progress for 10 minutes, or a GPU frame
+  the encoder doesn't take for 10 minutes, is killed and the job fails with that reason.
 - At 1440p and above (2K and 4K), scaling uses `flags=lanczos`. When a shot has no AI upscale, "Local upscale" adds a
   light `unsharp`.
 - The hardware baseline is an RTX 3060, 32 GB of RAM and an NVMe SSD. The machine check compares this PC with it.
@@ -374,8 +417,10 @@ Finishing room → AI upscale → **This PC · free** (the cloud Topaz route sta
 
 ### 4.3 Screens from the server, with an offline copy (added 12 October 2026)
 
-`uiSource` gains **`"auto"`**, the new default. `"bundled"` and `"server"` stay as choices in File → Studio
-server…. Settings that only had the old default `"bundled"` (the user never chose it) move to `"auto"`.
+`uiSource` gains **`"auto"`**. Since 15 October it is **opt-in**: the default is `"bundled"` (the copy inside the app),
+and `"auto"` or `"server"` are chosen in File → Studio server…, which says plainly that they run the server's own
+code inside the app. A settings file with an unchosen `"auto"` / `"server"` (no `uiSourceChosen`) moves back to
+`"bundled"`.
 
 **Picking the screens.** In `auto`, the gateway serves the UI from, in this order:
 1. **The server's build**, if it's reachable, allowed and compatible.
@@ -513,7 +558,7 @@ npm run dist       # Windows installer (NSIS) in desktop/release, with the built
 ```
 
 - `TATVAM_SERVER` (default `http://localhost:8100`) sets the server on the first run; after that, File → Studio
-  server… changes it. `TATVAM_UI_DIR` points at another built UI, `TATVAM_USER_DATA` at another settings folder.
+  server… changes it. Off this PC and the local network the address must be `https://` (§4, trust boundaries). `TATVAM_UI_DIR` points at another built UI, `TATVAM_USER_DATA` at another settings folder.
 - The end-to-end test (`TATVAM_E2E=1`, see `desktop/test/e2e.test.ts`) syncs a cut, writes the EDL, renders it in 4K
   and uploads it to a running server.
 - CI runs the desktop typecheck and unit tests (job "Desktop app").
@@ -527,8 +572,15 @@ npm run dist       # Windows installer (NSIS) in desktop/release, with the built
 - **One-time setup:** a fine-grained personal access token with access to that repository only (permission
   **Contents: read and write**), saved as the Actions secret `DESKTOP_RELEASES_TOKEN`. Without it the release job
   stops with a message saying so. After adding it, run the Release workflow with `publish_tag` = that tag.
-- **Signing** uses the optional `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` secrets; without them the installer is
-  unsigned and Windows SmartScreen warns on first run.
+- **Signing** uses the optional `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` (or `CSC_LINK` / `CSC_KEY_PASSWORD`)
+  secrets, passed to electron-builder as `CSC_LINK` / `CSC_KEY_PASSWORD`; as soon as they exist every release is signed,
+  nothing else to change. Without them the installer is unsigned and Windows SmartScreen warns on first run.
+- **Update verification.** `desktop/electron-builder.yml` sets `win.verifyUpdateCodeSignature: true` and
+  `win.publisherName` (the certificate's subject CN; change it to match the certificate that is bought), so
+  electron-updater refuses an update whose Authenticode signature isn't that publisher's. **This only protects anything
+  once builds are signed**: an unsigned build has no signature to compare, so until then an update's integrity rests on
+  TLS to GitHub and the blockmap. `desktop/test/release-config.test.ts` keeps the two settings and the workflow's
+  signing variables in place.
 
 ## 7. Status (13 October 2026)
 

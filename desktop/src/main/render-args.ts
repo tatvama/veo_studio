@@ -142,11 +142,14 @@ export function atempoChain(speed: number): string {
 
 export type Family = "nvenc" | "qsv" | "amf" | "software";
 
-/** The fastest hardware H.264 encoder for intermediates (CQ 16), else x264 veryfast CRF 16. */
+/**
+ * The fastest hardware H.264 encoder for intermediates (CQ 16), else x264 veryfast CRF 16. The segments are thrown away
+ * after the join, so NVENC runs its quickest preset (p2): at CQ 16 the picture is the same for the final encode's purpose.
+ */
 export function intermediateEncoder(probe: Record<string, boolean>, prefer: EncoderPreference = "auto", cq = 16): { name: string; args: string[] } {
   const order: Family[] = prefer === "auto" ? ["nvenc", "qsv", "amf", "software"] : [prefer, "nvenc", "qsv", "amf", "software"];
   for (const fam of order) {
-    if (fam === "nvenc" && probe.h264_nvenc) return { name: "h264_nvenc", args: ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", String(cq), "-b:v", "0", "-profile:v", "high", "-pix_fmt", "yuv420p"] };
+    if (fam === "nvenc" && probe.h264_nvenc) return { name: "h264_nvenc", args: ["-c:v", "h264_nvenc", "-preset", "p2", "-rc", "vbr", "-cq", String(cq), "-b:v", "0", "-profile:v", "high", "-pix_fmt", "yuv420p"] };
     if (fam === "qsv" && probe.h264_qsv) return { name: "h264_qsv", args: ["-c:v", "h264_qsv", "-preset", "faster", "-global_quality", String(cq), "-pix_fmt", "nv12"] };
     if (fam === "amf" && probe.h264_amf) return { name: "h264_amf", args: ["-c:v", "h264_amf", "-quality", "speed", "-rc", "cqp", "-qp_i", String(cq), "-qp_p", String(cq), "-pix_fmt", "nv12"] };
     if (fam === "software") break;
@@ -155,6 +158,20 @@ export function intermediateEncoder(probe: Record<string, boolean>, prefer: Enco
 }
 
 export const AUDIO_INTERMEDIATE = ["-c:a", "aac", "-ar", "48000", "-ac", "2"];
+
+/**
+ * Input options that decode a source clip on the graphics card: `-hwaccel cuda` when the probe found NVENC (NVDEC is on
+ * the same card), else `-hwaccel d3d11va` on Windows when any other hardware encoder works. Without `-hwaccel_output_format`
+ * the decoded frames come back to system memory, so the CPU filter graphs (scale, crop, vidstab, LUTs, xfade) stay as
+ * they are: the decode is the win. Empty when off or when there is no hardware encoder.
+ */
+export function hwDecodeArgs(probe: Record<string, boolean>, enabled = true, platform: NodeJS.Platform = process.platform): string[] {
+  if (!enabled) return [];
+  if (probe.h264_nvenc || probe.hevc_nvenc) return ["-hwaccel", "cuda"];
+  const other = Object.entries(probe).some(([k, v]) => v && /_(qsv|amf)/.test(k));
+  if (other && platform === "win32") return ["-hwaccel", "d3d11va"];
+  return [];
+}
 
 export interface PresetDef {
   id: string; label: string; w: number; h: number; fps?: number; orientation: "project" | "vertical";
@@ -283,6 +300,8 @@ export interface SegmentCtx {
   trf?: string | null;
   /** plan.stabilize_filters.transform (with @@TRF@@). */
   stabTransform?: string;
+  /** Input options for the source clip (hwDecodeArgs): decode on the graphics card. */
+  hwaccel?: string[];
 }
 
 /** First pass of stabilising (backend normalize_clip, fx.stabilize). */
@@ -300,7 +319,7 @@ export function segmentArgs(seg: PlanSegment, ctx: SegmentCtx): string[] {
   const speed = Number(seg.speed || 1);
   const segLen = seg.seg_len;
   const stab = seg.stabilize && ctx.trf ? withTrf(ctx.stabTransform || STAB_TRANSFORM, ctx.trf) : "";
-  const args: string[] = ["-ss", f3(seg.trim_in), "-t", f3(segLen * speed + 0.5), "-i", ctx.src];
+  const args: string[] = [...(ctx.hwaccel ?? []), "-ss", f3(seg.trim_in), "-t", f3(segLen * speed + 0.5), "-i", ctx.src];
   const inputsAudio: string[] = [];
   let idx = 1;
   if (ctx.override) {

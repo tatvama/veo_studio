@@ -261,6 +261,9 @@ class Project(Base, Serializable):
     pronunciations: Mapped[Any] = mapped_column(JSON, default=dict)  # {term: how to say it}, applied before every voice call
     budget_cap_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     brief: Mapped[Any] = mapped_column(JSON, default=dict)
+    # type "edit" only: the Tatvam Editor edit's own id (also in brief.edit_id), so the edit's studio project is found
+    # with one indexed lookup (api/edits.py find_edit); db_migrate backfills it from the brief
+    edit_id: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
     story: Mapped[Any] = mapped_column(JSON, default=dict)  # series: logline, arc, episode outlines
     style_id: Mapped[int | None] = mapped_column(ForeignKey("styles.id"), nullable=True)
     brand_kit_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -524,6 +527,10 @@ class Job(Base, Serializable):
     requested_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
     approved_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
     run_after: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # the worker process that claimed it (workers/worker.py Worker.id) and when it last said the job is still alive:
+    # after a restart a worker resumes only its own jobs, and jobs whose worker went quiet (stale heartbeat)
+    worker_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

@@ -130,14 +130,14 @@ export function FxEditor({ shotId }: { shotId: number }) {
                   onChange={(v) => fx.transition && set("transition", { ...fx.transition, duration: v })} suffix="s" />
               </div>
               <div className="grid grid-cols-[repeat(auto-fill,minmax(92px,1fr))] gap-1.5">
-                <TransitionTile id="" label={t("Cut")} selected={!fx.transition} disabled={!editable} onPick={() => set("transition", undefined)} />
+                <TransitionTile type="" label={t("Cut")} selected={!fx.transition} disabled={!editable} onPick={() => set("transition", undefined)} />
               </div>
               {cat.transitions.map((g) => (
                 <div key={g.group}>
                   <p className="eyebrow mb-1.5">{t(g.group)}</p>
                   <div className="grid grid-cols-[repeat(auto-fill,minmax(92px,1fr))] gap-1.5">
                     {g.items.map((it) => (
-                      <TransitionTile key={it.id} id={it.id} label={t(it.label)} selected={fx.transition?.type === it.id} disabled={!editable}
+                      <TransitionTile key={it.id} type={it.id} label={t(it.label)} selected={fx.transition?.type === it.id} disabled={!editable}
                         onPick={() => set("transition", { type: it.id, duration: fx.transition?.duration ?? 0.5 })} />
                     ))}
                   </div>
@@ -280,18 +280,19 @@ function ToggleRow({ icon, label, checked, onChange, disabled }: { icon: ReactNo
 }
 
 /** A transition tile that plays a tiny A→B demo of itself on hover. */
-function TransitionTile({ id, label, selected, disabled, onPick }: { id: string; label: string; selected: boolean; disabled?: boolean; onPick: () => void }) {
+/** One transition preset; `type` is the transition's id in the catalogue ("" is a plain cut, which has no preview). */
+function TransitionTile({ type, label, selected, disabled, onPick }: { type: string; label: string; selected: boolean; disabled?: boolean; onPick: () => void }) {
   const [p, setP] = useState(0.35);
   const raf = useRef<number | null>(null);
   const play = () => {
-    if (!id) return;
+    if (!type) return;
     const t0 = performance.now();
     const loop = (now: number) => { setP(((now - t0) / 1100) % 1.25 > 1 ? 1 : ((now - t0) / 1100) % 1.25); raf.current = requestAnimationFrame(loop); };
     raf.current = requestAnimationFrame(loop);
   };
   const stop = () => { if (raf.current) cancelAnimationFrame(raf.current); raf.current = null; setP(0.35); };
   useEffect(() => stop, []);
-  const f = id ? transitionFrame(id, p) : { a: {}, b: { opacity: 0 }, bTop: true };
+  const f = type ? transitionFrame(type, p) : { a: {}, b: { opacity: 0 }, bTop: true };
   const layer = (s: CSSProperties, bg: string, z: number): CSSProperties => ({ ...s, position: "absolute", inset: 0, background: bg, zIndex: z });
   return (
     <button type="button" disabled={disabled} onClick={onPick} onMouseEnter={play} onMouseLeave={stop} onFocus={play} onBlur={stop}

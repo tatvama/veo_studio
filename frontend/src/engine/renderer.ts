@@ -54,8 +54,11 @@ export interface DrawOptions {
 }
 /** An effect instance's picture from earlier frames (EffectDef.temporal). */
 interface Hist { frame: number; prev: RenderTarget | null; cur: RenderTarget | null; used: number }
-/** An effect instance's person mask (EffectDef.segmentation). */
-interface SegMask { frame: number; uploads: number; tex: Texture; used: number }
+/** An effect instance's person mask (EffectDef.segmentation): the picture it was computed from (frame, uploads), and
+ *  in live mode whether a newer one is being computed off the frame path (`pending`, kicked at `at`). */
+interface SegMask { frame: number; uploads: number; tex: Texture; used: number; pending: boolean; at: number }
+/** Live mode computes a person mask at most this often (ms); the previous one shows until the new one lands. */
+const SEG_INTERVAL_MS = 100;
 /** Options of a thumbnail (Engine.renderThumbnail). */
 export interface ThumbOptions {
   /** The user's own picture instead of the sample one (the LUT and Mood browsers). */
@@ -122,8 +125,11 @@ export class Renderer {
   private customOf = new Map<string, CustomSource>();
   private texs = new Map<FrameSource, SrcTex>();
   private luts = new Map<string, { tex: Texture3D; lut: Lut3D; from: string | Lut3D }>();
-  private curveTex = new Map<string, Texture>();
-  private images = new Map<string, { bmp: ImageBitmap | null; tex: Texture | null }>();
+  /** Baked curve textures by their points (aged out with pruneTemporal once no frame uses them). */
+  private curveTex = new Map<string, { tex: Texture; used: number }>();
+  /** Effect image parameters: the encoded file (kept to decode again after a context loss), the decoded picture until
+   *  it is uploaded (then closed), and its texture. */
+  private images = new Map<string, { blob: Blob | null; bmp: ImageBitmap | null; tex: Texture | null }>();
   private noise: Texture | null = null;
   private clearTex: Texture | null = null;
   private whiteTex: Texture | null = null;
@@ -167,8 +173,11 @@ export class Renderer {
     this.eachClip(comp, (c) => { if (c.transitionIn?.type.startsWith("gl:")) gl = true; }, (tk) => { if (tk.transitions?.some((x) => x.type.startsWith("gl:"))) gl = true; });
     if (gl) await loadGl().catch(() => this.warnings.add("gl-transitions didn't load"));
     await Promise.all([this.loadLuts(comp, opts), this.loadImages(comp), this.prepareEffects(comp)]);
+    // the shaders the composition will ask for compile now (in the background with KHR_parallel_shader_compile) while
+    // the first frame's media loads, instead of one by one at their first draw
+    const warm = this.b.waitReady(this.warmShaders(comp), 1500);
     // the first frame's media
-    const waits: Promise<unknown>[] = [];
+    const waits: Promise<unknown>[] = [warm];
     this.visit(evaluate(comp, 0), this.rootCtx(this.w, this.h), 1, (cs, ctx) => {
       const s = this.sourceFor(cs.clip, ctx.path);
       if (s) waits.push(s.ready.catch((e) => this.warnings.add((e as Error).message)));
@@ -315,14 +324,26 @@ export class Renderer {
   private async loadImages(comp: Composition) {
     await Promise.all([...this.imagesOf(comp)].map(async (url) => {
       if (this.images.has(url)) return;
-      const slot: { bmp: ImageBitmap | null; tex: Texture | null } = { bmp: null, tex: null };
+      const slot: { blob: Blob | null; bmp: ImageBitmap | null; tex: Texture | null } = { blob: null, bmp: null, tex: null };
       this.images.set(url, slot);
       try {
         const r = await fetch(url, { credentials: "same-origin" });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        slot.bmp = await createImageBitmap(await r.blob());
+        slot.blob = await r.blob();
+        slot.bmp = await createImageBitmap(slot.blob);
+        if (this.images.get(url) !== slot) { slot.bmp.close(); slot.bmp = null; return; }  // pruned meanwhile
+        if (!this.b.lost) this.uploadImage(slot);
       } catch (e) { this.warnings.add(`Image ${url.slice(0, 60)} didn't load: ${(e as Error).message}`); }
     }));
+  }
+
+  /** Uploads an image parameter's decoded picture and closes it (the texture is the copy that stays). */
+  private uploadImage(im: { blob: Blob | null; bmp: ImageBitmap | null; tex: Texture | null }) {
+    if (!im.bmp) return;
+    im.tex ??= this.b.createTexture();
+    this.b.upload(im.tex, im.bmp, im.bmp.width, im.bmp.height);
+    im.bmp.close();
+    im.bmp = null;
   }
 
   /** Before a reload: release the media, LUTs and images the new composition doesn't use. */
@@ -339,7 +360,7 @@ export class Renderer {
       if (!looks.has(look) || this.useNative(look, comp, opts) || l.from !== (this.lutSource(look, comp, opts) ?? "")) { this.b.deleteTexture(l.tex); this.luts.delete(look); }
     }
     const imgs = this.imagesOf(comp);
-    for (const [u, im] of [...this.images]) if (!imgs.has(u)) { if (im.tex) this.b.deleteTexture(im.tex); im.bmp?.close(); this.images.delete(u); }
+    for (const [u, im] of [...this.images]) if (!imgs.has(u)) { if (im.tex) this.b.deleteTexture(im.tex); im.bmp?.close(); im.bmp = null; this.images.delete(u); }
   }
 
   private sourceFor(c: Clip, path: string, create = true): FrameSource | null {
@@ -499,18 +520,18 @@ export class Renderer {
     const t0 = performance.now();
     this.manage(t);
     const fs = evaluate(this.comp, t);
-    const jobs: { s: FrameSource; t: number }[] = [];
+    // one request per source (the last time wins, as uploading in order did): every decoder seeks at the same time
+    const jobs = new Map<FrameSource, number>();
     this.visit(fs, this.rootCtx(this.w, this.h), 1, (cs, ctx) => {
       const s = this.sourceFor(cs.clip, ctx.path);
       if (!s) return;
       if (s instanceof TitleSource) s.size(ctx.W, ctx.H, ctx.unit);
-      jobs.push({ s, t: cs.sourceTime });
+      jobs.set(s, cs.sourceTime);
     });
-    for (const j of jobs) {
-      await j.s.ready.catch(() => undefined);
-      this.upload(j.s, await j.s.exact(j.t));
-    }
+    const frames = await Promise.all([...jobs].map(async ([s, st]) => { await s.ready.catch(() => undefined); return s.exact(st); }));
     if (this.b.lost) throw new Error("The graphics card reset (WebGL context lost)");
+    let i = 0;
+    for (const s of jobs.keys()) this.upload(s, frames[i++]);
     this.draw(fs, this.w, this.h);
     this.present();
     this.stats.lastMs = performance.now() - t0;
@@ -521,10 +542,25 @@ export class Renderer {
     this.rw = w; this.rh = h;
     this.b.tick();
     if (++this.frames % 90 === 0) { this.b.trimOld(240); this.pruneTemporal(240); }
-    const acc = this.drawComp(this.rootCtx(w, h), fs, !this.comp?.transparent);
+    let acc: RenderTarget;
+    try { acc = this.drawComp(this.rootCtx(w, h), fs, !this.comp?.transparent); }
+    catch (e) {
+      // a shader that failed to compile or an incomplete target: the frame's unreleased targets go back to the pool
+      // (the ones kept on purpose stay: histories, mattes, converted video pictures)
+      this.b.reclaim(this.retained());
+      throw e;
+    }
     this.b.release(this.frame);
     this.frame = acc;
     return acc;
+  }
+
+  /** Render targets the renderer keeps across frames (never to be reclaimed after a failed frame). */
+  private *retained(): Iterable<RenderTarget | null | undefined> {
+    yield this.frame;
+    for (const h of this.history.values()) { yield h.prev; yield h.cur; }
+    yield* this.mattes.values();
+    for (const st of this.texs.values()) yield st.rt;
   }
 
   present(): void {
@@ -617,13 +653,16 @@ export class Renderer {
       sc = 1;
     }
     const aw = Math.abs(r.w), ah = Math.abs(r.h);
-    if (opacity <= 1e-4 || aw < 0.5 || ah < 0.5) { b.release(pic.own); return null; }
+    // a degenerate placement (a NaN keyframe, a zero-size picture) draws nothing rather than asking for a NaN target
+    const finite = Number.isFinite(aw) && Number.isFinite(ah) && Number.isFinite(r.cx) && Number.isFinite(r.cy) && Number.isFinite(r.rot) && Number.isFinite(opacity);
+    if (!finite || opacity <= 1e-4 || aw < 0.5 || ah < 0.5) { b.release(pic.own); return null; }
     const maxS = Math.min(b.maxTextureSize, 2 * Math.max(W, H, 1024));
     let k = Math.min(1, maxS / aw, maxS / ah);
     // an animated scale would ask for a new target size every frame: round those up to 16 px (rendered a little
     // larger, drawn into the exact rectangle); a still size stays exact (a plain clip is drawn 1:1)
     const q = generic && isAnimated(c.motion?.scale) ? 16 : 1;
     const pw = Math.max(2, Math.min(maxS, Math.ceil((aw * k) / q) * q)), ph = Math.max(2, Math.min(maxS, Math.ceil((ah * k) / q) * q));
+    if (!(pw > 0 && ph > 0) || !Number.isFinite(pw) || !Number.isFinite(ph)) { b.release(pic.own); return null; }
     k = pw / aw;
     const px = ctx.px * k * sc;
     let rt = this.renderClip(cs, pw, ph, true, false, { pic, fill: generic, px, ctx, path: ctx.path });
@@ -732,9 +771,10 @@ export class Renderer {
   }
 
   private curveTexture(key: string, texels: () => Float32Array): Texture {
-    let t = this.curveTex.get(key);
-    if (!t) { t = this.b.createTexture(); this.b.uploadData(t, 256, 1, texels(), "rgba16f"); this.curveTex.set(key, t); }
-    return t;
+    let e = this.curveTex.get(key);
+    if (!e) { const tex = this.b.createTexture(); this.b.uploadData(tex, 256, 1, texels(), "rgba16f"); e = { tex, used: 0 }; this.curveTex.set(key, e); }
+    e.used = this.frames;
+    return e.tex;
   }
 
   private curvesFor(c: Clip): Texture | null {
@@ -887,7 +927,7 @@ export class Renderer {
       if (p.type === "curve") { const pts = v[p.name]; out[p.name] = this.curveTexture(`p${p.periodic ? "w" : ""}:${JSON.stringify(pts)}`, () => curveTexels(pts, !!p.periodic)); }
       else if (p.type === "image") {
         const im = this.images.get(String(v[p.name] ?? ""));
-        if (im?.bmp && !im.tex) { im.tex = this.b.createTexture(); this.b.upload(im.tex, im.bmp, im.bmp.width, im.bmp.height); }
+        if (im?.bmp && !im.tex) this.uploadImage(im);  // decoded again after a context loss
         out[p.name] = im?.tex ?? this.white();
       }
     }
@@ -967,11 +1007,16 @@ export class Renderer {
     };
   }
 
-  /** The person mask of an effect's input (MediaPipe): computed once per frame (exact) or per displayed frame while
-   *  the picture changes (live), reused while paused. White (everything a person) until the model has loaded. */
+  /**
+   * The person mask of an effect's input (MediaPipe). Export (and thumbnails): computed synchronously, once per frame.
+   * Live: the frame shows the last mask and, at most every SEG_INTERVAL_MS while the picture changes, a small copy of
+   * the input is read back and segmented in a task after the frame (the model runs on the main thread, but no longer
+   * inside every draw); the new mask replaces the old when it lands, and a paused frame keeps its mask. White
+   * (everything a person) until the model has loaded.
+   */
   private personMask(key: string, frame: number, input: RenderTarget): Texture {
-    const e = this.segs.get(key);
-    const live = this.mode === "live";
+    let e = this.segs.get(key);
+    const live = this.mode === "live" && !key.startsWith("thumb:");
     if (e) e.used = this.frames;
     if (e && e.frame === frame && (!live || e.uploads === this.stats.uploads)) return e.tex;
     const seg = segmenterReady();
@@ -980,6 +1025,35 @@ export class Renderer {
       void loadSegmenter().catch(() => undefined);
       return e?.tex ?? this.white();
     }
+    if (!e) {
+      const tex = this.b.createTexture();
+      this.b.uploadData(tex, 1, 1, new Uint8Array([255]), "r8");
+      e = { frame: NaN, uploads: -1, tex, used: this.frames, pending: false, at: 0 };
+      this.segs.set(key, e);
+    }
+    const mask = e;
+    if (!live) {
+      const m = this.segmentNow(this.segInput(input));
+      if (m) this.b.uploadData(mask.tex, m.w, m.h, m.data, "r8");
+      mask.frame = frame; mask.uploads = this.stats.uploads;
+      return mask.tex;
+    }
+    const now = performance.now();
+    if (mask.pending || now - mask.at < SEG_INTERVAL_MS) return mask.tex;
+    mask.pending = true; mask.at = now;
+    const img = this.segInput(input), uploads = this.stats.uploads;
+    setTimeout(() => {
+      mask.pending = false;
+      if (this.segs.get(key) !== mask || this.b.lost) return;  // pruned, unloaded or reset meanwhile
+      const m = this.segmentNow(img);
+      if (m) this.b.uploadData(mask.tex, m.w, m.h, m.data, "r8");
+      mask.frame = frame; mask.uploads = uploads;
+    }, 0);
+    return mask.tex;
+  }
+
+  /** A small copy of the input as ImageData (what the segmenter reads). */
+  private segInput(input: RenderTarget): ImageData {
     const aspect = input.h / Math.max(input.w, 1);
     const sw = 256, sh = Math.max(16, Math.min(512, Math.round(256 * aspect)));
     const small = this.b.target(sw, sh, { format: "rgba8" });
@@ -987,19 +1061,84 @@ export class Renderer {
     const px = new Uint8Array(sw * sh * 4);
     this.b.read(small, 0, 0, sw, sh, px);
     this.b.release(small);
-    let m: { data: Uint8Array; w: number; h: number } | null = null;
-    try { m = segmentPerson(new ImageData(new Uint8ClampedArray(px.buffer), sw, sh)); } catch (err) { this.warnings.add(`Segmentation failed: ${(err as Error).message}`); }
-    const tex = e?.tex ?? this.b.createTexture();
-    if (m) this.b.uploadData(tex, m.w, m.h, m.data, "r8");
-    else if (!e) this.b.uploadData(tex, 1, 1, new Uint8Array([255]), "r8");
-    this.segs.set(key, { frame, uploads: this.stats.uploads, tex, used: this.frames });
-    return tex;
+    return new ImageData(new Uint8ClampedArray(px.buffer), sw, sh);
   }
 
-  /** Drops histories and masks no frame used for `age` frames. */
+  private segmentNow(img: ImageData): { data: Uint8Array; w: number; h: number } | null {
+    try { return segmentPerson(img); } catch (err) { this.warnings.add(`Segmentation failed: ${(err as Error).message}`); return null; }
+  }
+
+  /** Drops histories, masks and curve textures no frame used for `age` frames. */
   private pruneTemporal(age: number) {
     for (const [k, h] of [...this.history]) if (this.frames - h.used > age) { this.b.release(h.prev); this.b.release(h.cur); this.history.delete(k); }
     for (const [k, m] of [...this.segs]) if (this.frames - m.used > age) { this.b.deleteTexture(m.tex); this.segs.delete(k); }
+    for (const [k, c] of [...this.curveTex]) if (this.frames - c.used > age) { this.b.deleteTexture(c.tex); this.curveTex.delete(k); }
+  }
+
+  // ── shader pre-warm ────────────────────────────────────────────────────────
+  /**
+   * Starts compiling the programs the composition is likely to draw with: the fixed passes, each clip's clip shader
+   * (its fx flags, as renderClip would set them, the fade variant for main-track fades), its registry effects' passes
+   * and the transitions it uses. A guess that misses costs one unused compile; nothing here changes what is drawn.
+   */
+  private warmShaders(comp: Composition): Program[] {
+    const progs: Program[] = [];
+    const seen = new Set<string>();
+    const add = (sh: { name: string; source: string } | null | undefined, glsl1 = false) => {
+      if (!sh || seen.has(sh.source)) return;
+      seen.add(sh.source);
+      try { progs.push(this.b.program(sh.name, sh.source, { glsl1 })); } catch { /* a bad custom shader: reported when drawn */ }
+    };
+    add({ name: "composite", source: COMPOSITE }); add({ name: "present", source: PRESENT }); add({ name: "copy", source: COPY }); add({ name: "fade", source: FADE });
+    const exact = this.mode === "exact";
+    const transitions = new Set<string>();
+    this.eachClip(comp, (c, _path, tk) => {
+      if (c.transitionIn?.type) transitions.add(c.transitionIn.type);
+      const type = c.type ?? "media";
+      if (type !== "adjustment" && type !== "nested") {
+        const fx = c.fx ?? {};
+        const look = fx.look && fx.look !== "none" && (fx.lut_strength ?? 1) > 1e-3 ? fx.look : undefined;
+        const native = look && this.useNative(look) ? this.lookCodeOf(look) : undefined;
+        const lut = look && !native ? this.luts.get(look) : undefined;
+        const plan = fxPlan(fx, !!lut);
+        const still = type !== "media" || c.media.kind === "image";
+        const srcm = still && comp.stillsMatrix !== "bt709";
+        const rgbFilters = plan.lut || !!native || !!plan.adjust.cb || plan.adjust.vibrance !== undefined;
+        // stills see FFmpeg's BT.601 RGB; exact-mode video does too once its planes are decoded (both variants then)
+        const ffms = comp.ffmpegRgb !== false && rgbFilters ? (still ? [true] : exact ? [false, true] : [false]) : [false];
+        const layer = tk.kind !== "main" || !!c.motion;
+        const fades = !layer && ((fx.fade_in ?? 0) > 0 || (fx.fade_out ?? 0) > 0) ? [false, true] : [false];
+        for (const ffm of ffms) {
+          const grade = { ...this.gradeFlags(plan), ffm, nlook: native };
+          for (const fade of fades) {
+            const fin = { vig: !!plan.adjust.vignette, grain: !!plan.adjust.grain, mask: plan.mask, fade };
+            if (!plan.neighbourhood) add(this.clipProgram({ src: true, srcm, input: false, ...grade, ...fin }, look));
+            else {
+              add(this.clipProgram({ src: true, srcm, input: false, ...grade }, look));
+              add(this.clipProgram({ src: fin.mask, srcm: fin.mask && srcm, input: true, glowAdd: plan.glow, ...fin }));
+            }
+          }
+        }
+        if (plan.neighbourhood) {
+          if (plan.glow) { add({ name: "glow-extract", source: GLOW_EXTRACT }); add({ name: "blur", source: BLUR }); add(this.clipProgram({ src: false, input: true, glowAdd: true })); }
+          if (plan.adjust.sharpen) add({ name: "unsharp", source: UNSHARP });
+          if (plan.adjust.blur) add({ name: "gblur", source: GBLUR });
+        }
+      } else if (type === "adjustment") {
+        const plan = fxPlan(c.fx, false);
+        add(this.clipProgram({ src: true, srcm: false, input: false, ...this.gradeFlags(plan), ffm: false, vig: !!plan.adjust.vignette, grain: !!plan.adjust.grain, mask: plan.mask, fade: false }, c.fx?.look));
+      }
+      for (const e of c.effects ?? []) {
+        if (!e || e.enabled === false) continue;
+        const def = getEffect(e.type);
+        if (!def || def.render) continue;
+        for (let k = 0; k < passesOf(def).length; k++) add(this.fxShader(def, k));
+        if (e.mask && (e.mask.w ?? 0) > 0 && (e.mask.h ?? 0) > 0) add({ name: "mask-mix", source: MASK_MIX });
+      }
+    }, (tk) => { for (const x of tk.transitions ?? []) transitions.add(x.type); });
+    for (const t of transitions) { const tp = transitionProgram(t); if (tp) add({ name: tp.name, source: tp.source }, tp.glsl1); }
+    if (exact) add({ name: "yuv2rgb", source: YUV2RGB });
+    return progs;
   }
 
   // ── luma mattes (tv: pack) ─────────────────────────────────────────────────
@@ -1317,7 +1456,11 @@ export class Renderer {
     this.curveTex.clear(); this.rand.clear();
     this.mattes.clear(); this.history.clear(); this.segs.clear();
     this.noise = null; this.clearTex = null; this.whiteTex = null; this.samples = null;
-    for (const im of this.images.values()) im.tex = null;
+    // image parameters decode again from their files; the next frame uploads them
+    for (const im of this.images.values()) {
+      im.tex = null;
+      if (im.blob && !im.bmp) { const slot = im; void createImageBitmap(im.blob).then((b) => { if (slot.tex || slot.bmp || ![...this.images.values()].includes(slot)) b.close(); else slot.bmp = b; }).catch(() => undefined); }
+    }
     this.frame = null;
     this.stats.restores++;
     this.warnings.add("The graphics card reset; the engine restored its textures");
@@ -1327,11 +1470,11 @@ export class Renderer {
     for (const k of [...this.sources.keys()]) this.dropSource(k);
     for (const l of this.luts.values()) this.b.deleteTexture(l.tex);
     this.luts.clear();
-    for (const t of this.curveTex.values()) this.b.deleteTexture(t);
+    for (const c of this.curveTex.values()) this.b.deleteTexture(c.tex);
     this.curveTex.clear();
     for (const t of this.rand.values()) this.b.deleteTexture(t);
     this.rand.clear();
-    for (const im of this.images.values()) { if (im.tex) this.b.deleteTexture(im.tex); im.bmp?.close(); }
+    for (const im of this.images.values()) { if (im.tex) this.b.deleteTexture(im.tex); im.bmp?.close(); im.bmp = null; }
     this.images.clear();
     for (const h of this.history.values()) { this.b.release(h.prev); this.b.release(h.cur); }
     this.history.clear();

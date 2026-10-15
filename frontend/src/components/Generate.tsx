@@ -88,10 +88,11 @@ export function GenerateProvider({ children }: { children: ReactNode }) {
       {children}
       <Modal
         open={!!pending}
+        closable={!busy}
         onClose={() => setPending(null)}
         title={<span className="flex items-center gap-2"><Coins className="size-4 text-accent-ink" />{pending?.title}</span>}
         footer={<>
-          <Button variant="ghost" onClick={() => setPending(null)}>{t("Cancel")}<Key>Esc</Key></Button>
+          <Button variant="ghost" disabled={busy} onClick={() => setPending(null)}>{t("Cancel")}<Key>Esc</Key></Button>
           {/* focus lands here when the dialog opens, so Enter confirms */}
           <Button variant="primary" data-autofocus loading={busy} onClick={confirm}>
             {est?.budget.ok ? t("Generate · {usd}", { usd: usd(est.total_usd) }) : t("Request approval")}

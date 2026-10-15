@@ -5,6 +5,7 @@
  */
 import "../audiofx/audiofx.css";
 import { useEffect, useRef, useState } from "react";
+import { useVisible } from "../moods/ui";
 import { mixer } from "../playback/audio";
 import { setFocus } from "../store";
 
@@ -14,17 +15,30 @@ const GRID_DB = [-80, -60, -40, -20];
 const fLabel = (f: number) => (f >= 1000 ? `${f / 1000}k` : String(f));
 
 export default function Spectrum() {
+  const root = useRef<HTMLDivElement>(null);
   const cv = useRef<HTMLCanvasElement>(null);
+  const visible = useVisible(root);
   const [hold, setHold] = useState(true);
   const [on, setOn] = useState(!!mixer.analyser());
+  // off screen (a hidden tab) nothing is drawn; without an analyser (the context wakes on the first play) the grid is
+  // drawn once and the mixer is polled for one, instead of a requestAnimationFrame loop running all the while
   useEffect(() => {
+    if (!visible) return;
+    if (!mixer.analyser()) {
+      const id = window.setInterval(() => { if (mixer.analyser()) setOn(true); }, 500);
+      return () => window.clearInterval(id);
+    }
+    return undefined;
+  }, [visible, on]);
+  useEffect(() => {
+    if (!visible) return;
     let raf = 0, last = performance.now();
     let data = new Float32Array(0), peak = new Float32Array(0);
     const draw = (now: number) => {
-      raf = requestAnimationFrame(draw);
       const c = cv.current, an = mixer.analyser();
       if (!c) return;
-      if (!!an !== on) setOn(!!an);
+      if (!!an !== on) { setOn(!!an); if (!an) return; }
+      if (an) raf = requestAnimationFrame(draw);
       const dpr = window.devicePixelRatio || 1;
       const W = Math.max(1, Math.round(c.clientWidth * dpr)), H = Math.max(1, Math.round(c.clientHeight * dpr));
       if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
@@ -83,9 +97,9 @@ export default function Spectrum() {
     };
     raf = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(raf);
-  }, [hold, on]);
+  }, [hold, on, visible]);
   return (
-    <div className="pn" onPointerDown={() => setFocus("mixer")}>
+    <div ref={root} className="pn" onPointerDown={() => setFocus("mixer")}>
       <div className="ed-bar gap-2">
         <span className="text-xs font-medium">Spectrum</span>
         <label className="ml-auto flex items-center gap-1 text-2xs text-mute"><input type="checkbox" checked={hold} onChange={(e) => setHold(e.target.checked)} />Peak hold</label>

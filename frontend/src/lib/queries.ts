@@ -79,8 +79,8 @@ export const useAudit = () => useQuery({ queryKey: ["audit"], queryFn: () => api
 export const usePrefs = () => useQuery({ queryKey: ["prefs"], queryFn: () => api.get<Prefs>("/api/me/prefs"), staleTime: 60_000 });
 export const useReviewLinks = (xid: number | null) =>
   useQuery({ queryKey: ["review-links", xid], queryFn: () => api.get<ReviewLinkRow[]>(`/api/exports/${xid}/review-links`), enabled: !!xid });
-export const useBoard = (eid: number | undefined) =>
-  useQuery({ queryKey: ["board", eid], queryFn: () => api.get<import("./types").Board>(`/api/episodes/${eid}/board`), enabled: !!eid });
+export const useBoard = (eid: number | undefined, opts: { refetchInterval?: number | false } = {}) =>
+  useQuery({ queryKey: ["board", eid], queryFn: () => api.get<import("./types").Board>(`/api/episodes/${eid}/board`), enabled: !!eid, refetchInterval: opts.refetchInterval ?? false });
 export const useHookInsights =() => useQuery({ queryKey: ["hook-insights"], queryFn: () => api.get<HookInsight[]>("/api/insights/hooks") });
 
 // ── MCP access ───────────────────────────────────────────────────────────────

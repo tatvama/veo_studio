@@ -6,8 +6,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  atempoChain, concatList, draftDims, escPath, finalArgs, finalEncoder, fitFilter, gpuFinalArgs, intermediateEncoder, mixArgs, musicBedArgs, overlayArgs, presetDims, presetList, PRESETS, segmentArgs, STAB_TRANSFORM, stabilizeDetectArgs, stepWeights, stillArgs, substituteLuts, type PlanSegment, type RenderPlan, uhdVf, xfadeArgs,
+  atempoChain, concatList, draftDims, escPath, finalArgs, finalEncoder, fitFilter, gpuFinalArgs, hwDecodeArgs, intermediateEncoder, mixArgs, musicBedArgs, overlayArgs, presetDims, presetList, PRESETS, segmentArgs, STAB_TRANSFORM, stabilizeDetectArgs, stepWeights, stillArgs, substituteLuts, type PlanSegment, type RenderPlan, uhdVf, xfadeArgs,
 } from "../src/main/render-args.ts";
+import { proxyArgs } from "../src/main/proxies.ts";
 import { frameBytes, gpuJob, isTenBitEncoder, planKeys } from "../src/main/render.ts";
 
 /** Python prints -3.0dB / d=1.0 where JS prints -3dB / d=1: the same to FFmpeg. */
@@ -42,6 +43,24 @@ test("helpers: escaping, LUT marks, atempo, fit", () => {
   assert.equal(atempoChain(0.25), "atempo=0.5,atempo=0.5000");
   assert.equal(fitFilter(1920, 1080), "scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,setsar=1");
   assert.match(fitFilter(3840, 2160), /increase:flags=lanczos,crop/);
+});
+
+test("hardware decode: cuda with NVENC, d3d11va for other hardware encoders on Windows, nothing when off or software-only; input options go first", () => {
+  assert.deepEqual(hwDecodeArgs(NV), ["-hwaccel", "cuda"]);
+  assert.deepEqual(hwDecodeArgs({ hevc_nvenc: true }), ["-hwaccel", "cuda"]);
+  assert.deepEqual(hwDecodeArgs({ h264_qsv: true, libx264: true }, true, "win32"), ["-hwaccel", "d3d11va"]);
+  assert.deepEqual(hwDecodeArgs({ h264_amf: true }, true, "linux"), []);
+  assert.deepEqual(hwDecodeArgs(NONE), []);
+  assert.deepEqual(hwDecodeArgs(NV, false), []);
+  const ctx = { w: 1920, h: 1080, fps: 24, src: "s.mp4", out: "o.mp4", enc: [], hasAudio: false, luts: {}, hwaccel: ["-hwaccel", "cuda"] };
+  const a = segmentArgs(seg(), ctx);
+  assert.deepEqual(a.slice(0, 8), ["-hwaccel", "cuda", "-ss", "0.200", "-t", "6.500", "-i", "s.mp4"], "before the clip's own input options and -i");
+  assert.deepEqual(segmentArgs(seg(), { ...ctx, hwaccel: [] }).slice(0, 2), ["-ss", "0.200"]);
+  assert.equal(a.indexOf("-hwaccel"), 0, "the audio inputs that follow are not touched");
+  assert.equal(a.filter((x) => x === "-hwaccel").length, 1);
+  const p = proxyArgs("in.mov", "out.mp4", true, 1080, ["-hwaccel", "cuda"]);
+  assert.deepEqual(p.slice(0, 4), ["-hwaccel", "cuda", "-i", "in.mov"]);
+  assert.deepEqual(proxyArgs("in.mov", "out.mp4", true).slice(0, 2), ["-i", "in.mov"]);
 });
 
 test("uhdVf adds lanczos to every fixed-size scale at 2160p and unsharp after the framing", () => {
@@ -110,7 +129,8 @@ test("join, sound layers, music bed and picture layers match the server", () => 
 });
 
 test("encoders: intermediates and per-preset finals follow NVENC → QSV → AMF → software", () => {
-  assert.deepEqual(intermediateEncoder(NV).args, ["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", "16", "-b:v", "0", "-profile:v", "high", "-pix_fmt", "yuv420p"]);
+  assert.deepEqual(intermediateEncoder(NV).args, ["-c:v", "h264_nvenc", "-preset", "p2", "-rc", "vbr", "-cq", "16", "-b:v", "0", "-profile:v", "high", "-pix_fmt", "yuv420p"],
+    "throwaway intermediates take NVENC's quickest preset");
   assert.deepEqual(intermediateEncoder(NONE).args, ["-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p"]);
   assert.equal(intermediateEncoder({ h264_qsv: true }).name, "h264_qsv");
   assert.equal(intermediateEncoder(NV, "software").name, "libx264");

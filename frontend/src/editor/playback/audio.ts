@@ -14,6 +14,7 @@ import { generatorKey, renderGenerator } from "../audiofx/generators";
 import { clipGainCurve, fxPlan, isCacheFx, sampleAt, valuesAt, type ClipFx, type FxPlan, type FxRef, type GeneratorClip } from "../audiofx/plan";
 import { sampleKeys, type AudioClipPlan, type AudioMix } from "../model/toComposition";
 import { project } from "../store";
+import { ByteLru } from "./lru";
 
 interface TrackNode { gain: GainNode; pan: StereoPannerNode; fx: FxChain; an: AnalyserNode }
 interface Voice { el: HTMLAudioElement; src: MediaElementAudioSourceNode; fx: FxChain; gain: GainNode; pan: StereoPannerNode; url: string; cached: boolean; trackId: string; plan: AudioClipPlan; lastUse: number }
@@ -31,6 +32,9 @@ interface GenVoice { buf: AudioBuffer | null; key: string; node: AudioBufferSour
 const decoded = new Map<string, Promise<AudioBuffer | null>>();
 const POOL = 24;
 const MAX_GEN_S = 600;
+/** Rendered generator sounds kept, in bytes (a 600 s mono buffer at 48 kHz is 115 MB; a count cap let 16 of them pile up). */
+const GEN_BUDGET = 256 * 1024 * 1024;
+const bufferBytes = (b: AudioBuffer) => b.length * b.numberOfChannels * 4;
 
 /** The master meters: BS.1770 loudness (LUFS), true peak (dBTP), sample peak (dBFS) and phase correlation. */
 export interface Loudness { m: number; s: number; i: number; tp: number; tpNow: number; peak: number; corr: number }
@@ -50,7 +54,7 @@ export class Mixer {
   private voices = new Map<string, Voice>();
   private revs = new Map<string, RevVoice>();
   private gens = new Map<string, GenVoice>();
-  private genBufs = new Map<string, AudioBuffer>();
+  private genBufs = new ByteLru<AudioBuffer>(GEN_BUDGET, bufferBytes);
   private mix: AudioMix | null = null;
   private fx: FxPlan = { fps: 25, clips: new Map(), tracks: new Map(), master: [], generators: [] };
   private seqId = "";
@@ -287,7 +291,6 @@ export class Mixer {
         b = this.ctx.createBuffer(1, data.length, this.ctx.sampleRate);
         b.copyToChannel(data as Float32Array<ArrayBuffer>, 0);
         this.genBufs.set(key, b);
-        if (this.genBufs.size > 16) this.genBufs.delete(this.genBufs.keys().next().value as string);
       }
       v.buf = b;
     }

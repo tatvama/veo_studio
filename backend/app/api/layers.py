@@ -1,6 +1,7 @@
 """Timeline layers: extra video & audio tracks over the shots, and the media they use."""
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any
 
@@ -80,18 +81,23 @@ async def upload_media(eid: int, file: UploadFile = File(...), user: User = Depe
         raise HTTPException(400, f"That file is too large (max {max_mb} MB for {kind})")
     st = get_storage()
     folder = f"projects/{e.project_id}/layers"
-    rel = st.save_bytes(f"{folder}/{uuid.uuid4().hex[:12]}.{ext}", data)
-    path = st.abs(rel)
-    try:
-        duration = 0.0 if kind == "image" else ff.duration(path)
-    except Exception:
-        raise HTTPException(400, "Couldn't read that file — is it a valid video / sound / picture?")
-    thumb = ""
-    if kind in ("video", "image"):
+
+    def ingest() -> tuple[str, float, str]:  # disk writes and FFmpeg probes: in a thread, off the event loop
+        rel = st.save_bytes(f"{folder}/{uuid.uuid4().hex[:12]}.{ext}", data)
+        path = st.abs(rel)
         try:
-            thumb = st.save_file(f"{folder}/{path.stem}.thumb.jpg", ff.thumbnail(path, path.with_suffix(".thumb.jpg")))
+            duration = 0.0 if kind == "image" else ff.duration(path)
         except Exception:
-            thumb = ""
+            raise HTTPException(400, "Couldn't read that file — is it a valid video / sound / picture?")
+        thumb = ""
+        if kind in ("video", "image"):
+            try:
+                thumb = st.save_file(f"{folder}/{path.stem}.thumb.jpg", ff.thumbnail(path, path.with_suffix(".thumb.jpg")))
+            except Exception:
+                thumb = ""
+        return rel, duration, thumb
+
+    rel, duration, thumb = await asyncio.to_thread(ingest)
     item = {"src": rel, "kind": kind, "name": name[:80], "duration": round(duration, 3), "thumb": thumb}
     L = dict(e.layers or {})
     L["media"] = [*(L.get("media") or []), item]  # the library doesn't bump rev: it never conflicts with an edit

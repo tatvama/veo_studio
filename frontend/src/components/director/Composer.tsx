@@ -120,7 +120,7 @@ export function Composer({ value, onChange, onSend, onPick, sending, canEdit, se
             placeholder={t("Ask the Director…")}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); onSend(); }
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); if (!sending) onSend(); }
             }}
             className="block max-h-[168px] min-h-9 min-w-0 flex-1 resize-none bg-transparent py-1.5 text-sm leading-relaxed text-ink outline-none placeholder:text-dim"
           />

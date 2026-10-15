@@ -6,6 +6,7 @@
  */
 import { existsSync, mkdirSync, promises as fsp, readFileSync, statfsSync } from "node:fs";
 import path from "node:path";
+import { isInside } from "./paths.ts";
 import type { OfflineDb, OfflineStore } from "./gateway.ts";
 import { Config, writeFileAtomic } from "./config.ts";
 import { Mirror } from "./mirror.ts";
@@ -237,7 +238,7 @@ export class Library implements OfflineStore {
     }
     if (what.includes("renders")) {
       for (const f of uploadedRenders) {
-        if (!path.resolve(f).toLowerCase().startsWith(path.resolve(dir, "Renders").toLowerCase())) continue;
+        if (!isInside(path.join(dir, "Renders"), f)) continue; // only renders of this project's Renders folder are ever removed
         try {
           removed += (await fsp.stat(f)).size;
           await fsp.rm(f, { force: true });

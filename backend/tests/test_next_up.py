@@ -448,7 +448,8 @@ def test_auto_registration_refresh_and_remove(client):
         _reset("byteplus_auto_register")
     reg = ok(c.post(f"/api/characters/{cid}/byteplus/refresh", headers=H))
     assert reg["status"] == "ready" and reg["checked_at"]
-    assert ok(c.delete(f"/api/characters/{cid}/byteplus", headers=H))["removed"] == 1
+    removed = ok(c.delete(f"/api/characters/{cid}/byteplus", headers=H))["removed"]
+    assert removed == 1
     ch = ok(c.get(f"/api/characters/{cid}"))
     assert ch["seedance_ready"] is False and not (ch.get("provider_assets") or {}).get("byteplus")
 
