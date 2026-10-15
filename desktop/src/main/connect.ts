@@ -71,7 +71,7 @@ footer{display:flex;justify-content:space-between;align-items:center;margin-top:
 <h1>Studio server</h1><p>The Tatvam server this app works with. Your login, approvals and costs live there.</p>
 <div id="first" class="note warn" style="display:none"></div>
 <label for="url">Server address</label>
-<div class="row"><input id="url" type="text" spellcheck="false" placeholder="https://studio.example.com (http:// only for a server on this PC)"><button id="test">Test</button></div>
+<div class="row"><input id="url" type="text" spellcheck="false" placeholder="https://studio.example.com (http:// only on this PC or the local network)"><button id="test">Test</button></div>
 <div id="testNote" class="note" role="status"></div>
 <label id="uiLabel">Screens</label>
 <div class="seg" role="radiogroup" aria-labelledby="uiLabel">

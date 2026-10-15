@@ -18,12 +18,11 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync, promises as fsp, readFileSync, statSync } from "node:fs";
-import net from "node:net";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { UiSource, UiStatus } from "../shared/types.ts";
-import { writeFileAtomic } from "./config.ts";
+import { allowsPlainHttp, writeFileAtomic } from "./config.ts";
 
 export interface UiManifestFile { path: string; size: number; sha256: string }
 export interface UiManifest { build: string; version: string; built_at: string; requires_desktop: string; files: UiManifestFile[] }
@@ -51,14 +50,6 @@ export function compareVersions(a: string, b: string): number {
   return 0;
 }
 
-function ipv4Private(ip: string): "loopback" | "private" | null {
-  const p = ip.split(".").map(Number);
-  if (p.length !== 4 || p.some((x) => !Number.isInteger(x) || x < 0 || x > 255)) return null;
-  if (p[0] === 127) return "loopback";
-  if (p[0] === 10 || (p[0] === 172 && p[1] >= 16 && p[1] <= 31) || (p[0] === 192 && p[1] === 168)) return "private";
-  return null;
-}
-
 /**
  * May screens be fetched from this server? HTTPS anywhere; plain HTTP only from loopback (127/8, ::1, localhost) or a
  * private network (10/8, 172.16/12, 192.168/16, fc00::/7, *.local).
@@ -68,18 +59,7 @@ export function originRule(serverUrl: string): { ok: boolean; origin?: string; r
   try { u = new URL(serverUrl); } catch { return { ok: false, reason: "The server address isn't valid" }; }
   if (u.protocol !== "https:" && u.protocol !== "http:") return { ok: false, reason: "Only http and https servers can serve screens" };
   const origin = u.origin;
-  if (u.protocol === "https:") return { ok: true, origin };
-  const host = u.hostname.replace(/^\[|\]$/g, "").toLowerCase();
-  if (host === "localhost" || host.endsWith(".localhost")) return { ok: true, origin };
-  if (host.endsWith(".local")) return { ok: true, origin };
-  if (net.isIPv4(host) && ipv4Private(host)) return { ok: true, origin };
-  if (net.isIPv6(host)) {
-    if (host === "::1") return { ok: true, origin };
-    const first = Number.parseInt(host.split(":")[0] || "0", 16);
-    if ((first & 0xfe00) === 0xfc00) return { ok: true, origin }; // fc00::/7
-    const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(host)?.[1];
-    if (mapped && ipv4Private(mapped)) return { ok: true, origin };
-  }
+  if (u.protocol === "https:" || allowsPlainHttp(u.hostname)) return { ok: true, origin };
   return { ok: false, origin, reason: `${u.host} is a public address over plain http: screens are only fetched over https, or from this PC or a local network` };
 }
 

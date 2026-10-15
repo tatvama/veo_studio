@@ -340,11 +340,13 @@ answers that window alone); folders change only through native folder dialogs. T
 to requests that carry the app's own session cookie and rejects unexpected `Host` headers (DNS rebinding).
 
 **Trust boundaries (tightened 15 October 2026).**
-- **The server address must be https** unless the server is on this PC: `normalizeServerUrl` accepts plain `http://`
-  only for `localhost`, `*.localhost`, `127.0.0.0/8` and `[::1]`; a bare host name becomes `https://…`; an explicit
-  `http://` address elsewhere is refused with the reason (shown by the Studio server window). A stored or
-  `TATVAM_SERVER` address that breaks the rule falls back to `http://localhost:8100`. Every call carries the session
-  cookie and, when chosen, the server's screens run inside the app, so a LAN server needs a certificate too.
+- **A public server address must be https**: `normalizeServerUrl` accepts plain `http://` only on this PC
+  (`localhost`, `*.localhost`, `127.0.0.0/8`, `[::1]`) or on the local network (`10/8`, `172.16/12`, `192.168/16`,
+  `fc00::/7`, `*.local`), the same rule `uicache.originRule` applies to screens; a bare host name becomes `https://…`;
+  an explicit `http://` to a public address is refused with the reason (shown by the Studio server window). A stored
+  or `TATVAM_SERVER` address that breaks the rule falls back to `http://localhost:8100`. Every call carries the
+  session cookie and, when chosen, the server's screens run inside the app, so a server reached over the internet
+  needs a certificate.
 - **Screens from the server are opt-in.** `uiSource` defaults to `"bundled"`; "From the server, with an offline copy"
   (`auto`) and "Always live from the server" (`server`) are labelled as running the server's own code and are chosen
   in the Studio server window only (a settings file with an unchosen `auto` / `server` moves back to `bundled`). The
@@ -556,7 +558,7 @@ npm run dist       # Windows installer (NSIS) in desktop/release, with the built
 ```
 
 - `TATVAM_SERVER` (default `http://localhost:8100`) sets the server on the first run; after that, File → Studio
-  server… changes it. Off this PC the address must be `https://` (§4, trust boundaries). `TATVAM_UI_DIR` points at another built UI, `TATVAM_USER_DATA` at another settings folder.
+  server… changes it. Off this PC and the local network the address must be `https://` (§4, trust boundaries). `TATVAM_UI_DIR` points at another built UI, `TATVAM_USER_DATA` at another settings folder.
 - The end-to-end test (`TATVAM_E2E=1`, see `desktop/test/e2e.test.ts`) syncs a cut, writes the EDL, renders it in 4K
   and uploads it to a running server.
 - CI runs the desktop typecheck and unit tests (job "Desktop app").
