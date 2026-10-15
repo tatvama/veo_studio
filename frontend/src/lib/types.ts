@@ -101,7 +101,11 @@ export interface Episode {
   marketing: MarketingPack;
 }
 
-export interface CharacterAsset { id: number; character_id: number; kind: string; label: string; outfit: string; url: string; approved: boolean; archived: boolean; created_at: string }
+export interface CharacterAsset { id: number; character_id: number; kind: string; label: string; outfit: string; url: string; approved: boolean; archived: boolean; created_at: string;
+  /** "" generated · "board" an uploaded character board (kind source) · "board:<id>" a view cut out of that board */
+  origin?: string;
+  /** a board's state (meta.board), a crop's box, the engine that made a generated image (meta.engine) */
+  meta?: Record<string, any> }
 export interface VoiceProfile {
   id: number; character_id: number; language: string; provider: string; voice_id: string; voice_name: string;
   description: string; style_prompt: string; sample_url: string; sts_voice_id: string;
@@ -120,6 +124,8 @@ export interface Character {
   seedance_ready?: boolean;
   /** Why the character isn't registered with BytePlus by itself ("" = it will be when its sheet is approved or it is locked). */
   byteplus_auto?: string;
+  /** The image engine picked for this character's reference pack (a Model Hub engine id); "" = the team's image chain. */
+  sheet_engine?: string;
   /** What a face model would be trained on now: the user's photos + approved variations (or the sheet if no photos). */
   training?: { basis: "your_photos" | "sheet"; own: number; variations_approved: number; variations_waiting: number; count: number; min: number;
     good: number; auto_fill: boolean;

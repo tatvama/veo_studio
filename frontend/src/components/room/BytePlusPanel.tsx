@@ -57,7 +57,8 @@ export function BytePlusPanel({ character: c, n }: { character: Character; n?: n
   const st = STATE[status] ?? STATE.none;
   const mode = settings?.providers.find((p) => p.provider === "byteplus_iam")?.mode;
   // mirrors handlers_hub.register_images: the approved sheet views, or the whole AI-made sheet while none is approved
-  const sheet = (c.assets ?? []).filter((a) => !a.archived && KINDS.includes(a.kind));
+  // (never views cut out of an uploaded character board: those are the uploader's own pictures)
+  const sheet = (c.assets ?? []).filter((a) => !a.archived && KINDS.includes(a.kind) && !(a.origin ?? "").startsWith("board"));
   const pool = sheet.some((a) => a.approved) ? sheet.filter((a) => a.approved) : sheet;
   const eligible = Math.min(pool.length, MAX);
   const kept = assets.filter(held).length;
