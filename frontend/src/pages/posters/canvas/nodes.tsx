@@ -89,11 +89,9 @@ export function BackgroundView({ bg, W, H }: { bg: Background; W: number; H: num
 
 // ── images ───────────────────────────────────────────────
 
-type KFilter = (this: Konva.Node, imageData: ImageData) => void;
-
-function activeFilters(f: ImageFilters): KFilter[] {
+function activeFilters(f: ImageFilters): Konva.Filter[] {
   const F = Konva.Filters;
-  const out: KFilter[] = [];
+  const out: Konva.Filter[] = [];
   if (f.blur && f.blur > 0) out.push(F.Blur);
   if (f.brightness) out.push(F.Brighten);
   if (f.contrast) out.push(F.Contrast);
@@ -106,12 +104,12 @@ function activeFilters(f: ImageFilters): KFilter[] {
   return out;
 }
 
-/** Filter attributes; pixel-sized ones scale with the cache resolution so they look the same at any zoom or export size. */
-function filterValues(f: ImageFilters, ratio: number): Record<string, number> {
+/** Filter attributes in design pixels; Konva scales blurRadius and pixelSize by the cache resolution itself (since 10.6). */
+function filterValues(f: ImageFilters): Record<string, number> {
   return {
-    blurRadius: Math.round((f.blur ?? 0) * ratio), brightness: f.brightness ?? 0, contrast: f.contrast ?? 0,
+    blurRadius: Math.round(f.blur ?? 0), brightness: f.brightness ?? 0, contrast: f.contrast ?? 0,
     saturation: f.saturation ?? 0, hue: f.hue ?? 0, luminance: f.luminance ?? 0, noise: f.noise ?? 0,
-    pixelSize: Math.max(1, Math.round((f.pixelate ?? 1) * ratio)),
+    pixelSize: Math.max(1, Math.round(f.pixelate ?? 1)),
   };
 }
 
@@ -194,7 +192,7 @@ function ImageBody({ l, img, w, h, cacheScale }: { l: ImageLayer; img: HTMLImage
       <Group
         ref={group} listening={false}
         clipFunc={circle ? (ctx: Konva.Context) => { ctx.ellipse(w / 2, h / 2, w / 2, h / 2, 0, 0, TAU, false); } : undefined}
-        filters={cached && filters.length ? filters : undefined} {...(cached ? filterValues(f, ratio) : {})}
+        filters={cached && filters.length ? filters : undefined} {...(cached ? filterValues(f) : {})}
         globalCompositeOperation={cached ? gco : undefined}
       >
         <KImage
