@@ -181,3 +181,170 @@ def test_worker_recovers_its_own_and_stale_jobs_only(client: TestClient):
         with SessionLocal() as db:
             db.query(Job).filter(Job.id.in_(list(ids.values()))).delete()
             db.commit()
+
+
+# ── 6. abandoned upload locks are dropped ────────────────────────────────────
+
+def test_abandoned_chunk_locks_are_purged(client: TestClient):
+    import asyncio
+
+    from app.api import desktop as desktop_api
+
+    desktop_api._chunk_locks.clear()
+    old = time.monotonic() - desktop_api.CHUNK_LOCK_TTL_S - 1
+    desktop_api._chunk_locks["abandoned"] = (asyncio.Lock(), old)
+    held = asyncio.Lock()
+    desktop_api._chunk_locks["old-but-busy"] = (held, old)
+    desktop_api._chunk_locks["recent"] = (asyncio.Lock(), time.monotonic())
+
+    async def hold_and_access():
+        async with held:
+            return desktop_api._chunk_lock("fresh")
+
+    lk = asyncio.run(hold_and_access())
+    assert "abandoned" not in desktop_api._chunk_locks
+    assert set(desktop_api._chunk_locks) == {"old-but-busy", "recent", "fresh"}
+    assert desktop_api._chunk_lock("fresh") is lk  # the same lock while the upload goes on
+    desktop_api._chunk_locks.clear()
+
+
+def test_upload_endpoints_do_not_block_the_event_loop_signature(client: TestClient):
+    """The upload handlers are coroutines whose blocking work is handed to a thread: a smoke check that the calls
+    still work end to end (layers media upload probes the file with FFmpeg)."""
+    import inspect as pyinspect
+
+    from app.api import desktop as desktop_api
+    from app.api import layers as layers_api
+    from app.api import shots as shots_api
+    for fn in (layers_api.upload_media, shots_api.upload_keyframe, desktop_api.upload_chunk):
+        assert pyinspect.iscoroutinefunction(fn)
+        assert "asyncio.to_thread" in pyinspect.getsource(fn)
+
+
+# ── 7. a running orchestrator reserves nothing; its children do ──────────────
+
+def test_running_orchestrators_do_not_double_reserve(client: TestClient):
+    from datetime import timedelta
+
+    from app.core import budget
+    from app.core.job_types import ORCHESTRATORS
+    from app.db import SessionLocal, utcnow
+    from app.models import Job
+    from app.workers import worker as worker_mod
+
+    assert worker_mod.ORCHESTRATORS == ORCHESTRATORS == {"dub", "autopilot", "produce", "campaign", "scene_chain"}
+    far = utcnow() + timedelta(days=1)
+    made: list[int] = []
+    try:
+        with SessionLocal() as db:
+            for n, kind in enumerate(("campaign", "scene_chain", "dub")):
+                pid = 900_000 + n  # the project only needs to be an id the sums filter on
+                parent = Job(type=kind, status="running", project_id=pid, cost_estimate=5.0, run_after=far)
+                db.add(parent)
+                db.flush()
+                kids = [Job(type="video", status="queued", project_id=pid, parent_job_id=parent.id, cost_estimate=1.0, run_after=far)
+                        for _ in range(2)]
+                db.add_all(kids)
+                db.flush()
+                made += [parent.id, *(k.id for k in kids)]
+                assert budget.reserved(db, project_id=pid) == 2.0, kind  # the children once, not 5 + 2
+            db.commit()
+            # a queued (not yet running) orchestrator still holds its own estimate
+            waiting = Job(type="campaign", status="queued", project_id=900_010, cost_estimate=5.0, run_after=far)
+            db.add(waiting)
+            db.commit()
+            made.append(waiting.id)
+            assert budget.reserved(db, project_id=900_010) == 5.0
+    finally:
+        with SessionLocal() as db:
+            db.query(Job).filter(Job.id.in_(made)).delete()
+            db.commit()
+
+
+# ── 9. submits of one project happen one at a time ───────────────────────────
+
+def test_submit_takes_the_write_lock_before_its_checks(client: TestClient):
+    import sqlite3
+
+    import pytest
+
+    from app.core import jobs
+    from app.db import SessionLocal, is_sqlite
+    if not is_sqlite():
+        return
+    db_file = get_settings().db_url.removeprefix("sqlite:///")
+    with SessionLocal() as db:
+        jobs.lock_project(db, 1)
+        other = sqlite3.connect(db_file, timeout=0.3)
+        try:
+            with pytest.raises(sqlite3.OperationalError):  # the writer lock is held until the submit commits
+                other.execute("BEGIN IMMEDIATE")
+            db.rollback()
+            other.execute("BEGIN IMMEDIATE")
+            other.rollback()
+        finally:
+            other.close()
+        jobs.lock_project(db, None)  # no project: nothing to lock
+
+
+def test_concurrent_submits_of_the_same_shot_make_one_job(client: TestClient):
+    import threading
+
+    from app.core import jobs
+    from app.db import SessionLocal
+    from app.models import Episode, Project, Shot, User
+
+    with SessionLocal() as db:
+        admin = db.query(User).filter(User.role == "admin").first()
+        p = Project(title="Race project")
+        db.add(p)
+        db.flush()
+        ep = Episode(project_id=p.id, number=1, title="E1")
+        db.add(ep)
+        db.flush()
+        sh = Shot(episode_id=ep.id, order=1, code="RACE-1")
+        db.add(sh)
+        db.commit()
+        pid, sid = p.id, sh.id
+    results: list[dict] = []
+    errors: list[Exception] = []
+    start = threading.Barrier(4)
+
+    def go():
+        try:
+            start.wait(timeout=10)
+            with SessionLocal() as db:
+                project = db.get(Project, pid)
+                results.append(jobs.submit(db, admin, project, [jobs.spec("keyframe", shot_id=sid, project_id=pid, estimate=0.0)],
+                                           propose=True))
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=go) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=60)
+    assert not errors, errors
+    assert sum(len(r["jobs"]) for r in results) == 1 and sum(r["skipped"] for r in results) == 3
+
+
+# ── 11. concat lists quote apostrophes the demuxer's way ─────────────────────
+
+def test_concat_list_escapes_apostrophes(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from app.pipeline import ffmpeg as ff
+
+    calls: list[list] = []
+    monkeypatch.setattr(ff, "run", lambda args, timeout=900: calls.append(args) or "")
+    clip = tmp_path / "Priya's cut" / "it's take 1.mp4"
+    plain = tmp_path / "plain.mp4"
+    out = tmp_path / "out.mp4"
+    ff.concat([clip, plain], out)
+    lines = (tmp_path / "out_list.txt").read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "file '" + clip.resolve().as_posix().replace("'", "'\\''") + "'"
+    assert "'\\''" in lines[0] and lines[0].count("'\\''") == 2
+    assert lines[1] == f"file '{plain.resolve().as_posix()}'"
+    assert ff.concat_list_line(Path("a'b")).endswith("a'\\''b'\n")
+    assert calls and calls[0][:4] == ["-f", "concat", "-safe", "0"]

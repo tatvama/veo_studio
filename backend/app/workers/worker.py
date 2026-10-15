@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from ..config import get_settings
 from ..core import budget, ratelimit
+from ..core.job_types import ORCHESTRATORS
 from ..core.scene_order import held_back
 from ..db import SessionLocal, utcnow
 from ..events import emit, prune
@@ -29,7 +30,7 @@ from ..providers.base import (NeedsApproval, ProviderBlocked, ProviderError, Pro
 from ..providers.services import Services
 
 HANDLERS: dict[str, Callable[["JobContext"], dict | None]] = {}
-ORCHESTRATORS = {"dub", "autopilot", "produce", "campaign", "scene_chain"}
+# ORCHESTRATORS: core/job_types.py (shared with the budget, which must not import this package)
 GROUP_OF = {"video": "video", "omni_edit": "video", "lipsync": "lipsync", "voicelock": "audio", "voice": "audio",
             "voice_design": "audio", "voice_preview": "audio", "music": "audio", "sfx": "audio", "table_read": "audio",
             "export": "render", "animatic": "render", "keyframe": "image", "character_sheet": "image",

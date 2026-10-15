@@ -5,9 +5,10 @@ import uuid
 from typing import Any
 
 from fastapi import HTTPException
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from ..db import utcnow
+from ..db import is_sqlite, utcnow
 from ..events import emit
 from ..models import Approval, Job, Project, Shot, User, role_rank
 from . import budget
@@ -65,11 +66,27 @@ def _one_run_per_episode(db: Session, specs: list[dict]) -> None:
                     raise HTTPException(409, f"This episode is already being dubbed into {lang} (job #{o.id}).")
 
 
+def lock_project(db: Session, project_id: int | None) -> None:
+    """Serialise job submission for a project for the rest of this transaction, so two submits that both pass the
+    budget, duplicate and one-run checks can't both insert (check and insert happen in one transaction, one at a time).
+    Postgres: a transaction-scoped advisory lock on the project id. SQLite: take the database's single writer lock
+    now (BEGIN IMMEDIATE) instead of at the first INSERT, unless this session is already writing."""
+    if project_id is None:
+        return
+    if is_sqlite():
+        raw = db.connection().connection.dbapi_connection  # the sqlite3 connection
+        if not getattr(raw, "in_transaction", False):
+            db.execute(text("BEGIN IMMEDIATE"))
+    else:
+        db.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": int(project_id)})
+
+
 def submit(db: Session, user: User, project: Project | None, specs: list[dict], *, propose: bool = False,
            parent_job_id: int | None = None, skip_budget: bool = False) -> dict[str, Any]:
     """Create jobs. Returns {batch_id, status, total_usd, jobs, skipped, reason}."""
     if role_rank(user.role) < role_rank("creator"):
         raise HTTPException(403, "Your role cannot start generations")
+    lock_project(db, project.id if project else next((s.get("project_id") for s in specs if s.get("project_id")), None))
     _one_run_per_episode(db, specs)
     keep, skipped = [], []
     for s in specs:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import shutil
 import tempfile
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -165,7 +166,21 @@ def start_upload(eid: int, body: UploadIn, user: User = Depends(require("creator
     return desktop.start_upload(db, get_or_404(db, Episode, eid), user, body.model_dump())
 
 
-_chunk_locks: dict[str, asyncio.Lock] = {}
+_chunk_locks: dict[str, tuple[asyncio.Lock, float]] = {}  # upload id -> (its lock, when it was last used)
+CHUNK_LOCK_TTL_S = 6 * 3600
+_WRITE_BUF = 1 << 20  # bytes gathered before one write off the event loop
+
+
+def _chunk_lock(uid: str) -> asyncio.Lock:
+    """The lock that serialises an upload's chunks. Locks of uploads nobody has touched for CHUNK_LOCK_TTL_S
+    (abandoned) are dropped on the way, so the table doesn't keep every upload that never completed."""
+    now = time.monotonic()
+    for k, (lk, used) in list(_chunk_locks.items()):
+        if k != uid and now - used > CHUNK_LOCK_TTL_S and not lk.locked():
+            _chunk_locks.pop(k, None)
+    lk = _chunk_locks[uid][0] if uid in _chunk_locks else asyncio.Lock()
+    _chunk_locks[uid] = (lk, now)
+    return lk
 
 
 def _wrong_offset(have: int, msg: str) -> JSONResponse:
@@ -178,20 +193,26 @@ async def upload_chunk(uid: str, request: Request, offset: int = 0, user: User =
     meta = desktop.upload_meta(uid, user)
     size = int(meta["size"])
     part, _ = desktop.upload_files(uid)
-    async with _chunk_locks.setdefault(uid, asyncio.Lock()):
-        have = desktop.received(uid)
+    async with _chunk_lock(uid):
+        have = await asyncio.to_thread(desktop.received, uid)
         if offset != have:
             return _wrong_offset(have, f"Expected the next chunk at byte {have}")
         n, over = have, False
-        with open(part, "ab") as f:
+        buf = bytearray()
+        with open(part, "ab") as f:  # the writes (8 MB a chunk) happen in a thread, not on the event loop
             async for chunk in request.stream():
                 if n + len(chunk) > size:
                     over = True
                     break
-                f.write(chunk)
+                buf += chunk
                 n += len(chunk)
+                if len(buf) >= _WRITE_BUF:
+                    await asyncio.to_thread(f.write, bytes(buf))
+                    buf.clear()
             if over:
-                f.truncate(have)
+                await asyncio.to_thread(f.truncate, have)
+            elif buf:
+                await asyncio.to_thread(f.write, bytes(buf))
         if over:
             raise HTTPException(400, f"More data than the upload's size ({size} bytes)")
     return {"received": n, "size": size}

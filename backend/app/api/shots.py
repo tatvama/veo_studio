@@ -1,6 +1,7 @@
 """Shots (edit, reorder, undo, approve) and takes (select, archive)."""
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -210,12 +211,15 @@ async def upload_keyframe(sid: int, file: UploadFile = File(...), user: User = D
     st = get_storage()
     p = _project(db, s)
     folder = f"projects/{p.id}/shots/{s.id}/keyframe"
-    rel = st.save_bytes(st.new_path(folder, ext), data)
-    thumb = ""
-    try:
-        thumb = st.save_file(st.new_path(folder, "jpg"), ff.thumbnail(st.abs(rel), st.abs(rel).with_suffix(".thumb.jpg")))
-    except Exception:
-        pass
+
+    def ingest() -> tuple[str, str]:  # the disk write and the FFmpeg thumbnail: in a thread, off the event loop
+        rel = st.save_bytes(st.new_path(folder, ext), data)
+        try:
+            return rel, st.save_file(st.new_path(folder, "jpg"), ff.thumbnail(st.abs(rel), st.abs(rel).with_suffix(".thumb.jpg")))
+        except Exception:
+            return rel, ""
+
+    rel, thumb = await asyncio.to_thread(ingest)
     t = Take(shot_id=s.id, kind="keyframe", provider="upload", model="your image", path=rel, thumb_path=thumb,
              params={"uploaded": True, "filename": (file.filename or "")[:120], "engine_label": "Your image"}, created_by=user.id)
     db.add(t)

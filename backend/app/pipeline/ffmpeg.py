@@ -292,9 +292,15 @@ def xfade_concat(clips: list[Path], lengths: list[float], transitions: list[tupl
     return out
 
 
+def concat_list_line(clip: Path) -> str:
+    """One `file` line for the concat demuxer: the path single-quoted, a quote inside it written as '\\'' (the
+    demuxer's rule: close the quote, an escaped quote, open again)."""
+    return "file '" + clip.resolve().as_posix().replace("'", "'\\''") + "'\n"
+
+
 def concat(clips: list[Path], out: Path) -> Path:
     lst = out.parent / f"{out.stem}_list.txt"
-    lst.write_text("".join(f"file '{c.resolve().as_posix()}'\n" for c in clips), encoding="utf-8")
+    lst.write_text("".join(concat_list_line(c) for c in clips), encoding="utf-8")
     run(["-f", "concat", "-safe", "0", "-i", lst, "-c", "copy", out])
     return out
 
