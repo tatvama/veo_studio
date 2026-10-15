@@ -370,7 +370,9 @@ def add_cast_from_image(c: AgentCtx, attachment_id: Any, name: str, kind: str = 
             row.dna_text = desc
         studio.link_character(db, p, row)
         db.commit()
-        ref = reference_images.save_character_image(db, row, data, ext, label="reference from the Director chat", project_id=p.id)
+        # a chat picture counts as a real person's photo until the user marks it AI-made under Your uploads
+        ref = reference_images.save_character_image(db, row, data, ext, user=c.user, label="reference from the Director chat",
+                                                    via="director", project_id=p.id)
         saved = f"reference image #{ref.id} (approved)"
     elif kind == "location":
         if row is None:

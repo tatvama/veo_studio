@@ -133,9 +133,10 @@ def character_out(db: Session, c: Character, brief: bool = False) -> dict:
     out["seedance_ready"] = seedance_ready(c)  # registered with BytePlus: Seedance keeps this character's look
     if not brief:
         from ..core import identity as identity_core
-        from ..workers.handlers_hub import auto_register_reason
+        from ..workers.handlers_hub import auto_register_reason, register_block_reason
         out["training"] = identity_core.summary(db, c)
         out["byteplus_auto"] = auto_register_reason(db, c)  # why it isn't registered by itself ("" = it will be)
+        out["byteplus_block"] = register_block_reason(db, c)  # why it can't be registered at all ("" = it can)
         out["assets"] = [a.to_dict(url=url(a.path)) for a in assets]
         from ..core import lock as lock_core
         from ..models import CharacterVersion, Costume

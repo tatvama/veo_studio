@@ -3,6 +3,7 @@
 How to use the studio day to day. For installing, configuring and deploying it, see the [README](../README.md).
 
 - [Daily workflow](#daily-workflow)
+- [Seedance characters (BytePlus)](#seedance-characters-byteplus)
 - [Model Hub](#model-hub)
 - [Team, roles and money](#team-roles-and-money)
 - [Interface](#interface) · [Poster Studio](#poster-studio)
@@ -63,6 +64,37 @@ Each mode is a **routing chain** in the Model Hub (for example Veo 3.1 Lite → 
 - **Native when possible**: the video engine speaks the line itself. Cheapest; good for English ads and shorts.
 
 **Dubbing** either re-syncs the lips on the existing video (**re-dub**, cheaper) or regenerates audio-driven shots per language (**regenerate**, most accurate mouth shapes).
+
+## Seedance characters (BytePlus)
+
+Seedance (BytePlus) blocks faces it takes for real people. An **AI character** registered in your private BytePlus asset
+library is trusted instead: Seedance gets the registered images as references and keeps the look. Real people can't be
+registered from the studio; they verify themselves in the BytePlus console.
+
+**Once:**
+1. In the BytePlus ModelArk console, open **Model activation → Advanced Creation Rights** and turn on the free version
+   (50 images, 50 groups).
+2. Add the BytePlus **access key and secret** (an IAM user with ArkFullAccess) in **Settings → AI services**.
+3. Use **bucket storage** (`STORAGE_BACKEND=s3` with the R2 settings): BytePlus downloads the images by link.
+
+**For each AI character** (2 Cast › the character):
+1. Give it a look BytePlus may take: **upload** an AI-generated image and tick **"This image is AI-generated — not a
+   photo of a real person"**, or **Generate sheet** and approve the good views. Every upload counts as a real
+   person's photo until you tick the box; you can change it later under **Reference pack → Your uploads** (with a
+   confirm, and it is recorded in the audit log). The box is on every upload: the character page, **New character**,
+   the import wizard's **Add photo** and **+ Character** in the shot list.
+2. In **Video character**, check **Images that will be sent**: up to 4, best first (the uploads you marked
+   AI-generated, then the approved sheet views). BytePlus takes images of 300–6000 px per side, between 0.4 and 2.5
+   times as wide as tall and under 30 MB: larger ones go as a smaller copy, too small or oddly shaped ones are listed
+   under **Not sent** with the reason.
+3. Press **Register with BytePlus** and wait until the images show **Active** (BytePlus reviews each one; **Re-check
+   status** asks again). The character then shows the Seedance badge.
+
+**Never sent:** a character with an upload that isn't marked AI-generated counts as **made from a photo of a real
+person**: Register is turned off with the reason, and automatic registration (Settings → Generation) skips it. An
+upload can't be relabelled as a sheet view to get around this. If you mark an upload as a real person's photo while
+the character is registered, or **archive** the character, it is removed from BytePlus right away. If BytePlus can't
+be reached then, the registration stays marked (Seedance no longer uses it) and **Remove from BytePlus** tries again.
 
 ## Model Hub
 

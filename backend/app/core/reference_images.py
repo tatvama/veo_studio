@@ -9,7 +9,7 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from ..events import emit
-from ..models import Character, CharacterAsset, Location, LocationAsset, Prop
+from ..models import Character, CharacterAsset, Location, LocationAsset, Prop, User
 from ..storage import get_storage
 
 IMAGE_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
@@ -27,15 +27,15 @@ def sniff(data: bytes) -> str:
     return ""
 
 
-def save_character_image(db: Session, ch: Character, data: bytes, ext: str, *, label: str = "",
-                         project_id: int | None = None) -> CharacterAsset:
-    """The user's own picture of a character: an approved "source" asset, the first look reference everywhere."""
-    st = get_storage()
-    rel = st.save_bytes(st.new_path(f"characters/{ch.id}", ext), data)
-    a = CharacterAsset(character_id=ch.id, kind="source", label=(label.strip() or "your photo")[:80], path=rel, approved=True)
-    db.add(a)
-    db.commit()
-    emit(db, project_id, "bible.updated", {"character_id": ch.id})
+def save_character_image(db: Session, ch: Character, data: bytes, ext: str, *, user: User | None = None, label: str = "",
+                         ai_made: bool = False, via: str = "upload", project_id: int | None = None) -> CharacterAsset:
+    """The user's own picture of a character: an approved "source" asset, the first look reference everywhere. Saved
+    through core.character_images, so it follows the AI-made rules: without the user's attestation it counts as a
+    real person's photo and never goes to the BytePlus asset library."""
+    from .character_images import save_character_image as save
+    a = save(db, ch, data, ext, user=user, label=label, ai_made=ai_made, via=via)
+    if project_id:
+        emit(db, project_id, "bible.updated", {"character_id": ch.id})
     return a
 
 

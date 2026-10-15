@@ -105,6 +105,7 @@ def test_attachments_tags_and_mentions_reach_claude(client: TestClient, claude):
         assert ish.dna_text == "Woman, early 30s, oval face, long black braid" and not ish.shared
         refs = db.query(CharacterAsset).filter(CharacterAsset.character_id == ish.id).all()
         assert [(a.kind, a.approved) for a in refs] == [("source", True)]
+        assert not refs[0].ai_made  # a real person's photo until the user marks it AI-made: never sent to BytePlus
         um = (db.query(AgentMessage).filter(AgentMessage.project_id == pid, AgentMessage.role == "user")
               .order_by(AgentMessage.id.desc()).first())
         rows = db.query(AgentAttachment).filter(AgentAttachment.message_id == um.id).order_by(AgentAttachment.id).all()
