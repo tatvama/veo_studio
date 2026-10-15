@@ -27,7 +27,7 @@ import { WebGL2Backend } from "./gl/webgl2";
 import { listEffectInfos, registerEffect as addEffect, type EffectDef, type EffectInfo } from "./effects/registry";
 import { listTransitions as loadList, loadGl, registerTransition as addTransition, transitionInfos, type CustomTransition, type TransitionInfo } from "./transitions/gltransitions";
 import { Scopes, type ScopeKind, type ScopeOptions } from "./scopes";
-import { grabFrame, type FrameRef } from "./analysis/index";
+import { acquireFrame, releaseFrame, type FrameRef } from "./analysis/index";
 import { LOG_CURVES } from "./colour";
 import type { Composition } from "./types";
 
@@ -243,11 +243,17 @@ export async function createEngine(opts: EngineOptions): Promise<Engine> {
       const w = Math.max(16, Math.round(width)), h = Math.max(9, Math.round((w * 9) / 16));
       const k = kind ?? (listEffectInfos().some((e) => e.id === id) && !transitionInfos().some((t) => t.id === id) ? "effect" : "transition");
       let source: ThumbOptions["source"];
+      // a frame grabbed from a URL is held in the analysis cache while the thumbnail draws; one made here from
+      // ImageData is closed afterwards (the caller's own picture is left alone)
+      let own: ImageBitmap | null = null, held: (() => void) | null = null;
       if (o.source) {
         const s = o.source;
-        source = "url" in s ? await grabFrame(s.url, s.t ?? 0, Math.max(w * 2, 320)) : (s.image instanceof ImageData ? await createImageBitmap(s.image) : s.image);
+        if ("url" in s) { const t = s.t ?? 0, mw = Math.max(w * 2, 320); source = await acquireFrame(s.url, t, mw); held = () => releaseFrame(s.url, t, mw); }
+        else if (s.image instanceof ImageData) { own = await createImageBitmap(s.image); source = own; }
+        else source = s.image;
       }
-      const px = await r.thumbnail(k, id, w, h, { ...o, source });
+      let px: Awaited<ReturnType<typeof r.thumbnail>>;
+      try { px = await r.thumbnail(k, id, w, h, { ...o, source }); } finally { own?.close(); held?.(); }
       return createImageBitmap(bitmap(px.data, w, h));
     },
     async computeScopes(kind, o = {}) {

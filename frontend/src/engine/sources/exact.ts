@@ -2,30 +2,52 @@
  * Exact video source (export): mp4box.js demuxes the file, a WebCodecs VideoDecoder (hardware preferred) decodes in
  * order, and decoded frames wait in a small ring keyed by timestamp. getFrame(t) returns the frame whose time is the
  * closest at or before t + half a frame, so frame i of the export is the same source frame FFmpeg's fps filter
- * picks. H.264 and HEVC (and VP9 / AV1 in MP4) go through the decoder; anything it can't decode falls back to a
- * <video> with seek-and-wait.
+ * picks. H.264 and HEVC (and VP9 / AV1 in MP4) go through the decoder; anything it can't decode (or a decoder that
+ * fails mid-way) falls back to a <video> with seek-and-wait.
  */
 import type { Frame, FrameSource } from "./source";
-import { LiveVideo } from "./live";
-import { avccSps, matrixName, spsColour, type VideoColour } from "./sps";
+import { LiveVideo } from "./live.ts";
+import { avccSps, matrixName, spsColour, type VideoColour } from "./sps.ts";
+import { RefCache } from "../refcache.ts";
 
+interface RawSample { cts: number; dur: number; key: boolean; data: Uint8Array; timescale: number }
 interface Sample { ts: number; dur: number; key: boolean; data: Uint8Array }
-interface Demuxed {
+export interface Demuxed {
   codec: string; width: number; height: number; description?: Uint8Array; samples: Sample[]; pts: number[]; byTs: Map<number, number>;
   /** The stream's colour description (colr box, else the H.264 SPS). */
   colour: VideoColour;
 }
 
-const demuxed = new Map<string, Promise<Demuxed>>();
+/** Demuxed files by URL, held while an ExactVideo (or a lab probe) uses them: two clips of one file share one, and a
+ *  file nobody uses any more is let go (a long edit's media would otherwise stay in memory for the session). */
+const demuxed = new RefCache<Demuxed>(load);
 /** Decoded frames kept (hardware decoders stall when the page holds too many of their surfaces). */
 const RING = 6;
 const REORDER = 16;
 
-/** Demux a whole MP4 (cached per URL: two clips of one file share it). */
-export function demux(url: string): Promise<Demuxed> {
-  let p = demuxed.get(url);
-  if (!p) { p = load(url); demuxed.set(url, p); p.catch(() => demuxed.delete(url)); }
-  return p;
+/** Demux a whole MP4 (shared per URL). Pair every call with releaseDemux(url) once done with the samples. */
+export function acquireDemux(url: string): Promise<Demuxed> { return demuxed.acquire(url); }
+export function releaseDemux(url: string): void { demuxed.release(url); }
+/** How many files are demuxed right now (the lab, tests). */
+export const demuxedCount = () => demuxed.size;
+
+/** The sample table of a track: times in µs from the earliest sample, the sorted presentation times and the index by
+ *  time. A loop rather than Math.min(...spread): a long file has more samples than one call can take arguments. */
+export function sampleTable(raw: RawSample[]): Pick<Demuxed, "samples" | "pts" | "byTs"> {
+  let min = Infinity;
+  for (const s of raw) if (s.cts < min) min = s.cts;
+  const samples: Sample[] = new Array(raw.length);
+  const byTs = new Map<number, number>();
+  for (let i = 0; i < raw.length; i++) {
+    const s = raw[i];
+    const ts = Math.round(((s.cts - min) / s.timescale) * 1e6);
+    samples[i] = { ts, dur: Math.round((s.dur / s.timescale) * 1e6), key: s.key, data: s.data };
+    byTs.set(ts, i);
+  }
+  const pts = new Array<number>(samples.length);
+  for (let i = 0; i < samples.length; i++) pts[i] = samples[i].ts;
+  pts.sort((a, b) => a - b);
+  return { samples, pts, byTs };
 }
 
 async function load(url: string): Promise<Demuxed> {
@@ -34,7 +56,7 @@ async function load(url: string): Promise<Demuxed> {
   if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
   const buf = await r.arrayBuffer();
   const file = MP4Box.createFile();
-  const raw: { cts: number; dur: number; key: boolean; data: Uint8Array; timescale: number }[] = [];
+  const raw: RawSample[] = [];
   let info: { codec: string; width: number; height: number; id: number } | null = null;
   let error = "";
   file.onError = (_m: string, msg: string) => { error = msg; };
@@ -72,10 +94,7 @@ async function load(url: string): Promise<Demuxed> {
     }
   }
   if (!raw.length) throw new Error(`${url}: no video samples`);
-  const min = Math.min(...raw.map((s) => s.cts));
-  const samples = raw.map((s) => ({ ts: Math.round(((s.cts - min) / s.timescale) * 1e6), dur: Math.round((s.dur / s.timescale) * 1e6), key: s.key, data: s.data }));
-  const pts = samples.map((s) => s.ts).sort((a, b) => a - b);
-  return { codec: inf.codec, width: inf.width, height: inf.height, description, samples, pts, byTs: new Map(samples.map((s, i) => [s.ts, i])), colour };
+  return { codec: inf.codec, width: inf.width, height: inf.height, description, ...sampleTable(raw), colour };
 }
 
 export class ExactVideo implements FrameSource {
@@ -96,8 +115,12 @@ export class ExactVideo implements FrameSource {
   private want = -1;
   private lastOut = 0;
   private version = 0;
+  /** The last frame handed out; null once its VideoFrame was closed (never handed out again). */
   private last: Frame | null = null;
   private buf: Uint8Array | null = null;
+  /** Holding the demuxed file (released on dispose, or once the <video> fallback takes over). */
+  private held = false;
+  private disposed = false;
   /** Hand the GPU the decoded planes (exact colour) instead of the browser's RGB conversion. */
   raw = true;
   /** "hardware" / "software" / "fallback" once known. */
@@ -115,28 +138,61 @@ export class ExactVideo implements FrameSource {
   private async init() {
     try {
       if (typeof VideoDecoder === "undefined") throw new Error("WebCodecs isn't available");
-      const d = await demux(this.url);
+      this.held = true;
+      const d = await acquireDemux(this.url);
+      if (this.disposed) return;
       const base: VideoDecoderConfig = { codec: d.codec, codedWidth: d.width, codedHeight: d.height, description: d.description, optimizeForLatency: false };
       for (const hw of ["prefer-hardware", "no-preference"] as HardwareAcceleration[]) {
         const c = { ...base, hardwareAcceleration: hw };
         if ((await VideoDecoder.isConfigSupported(c)).supported) { this.config = c; this.path = hw === "prefer-hardware" ? "hardware" : "software"; break; }
       }
+      if (this.disposed) return;
       if (!this.config) throw new Error(`${d.codec} can't be decoded here`);
       this.d = d;
       this.open();
     } catch (e) {
+      if (this.disposed) return;
       console.warn("[engine] exact decode unavailable, seeking a <video> instead:", (e as Error).message);
-      this.path = "fallback";
-      this.fallback = new LiveVideo(this.url, this.fps);
-      await this.fallback.ready;
+      await this.useFallback();
     }
   }
 
+  /** From now on the frames come from a <video> (WebCodecs can't decode the file, or its decoder failed). */
+  private async useFallback() {
+    this.path = "fallback";
+    this.closeDecoder();
+    this.releaseDemux();
+    this.d = null;
+    if (!this.fallback) this.fallback = new LiveVideo(this.url, this.fps);
+    await this.fallback.ready;
+  }
+
+  private releaseDemux() {
+    if (!this.held) return;
+    this.held = false;
+    releaseDemux(this.url);
+  }
+
+  /** Closes a decoded frame; the Frame that wrapped it is forgotten so it is never handed out again. */
+  private closeFrame(f: VideoFrame) {
+    if (this.last?.image === f) this.last = null;
+    try { f.close(); } catch { /* closed already */ }
+  }
+
+  private closeDecoder() {
+    for (const f of this.ring.values()) this.closeFrame(f);
+    this.ring.clear();
+    // closing an already closed codec (after an error) throws InvalidStateError
+    try { this.dec?.close(); } catch { /* closed already */ }
+    this.dec = null;
+  }
+
   private open() {
-    this.dec?.close();
+    this.closeDecoder();
     this.dec = new VideoDecoder({
       output: (f) => {
-        this.ring.get(f.timestamp)?.close();
+        const old = this.ring.get(f.timestamp);
+        if (old) this.closeFrame(old);
         this.ring.set(f.timestamp, f);
         this.outMax = Math.max(this.outMax, f.timestamp);
         this.lastOut = performance.now();
@@ -148,8 +204,6 @@ export class ExactVideo implements FrameSource {
     this.dec.addEventListener("dequeue", () => this.wake());
     this.dec.configure(this.config!);
     this.fed = 0; this.flushed = false; this.outMax = -1;
-    for (const f of this.ring.values()) f.close();
-    this.ring.clear();
   }
 
   private wake() { const s = this.signal; this.signal = null; s?.(); }
@@ -170,7 +224,7 @@ export class ExactVideo implements FrameSource {
     for (const k of ts) {
       if (this.ring.size <= RING) break;
       if (k === keep) continue;
-      this.ring.get(k)!.close();
+      this.closeFrame(this.ring.get(k)!);
       this.ring.delete(k);
     }
   }
@@ -191,7 +245,13 @@ export class ExactVideo implements FrameSource {
     this.want = us;
     this.lastOut = performance.now();
     while (!this.ring.has(us)) {
-      if (this.err) { const e = this.err; this.err = null; this.open(); throw e; }
+      if (this.err) {
+        // the decoder gave up on this file (a stream it can't handle after all): the <video> takes over for good
+        const e = this.err; this.err = null;
+        console.warn("[engine] exact decode failed, seeking a <video> instead:", e.message);
+        try { await this.useFallback(); } catch (fe) { throw new Error(`${this.url}: ${e.message}; and the <video> fallback failed: ${(fe as Error).message}`); }
+        return this.fallback!.exact(t);
+      }
       if (performance.now() - this.lastOut > 5000) { this.open(); throw new Error(`${this.url}: the video decoder stopped answering`); }
       if (this.outMax >= us) {  // went past it (dropped or evicted): decode the GOP again, once
         if (restarts > 1) break;
@@ -211,7 +271,7 @@ export class ExactVideo implements FrameSource {
       const k = [...this.ring.keys()].filter((x) => x <= us).sort((a, b) => b - a)[0];
       f = k !== undefined ? this.ring.get(k)! : null;
     }
-    if (!f) return this.last;
+    if (!f) return this.last;  // null once its frame was closed: a closed frame is never handed out
     this.evict(us);
     this.version++;
     this.last = { image: f, width: f.displayWidth, height: f.displayHeight, version: this.version };
@@ -231,10 +291,10 @@ export class ExactVideo implements FrameSource {
   live(): Frame | null { return this.last; }
   idle(): void { this.fallback?.idle(); }
   dispose(): void {
-    for (const f of this.ring.values()) f.close();
-    this.ring.clear();
-    try { this.dec?.close(); } catch { /* closed already */ }
-    this.dec = null;
+    this.disposed = true;
+    this.closeDecoder();
+    this.last = null;
+    this.releaseDemux();
     this.fallback?.dispose();
   }
 }

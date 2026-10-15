@@ -7,6 +7,8 @@ import { registerLut } from "../luts";
 import { lutToCube, type Lut3D } from "../cube";
 import { labStats, matchParams, reinhardRgb, samplePixels, suggestWb, type LabStats, type MatchParams, type WbSuggestion, type WheelsParams } from "./colorMath";
 import { fnv1a } from "../transitions/pack/mattes";
+import { RefCache } from "../refcache.ts";
+import { waitFor } from "../sources/live.ts";
 
 export type { LabStats, WbSuggestion, WheelsParams } from "./colorMath";
 
@@ -14,53 +16,71 @@ export type { LabStats, WbSuggestion, WheelsParams } from "./colorMath";
 export type FrameRef = { url: string; t?: number } | { image: ImageBitmap | HTMLCanvasElement | OffscreenCanvas | ImageData };
 
 const isImageUrl = (u: string) => /\.(png|jpe?g|webp|gif|avif|bmp|tiff?)(\?|#|$)/i.test(u) || u.startsWith("data:image/");
-const cache = new Map<string, Promise<ImageBitmap>>();
 
-/** The frame of `url` at `t` seconds as an ImageBitmap at most `maxW` wide (cached, the last 12). */
-export function grabFrame(url: string, t = 0, maxW = 640): Promise<ImageBitmap> {
-  const key = `${url}@${t}@${maxW}`;
-  let p = cache.get(key);
-  if (!p) {
-    p = (async () => {
-      if (isImageUrl(url)) {
-        const r = await fetch(url, { credentials: "same-origin" });
-        if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
-        const bmp = await createImageBitmap(await r.blob(), { colorSpaceConversion: "none", premultiplyAlpha: "none" });
-        if (bmp.width <= maxW) return bmp;
-        const out = await createImageBitmap(bmp, { resizeWidth: maxW, resizeHeight: Math.round((bmp.height * maxW) / bmp.width), resizeQuality: "medium" });
-        bmp.close();
-        return out;
-      }
-      const v = document.createElement("video");
-      v.muted = true; v.playsInline = true; v.preload = "auto"; v.crossOrigin = "anonymous";
-      v.src = url;
-      try {
-        await new Promise<void>((res, rej) => { v.onloadeddata = () => res(); v.onerror = () => rej(new Error(`${url}: ${v.error?.message || "can't load the video"}`)); });
-        await new Promise<void>((res) => { const done = () => { v.removeEventListener("seeked", done); res(); }; v.addEventListener("seeked", done); v.currentTime = Math.max(0, Math.min(t, (v.duration || t + 1) - 0.01)); setTimeout(done, 4000); });
-        const sc = Math.min(1, maxW / Math.max(v.videoWidth, 1));
-        return await createImageBitmap(v, { resizeWidth: Math.max(2, Math.round(v.videoWidth * sc)), resizeHeight: Math.max(2, Math.round(v.videoHeight * sc)), resizeQuality: "medium" });
-      } finally { v.removeAttribute("src"); v.load(); }
-    })();
-    cache.set(key, p);
-    p.catch(() => cache.delete(key));
-    while (cache.size > 12) { const k = cache.keys().next().value as string; cache.get(k)?.then((b) => b.close()).catch(() => undefined); cache.delete(k); }
+/** Grabbed frames by [url, t, maxW]: held while a thumbnail or an analysis uses one (a frame in use is never closed
+ *  under it), and the last 12 released ones stay for the next request. */
+const frames = new RefCache<ImageBitmap>((key) => { const [url, t, maxW] = JSON.parse(key) as [string, number, number]; return loadFrame(url, t, maxW); }, (b) => b.close(), 12);
+const frameKey = (url: string, t: number, maxW: number) => JSON.stringify([url, t, maxW]);
+
+async function loadFrame(url: string, t: number, maxW: number): Promise<ImageBitmap> {
+  if (isImageUrl(url)) {
+    const r = await fetch(url, { credentials: "same-origin" });
+    if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
+    const bmp = await createImageBitmap(await r.blob(), { colorSpaceConversion: "none", premultiplyAlpha: "none" });
+    if (bmp.width <= maxW) return bmp;
+    const out = await createImageBitmap(bmp, { resizeWidth: maxW, resizeHeight: Math.round((bmp.height * maxW) / bmp.width), resizeQuality: "medium" });
+    bmp.close();
+    return out;
   }
-  return p;
+  const v = document.createElement("video");
+  v.muted = true; v.playsInline = true; v.preload = "auto"; v.crossOrigin = "anonymous";
+  v.src = url;
+  try {
+    await new Promise<void>((res, rej) => { v.onloadeddata = () => res(); v.onerror = () => rej(new Error(`${url}: ${v.error?.message || "can't load the video"}`)); });
+    const seeked = waitFor(v, ["seeked"], ["error"], 4000, () => `${url}: ${v.error?.message || "the video failed while seeking"}`);
+    v.currentTime = Math.max(0, Math.min(t, (v.duration || t + 1) - 0.01));
+    await seeked;
+    const sc = Math.min(1, maxW / Math.max(v.videoWidth, 1));
+    return await createImageBitmap(v, { resizeWidth: Math.max(2, Math.round(v.videoWidth * sc)), resizeHeight: Math.max(2, Math.round(v.videoHeight * sc)), resizeQuality: "medium" });
+  } finally { v.removeAttribute("src"); v.load(); }
+}
+
+/** The frame of `url` at `t` seconds as an ImageBitmap at most `maxW` wide, held for the caller: releaseFrame() with
+ *  the same arguments when done (the cache may then close it). */
+export function acquireFrame(url: string, t = 0, maxW = 640): Promise<ImageBitmap> { return frames.acquire(frameKey(url, t, maxW)); }
+export function releaseFrame(url: string, t = 0, maxW = 640): void { frames.release(frameKey(url, t, maxW)); }
+/** Frames cached right now (tests, the lab). */
+export const cachedFrames = () => frames.size;
+
+/** The frame of `url` at `t` seconds as an ImageBitmap at most `maxW` wide (cached, the last 12). The bitmap is the
+ *  caller's own copy: close() it when done. */
+export async function grabFrame(url: string, t = 0, maxW = 640): Promise<ImageBitmap> {
+  const key = frameKey(url, t, maxW);
+  try {
+    const b = await frames.acquire(key);
+    return await createImageBitmap(b);
+  } finally { frames.release(key); }
 }
 
 /** RGBA bytes of a picture (drawn at most `maxW` wide). */
 export async function pixelsOf(ref: FrameRef, maxW = 320): Promise<{ data: Uint8ClampedArray; w: number; h: number }> {
   let img: ImageBitmap | HTMLCanvasElement | OffscreenCanvas | ImageData;
-  if ("url" in ref) img = await grabFrame(ref.url, ref.t ?? 0, Math.max(maxW, 320));
-  else img = ref.image;
-  if (img instanceof ImageData && img.width <= maxW) return { data: img.data, w: img.width, h: img.height };
-  const sw = img.width, sh = img.height, sc = Math.min(1, maxW / Math.max(sw, 1));
-  const w = Math.max(1, Math.round(sw * sc)), h = Math.max(1, Math.round(sh * sc));
-  const cv = typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(w, h) : Object.assign(document.createElement("canvas"), { width: w, height: h });
-  const g = cv.getContext("2d", { willReadFrequently: true }) as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
-  if (img instanceof ImageData) { const tmp = new OffscreenCanvas(sw, sh); tmp.getContext("2d")!.putImageData(img, 0, 0); g.drawImage(tmp, 0, 0, w, h); }
-  else g.drawImage(img as CanvasImageSource, 0, 0, w, h);
-  return { data: g.getImageData(0, 0, w, h).data, w, h };
+  let held: (() => void) | null = null;
+  if ("url" in ref) {
+    const u = ref.url, t = ref.t ?? 0, mw = Math.max(maxW, 320);
+    img = await acquireFrame(u, t, mw);
+    held = () => releaseFrame(u, t, mw);
+  } else img = ref.image;
+  try {
+    if (img instanceof ImageData && img.width <= maxW) return { data: img.data, w: img.width, h: img.height };
+    const sw = img.width, sh = img.height, sc = Math.min(1, maxW / Math.max(sw, 1));
+    const w = Math.max(1, Math.round(sw * sc)), h = Math.max(1, Math.round(sh * sc));
+    const cv = typeof OffscreenCanvas !== "undefined" ? new OffscreenCanvas(w, h) : Object.assign(document.createElement("canvas"), { width: w, height: h });
+    const g = cv.getContext("2d", { willReadFrequently: true }) as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
+    if (img instanceof ImageData) { const tmp = new OffscreenCanvas(sw, sh); tmp.getContext("2d")!.putImageData(img, 0, 0); g.drawImage(tmp, 0, 0, w, h); }
+    else g.drawImage(img as CanvasImageSource, 0, 0, w, h);
+    return { data: g.getImageData(0, 0, w, h).data, w, h };
+  } finally { held?.(); }
 }
 
 export interface ColorAnalysis {

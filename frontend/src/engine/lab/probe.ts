@@ -3,12 +3,16 @@
  * planes (VideoFrame.copyTo) and what texImage2D makes of it (RGBA8), so colour handling can be checked against
  * FFmpeg's decode of the same frame.
  */
-import { demux } from "../sources/exact";
+import { acquireDemux, releaseDemux } from "../sources/exact";
 
 const b64 = (u: Uint8Array) => { let s = ""; for (let i = 0; i < u.length; i += 8192) s += String.fromCharCode(...u.subarray(i, i + 8192)); return btoa(s); };
 
 export async function probeDecode(url: string, k: number, opts: { hardware?: boolean } = {}) {
-  const d = await demux(url);
+  const d = await acquireDemux(url);
+  try { return await probeDemuxed(d, k, opts); } finally { releaseDemux(url); }
+}
+
+async function probeDemuxed(d: Awaited<ReturnType<typeof acquireDemux>>, k: number, opts: { hardware?: boolean }) {
   const frames: VideoFrame[] = [];
   let err = "", n = 0;
   // outputs come in presentation order: keep only frame k (holding many stalls a hardware decoder)
