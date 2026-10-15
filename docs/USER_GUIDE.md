@@ -3,6 +3,7 @@
 How to use the studio day to day. For installing, configuring and deploying it, see the [README](../README.md).
 
 - [Daily workflow](#daily-workflow)
+- [Character boards](#character-boards)
 - [Seedance characters (BytePlus)](#seedance-characters-byteplus)
 - [Model Hub](#model-hub)
 - [Team, roles and money](#team-roles-and-money)
@@ -48,6 +49,54 @@ Each mode is a **routing chain** in the Model Hub (for example Veo 3.1 Lite → 
 
 **Dubbing** either re-syncs the lips on the existing video (**re-dub**, cheaper) or regenerates audio-driven shots per language (**regenerate**, most accurate mouth shapes).
 
+## Character boards
+
+Where: **2 Cast › Characters & places**, open a character, **Reference pack**.
+
+### Split a board you already have
+
+A character board is one image with many views of the same character: a turnaround (front, three-quarter, side, back),
+expressions, outfits. **Upload a board** cuts it into separate views:
+
+1. **Panels are found.** On a plain background the studio finds them itself, from the gutters between the pictures (or
+   the separate figures when nothing lines up). On a busy background a vision model finds them instead.
+2. **Each panel is labelled** by a small vision check (front, three-quarter, profile, back, full body, an expression
+   with its name, an outfit, or other). It is a job like any other: priced first (a few cents at most), counted against
+   the budget, and sent for approval when the budget asks for it. If it can't run, you label the panels yourself.
+3. **You review them** in **Review views**: pick what each panel shows, name the expression or the outfit (and its angle),
+   untick the panels you don't want, and fix a crop by dragging its box on the board (or its corner to resize), or by
+   typing the numbers under **Adjust box**. **Add a panel** draws a new box; **Label again with AI** relabels your boxes.
+4. **Save views.** Each kept panel becomes its own approved image in the reference pack (outfit panels also create the
+   outfit), marked *from your board*.
+
+Good to know:
+
+- The board itself is kept as **your own picture**, never used whole as a look reference. Like an uploaded photo, it
+  counts as a real person's pictures unless you tick **This image is AI-generated — not a photo of a real person** when
+  you upload it (or later under **Your uploads**). Only then can the character be registered with BytePlus, and only
+  then are the views cut from the board sent along (see [Seedance characters](#seedance-characters-byteplus)). A face
+  model trains on them as your own photos (no AI variations are added).
+- Removing the board keeps the views you saved.
+
+### A whole board in one request (Seedream on BytePlus)
+
+**Full board in one go** makes the turnaround, the five expressions and, if you describe one, an outfit's mini
+turnaround in **one** Seedream request on BytePlus, from the character's reference image. Each image is saved as its
+view, in the order the request listed them.
+
+- One request makes at most 15 images, and the reference image counts toward that limit (so 14 with a reference).
+- BytePlus decides how many images come back and bills only those. Any it doesn't return (or refuses) are made one by one
+  on the same engine, within the same estimate. The job says which panels are still missing, if any.
+- It needs **Seedream 5.0 Lite (BytePlus)**: BytePlus doesn't offer one-request boards on **Seedream 5.0 Pro** yet. Pro
+  can still make this character's views one at a time (see below).
+
+### The image engine per character
+
+**Image engine for this character** picks the engine that makes this character's sheet, expressions, lighting variants
+and outfits. **Auto** is the team's image chain (Google first, as set in the Model Hub). Pick another engine, for example
+**Seedream 5.0 Pro (BytePlus)**, and it is remembered for the next regenerations. A picked engine is used exactly as
+picked: "Google first" doesn't replace it, and no other engine or provider is tried behind your back (only the team's
+opt-in safety fallback, if it is on). The list shows each engine's price per image.
 ## Seedance characters (BytePlus)
 
 Seedance (BytePlus) blocks faces it takes for real people. An **AI character** registered in your private BytePlus asset

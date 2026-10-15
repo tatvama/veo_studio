@@ -30,6 +30,13 @@ def _attest(db: Session, user: User | None, a: CharacterAsset, ch: Character, ai
           {"character_id": ch.id, "asset_id": a.id, "via": how}, request=request, commit=False)
 
 
+def attest_upload(db: Session, user: User | None, a: CharacterAsset, ch: Character, *, via: str,
+                  request: Request | None = None) -> None:
+    """Record at upload time that an image the user brings (e.g. a character board) is AI-made."""
+    _attest(db, user, a, ch, True, via, request)
+    db.commit()
+
+
 def save_character_image(db: Session, ch: Character, data: bytes, ext: str, *, user: User | None = None, label: str = "",
                          ai_made: bool = False, request: Request | None = None, via: str = "upload") -> CharacterAsset:
     """Save an image the user brings as the character's own look reference (approved: used first everywhere).

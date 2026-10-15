@@ -50,6 +50,11 @@ def register_candidates(db, ch: Character) -> list[CharacterAsset]:
     sheet = (db.query(CharacterAsset).filter(CharacterAsset.character_id == ch.id, CharacterAsset.archived.is_(False),
                                              CharacterAsset.kind.in_(REGISTER_KINDS))
              .order_by(CharacterAsset.id.desc()).all())
+    # Views cut out of an uploaded character board (origin "board:<board asset id>") are the uploader's own images,
+    # maybe of a real person: sent only when that board is attested AI-made, like the uploads themselves.
+    ai_boards = {f"board:{i}" for (i,) in db.query(CharacterAsset.id).filter(
+        CharacterAsset.character_id == ch.id, CharacterAsset.origin == "board", CharacterAsset.ai_made.is_(True))}
+    sheet = [a for a in sheet if not (a.origin or "").startswith("board") or a.origin in ai_boards]
     rows = [a for a in sheet if a.approved] or sheet
     rows.sort(key=lambda a: REGISTER_KINDS.index(a.kind))
     out, kinds = [], set()
