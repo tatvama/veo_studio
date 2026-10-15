@@ -8,7 +8,8 @@
 # 5. The Windows desktop installer (desktop/, Electron) is built, attached to the same GitHub Release, and published
 #    to the public, releases-only repository tatvama/tatvam-desktop-releases (no source code). Installed apps update
 #    themselves from there, so they need no token even when this repository is private. Optional secrets
-#    WIN_CSC_LINK + WIN_CSC_KEY_PASSWORD sign it.
+#    WIN_CSC_LINK + WIN_CSC_KEY_PASSWORD (or CSC_LINK + CSC_KEY_PASSWORD) sign it; once they are set every release is
+#    signed automatically and installed apps verify the signature of each update (electron-builder.yml win.publisherName).
 #
 # Optional secrets (Settings → Secrets and variables → Actions):
 #   RELEASE_PLEASE_TOKEN  fine-grained PAT (contents + pull requests: read/write). Without it the release PR is
@@ -134,9 +135,10 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       RELEASES_REPO: ${{ vars.DESKTOP_RELEASES_REPO || 'tatvama/tatvam-desktop-releases' }}
       RELEASES_TOKEN: ${{ secrets.DESKTOP_RELEASES_TOKEN }}
-      # Optional code signing (avoids SmartScreen warnings): a base64 .pfx in WIN_CSC_LINK + its password
-      CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-      CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+      # Optional code signing (avoids SmartScreen warnings and lets the updater verify downloads): a base64 .pfx in
+      # WIN_CSC_LINK (or CSC_LINK) + its password. electron-builder reads CSC_LINK / CSC_KEY_PASSWORD from the environment.
+      CSC_LINK: ${{ secrets.WIN_CSC_LINK || secrets.CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD || secrets.CSC_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v7
         with:

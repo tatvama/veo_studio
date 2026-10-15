@@ -3,7 +3,7 @@
  * read media info, and the machine check against the RTX 3060 / 32 GB / NVMe baseline (docs/DESKTOP.md §4).
  * Electron-free (index.ts passes the GPU info and displays in).
  */
-import { execFile, spawn, spawnSync } from "node:child_process";
+import { execFile, spawn, spawnSync, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { createRequire } from "node:module";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import os from "node:os";
@@ -181,9 +181,37 @@ export interface RunOptions {
   onProgress?(p: FfProgress): void;
   signal?: AbortSignal;
   cwd?: string;
+  /** Kill FFmpeg after this long however it's doing (probes). */
   timeoutMs?: number;
+  /** Kill FFmpeg when no `-progress` block arrives for this long (a stalled encoder or driver): the run fails with a clear message. */
+  stallMs?: number;
   log?(line: string): void;
+  /** Tests: how the process is started (defaults to child_process.spawn). */
+  spawnImpl?: SpawnFn;
 }
+
+export type SpawnFn = (cmd: string, args: string[], opts: SpawnOptions) => ChildProcess;
+
+/** Feed stdout / stderr chunks in; every complete `-progress` block (ending in a `progress=` line) is parsed and reported. */
+export function progressReader(onBlock: (p: FfProgress) => void): (chunk: string) => void {
+  let buf = "";
+  const cur: FfProgress = { outTimeS: 0, speed: "", fps: 0, frame: 0 };
+  return (d: string) => {
+    buf += d;
+    let i: number;
+    while ((i = buf.indexOf("progress=")) >= 0) {
+      const nl = buf.indexOf("\n", i);
+      if (nl < 0) break;
+      const p = parseProgress(buf.slice(0, nl));
+      buf = buf.slice(nl + 1);
+      Object.assign(cur, Object.fromEntries(Object.entries(p).filter(([k]) => k !== "end")));
+      onBlock({ ...cur });
+    }
+    if (buf.length > 256_000) buf = buf.slice(-128_000); // a run with no progress lines at all never grows without bound
+  };
+}
+
+const minutes = (ms: number) => `${Math.max(1, Math.round(ms / 60_000))} minute${Math.round(ms / 60_000) === 1 ? "" : "s"}`;
 
 /** Run FFmpeg (args without the binary) with `-progress pipe:1`. Rejects with the stderr tail on failure. */
 export function runFfmpeg(ff: string, args: string[], opts: RunOptions = {}): Promise<{ stderr: string }> {
@@ -193,25 +221,26 @@ export function runFfmpeg(ff: string, args: string[], opts: RunOptions = {}): Pr
       return;
     }
     const full = ["-hide_banner", "-nostdin", "-y", "-progress", "pipe:1", "-nostats", ...args];
-    const child = spawn(ff, full, { cwd: opts.cwd, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = (opts.spawnImpl ?? spawn)(ff, full, { cwd: opts.cwd, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     let stderr = "";
-    let buf = "";
-    const cur: FfProgress = { outTimeS: 0, speed: "", fps: 0, frame: 0 };
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (d: string) => {
-      buf += d;
-      let i: number;
-      while ((i = buf.indexOf("progress=")) >= 0) {
-        const nl = buf.indexOf("\n", i);
-        if (nl < 0) break;
-        const p = parseProgress(buf.slice(0, nl));
-        buf = buf.slice(nl + 1);
-        Object.assign(cur, Object.fromEntries(Object.entries(p).filter(([k]) => k !== "end")));
-        opts.onProgress?.({ ...cur });
-      }
+    let stalled = false;
+    let stallTimer: NodeJS.Timeout | null = null;
+    const armStall = () => {
+      if (!opts.stallMs) return;
+      if (stallTimer) clearTimeout(stallTimer);
+      stallTimer = setTimeout(() => {
+        stalled = true;
+        if (child.pid) killTree(child.pid);
+      }, opts.stallMs);
+    };
+    const read = progressReader((p) => {
+      armStall();
+      opts.onProgress?.(p);
     });
-    child.stderr.setEncoding("utf8");
-    child.stderr.on("data", (d: string) => {
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (d: string) => read(d));
+    child.stderr?.setEncoding("utf8");
+    child.stderr?.on("data", (d: string) => {
       stderr += d;
       if (stderr.length > 200_000) stderr = stderr.slice(-100_000);
     });
@@ -222,78 +251,157 @@ export function runFfmpeg(ff: string, args: string[], opts: RunOptions = {}): Pr
     };
     opts.signal?.addEventListener("abort", onAbort, { once: true });
     const timer = opts.timeoutMs ? setTimeout(onAbort, opts.timeoutMs) : null;
-    child.on("error", (e) => {
+    armStall();
+    const cleanup = () => {
       opts.signal?.removeEventListener("abort", onAbort);
       if (timer) clearTimeout(timer);
+      if (stallTimer) clearTimeout(stallTimer);
+    };
+    child.on("error", (e) => {
+      cleanup();
       reject(new FfmpegError(`ffmpeg could not start: ${e.message}`, null, ""));
     });
     child.on("close", (code) => {
-      opts.signal?.removeEventListener("abort", onAbort);
-      if (timer) clearTimeout(timer);
-      if (code === 0 && !killed) {
+      cleanup();
+      if (code === 0 && !killed && !stalled) {
         resolve({ stderr });
         return;
       }
       const tail = stderr.trim().split(/\r?\n/).slice(-15).join("\n");
-      reject(new FfmpegError(killed ? "cancelled" : `ffmpeg failed (${code}): ${tail}`, code, tail));
+      if (stalled) {
+        reject(new FfmpegError(`ffmpeg made no progress for ${minutes(opts.stallMs!)}, so it was stopped (a stalled encoder or graphics driver)`, code, tail));
+        return;
+      }
+      if (killed && opts.signal?.aborted) {
+        reject(new FfmpegError("cancelled", code, tail));
+        return;
+      }
+      reject(new FfmpegError(killed ? `ffmpeg ran for more than ${minutes(opts.timeoutMs ?? 0)} and was stopped` : `ffmpeg failed (${code}): ${tail}`, code, tail));
     });
   });
 }
 
+export interface FfmpegPipe {
+  /** Resolves once FFmpeg took the bytes; rejects when FFmpeg died, stopped reading or the input was closed. */
+  write(buf: Uint8Array): Promise<void>;
+  /** Close stdin and wait for FFmpeg; rejects on a non-zero exit (or with "cancelled"). */
+  end(): Promise<{ stderr: string }>;
+  kill(): void;
+}
+
+export interface PipeOptions {
+  signal?: AbortSignal;
+  cwd?: string;
+  onProgress?(p: FfProgress): void;
+  /** Fail when a frame waits this long for FFmpeg to take it (default 10 minutes; 0 disables). */
+  stallMs?: number;
+  /** Tests: how the process is started (defaults to child_process.spawn). */
+  spawnImpl?: SpawnFn;
+}
+
+/** Long encodes (renders, proxies) that make no progress for this long are stopped. */
+export const DEFAULT_STALL_MS = 10 * 60_000;
+export const PIPE_STALL_MS = DEFAULT_STALL_MS;
+
 /**
  * FFmpeg fed through stdin (the GPU engine's raw frames). `write` resolves once FFmpeg has taken the bytes, so the
- * producer can't run ahead of the encoder; `end` closes stdin and resolves when FFmpeg exits cleanly.
+ * producer can't run ahead of the encoder; `end` closes stdin and resolves when FFmpeg exits cleanly. A write that is
+ * waiting for room when FFmpeg dies, stops reading or stalls is rejected (never left hanging), so the frame IPC that
+ * awaits it always answers.
  */
-export function spawnFfmpegPipe(ff: string, args: string[], opts: { signal?: AbortSignal; cwd?: string; onProgress?(p: FfProgress): void } = {}): {
-  write(buf: Uint8Array): Promise<void>; end(): Promise<{ stderr: string }>; kill(): void;
-} {
+export function spawnFfmpegPipe(ff: string, args: string[], opts: PipeOptions = {}): FfmpegPipe {
   const full = ["-hide_banner", "-nostats", "-y", "-progress", "pipe:2", ...args];
-  const child = spawn(ff, full, { cwd: opts.cwd, windowsHide: true, stdio: ["pipe", "ignore", "pipe"] });
+  const child = (opts.spawnImpl ?? spawn)(ff, full, { cwd: opts.cwd, windowsHide: true, stdio: ["pipe", "ignore", "pipe"] });
+  const stdin = child.stdin!;
   let stderr = "";
   let failed: Error | null = null;
-  child.stderr.setEncoding("utf8");
-  child.stderr.on("data", (d: string) => {
+  let closed = false;
+  let stalled = false;
+  let pending: { resolve(): void; reject(e: Error): void } | null = null;
+  let stallTimer: NodeJS.Timeout | null = null;
+  const stallMs = opts.stallMs ?? PIPE_STALL_MS;
+  const tail = () => stderr.trim().split(/\r?\n/).filter((l) => !/^\w+=/.test(l)).slice(-15).join("\n");
+  const settle = (err: Error | null) => {
+    if (stallTimer) { clearTimeout(stallTimer); stallTimer = null; }
+    const p = pending;
+    pending = null;
+    if (!p) return;
+    if (err) p.reject(err);
+    else p.resolve();
+  };
+  const read = progressReader((p) => opts.onProgress?.(p));
+  child.stderr!.setEncoding("utf8");
+  child.stderr!.on("data", (d: string) => {
     stderr += d;
     if (stderr.length > 200_000) stderr = stderr.slice(-100_000);
-    const m = /frame=(\d+)[\s\S]*?out_time_us=(\d+)[\s\S]*?speed=\s*([\d.]+x|N\/A)/.exec(d);
-    if (m) opts.onProgress?.({ frame: Number(m[1]), outTimeS: Number(m[2]) / 1e6, speed: m[3], fps: 0 });
+    if (opts.onProgress) read(d);
   });
-  const exited = new Promise<number | null>((res) => child.on("close", (code) => res(code)));
-  child.on("error", (e) => { failed = new FfmpegError(`ffmpeg could not start: ${e.message}`, null, ""); });
-  child.stdin.on("error", (e) => { failed ??= new FfmpegError(`ffmpeg stopped reading frames: ${e.message}`, null, stderr.slice(-2000)); });
+  const exited = new Promise<number | null>((res) => child.on("close", (code) => {
+    closed = true;
+    const err = failed ?? new FfmpegError(`ffmpeg exited (${code}) before all frames were written: ${tail()}`, code, tail());
+    failed ??= err;
+    settle(err);
+    res(code);
+  }));
+  child.on("error", (e) => {
+    failed = new FfmpegError(`ffmpeg could not start: ${e.message}`, null, "");
+    settle(failed);
+  });
+  stdin.on("error", (e) => {
+    failed ??= new FfmpegError(`ffmpeg stopped reading frames: ${e.message}`, null, stderr.slice(-2000));
+    settle(failed);
+  });
+  stdin.on("drain", () => settle(failed));
   const kill = () => { if (child.pid && child.exitCode === null) killTree(child.pid); };
   opts.signal?.addEventListener("abort", kill, { once: true });
   return {
     write: (buf) => new Promise<void>((resolve, reject) => {
       if (failed) return reject(failed);
-      if (child.stdin.write(buf)) resolve();
-      else child.stdin.once("drain", () => (failed ? reject(failed) : resolve()));
+      if (closed) return reject(new FfmpegError("ffmpeg has already exited", child.exitCode, tail()));
+      if (pending) return reject(new Error("the previous frame is still being written: frames go in one at a time"));
+      let ok: boolean;
+      try { ok = stdin.write(buf); } catch (e) { return reject(failed ?? (e as Error)); }
+      if (ok) return resolve();
+      pending = { resolve, reject };
+      if (stallMs > 0) {
+        stallTimer = setTimeout(() => {
+          stalled = true;
+          failed ??= new FfmpegError(`ffmpeg took no frames for ${minutes(stallMs)}, so it was stopped (a stalled encoder or graphics driver)`, null, tail());
+          kill();
+          settle(failed);
+        }, stallMs);
+      }
     }),
     end: async () => {
-      child.stdin.end();
+      settle(failed ?? new FfmpegError("the frame input was closed while a frame was still waiting", null, tail()));
+      if (!closed) stdin.end();
       const code = await exited;
       opts.signal?.removeEventListener("abort", kill);
-      const tail = stderr.trim().split(/\r?\n/).filter((l) => !/^\w+=/.test(l)).slice(-15).join("\n");
-      if (opts.signal?.aborted) throw new FfmpegError("cancelled", code, tail);
-      if (code !== 0) throw new FfmpegError(`ffmpeg failed (${code}): ${tail}`, code, tail);
+      if (opts.signal?.aborted) throw new FfmpegError("cancelled", code, tail());
+      if (stalled) throw failed!;
+      if (code !== 0) throw new FfmpegError(`ffmpeg failed (${code}): ${tail()}`, code, tail());
       return { stderr };
     },
     kill,
   };
 }
 
-export interface MediaInfo { duration: number; width: number; height: number; hasAudio: boolean; hasVideo: boolean }
+export interface MediaInfo { duration: number; width: number; height: number; hasAudio: boolean; hasVideo: boolean;
+  /** The first video stream's frame rate (0 when there is none or it isn't printed). */ fps: number }
 
 /** Duration, size and streams from `ffmpeg -i` (the same parsing the server does). */
 export function parseMediaInfo(stderr: string): MediaInfo {
   const d = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(stderr);
   const v = /Stream #.*Video:.*?(\d{2,5})x(\d{2,5})/.exec(stderr);
+  const vline = stderr.split(/\r?\n/).find((l) => /Stream #.*Video:/.test(l)) ?? "";
+  const f = /,\s*(\d+(?:\.\d+)?)\s*fps/.exec(vline) ?? /,\s*(\d+(?:\.\d+)?)\s*tbr/.exec(vline);
   return {
     duration: d ? Number(d[1]) * 3600 + Number(d[2]) * 60 + Number(d[3]) : 0,
     width: v ? Number(v[1]) : 0,
     height: v ? Number(v[2]) : 0,
     hasAudio: /Stream #.*Audio:/.test(stderr),
     hasVideo: /Stream #.*Video:/.test(stderr),
+    fps: f ? Number(f[1]) : 0,
   };
 }
 

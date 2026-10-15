@@ -25,6 +25,7 @@ import { Analyzer } from "./analyze.ts";
 import { FolderGuard } from "./folders.ts";
 import { McpJobs } from "./jobs.ts";
 import { EditorLink } from "./link.ts";
+import { isInside } from "../paths.ts";
 import { mediaKind } from "./security.ts";
 import { AssistantServer } from "./server.ts";
 import { AUTO_EDIT_STYLES, effectivePort, validPort } from "./settings.ts";
@@ -348,11 +349,19 @@ export class Assistants {
       const opts: Electron.OpenDialogOptions = { title: "A folder of clips to auto edit", properties: ["openDirectory"] };
       const r = parent ? await dialog.showOpenDialog(parent, opts) : await dialog.showOpenDialog(opts);
       if (r.canceled || !r.filePaths[0]) return null;
+      this.deps.editor.grantFolder(r.filePaths[0]); // chosen in a native dialog: the page may import what's in it
       return { folder: r.filePaths[0], ...(await folderMedia(r.filePaths[0])) };
     });
     handle(ASSISTANTS_IPC.listFolder, async (_e, folder: string, o?: { recursive?: boolean }) => {
       if (typeof folder !== "string" || !path.isAbsolute(folder)) throw new Error("A folder is named by its full path");
-      return { folder: path.resolve(folder), ...(await folderMedia(folder, { recursive: Boolean(o?.recursive) })) };
+      const dir = path.resolve(folder);
+      const listing = await folderMedia(folder, { recursive: Boolean(o?.recursive) });
+      // the page may import the listing only when the folder is one the user handed over: chosen or dropped this session, one
+      // of the assistants' folders or the library, or a watch folder (all picked in native dialogs)
+      const handedOver = this.deps.editor.mayImportFolder(dir) || this.folders.decide(dir, "ui") === "allowed"
+        || cfg().watches.some((w) => isInside(w.folder, dir));
+      if (handedOver) this.deps.editor.grantPaths(listing.files.map((f) => f.path));
+      return { folder: dir, ...listing };
     });
     handle(ASSISTANTS_IPC.analyze, async (e, editPath: string, media: AnalyzeMediaRef[], kinds?: AnalysisKindName[]): Promise<MediaAnalysis[]> => {
       if (typeof editPath !== "string" || !editPath.toLowerCase().endsWith(".tatvamedit")) throw new Error("Analysis is for an edit's media");

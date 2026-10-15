@@ -225,6 +225,26 @@ test("importMedia: probe, copy into Media, thumbnail / filmstrip / peaks in Cach
   await assert.rejects(ed.importMedia(editPath, [path.join(outside, "missing.mp4")]), /not found/);
 });
 
+test("importMedia from a page takes only paths a dialog returned or Explorer dropped (or the edit's own folder)", async () => {
+  const stray = media(outside, "stray.mp4", 4000);
+  const dropped = media(outside, "dropped.mp4", 4000);
+  const inFolder = media(path.join(editDir, "Media"), "placed.mp4", 4000);
+  await assert.rejects(ed.importMedia(editPath, [stray], { fromPage: true }), /wasn't chosen in a file dialog or dropped/);
+  assert.equal(ed.mayImport(stray, editDir), false);
+  ed.grantPaths([dropped]); // the preload's pathsForDrop / a shell drop
+  const items = await ed.importMedia(editPath, [dropped, inFolder, stray], { fromPage: true });
+  assert.deepEqual(items.map((x) => x.name).sort(), ["dropped.mp4", "placed.mp4"], "the stray path is refused, the others import");
+  assert.ok(ed.mayImport(stray.toUpperCase(), editDir) === false && ed.mayImport(dropped.toUpperCase(), editDir), "case-insensitive, as Windows");
+  const picked = path.join(outside, "picked");
+  mkdirSync(path.join(picked, "deeper"), { recursive: true });
+  const inPicked = media(path.join(picked, "deeper"), "x.mp4", 4000);
+  assert.equal(ed.mayImport(inPicked), false);
+  ed.grantFolder(picked); // a folder from a native dialog or a drop
+  assert.ok(ed.mayImport(inPicked) && ed.mayImportFolder(path.join(picked, "deeper")) && !ed.mayImportFolder(`${picked}2`));
+  // in-process callers (the MCP server after its own checks, interchange) are not gated
+  assert.equal((await ed.importMedia(editPath, [stray])).length, 1);
+});
+
 test("the /__media registry through the gateway: session cookie, Range, ETag, 304, HEAD, unknown ids", async () => {
   const url = await ed.mediaUrl(editPath, video.path);
   assert.equal(url, video.url, "a file keeps its URL for the session");

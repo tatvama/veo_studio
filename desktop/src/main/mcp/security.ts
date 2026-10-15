@@ -9,6 +9,7 @@
  * - only media and interchange file types are read.
  */
 import path from "node:path";
+import { isInside } from "../paths.ts";
 
 export const LOOPBACK_HOSTS = ["127.0.0.1", "localhost"] as const;
 
@@ -81,13 +82,9 @@ export class RateLimiter {
 
 // ── folders and files ──
 
-const norm = (p: string) => path.resolve(p).replace(/[\\/]+$/, "").toLowerCase();
-
-/** `child` is `dir` or inside it (case-insensitive, as Windows). */
+/** `child` is `dir` or inside it (case-insensitive, as Windows): the shared rule in paths.ts. */
 export function inside(dir: string, child: string): boolean {
-  const d = norm(dir);
-  const c = norm(child);
-  return c === d || c.startsWith(`${d}${path.sep}`) || c.startsWith(`${d}/`);
+  return isInside(dir, child);
 }
 
 export const MEDIA_TYPES = {
