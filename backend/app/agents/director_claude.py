@@ -20,13 +20,13 @@ import anthropic
 from sqlalchemy.orm import Session
 
 from .. import settings_store
-from ..core import budget
+from ..core import budget, chat_attachments, mentions
 from ..db import utcnow
 from ..models import AgentMessage
 from ..providers.base import Usage
 from ..providers.claude_text import cost
 from . import prompts
-from .director import _step, progress
+from .director import _step, progress, turn_notes
 from .tools import TOOL_DECLS, TOOL_FUNCS, AgentCtx, memory_text, step_label
 
 DEFAULT_MODEL = "claude-sonnet-5-5"
@@ -114,7 +114,7 @@ def _since(db: Session, project_id: int, after_id: int, before_id: int) -> list[
     asked = ""
     for m in rows:
         if m.role == "user":
-            asked = m.content
+            asked = mentions.plain(m.content)
             continue
         if m.role != "assistant":
             continue
@@ -141,9 +141,42 @@ def _since(db: Session, project_id: int, after_id: int, before_id: int) -> list[
     return out[-8:]
 
 
-def _turn(c: AgentCtx, message: str, selection: dict, since: list[str]) -> dict:
+CARRY_MESSAGES, CARRY_HEAD, CARRY_WINDOW = 4, 1500, timedelta(days=2)
+
+
+def _carry(db: Session, project_id: int, before_id: int) -> list[str]:
+    """For a new thread: the last few things the user asked (long ones trimmed to their start, with a note how to read
+    the rest), the pictures that came with them, and the last reply and plan, so a fresh thread can pick up the work.
+    Nothing stored is changed: old turns are only ever trimmed here, in a new thread's first message."""
+    since = utcnow() - CARRY_WINDOW
+    rows = (db.query(AgentMessage).filter(AgentMessage.project_id == project_id, AgentMessage.id < before_id,
+                                          AgentMessage.created_at >= since)
+            .order_by(AgentMessage.id.desc()).limit(16).all())
+    out: list[str] = []
+    for m in reversed([m for m in rows if m.role == "user"][:CARRY_MESSAGES]):
+        text = mentions.plain(m.content)
+        line = f"- The user wrote (chat message #{m.id}): {_clip(text, CARRY_HEAD)}"
+        if len(text) > CARRY_HEAD:
+            line += f" [trimmed: {len(text):,} characters; read_chat_message({m.id}) has all of it]"
+        for a in (m.data or {}).get("attachments") or []:
+            line += f"\n  {chat_attachments.placeholder(db, a)}"
+        out.append(line)
+    last = next((m for m in rows if m.role == "assistant"), None)
+    if last is not None and out:
+        out.append(f"- Your last reply: {_clip(last.content, 600)}")
+        plan = [s for s in (last.data or {}).get("plan") or [] if isinstance(s, dict)]
+        if plan:
+            out.append("- Your plan then: " + "; ".join(f"{s.get('text')} ({s.get('status')})" for s in plan))
+    return out
+
+
+def _turn(c: AgentCtx, message: str, selection: dict, since: list[str], carry: list[str] | None = None) -> dict:
     """The user's turn: the studio's facts for this turn first (kept out of the system prompt so it never changes), then
-    the message itself."""
+    the pictures attached to the message (each after a line saying what it is), then the message itself.
+
+    The pictures stay in the stored thread (it is replayed append-only: editing an earlier turn would invalidate every
+    later thinking block), served from the prompt cache on later turns. A new thread gets them as text placeholders
+    (_carry) and look_at_attachment shows one again."""
     p, ep = c.project, c.ep()
     ctx = (f"[Context from the studio, not typed by the user] Project '{p.title}' ({p.type}, {p.aspect}, primary language "
            f"{p.primary_language}, languages {', '.join(p.languages or [])}, quality {p.quality_mode}, mode {p.agent_mode}). "
@@ -155,7 +188,22 @@ def _turn(c: AgentCtx, message: str, selection: dict, since: list[str]) -> dict:
         ctx += f"\nSelected in the UI: {json.dumps(selection, sort_keys=True, ensure_ascii=False, default=str)}"
     if since:
         ctx += "\nSince your last reply:\n" + "\n".join(f"- {s}" for s in since)
-    return {"role": "user", "content": [{"type": "text", "text": ctx}, {"type": "text", "text": message}]}
+    if carry:
+        ctx += "\nEarlier in this chat (before this conversation thread started):\n" + "\n".join(carry)
+    plain, notes = turn_notes(c, message)
+    if notes:
+        ctx += "\n" + "\n".join(notes)
+    content: list[dict] = [{"type": "text", "text": ctx}]
+    for i, a in enumerate(c.attachments, 1):
+        att = chat_attachments.get(c.db, p, a["id"])
+        img = chat_attachments.model_jpeg(att) if att is not None else None
+        label = chat_attachments.label(c.db, a, i, len(c.attachments))
+        content.append({"type": "text", "text": label if img else label + " (The picture's file can't be read.)"})
+        if img:
+            content.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg",
+                                                        "data": base64.b64encode(img).decode()}})
+    content.append({"type": "text", "text": plain.strip() or "(No text: see the attached pictures.)"})
+    return {"role": "user", "content": content}
 
 
 def _result(c: AgentCtx, block: dict) -> dict:
@@ -212,7 +260,8 @@ def run(c: AgentCtx, message: str, selection: dict, user_msg_id: int) -> tuple[s
     fp = fingerprint(model)
     client = _client(settings_store.api_key("anthropic"))
     tid, history, last_msg, turn = _thread(db, c.project.id, fp)
-    new = [_turn(c, message, selection, _since(db, c.project.id, last_msg.id, user_msg_id) if last_msg else [])]
+    since = _since(db, c.project.id, last_msg.id, user_msg_id) if last_msg else []
+    new = [_turn(c, message, selection, since, [] if history else _carry(db, c.project.id, user_msg_id))]
 
     def ask(msgs: list[dict]):
         return client.beta.messages.create(
@@ -233,7 +282,7 @@ def run(c: AgentCtx, message: str, selection: dict, user_msg_id: int) -> tuple[s
                     raise
                 # the stored conversation was rejected (expired, edited, too long): start a fresh thread, once
                 tid, history, turn = _new_thread(), [], 0
-                new = [_turn(c, message, selection, [])]
+                new = [_turn(c, message, selection, [], _carry(db, c.project.id, user_msg_id))]
                 resp = ask(new)
         except anthropic.APIError as e:
             text, failed = _failure(e), True

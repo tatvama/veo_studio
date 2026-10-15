@@ -6,13 +6,13 @@ import re
 import time
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..agents import director
-from ..core import collab, jobs
+from ..core import chat_attachments, collab, jobs, reference_images
 from ..db import SessionLocal, get_db, is_network_error
 from ..events import emit
 from ..models import AgentMessage, Approval, Comment, Episode, Event, Job, Project, User, role_rank
@@ -209,10 +209,19 @@ def agent_messages(pid: int, limit: int = 60, user: User = Depends(current_user)
     return out
 
 
+MAX_CHAT_CHARS = 30_000  # one long brief or a whole script fits in one message
+
+
+class AttachmentRef(BaseModel):
+    id: int
+    tag: dict | None = None  # {kind: character|location|prop|style, id?, name?}
+
+
 class ChatIn(BaseModel):
-    message: str = Field(min_length=1, max_length=4000)
+    message: str = Field("", max_length=MAX_CHAT_CHARS)
     episode_id: int | None = None
     selection: dict | None = None
+    attachments: list[AttachmentRef] = Field(default_factory=list, max_length=chat_attachments.MAX_PER_MESSAGE)
 
 
 @router.post("/api/projects/{pid}/agent/chat")
@@ -221,7 +230,19 @@ def agent_chat(pid: int, body: ChatIn, user: User = Depends(require("creator")),
     ep = db.get(Episode, body.episode_id) if body.episode_id else None
     if ep is not None and ep.project_id != p.id:
         raise HTTPException(404, "Episode not found in this project")
-    return director.run(db, user, p, ep, body.message, body.selection)
+    if not body.message.strip() and not body.attachments:
+        raise HTTPException(422, "Write a message or attach an image")
+    atts = chat_attachments.for_message(db, p, [a.model_dump() for a in body.attachments])
+    return director.run(db, user, p, ep, body.message, body.selection, attachments=atts)
+
+
+@router.post("/api/projects/{pid}/agent/attachments")
+async def agent_attachment(pid: int, file: UploadFile = File(...), user: User = Depends(require("creator")),
+                           db: Session = Depends(get_db)):
+    """A picture for the Director chat (PNG, JPG or WEBP, up to 15 MB). Send its id with the message, with a tag."""
+    p = get_or_404(db, Project, pid)
+    data = await file.read(reference_images.MAX_BYTES + 1)
+    return chat_attachments.out(chat_attachments.save_upload(db, user, p, data, file.content_type or "", file.filename or ""))
 
 
 class ConfirmIn(BaseModel):
