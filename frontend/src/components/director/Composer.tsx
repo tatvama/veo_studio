@@ -1,15 +1,19 @@
 import { clsx } from "clsx";
-import { Crosshair, Eye, Loader2, Send } from "lucide-react";
+import { Crosshair, Eye, ImagePlus, Loader2, Send } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ClipboardEvent, type DragEvent } from "react";
 import { useT } from "../../lib/i18n";
+import type { AgentAttachmentTag } from "../../lib/types";
+import { useMentionField } from "../room/MentionField";
 import { MOD } from "../shell/keys";
 import { Kbd, Tooltip } from "../ui";
+import { ATTACH_TYPES, AttachmentStrip, MAX_ATTACHMENTS, type DraftAttachment } from "./Attachments";
 import type { Suggestion } from "./shared";
 import "../../styles/director.css";
 
-const MAX_LEN = 4000; // the API rejects longer messages
+export const MAX_LEN = 30_000; // the API rejects longer messages: a long brief or a whole script fits
 const MAX_H = 168;
+const hasFiles = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes("Files");
 /** Hide the extras (quick orders, key hints) when the window is short, so the conversation keeps its room. */
 const TALL_ONLY = "[@media(max-height:560px)]:hidden";
 
@@ -53,17 +57,24 @@ function Chips({ items, disabled, onPick }: { items: Suggestion[]; disabled: boo
 }
 
 /**
- * The command line at the bottom of the Director console: quick-order chips above, a prompt glyph and an auto-growing
- * textarea, one primary Send, and the key hints in mono underneath.
+ * The command line at the bottom of the Director console: quick-order chips above, attached pictures (each with a tag),
+ * a prompt glyph and an auto-growing textarea with @mentions of the cast, places and props, one primary Send, and the
+ * key hints in mono underneath. Pictures come in with the attach button, paste or drag-and-drop.
  */
-export function Composer({ value, onChange, onSend, onPick, sending, canEdit, selectedCode, suggestions, chips = true }: {
-  value: string; onChange: (v: string) => void; onSend: () => void; onPick: (order: string) => void;
+export function Composer({ pid, value, onChange, onSend, onPick, sending, canEdit, selectedCode, suggestions, chips = true,
+  attachments = [], onFiles, onRemoveAttachment, onTagAttachment }: {
+  pid: number; value: string; onChange: (v: string) => void; onSend: () => void; onPick: (order: string) => void;
   sending: boolean; canEdit: boolean; selectedCode?: string; suggestions: Suggestion[];
   /** Show the quick-order row above the box (the empty conversation already shows them, larger). */
   chips?: boolean;
+  attachments?: DraftAttachment[]; onFiles?: (files: File[]) => void; onRemoveAttachment?: (key: string) => void;
+  onTagAttachment?: (key: string, tag: AgentAttachmentTag | null) => void;
 }) {
   const t = useT();
   const ref = useRef<HTMLTextAreaElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [dragging, setDragging] = useState(false);
+  const mention = useMentionField({ pid, value, onChange, ref, enabled: canEdit && !sending });
 
   // Auto-grow up to ~7 lines, then scroll inside.
   useLayoutEffect(() => {
@@ -86,14 +97,43 @@ export function Composer({ value, onChange, onSend, onPick, sending, canEdit, se
   }
 
   const text = value.trim();
-  const near = value.length > MAX_LEN - 600;
+  const near = value.length > MAX_LEN - 2000;
   const extras = !!selectedCode || near;
+  const uploading = attachments.some((a) => a.status === "uploading");
+  const canSend = (!!text || attachments.length > 0) && !uploading && !sending;
+  const canAttach = !!onFiles && attachments.length < MAX_ATTACHMENTS && !sending;
+  const takeFiles = (list: FileList | File[] | null | undefined) => {
+    const files = Array.from(list ?? []).filter((f) => ATTACH_TYPES.includes(f.type));
+    if (files.length && onFiles) onFiles(files);
+  };
+  const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const imgs = Array.from(e.clipboardData?.files ?? []).filter((f) => ATTACH_TYPES.includes(f.type));
+    if (!imgs.length || !onFiles) return;
+    onFiles(imgs);
+    if (!e.clipboardData.getData("text")) e.preventDefault(); // a copied picture only: nothing to paste as text
+  };
 
   return (
-    <div className="@container relative shrink-0 border-t border-line bg-panel px-3 pb-2.5 pt-2">
+    <div
+      className="@container relative shrink-0 border-t border-line bg-panel px-3 pb-2.5 pt-2"
+      onDragEnter={(e) => { if (onFiles && hasFiles(e)) { e.preventDefault(); setDragging(true); } }}
+      onDragOver={(e) => { if (onFiles && hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; } }}
+      onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDragging(false); }}
+      onDrop={(e) => {
+        if (!onFiles || !hasFiles(e)) return;
+        e.preventDefault();
+        setDragging(false);
+        takeFiles(e.dataTransfer.files);
+      }}
+    >
       <span aria-hidden className="dr-edge pointer-events-none absolute inset-x-4 top-0 opacity-70" />
+      {dragging && (
+        <div aria-hidden className="pointer-events-none absolute inset-1.5 z-10 grid place-items-center rounded-lg border-2 border-dashed border-ai/60 bg-ai/10 text-xs font-medium text-ai backdrop-blur-[1px]">
+          <span className="flex items-center gap-1.5"><ImagePlus className="size-4" />{t("Drop pictures to attach (up to {n})", { n: MAX_ATTACHMENTS })}</span>
+        </div>
+      )}
       <AnimatePresence initial={false}>
-        {chips && !value && (
+        {chips && !value && !attachments.length && (
           <motion.div
             key="chips"
             initial={{ height: 0, opacity: 0 }}
@@ -108,6 +148,8 @@ export function Composer({ value, onChange, onSend, onPick, sending, canEdit, se
       </AnimatePresence>
 
       <div className="dr-input mt-1">
+        <AttachmentStrip items={attachments} pid={pid} disabled={sending} onRemove={(k) => onRemoveAttachment?.(k)}
+          onTag={(k, tag) => onTagAttachment?.(k, tag)} />
         <div className="flex items-end gap-1.5 py-1.5 pl-3 pr-1.5">
           <span aria-hidden className="mono mb-[0.55rem] select-none text-sm font-medium leading-none text-ai">›</span>
           <textarea
@@ -117,20 +159,41 @@ export function Composer({ value, onChange, onSend, onPick, sending, canEdit, se
             rows={1}
             maxLength={MAX_LEN}
             aria-label={t("Ask the Director…")}
-            placeholder={t("Ask the Director…")}
-            onChange={(e) => onChange(e.target.value)}
+            placeholder={attachments.length ? t("Say what to do with the pictures… (@ to mention)") : t("Ask the Director… (@ to mention)")}
+            {...mention.fieldProps}
+            onPaste={onPaste}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); onSend(); }
+              mention.fieldProps.onKeyDown(e); // the @ list takes the arrows, Enter, Tab and Esc while it is open
+              if (e.defaultPrevented) return;
+              if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) { e.preventDefault(); if (canSend) onSend(); }
             }}
             className="block max-h-[168px] min-h-9 min-w-0 flex-1 resize-none bg-transparent py-1.5 text-sm leading-relaxed text-ink outline-none placeholder:text-dim"
           />
-          <Tooltip content={t("Send")} shortcut={<Kbd>↵</Kbd>} side="top" disabled={!text || sending}>
+          {mention.popover}
+          {onFiles && (
+            <>
+              <input ref={fileInput} type="file" accept={ATTACH_TYPES.join(",")} multiple hidden
+                onChange={(e) => { takeFiles(e.target.files); e.target.value = ""; }} />
+              <Tooltip content={t("Attach pictures (or paste, or drop them here)")} side="top" disabled={!canAttach}>
+                <button
+                  type="button"
+                  aria-label={t("Attach pictures")}
+                  onClick={() => fileInput.current?.click()}
+                  disabled={!canAttach}
+                  className="mb-0.5 grid size-8 shrink-0 place-items-center rounded-lg text-mute transition-colors hover:bg-hover hover:text-ai disabled:cursor-not-allowed disabled:opacity-45 max-sm:size-10"
+                >
+                  <ImagePlus className="size-4" />
+                </button>
+              </Tooltip>
+            </>
+          )}
+          <Tooltip content={uploading ? t("Waiting for the pictures to upload") : t("Send")} shortcut={<Kbd>↵</Kbd>} side="top" disabled={!canSend}>
             <button
               type="button"
               aria-label={t("Send")}
               aria-busy={sending || undefined}
               onClick={onSend}
-              disabled={!text || sending}
+              disabled={!canSend}
               className="btn-primary mb-0.5 grid size-8 shrink-0 select-none place-items-center rounded-lg text-black transition-[transform,opacity,filter] duration-150 active:scale-90 disabled:cursor-not-allowed disabled:opacity-45 disabled:active:scale-100 max-sm:size-10"
             >
               {sending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
