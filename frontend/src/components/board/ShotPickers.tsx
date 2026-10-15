@@ -8,6 +8,7 @@ import { useT } from "../../lib/i18n";
 import type { Character, VideoEngine, VideoEngines, VideoFit } from "../../lib/types";
 import { Avatar, Badge, Button, Popover, Toggle, Tooltip } from "../ui";
 import { SeedanceBadge } from "../room/SeedanceBadge";
+import { AiMadeCheck } from "../room/AiMade";
 import { TONE_TEXT_SM } from "../room/util";
 import { providerName } from "../hub/Chips";
 
@@ -16,14 +17,15 @@ import { providerName } from "../hub/Chips";
 /** "+ Character": pick from this project's cast or the library, or make a new one (name + optional photo). */
 export function CharacterPicker({ selected, projectCast, library, onToggle, onCreate, disabled }: {
   selected: number[]; projectCast: Character[]; library: Character[]; onToggle: (id: number) => void;
-  /** creates the character in this project; resolves with it (or undefined if it failed) */
-  onCreate?: (name: string, photo: File | null) => Promise<Character | undefined>; disabled?: boolean;
+  /** creates the character in this project; resolves with it (or undefined if it failed). `aiMade`: the photo is attested AI-generated. */
+  onCreate?: (name: string, photo: File | null, aiMade: boolean) => Promise<Character | undefined>; disabled?: boolean;
 }) {
   const t = useT();
   const ref = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
   const [photo, setPhoto] = useState<File | null>(null);
+  const [aiMade, setAiMade] = useState(false);
   const [busy, setBusy] = useState(false);
   const inProject = new Set(projectCast.map((c) => c.id));
   const others = library.filter((c) => !inProject.has(c.id));
@@ -35,8 +37,8 @@ export function CharacterPicker({ selected, projectCast, library, onToggle, onCr
     if (!onCreate || !q.trim()) return;
     setBusy(true);
     try {
-      const c = await onCreate(q.trim(), photo);
-      if (c) { onToggle(c.id); setQ(""); setPhoto(null); setOpen(false); }
+      const c = await onCreate(q.trim(), photo, !!photo && aiMade);
+      if (c) { onToggle(c.id); setQ(""); setPhoto(null); setAiMade(false); setOpen(false); }
     } finally { setBusy(false); }
   };
 
@@ -80,6 +82,7 @@ export function CharacterPicker({ selected, projectCast, library, onToggle, onCr
               <span className="min-w-0 flex-1 truncate">{photo ? photo.name : t("Add their photo (recommended: the face stays the same)")}</span>
               <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => setPhoto(e.target.files?.[0] ?? null)} />
             </label>
+            {photo && <AiMadeCheck checked={aiMade} onChange={setAiMade} className="px-2" />}
             <Button size="sm" variant="primary" className="w-full" loading={busy} icon={<Plus className="size-3.5" />} onClick={() => void create()}>
               {t("Create “{name}”", { name: q.trim() })}
             </Button>

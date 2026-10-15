@@ -132,6 +132,11 @@ class CharacterAsset(Base, Serializable):
     version: Mapped[int] = mapped_column(Integer, default=1)
     cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    # an upload (kind "source") the user attested is AI-generated, not a photo of a real person: it may go to the
+    # BytePlus asset library. Uploads default to a real person's photo, which never leaves for that library.
+    ai_made: Mapped[bool] = mapped_column(Boolean, default=False)
+    ai_attested_by: Mapped[int | None] = mapped_column(Integer, nullable=True)  # who said so last (either way)
+    ai_attested_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 

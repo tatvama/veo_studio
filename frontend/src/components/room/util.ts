@@ -141,9 +141,10 @@ export const IDENTITY_STATUS: Record<IdStatus | "none", { label: string; tone: "
   cancelled: { label: "Stopped", tone: "neutral" },
 };
 
-/** Whether this character needs a consent record (uploaded real-person photos or an external ElevenLabs voice). */
+/** Whether this character needs a consent record (uploaded real-person photos or an external ElevenLabs voice). Uploads attested as
+ * AI-generated don't show a real person, so they need none. */
 export function consentNeeds(c: Character) {
-  const photos = (c.assets ?? []).filter((a) => a.kind === "source" && !a.archived);
+  const photos = (c.assets ?? []).filter((a) => a.kind === "source" && !a.archived && !a.ai_made);
   const external = ((c.voices ?? []) as VoiceProfile[]).filter((v) => typeof v === "object" && v.provider === "elevenlabs" && !v.description);
   return { photos, external, any: photos.length > 0 || external.length > 0 };
 }

@@ -9,6 +9,7 @@ import { tr, useT } from "../../lib/i18n";
 import { useCharacters } from "../../lib/queries";
 import type { Board, Character, ImportResult } from "../../lib/types";
 import { importApply } from "../../lib/v3";
+import { AiMadeCheck, AiMadeHelp, uploadCharacterImage } from "../room/AiMade";
 import { radioKeys } from "../room/util";
 import { pad } from "../room/workspace";
 import { Avatar, Button, Modal, Select, Textarea } from "../ui";
@@ -81,6 +82,7 @@ export function ImportWizard({ open, onClose, eid, projectId, hasShots, onDone }
   const [res, setRes] = useState<ImportResult | null>(null);
   const [picks, setPicks] = useState<Record<string, CastPick>>({});
   const [photos, setPhotos] = useState<Record<string, File>>({});
+  const [aiPhotos, setAiPhotos] = useState<Record<string, boolean>>({});
   const [writeScript, setWriteScript] = useState(true);
 
   const pool = useMemo(() => {
@@ -93,7 +95,7 @@ export function ImportWizard({ open, onClose, eid, projectId, hasShots, onDone }
   const previews = useMemo(() => Object.fromEntries(Object.entries(photos).map(([name, f]) => [name, URL.createObjectURL(f)])) as Record<string, string>, [photos]);
   useEffect(() => () => { Object.values(previews).forEach((u) => URL.revokeObjectURL(u)); }, [previews]);
 
-  const reset = () => { setStep("source"); setFile(null); setText(""); setRes(null); setPicks({}); setPhotos({}); setWriteScript(true); };
+  const reset = () => { setStep("source"); setFile(null); setText(""); setRes(null); setPicks({}); setPhotos({}); setAiPhotos({}); setWriteScript(true); };
   const close = () => { if (!busy) { reset(); onClose(); } };
 
   const read = async () => {
@@ -122,7 +124,7 @@ export function ImportWizard({ open, onClose, eid, projectId, hasShots, onDone }
       // Photos go to whichever character each name ended up as (matched or just created).
       for (const [name, photo] of Object.entries(photos)) {
         const id = r.characters?.[name];
-        if (typeof id === "number") { try { await api.upload(`/api/characters/${id}/upload`, photo); } catch { /* api toasts */ } }
+        if (typeof id === "number") { try { await uploadCharacterImage(id, photo, !!aiPhotos[name]); } catch { /* api toasts */ } }
       }
       const shots = r.scenes.reduce((a, s) => a + (s.shots?.length ?? 0), 0);
       toast.success(tr("Script imported: {s} scenes, {n} shots", { s: r.scenes.length, n: shots }),
@@ -289,12 +291,16 @@ export function ImportWizard({ open, onClose, eid, projectId, hasShots, onDone }
                             onChange={(e) => { const f = e.target.files?.[0]; if (f) setPhotos({ ...photos, [c.name]: f }); }} />
                         </label>
                       ) : <span aria-hidden className="hidden @2xl:block" />}
+                      {p.kind !== "vo" && photos[c.name] && (
+                        <AiMadeCheck compact checked={!!aiPhotos[c.name]} onChange={(v) => setAiPhotos({ ...aiPhotos, [c.name]: v })} className="col-span-full" />
+                      )}
                     </li>
                   );
                 })}
               </ul>
             </div>
             <p className="flex items-center gap-1.5 text-2xs text-dim"><Users className="size-3" />{t("New characters are added to this project and the library when you import. Uploaded photos become their look reference.")}</p>
+            {Object.keys(photos).length > 0 && <AiMadeHelp />}
           </div>
         )}
 
