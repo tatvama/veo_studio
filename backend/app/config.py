@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     # Background worker
     run_worker_in_process: bool = True
     worker_concurrency: int = 4
+    # Name this worker stamps on the jobs it runs (empty = the host name). After a restart a worker resumes only its
+    # own interrupted jobs (and jobs whose worker stopped reporting), never another machine's in-flight paid work.
+    worker_id: str = ""
 
     # "auto" = use a mock provider when its API key is missing; "true" = always mock; "false" = never mock.
     mock_providers: str = "auto"

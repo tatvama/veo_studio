@@ -105,3 +105,79 @@ def test_health_hides_provider_modes_from_anonymous_callers(client: TestClient):
     mine = client.get("/api/health").json()
     assert mine["ok"] is True and mine["version"] == app.version
     assert isinstance(mine["providers"], list) and mine["providers"] and "mode" in mine["providers"][0]
+
+
+# ── 8. edits are found by an indexed column ──────────────────────────────────
+
+def test_edit_lookup_uses_the_indexed_column_and_is_backfilled(client: TestClient):
+    from app.api.edits import find_edit
+    from app.db import SessionLocal
+    from app.db_migrate import migrate
+    from app.models import Project
+
+    e = ok(client.post("/api/edits", headers=H, json={"name": "Indexed", "edit_id": "p_indexed_review_1"}))
+    with SessionLocal() as db:
+        p = db.get(Project, e["id"])
+        assert p.edit_id == "p_indexed_review_1" and p.brief["edit_id"] == "p_indexed_review_1"
+        assert find_edit(db, "p_indexed_review_1").id == p.id and find_edit(db, "p_nobody") is None
+        # a project from before the column existed: only brief.edit_id, found again after migrate backfills it
+        legacy = Project(title="Legacy edit", type="edit", brief={"edit_id": "p_legacy_review_1"}, status="edit")
+        db.add(legacy)
+        db.commit()
+        legacy_id = legacy.id
+        assert find_edit(db, "p_legacy_review_1") is None
+    changed = migrate()
+    assert any(c.startswith("projects.edit_id <- brief") for c in changed)
+    with SessionLocal() as db:
+        assert find_edit(db, "p_legacy_review_1").id == legacy_id
+        assert db.get(Project, legacy_id).edit_id == "p_legacy_review_1"
+    again = ok(client.post("/api/edits", headers=H, json={"name": "Legacy edit", "edit_id": "p_legacy_review_1"}))
+    assert again["id"] == legacy_id and again["edit_id"] == "p_legacy_review_1"
+
+
+# ── 10. a worker recovers only its own jobs, and stale ones ──────────────────
+
+def test_worker_recovers_its_own_and_stale_jobs_only(client: TestClient):
+    from datetime import timedelta
+
+    from app.db import SessionLocal, utcnow
+    from app.models import Job
+    from app.workers.worker import STALE_RUNNING_S, Worker
+
+    far = utcnow() + timedelta(days=1)  # run_after in the future: the live worker leaves these in the queue
+    now = utcnow()
+    with SessionLocal() as db:
+        mine = Job(type="noop_review", status="running", label="mine", worker_id="review-worker-a", heartbeat_at=now,
+                   started_at=now, run_after=far)
+        theirs = Job(type="noop_review", status="running", label="theirs (alive)", worker_id="review-worker-b",
+                     heartbeat_at=now, started_at=now, run_after=far)
+        dead = Job(type="noop_review", status="running", label="theirs (dead)", worker_id="review-worker-b",
+                   heartbeat_at=now - timedelta(seconds=STALE_RUNNING_S + 60), started_at=now - timedelta(hours=2), run_after=far)
+        legacy = Job(type="noop_review", status="running", label="before worker ids", worker_id=None, heartbeat_at=None,
+                     started_at=now, run_after=far)
+        db.add_all([mine, theirs, dead, legacy])
+        db.commit()
+        ids = {"mine": mine.id, "theirs": theirs.id, "dead": dead.id, "legacy": legacy.id}
+    try:
+        w = Worker(concurrency=1, id_="review-worker-a")
+        assert w.recover() == 2
+        with SessionLocal() as db:
+            st = {k: db.get(Job, i) for k, i in ids.items()}
+            assert st["mine"].status == "queued" and st["mine"].worker_id is None and "restart" in st["mine"].message
+            assert st["theirs"].status == "running" and st["theirs"].worker_id == "review-worker-b"  # in flight elsewhere
+            assert st["dead"].status == "queued" and "stopped responding" in st["dead"].message
+            assert st["legacy"].status == "running"  # fresh start, no heartbeat yet: left alone until it goes stale
+        assert w.recover(own=False) == 0  # nothing new: the live one stays, the recovered ones are queued
+        # a job this process is running right now is never requeued, even with a stale stamp
+        w.running[ids["theirs"]] = "noop_review"
+        with SessionLocal() as db:
+            db.get(Job, ids["theirs"]).heartbeat_at = now - timedelta(hours=1)
+            db.commit()
+        assert w.recover(own=False) == 0
+        w.heartbeat()
+        with SessionLocal() as db:
+            assert db.get(Job, ids["theirs"]).heartbeat_at > now - timedelta(minutes=1)
+    finally:
+        with SessionLocal() as db:
+            db.query(Job).filter(Job.id.in_(list(ids.values()))).delete()
+            db.commit()

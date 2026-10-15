@@ -6,6 +6,7 @@ instead of paying twice.
 """
 from __future__ import annotations
 
+import socket
 import threading
 import time
 import traceback
@@ -40,6 +41,10 @@ GROUP_LIMITS = {"video": 3, "lipsync": 2, "audio": 4, "render": 2, "image": 4, "
 # A rate-limited job waits in the queue up to this many times (back-off grows to 15 min, so about a day:
 # long enough for a daily quota to reset at midnight Pacific) before it is retried and failed as usual.
 MAX_RATE_LIMIT_WAITS = 100
+# Every running job is stamped alive this often; a running job nobody has stamped for STALE_RUNNING_S (its worker
+# died or was taken down) is put back in the queue by any worker.
+HEARTBEAT_S = 30.0
+STALE_RUNNING_S = 10 * 60
 
 
 def handler(name: str):
@@ -184,8 +189,14 @@ class JobContext:
             time.sleep(2)
 
 
+def worker_id() -> str:
+    """What this worker writes on the jobs it runs (settings.worker_id, else the host name)."""
+    return (get_settings().worker_id or "").strip() or socket.gethostname()
+
+
 class Worker:
-    def __init__(self, concurrency: int | None = None):
+    def __init__(self, concurrency: int | None = None, id_: str | None = None):
+        self.id = id_ or worker_id()
         self.concurrency = concurrency or get_settings().worker_concurrency
         self.pool = ThreadPoolExecutor(max_workers=max(self.concurrency, 2), thread_name_prefix="job")
         # 2 top-level runs at a time; an orchestrator started by another one (Autopilot → Dub) never waits for a slot,
@@ -209,15 +220,39 @@ class Worker:
     def stop(self) -> None:
         self.stop_event.set()
 
-    def recover(self) -> None:
+    def recover(self, own: bool = True) -> int:
+        """Put interrupted jobs back in the queue: this worker's own running jobs (`own`, at start: they died with its
+        last process) and any running job whose worker has not stamped it alive for STALE_RUNNING_S. Other workers'
+        live jobs are left alone: they are in flight, and paid."""
+        cutoff = utcnow() - timedelta(seconds=STALE_RUNNING_S)
+        with self.lock:
+            busy = set(self.running)
         with SessionLocal() as db:
             n = 0
             for j in db.query(Job).filter(Job.status == "running").all():
-                j.status, j.message = "queued", "Resumed after restart"
-                n += 1
+                if j.id in busy:
+                    continue  # this process is running it right now
+                mine = j.worker_id == self.id
+                stale = (j.heartbeat_at or j.started_at or j.created_at or cutoff) < cutoff
+                if (own and mine) or stale:
+                    j.status = "queued"
+                    j.message = "Resumed after restart" if mine else "Resumed: its worker stopped responding"
+                    j.worker_id, j.heartbeat_at = None, None
+                    n += 1
             db.commit()
             if n:
                 print(f"[worker] re-queued {n} interrupted job(s)")
+            return n
+
+    def heartbeat(self) -> None:
+        """Stamp the jobs this worker is running as alive (one UPDATE)."""
+        with self.lock:
+            ids = list(self.running)
+        if not ids:
+            return
+        with SessionLocal() as db:
+            db.execute(update(Job).where(Job.id.in_(ids), Job.status == "running").values(heartbeat_at=utcnow()))
+            db.commit()
 
     def schedule_periodic(self, db: Session) -> None:
         """Daily Model Hub sync (new models appear automatically) and analytics refresh."""
@@ -237,7 +272,7 @@ class Worker:
 
     def loop(self) -> None:
         from .. import health
-        last_prune = 0.0
+        last_prune, last_beat, last_recover = 0.0, 0.0, time.time()
         while not self.stop_event.is_set():
             health.beat()  # the worker container's health check reads this
             try:
@@ -245,6 +280,18 @@ class Worker:
             except Exception as e:  # keep the loop alive
                 print(f"[worker] claim error: {e}")
                 claimed = 0
+            if time.time() - last_beat > HEARTBEAT_S:
+                last_beat = time.time()
+                try:
+                    self.heartbeat()
+                except Exception as e:
+                    print(f"[worker] heartbeat: {e}")
+            if time.time() - last_recover > STALE_RUNNING_S / 2:  # jobs of a worker that died: back in the queue
+                last_recover = time.time()
+                try:
+                    self.recover(own=False)
+                except Exception as e:
+                    print(f"[worker] recover: {e}")
             if time.time() - last_prune > 3600:
                 last_prune = time.time()
                 try:
@@ -282,7 +329,8 @@ class Worker:
                     if g in GROUP_LIMITS and self._group_count(g) >= GROUP_LIMITS[g]:
                         continue
                 res = db.execute(update(Job).where(Job.id == j.id, Job.status == "queued")
-                                 .values(status="running", started_at=utcnow(), attempts=Job.attempts + 1))
+                                 .values(status="running", started_at=utcnow(), heartbeat_at=utcnow(), worker_id=self.id,
+                                         attempts=Job.attempts + 1))
                 db.commit()
                 if res.rowcount != 1:
                     continue

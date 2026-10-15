@@ -256,6 +256,7 @@ Team, personal and project budgets are set in the app (**Settings → Budget**).
 |---|---|---|
 | `RUN_WORKER_IN_PROCESS` | `true` | Run the job worker inside the API process. Docker Compose sets `false` and runs a separate `worker` container. |
 | `WORKER_CONCURRENCY` | `4` | Jobs run at the same time. |
+| `WORKER_ID` | host name | Name stamped on the jobs this worker runs. After a restart a worker resumes only its own interrupted jobs (plus jobs whose worker stopped reporting for 10 minutes), never another machine's running paid work. |
 | `WORKER_HEARTBEAT_FILE` | temp dir | Heartbeat file the worker health check reads. |
 | `PORT` | `8100` | Port the `python -m app.health api` probe calls. |
 

@@ -32,3 +32,83 @@ def test_relax_not_null_keeps_rows(client):
         names = [r[0] for r in conn.execute(text("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='comments'"))]
         assert "ix_comments_project_id" in names
         conn.execute(text("DELETE FROM comments"))
+
+
+def test_indexes_added_later_are_created_on_existing_databases(client):
+    """An index put on a column after the table first shipped (jobs.type here) is missing from a database made before
+    it; migrate adds it, on both SQLite and Postgres (only the SQLite rebuild path created indexes before)."""
+    with engine.begin() as conn:
+        conn.execute(text("DROP INDEX ix_jobs_type"))
+    assert "ix_jobs_type" not in {ix["name"] for ix in inspect(engine).get_indexes("jobs")}
+    changed = migrate()
+    assert "jobs.ix_jobs_type" in changed
+    have = {ix["name"]: ix for ix in inspect(engine).get_indexes("jobs")}
+    assert have["ix_jobs_type"]["column_names"] == ["type"]
+    assert migrate() == []  # idempotent: nothing is created twice
+
+
+def test_sqlite_rebuild_of_a_parent_table_keeps_its_children(client, tmp_path, monkeypatch):
+    """Relaxing a NOT NULL on SQLite rebuilds the table (drop + rename). With foreign keys enforced inside the migration
+    transaction that failed for a table other rows point at ("FOREIGN KEY constraint failed"): scenes with shots here.
+    The rebuild runs with foreign keys off and checks them before committing; the shot still points at its scene.
+    On a database of its own (with the app's foreign_keys=ON pragma), so the shared test database stays as it is."""
+    if not is_sqlite():
+        return
+    from sqlalchemy import create_engine, event
+    from sqlalchemy.orm import sessionmaker
+
+    from app import db_migrate
+    from app.db import Base
+    from app.models import Episode, Project, Scene, Shot
+
+    eng = create_engine(f"sqlite:///{(tmp_path / 'rebuild.db').as_posix()}", future=True)
+
+    @event.listens_for(eng, "connect")
+    def _fk_on(dbapi_conn, _):
+        dbapi_conn.execute("PRAGMA foreign_keys=ON")
+
+    monkeypatch.setattr(db_migrate, "engine", eng)
+    monkeypatch.setattr(db_migrate, "SessionLocal", sessionmaker(bind=eng, expire_on_commit=False))
+    Base.metadata.create_all(bind=eng)
+    with sessionmaker(bind=eng)() as db:
+        p = Project(title="Rebuild parent")
+        db.add(p)
+        db.flush()
+        ep = Episode(project_id=p.id, number=1, title="E1")
+        db.add(ep)
+        db.flush()
+        sc = Scene(episode_id=ep.id, order=1, title="Kitchen")
+        db.add(sc)
+        db.flush()
+        sh = Shot(episode_id=ep.id, scene_id=sc.id, order=1, code="R-1")
+        db.add(sh)
+        db.flush()
+        sc.anchor_shot_id = sh.id
+        db.commit()
+        scene_id, shot_id = sc.id, sh.id
+    # put `scenes` back to an "older" shape where anchor_shot_id was NOT NULL
+    with eng.connect() as conn:
+        conn = conn.execution_options(isolation_level="AUTOCOMMIT")
+        conn.exec_driver_sql("PRAGMA foreign_keys=OFF")
+        (ddl,) = conn.exec_driver_sql("SELECT sql FROM sqlite_master WHERE type='table' AND name='scenes'").one()
+        assert "anchor_shot_id INTEGER" in ddl and "anchor_shot_id INTEGER NOT NULL" not in ddl
+        conn.exec_driver_sql("CREATE TABLE _keep_scenes AS SELECT * FROM scenes")
+        conn.exec_driver_sql("DROP TABLE scenes")
+        conn.exec_driver_sql(ddl.replace("anchor_shot_id INTEGER", "anchor_shot_id INTEGER NOT NULL", 1))
+        conn.exec_driver_sql("INSERT INTO scenes SELECT * FROM _keep_scenes")
+        conn.exec_driver_sql("DROP TABLE _keep_scenes")
+        conn.exec_driver_sql("PRAGMA foreign_keys=ON")
+    assert not {c["name"]: c for c in inspect(eng).get_columns("scenes")}["anchor_shot_id"]["nullable"]
+    with eng.begin() as conn:  # the shot's row does point at the scene: a plain DROP TABLE scenes would be refused
+        assert conn.execute(text("PRAGMA foreign_keys")).scalar() == 1
+    changed = db_migrate.migrate()
+    assert "scenes.anchor_shot_id" in changed and db_migrate.migrate() == []
+    cols = {c["name"]: c for c in inspect(eng).get_columns("scenes")}
+    assert cols["anchor_shot_id"]["nullable"]
+    assert "ix_scenes_episode_id" in {ix["name"] for ix in inspect(eng).get_indexes("scenes")}
+    with eng.begin() as conn:
+        assert conn.execute(text("PRAGMA foreign_key_check")).fetchall() == []
+        assert conn.execute(text("SELECT scene_id FROM shots WHERE id=:i"), {"i": shot_id}).scalar() == scene_id
+        assert conn.execute(text("SELECT title, anchor_shot_id FROM scenes WHERE id=:i"), {"i": scene_id}).one() == ("Kitchen", shot_id)
+        assert conn.execute(text("PRAGMA foreign_keys")).scalar() == 1  # enforcement is back on for pooled connections
+    eng.dispose()
