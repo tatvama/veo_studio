@@ -1,9 +1,10 @@
 import { LogoMark } from "../components/shell/Brand";
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { ArrowRight, CircleAlert, Eye, EyeOff, Languages, LockKeyhole, Monitor, Moon, Sun, TriangleAlert } from "lucide-react";
+import { ArrowLeft, ArrowRight, CircleAlert, Eye, EyeOff, Languages, LockKeyhole, Monitor, Moon, Sun, TriangleAlert } from "lucide-react";
 import { AnimatePresence, motion, useAnimate } from "motion/react";
 import { useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from "react";
+import { Link, useLocation } from "react-router-dom";
 import { usePrefActions } from "../components/shell/prefs";
 import { nextTheme, useThemePref } from "../components/shell/theme";
 import { Button, IconButton, Input, Meter, rise } from "../components/ui";
@@ -208,6 +209,7 @@ export default function Login({ setupNeeded, googleEnabled }: { setupNeeded: boo
     }
   };
 
+  const onLoginRoute = useLocation().pathname === "/login";
   const ThemeIcon = theme === "light" ? Sun : theme === "system" ? Monitor : Moon;
   const themeLabel = theme === "light" ? t("Light") : theme === "system" ? t("System") : t("Dark");
   const str = strength(password);
@@ -224,6 +226,10 @@ export default function Login({ setupNeeded, googleEnabled }: { setupNeeded: boo
       <header className="relative z-10 flex items-center justify-between gap-3 px-4 py-3 sm:px-8 sm:py-5">
         <Brand />
         <div className="flex items-center gap-2">
+          {/* /login is reached from the landing page; deep links (/oauth/consent?…) and first-time setup have no page to go back to */}
+          {onLoginRoute && !setupNeeded && (
+            <Link to="/" className={clsx(glassBtn, "px-3 active:scale-95")}><ArrowLeft className="size-4" /><span className="hidden sm:inline">{t("Back to home")}</span></Link>
+          )}
           <label className={clsx(glassBtn, "pl-3 pr-1 focus-within:border-accent/60")}>
             <Languages className="size-4 shrink-0" />
             <span className="sr-only">{t("Interface language")}</span>

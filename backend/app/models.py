@@ -67,6 +67,16 @@ class ApiKey(Base, Serializable):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class WaitlistEntry(Base, Serializable):
+    """Someone who asked for an invite on the public landing page (api/waitlist.py). Joining is consent to be contacted
+    about the launch, so there is nothing else to store: no IP, no tracking."""
+    __tablename__ = "waitlist_entries"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
+    phone: Mapped[str] = mapped_column(String(20))  # E.164, e.g. +919876543210
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 # ── Bible (shared library) ───────────────────────────────────────────────────
 
 class Style(Base, Serializable):
