@@ -5,6 +5,37 @@ All notable changes to Tatvam AI Studio. From 3.0.0 on, this file is written by
 ([Conventional Commits](https://www.conventionalcommits.org/)); see [CONTRIBUTING.md](CONTRIBUTING.md#releases).
 Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.1.0](https://github.com/tatvama/veo_studio/compare/v3.0.0...v3.1.0) (2026-10-15)
+
+
+### Features
+
+* **desktop:** Tatvam Studio desktop finishing room (Phase 9, part 1) ([#28](https://github.com/tatvama/veo_studio/issues/28)) ([36ae2f9](https://github.com/tatvama/veo_studio/commit/36ae2f95ab647ccb498498f0e7b5a3fc5e45123a))
+* **director:** agentic Director with plans, shot viewing, web search, memory and live progress ([#26](https://github.com/tatvama/veo_studio/issues/26)) ([fd73cf4](https://github.com/tatvama/veo_studio/commit/fd73cf4f918df460d2c1de9f11c4e019583fb041))
+* **editor:** GPU render engine and Tatvam Editor for the desktop app ([#29](https://github.com/tatvama/veo_studio/issues/29)) ([9aad66a](https://github.com/tatvama/veo_studio/commit/9aad66ab7ddeee3077a81c455ca53225cf0d37d8))
+* **editor:** News Room broadcast graphics with tickers, layouts, wipes, designers and exports ([#37](https://github.com/tatvama/veo_studio/issues/37)) ([4774986](https://github.com/tatvama/veo_studio/commit/477498626830218733263f3ff7aaab6983f94c24))
+* **editor:** recorded sound effects from Kenney's CC0 packs ([#38](https://github.com/tatvama/veo_studio/issues/38)) ([7c1c83e](https://github.com/tatvama/veo_studio/commit/7c1c83e9b9fea647ed942fcca6926f0248bd6793))
+* **editor:** sound effects library, auto SFX, real previews and a template design system ([#36](https://github.com/tatvama/veo_studio/issues/36)) ([c887192](https://github.com/tatvama/veo_studio/commit/c88719253db38054d5955c52a93a56e67f1b65ca))
+* **ui:** spacious project layout and a focused shot-by-shot workspace ([#27](https://github.com/tatvama/veo_studio/issues/27)) ([028da12](https://github.com/tatvama/veo_studio/commit/028da12f9dc8d582607800e277f54e9558619be5))
+* **writing:** Claude writes and reviews everything by default ([#25](https://github.com/tatvama/veo_studio/issues/25)) ([3867f0f](https://github.com/tatvama/veo_studio/commit/3867f0f4064dc1259bb22193c803792a185f58f5))
+
+
+### Bug Fixes
+
+* **editor:** News Room code-scanning findings (file reads, feed text, JSON paths) ([#40](https://github.com/tatvama/veo_studio/issues/40)) ([2907824](https://github.com/tatvama/veo_studio/commit/29078249c73794017d145c2deac793e3f19e6a86))
+* **editor:** stop bitcrusher and lo-fi exports from turning samples into NaN ([#35](https://github.com/tatvama/veo_studio/issues/35)) ([433df75](https://github.com/tatvama/veo_studio/commit/433df75b3a82f82251d721a19865af78ed886a92))
+* **providers:** name the missing BytePlus asset-library plan ([#24](https://github.com/tatvama/veo_studio/issues/24)) ([f4e6e9b](https://github.com/tatvama/veo_studio/commit/f4e6e9b47dea96845fa6aed042856490028332e0))
+
+
+### Build & Dependencies
+
+* **deps-dev:** bump @modelcontextprotocol/sdk from 1.30.1 to 1.31.0 in /desktop ([#31](https://github.com/tatvama/veo_studio/issues/31)) ([b2b0200](https://github.com/tatvama/veo_studio/commit/b2b0200360e4a13f6e66e0ed8fae7e35ec7458c0))
+* **deps-dev:** bump @modelcontextprotocol/sdk in /desktop ([b2b0200](https://github.com/tatvama/veo_studio/commit/b2b0200360e4a13f6e66e0ed8fae7e35ec7458c0))
+* **deps-dev:** bump ruff from 0.16.10 to 0.17.0 in /backend ([#33](https://github.com/tatvama/veo_studio/issues/33)) ([264946f](https://github.com/tatvama/veo_studio/commit/264946f55b7d013ebfda21814764c4868f2878b2))
+* **deps:** bump konva from 9.3.22 to 10.7.1 in /frontend ([#41](https://github.com/tatvama/veo_studio/issues/41)) ([20035f3](https://github.com/tatvama/veo_studio/commit/20035f31e3a850f384a37b0b1361bb0faec681cc))
+* **deps:** bump the npm-minor-patch group across 1 directory with 3 updates ([#17](https://github.com/tatvama/veo_studio/issues/17)) ([f8014ce](https://github.com/tatvama/veo_studio/commit/f8014cef1bded960a931f501542a10002745ee17))
+* **deps:** bump the npm-minor-patch group in /frontend with 4 updates ([#34](https://github.com/tatvama/veo_studio/issues/34)) ([16aa64e](https://github.com/tatvama/veo_studio/commit/16aa64eba90fdab7a1662b41752ad0bbc25756b0))
+
 ## [3.0.0](https://github.com/tatvama/veo_studio/releases/tag/v3.0.0) (2026-10-10)
 
 First tagged release. It gathers everything merged so far (pull requests #1–#13) and starts the automated
