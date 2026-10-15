@@ -238,66 +238,127 @@ def agent_confirm(pid: int, mid: int, body: ConfirmIn, user: User = Depends(requ
 
 # ── live events ──────────────────────────────────────────────────────────────
 
+def _last_event_id() -> int:
+    with SessionLocal() as db:
+        return db.query(Event.id).order_by(Event.id.desc()).limit(1).scalar() or 0
+
+
+def _fetch_events(after: int) -> list[tuple[int, int | None, dict]]:
+    with SessionLocal() as db:
+        rows = db.query(Event).filter(Event.id > after).order_by(Event.id).limit(200).all()
+        return [(e.id, e.project_id, e.to_dict()) for e in rows]
+
+
+class EventHub:
+    """One poller for every open tab: reads the new Event rows once a tick and hands each to every subscriber's
+    queue, so the database sees one query per tick however many tabs are open. The poller runs while there are
+    subscribers and stops when the last one leaves."""
+
+    TICK_S = 0.7
+    QUEUE_MAX = 2000  # a tab that stops reading is dropped (it reconnects) rather than piling up events
+
+    def __init__(self) -> None:
+        self.subscribers: dict[int, asyncio.Queue] = {}
+        self.task: asyncio.Task | None = None
+        self.last_id: int | None = None
+        self._next = 0
+
+    def subscribe(self) -> tuple[int, asyncio.Queue]:
+        self._next += 1
+        q: asyncio.Queue = asyncio.Queue(maxsize=self.QUEUE_MAX)
+        self.subscribers[self._next] = q
+        if self.task is None or self.task.done():
+            self.last_id = None  # a fresh start reads the current last id: nothing old is replayed
+            self.task = asyncio.create_task(self.run(), name="event-hub")
+        return self._next, q
+
+    def unsubscribe(self, sid: int) -> None:
+        self.subscribers.pop(sid, None)
+
+    async def run(self) -> None:
+        try:
+            while self.subscribers:
+                try:
+                    if self.last_id is None:
+                        self.last_id = await asyncio.to_thread(_last_event_id)
+                    rows = await asyncio.to_thread(_fetch_events, self.last_id)
+                except Exception as e:
+                    # the database link hiccuped: keep the tabs open and try again shortly instead of dropping them
+                    if not is_network_error(e):
+                        print(f"[ws] event poll failed: {e}")
+                    await asyncio.sleep(2.0)
+                    continue
+                for eid, pid, data in rows:
+                    self.last_id = eid
+                    for sid, q in list(self.subscribers.items()):
+                        try:
+                            q.put_nowait((eid, pid, data))
+                        except asyncio.QueueFull:
+                            self.subscribers.pop(sid, None)  # its socket loop notices and closes
+                await asyncio.sleep(self.TICK_S)
+        finally:
+            self.task = None
+
+
+_hub = EventHub()
+
+
 @router.websocket("/api/ws")
 async def ws(websocket: WebSocket):
     await websocket.accept()
     with SessionLocal() as db:
         user = ws_user(websocket, db)
-        last_id = db.query(Event.id).order_by(Event.id.desc()).limit(1).scalar() or 0
     if not user:
         await websocket.close(code=4401)
         return
-    project_id: int | None = None
-    try:
-        q = websocket.query_params.get("project_id")
-        project_id = int(q) if q else None
-    except ValueError:
-        project_id = None
+    sid, queue = _hub.subscribe()  # subscribed first, then the snapshot: nothing between the two is missed
     conn = uuid.uuid4().hex
-    if project_id:
-        collab.report(conn, user, project_id)
-
-    async def receiver():
-        nonlocal project_id
-        while True:
-            msg = await websocket.receive_json()
-            if not isinstance(msg, dict):
-                continue
-            if "project_id" in msg:
-                project_id = msg.get("project_id")
-            if msg.get("type") == "presence":  # which view this tab shows and what it is editing
-                collab.report(conn, user, project_id, str(msg.get("view") or ""), str(msg.get("editing") or ""))
-
-    recv_task = asyncio.create_task(receiver())
-    sent_presence = (-1, None)
+    recv_task: asyncio.Task | None = None
     try:
+        last_id = await asyncio.to_thread(_last_event_id)
+        project_id: int | None = None
+        try:
+            q = websocket.query_params.get("project_id")
+            project_id = int(q) if q else None
+        except ValueError:
+            project_id = None
+        if project_id:
+            collab.report(conn, user, project_id)
+
+        async def receiver():
+            nonlocal project_id
+            while True:
+                msg = await websocket.receive_json()
+                if not isinstance(msg, dict):
+                    continue
+                if "project_id" in msg:
+                    project_id = msg.get("project_id")
+                if msg.get("type") == "presence":  # which view this tab shows and what it is editing
+                    collab.report(conn, user, project_id, str(msg.get("view") or ""), str(msg.get("editing") or ""))
+
+        recv_task = asyncio.create_task(receiver())
+        sent_presence = (-1, None)
         while True:
             if project_id and sent_presence != (collab.version(), project_id):
                 sent_presence = (collab.version(), project_id)
                 await websocket.send_json({"type": "presence", "project_id": project_id, "payload": collab.snapshot(project_id)})
-            def fetch(last: int):
-                with SessionLocal() as db:
-                    rows = db.query(Event).filter(Event.id > last).order_by(Event.id).limit(200).all()
-                    return [(e.id, e.project_id, e.to_dict()) for e in rows]
             try:
-                rows = await asyncio.to_thread(fetch, last_id)
-            except Exception as e:
-                if not is_network_error(e):
-                    raise
-                # the database link hiccuped: keep the socket open and try again shortly instead of dropping the tab
-                await asyncio.sleep(2.0)
+                eid, pid, data = await asyncio.wait_for(queue.get(), timeout=EventHub.TICK_S)
+            except asyncio.TimeoutError:
+                if recv_task.done() or sid not in _hub.subscribers:
+                    break
                 continue
-            for eid, pid, data in rows:
-                last_id = eid
-                if pid is None or project_id is None or pid == project_id:
-                    await websocket.send_json(data)
-            if recv_task.done():
-                break
-            await asyncio.sleep(0.7)
+            if eid <= last_id:
+                continue  # happened before this tab connected
+            last_id = eid
+            if pid is None or project_id is None or pid == project_id:
+                await websocket.send_json(data)
     except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
-        recv_task.cancel()
+        if recv_task is not None:
+            recv_task.cancel()
+        _hub.unsubscribe(sid)
         collab.leave(conn)
 
 

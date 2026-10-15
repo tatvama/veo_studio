@@ -283,6 +283,7 @@ Team, personal and project budgets are set in the app (**Settings → Budget**).
 |---|---|---|
 | `FFMPEG_PATH` | bundled | Path to your own FFmpeg (with libass + harfbuzz for Indic captions). |
 | `CAPTION_FONT` | `Nirmala UI` (Windows) / `Noto Sans` | Caption font. The Docker image ships Noto fonts for all five scripts. |
+| `VIDEO_ENCODER` | `auto` | H.264 encoder for every render: `auto` probes FFmpeg once and uses the first hardware encoder that works on the machine (`h264_nvenc` NVIDIA, `h264_qsv` Intel, `h264_amf` AMD, `h264_videotoolbox` Apple), else `libx264`. Name one to force it. |
 
 ### Development and CI
 

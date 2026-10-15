@@ -292,7 +292,7 @@ def test_concurrent_submits_of_the_same_shot_make_one_job(client: TestClient):
 
     from app.core import jobs
     from app.db import SessionLocal
-    from app.models import Episode, Project, Shot, User
+    from app.models import Episode, Job, Project, Shot, User
 
     with SessionLocal() as db:
         admin = db.query(User).filter(User.role == "admin").first()
@@ -325,8 +325,13 @@ def test_concurrent_submits_of_the_same_shot_make_one_job(client: TestClient):
         t.start()
     for t in threads:
         t.join(timeout=60)
-    assert not errors, errors
-    assert sum(len(r["jobs"]) for r in results) == 1 and sum(r["skipped"] for r in results) == 3
+    try:
+        assert not errors, errors
+        assert sum(len(r["jobs"]) for r in results) == 1 and sum(r["skipped"] for r in results) == 3
+    finally:
+        with SessionLocal() as db:
+            db.query(Job).filter(Job.shot_id == sid).delete()
+            db.commit()
 
 
 # ── 11. concat lists quote apostrophes the demuxer's way ─────────────────────
@@ -348,3 +353,177 @@ def test_concat_list_escapes_apostrophes(tmp_path, monkeypatch):
     assert lines[1] == f"file '{plain.resolve().as_posix()}'"
     assert ff.concat_list_line(Path("a'b")).endswith("a'\\''b'\n")
     assert calls and calls[0][:4] == ["-f", "concat", "-safe", "0"]
+
+
+# ── 13. segment clips are built side by side, in order ───────────────────────
+
+def test_render_segments_keeps_order_and_error_semantics():
+    import os
+    import threading
+
+    import pytest
+
+    from app.pipeline import assembler
+    from app.pipeline.ffmpeg import FFmpegError
+
+    assert assembler.segment_workers() == max(1, (os.cpu_count() or 2) // 2)
+    seen: list[int] = []
+    lock = threading.Lock()
+
+    def make(i, item):
+        time.sleep(0.05 * (5 - i))  # the later ones finish first
+        with lock:
+            seen.append(i)
+        return f"clip-{item}"
+
+    assert assembler.render_segments(["a", "b", "c", "d", "e"], make) == ["clip-a", "clip-b", "clip-c", "clip-d", "clip-e"]
+    assert sorted(seen) == [0, 1, 2, 3, 4]
+    assert assembler.render_segments([], make) == []
+
+    def bad(i, item):
+        if i == 1:
+            raise FFmpegError("ffmpeg failed (1): boom")
+        return item
+
+    with pytest.raises(FFmpegError, match="boom"):
+        assembler.render_segments(list(range(40)), bad)
+
+
+# ── 14. the encoder choice ───────────────────────────────────────────────────
+
+def test_video_encoder_setting_and_probe(monkeypatch):
+    from app.pipeline import ffmpeg as ff
+
+    listing = """Encoders:
+ V..... = Video
+ ------
+ V....D libx264              libx264 H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10 (codec h264)
+ V....D h264_nvenc           NVIDIA NVENC H.264 encoder (codec h264)
+ V..... h264_qsv             H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10 (Intel Quick Sync Video acceleration) (codec h264)
+ A....D aac                  AAC (Advanced Audio Coding)
+"""
+    assert ff._parse_encoders(listing) == {"libx264", "h264_nvenc", "h264_qsv"}
+    s = get_settings()
+    probed: list[str] = []
+
+    def choose(setting: str, built_in: set[str], works: bool = True) -> tuple[str, list[str]]:
+        probed.clear()
+        monkeypatch.setattr(s, "video_encoder", setting)
+        monkeypatch.setattr(ff, "available_encoders", lambda: frozenset(built_in))
+        monkeypatch.setattr(ff, "_encoder_works", lambda name: probed.append(name) or works)
+        ff.video_encoder.cache_clear()
+        try:
+            return ff.video_encoder(), ff.h264_args(20)
+        finally:
+            ff.video_encoder.cache_clear()
+
+    enc, args = choose("auto", {"libx264", "h264_nvenc"})
+    assert enc == "h264_nvenc" and args[:2] == ["-c:v", "h264_nvenc"] and "-cq" in args and "-crf" not in args
+    assert args[-2:] == ["-pix_fmt", "yuv420p"] and probed == ["h264_nvenc"]
+    enc, args = choose("auto", {"libx264", "h264_nvenc"}, works=False)  # built in, but no GPU here
+    assert enc == "libx264" and args == ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p"]
+    assert choose("auto", {"libx264"})[0] == "libx264" and probed == []
+    enc, args = choose("auto", {"libx264", "h264_amf", "h264_qsv"})
+    assert enc == "h264_qsv" and "-global_quality" in args
+    enc, args = choose("h264_amf", set())  # named outright: used as told, no probe
+    assert enc == "h264_amf" and probed == [] and args[args.index("-qp_i") + 1] == "20"
+    enc, args = choose("h264_videotoolbox", set())
+    assert args[args.index("-q:v") + 1] == "60"
+    assert choose("libx264", {"h264_nvenc"})[1][1] == "libx264"
+    assert choose("mpeg4", set())[0] == "libx264"  # not an H.264 encoder we know: the software one
+    assert ff.h264_args(19)[-4:] == ["-crf", "19", "-pix_fmt", "yuv420p"]  # the suite runs on libx264 (conftest)
+
+
+# ── 15. an episode's shots are listed with two aggregate queries ─────────────
+
+def test_episode_shots_use_pre_aggregated_jobs_and_comments(client: TestClient):
+    from datetime import timedelta
+
+    from sqlalchemy import event
+
+    from app.api.common import shot_maps, shot_out
+    from app.db import SessionLocal, engine, utcnow
+    from app.models import Comment, Episode, Job, Project, Shot
+
+    with SessionLocal() as db:
+        p = Project(title="Aggregate me")
+        db.add(p)
+        db.flush()
+        ep = Episode(project_id=p.id, number=1, title="E1")
+        db.add(ep)
+        db.flush()
+        shots = [Shot(episode_id=ep.id, order=i, code=f"AG-{i}") for i in range(1, 4)]
+        db.add_all(shots)
+        db.flush()
+        far = utcnow() + timedelta(days=1)
+        db.add_all([Job(type="video", status="queued", project_id=p.id, shot_id=shots[0].id, run_after=far),
+                    Job(type="voice", status="running", project_id=p.id, shot_id=shots[0].id, run_after=far, worker_id="x",
+                        heartbeat_at=utcnow()),
+                    Job(type="keyframe", status="succeeded", project_id=p.id, shot_id=shots[1].id)])
+        db.add_all([Comment(project_id=p.id, target_type="shot", target_id=shots[1].id, body="open"),
+                    Comment(project_id=p.id, target_type="shot", target_id=shots[1].id, body="open too"),
+                    Comment(project_id=p.id, target_type="shot", target_id=shots[1].id, body="done", resolved=True),
+                    Comment(project_id=p.id, target_type="take", target_id=shots[2].id, body="not a shot comment")])
+        db.commit()
+        active, counts = shot_maps(db, [s.id for s in shots])
+        assert active == {shots[0].id: ["video", "voice"]} and counts == {shots[1].id: 2}
+        for s in shots:  # the same answer with and without the maps
+            one = shot_out(db, s, p)
+            many = shot_out(db, s, p, active_jobs=active, comment_counts=counts)
+            assert one == many and one["active_jobs"] == active.get(s.id, []) and one["comments"] == counts.get(s.id, 0)
+        assert shot_maps(db, []) == ({}, {})
+        eid = ep.id
+
+    statements: list[str] = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        body = ok(client.get(f"/api/episodes/{eid}"))
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+        with SessionLocal() as db:  # other tests wait for every job in the database: leave none behind
+            db.query(Job).filter(Job.shot_id.in_([s.id for s in shots])).delete()
+            db.commit()
+    by_code = {s["code"]: s for s in body["shots"]}
+    assert by_code["AG-1"]["active_jobs"] == ["video", "voice"] and by_code["AG-2"]["comments"] == 2 and by_code["AG-3"]["comments"] == 0
+    assert sum(1 for st in statements if "FROM comments" in st) == 1
+    assert sum(1 for st in statements if "FROM jobs" in st and "jobs.status IN" in st) == 1
+
+
+# ── 16. one poller feeds every tab ───────────────────────────────────────────
+
+def test_ws_tabs_share_one_event_poller(client: TestClient):
+    import uuid
+
+    from app.api import work
+    from app.events import emit
+
+    pid = 424_242
+    with client.websocket_connect(f"/api/ws?project_id={pid}") as a, client.websocket_connect(f"/api/ws?project_id={pid}") as b:
+        assert a.receive_json()["type"] == "presence" and b.receive_json()["type"] == "presence"
+        assert len(work._hub.subscribers) == 2 and work._hub.task is not None and not work._hub.task.done()
+        marker = uuid.uuid4().hex
+        emit(None, pid, "shot.updated", {"shot_id": 1, "marker": marker})
+        emit(None, pid + 1, "shot.updated", {"shot_id": 2, "marker": marker})  # another project: not for these tabs
+        for tab in (a, b):
+            while True:
+                msg = tab.receive_json()
+                if msg.get("type") == "shot.updated" and (msg.get("payload") or {}).get("marker") == marker:
+                    break
+            assert msg["project_id"] == pid and msg["payload"]["shot_id"] == 1  # same shape as Event.to_dict()
+            assert {"id", "project_id", "user_id", "type", "payload", "created_at"} <= set(msg)
+        with client.websocket_connect("/api/ws") as c:  # a third tab joins the same poller
+            assert len(work._hub.subscribers) == 3
+            emit(None, pid + 1, "shot.updated", {"shot_id": 3, "marker": marker + "-c"})
+            while True:
+                msg = c.receive_json()
+                if (msg.get("payload") or {}).get("marker") == marker + "-c":
+                    break
+        assert len(work._hub.subscribers) == 2
+    deadline = time.time() + 5
+    while time.time() < deadline and (work._hub.subscribers or (work._hub.task is not None and not work._hub.task.done())):
+        time.sleep(0.1)
+    assert not work._hub.subscribers and work._hub.task is None  # the poller stops with the last tab

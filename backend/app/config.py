@@ -82,6 +82,9 @@ class Settings(BaseSettings):
 
     make_webhook_url: str = ""
     ffmpeg_path: str = ""
+    # H.264 encoder for every render: auto (the first working hardware encoder, else libx264), libx264, h264_nvenc
+    # (NVIDIA), h264_qsv (Intel), h264_amf (AMD) or h264_videotoolbox (Apple)
+    video_encoder: str = "auto"
     caption_font: str = "Nirmala UI" if sys.platform == "win32" else "Noto Sans"
 
     spike_budget_usd: float = 30.0

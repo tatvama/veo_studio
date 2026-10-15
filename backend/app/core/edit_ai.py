@@ -112,7 +112,7 @@ def cut_video(src: Path, out: Path, start: float | None = None, end: float | Non
     if not args:
         return src
     audio = ["-c:a", "aac", "-b:a", "192k"] if ff.has_audio(src) else ["-an"]
-    ff.run([*args, "-i", src, "-c:v", "libx264", "-preset", "veryfast", "-crf", "17", "-pix_fmt", "yuv420p", *audio, out])
+    ff.run([*args, "-i", src, *ff.h264_args(17), *audio, out])
     return out
 
 
