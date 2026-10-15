@@ -42,5 +42,18 @@ export default defineConfig({
   },
   build: {
     manifest: true,
+    rolldownOptions: {
+      output: {
+        // Vite 8 bundles with Rolldown: long-lived vendor code gets its own chunks (cached across app releases), and
+        // each UI dictionary stays its own chunk, fetched only when that language is chosen.
+        codeSplitting: {
+          groups: [
+            { name: "vendor-react", test: /node_modules[\\/](react|react-dom|react-router|react-router-dom|scheduler)[\\/]/, priority: 10 },
+            { name: "vendor-motion", test: /node_modules[\\/](motion|motion-dom|motion-utils|framer-motion)[\\/]/, priority: 10 },
+            { name: (id: string) => `i18n-${/[\\/]i18n[\\/](\w+)\.ts$/.exec(id)?.[1] ?? "dict"}`, test: /[\\/]src[\\/]lib[\\/]i18n[\\/]\w+\.ts$/, priority: 20 },
+          ],
+        },
+      },
+    },
   },
 });
