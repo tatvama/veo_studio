@@ -20,7 +20,7 @@ from app.pipeline.prompting import character_refs
 from app.providers import byteplus, mock
 from app.providers import services as services_mod
 from app.providers.base import MediaResult, ProviderError, Usage
-from app.workers.handlers_hub import auto_register_reason, register_images
+from app.workers.handlers_hub import PHOTO_REASON, auto_register_reason, register_images
 from conftest import H, ok, wait_jobs
 
 
@@ -148,7 +148,7 @@ def test_split_board_labels_and_saves_views(client: TestClient):
         # SAFETY: crops of an uploaded board are never sent to BytePlus as AI-generated sheet views
         assert register_images(db, ch) == []
         assert auto_register_reason(db, ch) in ("Automatic registration is off (Settings → Generation)",
-                                                "Made from a photo: a real person verifies themselves in the BytePlus console")
+                                                PHOTO_REASON.rstrip("."))
         # the crops are references; the whole board is not
         refs = character_refs(db, ch, max_n=3)
         assert board["id"] not in [a.id for a in refs] and refs[0].kind == "front"
@@ -159,7 +159,15 @@ def test_split_board_labels_and_saves_views(client: TestClient):
         db.add(CharacterAsset(character_id=cid, kind="front", path=crops[0].path, approved=True))
         db.commit()
         assert [a.origin for a in register_images(db, ch)] == [""]
-    assert c.post(f"/api/characters/{cid}/register/byteplus", headers=H, json={}).status_code != 400
+    # the board isn't attested AI-made: the character counts as made from a photo, so it can't be registered by hand
+    assert c.post(f"/api/characters/{cid}/register/byteplus", headers=H, json={}).status_code == 409
+    # once the board is marked AI-generated, its views go along with the AI sheet view
+    ok(c.put(f"/api/character-assets/{board['id']}/ai-made", headers=H, json={"ai_made": True}))
+    with SessionLocal() as db:
+        sent = register_images(db, db.get(Character, cid))
+        assert board["id"] not in [a.id for a in sent]  # never the whole board
+        assert {a.origin for a in sent} == {"", f"board:{board['id']}"}
+    assert c.post(f"/api/characters/{cid}/register/byteplus", headers=H, json={}).status_code == 200
     wait_jobs(c, None, timeout=60)
     state = _board_asset(c, cid)["meta"]["board"]
     assert state["status"] == "saved" and len(state["saved_asset_ids"]) == 7

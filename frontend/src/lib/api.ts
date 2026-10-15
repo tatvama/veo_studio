@@ -42,9 +42,11 @@ export const api = {
   patch: <T>(p: string, b?: unknown) => request<T>("PATCH", p, b ?? {}),
   put: <T>(p: string, b?: unknown, o?: { silent?: boolean }) => request<T>("PUT", p, b ?? {}, o),
   del: <T>(p: string, o?: { silent?: boolean }) => request<T>("DELETE", p, undefined, o),
-  upload: <T>(p: string, file: File) => {
+  /** POST one file as multipart form data, with optional extra form fields (e.g. `{ ai_made: true }`). */
+  upload: <T>(p: string, file: File, fields?: Record<string, string | number | boolean>) => {
     const fd = new FormData();
     fd.append("file", file);
+    for (const [k, v] of Object.entries(fields ?? {})) fd.append(k, String(v));
     return request<T>("POST", p, fd);
   },
 };

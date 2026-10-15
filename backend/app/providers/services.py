@@ -873,6 +873,8 @@ def byteplus_assets(paths: list[Path]) -> dict[int, tuple[str, list[str], set[st
         for path, cid in rows:
             ch = chars.get(cid)
             reg = ((ch.provider_assets or {}).get("byteplus") or {}) if ch else {}
+            if reg.get("withdrawn"):  # taken back for safety, removal from BytePlus still pending: never used
+                continue
             ids = [a["asset_id"] for a in reg.get("assets") or [] if a.get("status") == "Active" and a.get("asset_id")]
             if ids:
                 name, have, mine = out.get(cid, (ch.name, ids, set()))

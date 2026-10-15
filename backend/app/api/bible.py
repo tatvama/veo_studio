@@ -87,17 +87,26 @@ class CharacterPatch(BaseModel):
 
 
 @router.patch("/characters/{cid}")
-def patch_character(cid: int, body: CharacterPatch, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
+def patch_character(cid: int, body: CharacterPatch, request: Request, user: User = Depends(require("creator")),
+                    db: Session = Depends(get_db)):
     c = get_or_404(db, Character, cid)
     _check_unlocked(c, user)
+    archiving = body.archived is True and not c.archived
     data = body.model_dump(exclude_unset=True)
     if "sheet_engine" in data:  # checked against the Model Hub's image engines, then remembered
         sheet_engine.resolve(db, c, data.pop("sheet_engine") or "auto")
     for k, v in data.items():
         setattr(c, k, v)
     db.commit()
+    removal = None
+    if archiving:  # an archived character leaves the BytePlus asset library too (best effort; Remove retries)
+        from ..workers.handlers_hub import withdraw_byteplus
+        removal = withdraw_byteplus(db, user, c, "archived", request=request)
     emit(db, None, "bible.updated", {"character_id": c.id})
-    return character_out(db, c)
+    out = character_out(db, c)
+    if removal is not None:
+        out["byteplus_removal"] = removal
+    return out
 
 
 class LockIn(BaseModel):
@@ -266,33 +275,31 @@ def gen_expressions(cid: int, body: SheetIn, user: User = Depends(require("creat
 
 
 @router.post("/characters/{cid}/upload")
-async def upload_character_photo(cid: int, file: UploadFile = File(...), label: str = Form(""),
-                                 user: User = Depends(require("creator")), db: Session = Depends(get_db)):
-    """The user's own photo of the character. Approved uploads are the first look reference everywhere."""
+async def upload_character_photo(cid: int, request: Request, file: UploadFile = File(...), label: str = Form(""),
+                                 ai_made: bool = Form(False), user: User = Depends(require("creator")),
+                                 db: Session = Depends(get_db)):
+    """An image the user brings for the character: the first look reference everywhere. `ai_made` attests it is
+    AI-generated, not a photo of a real person (only such images may be registered with BytePlus)."""
+    from ..core.character_images import save_character_image
     c = get_or_404(db, Character, cid)
     _check_unlocked(c, user)
     ext = IMG_TYPES.get(file.content_type or "")
     if not ext:
         raise HTTPException(400, "Upload a PNG, JPG or WEBP image")
-    data = await file.read()
-    if len(data) > 15 * 1024 * 1024:
-        raise HTTPException(400, "Image too large (max 15 MB)")
-    st = get_storage()
-    rel = st.save_bytes(st.new_path(f"characters/{cid}", ext), data)
-    a = CharacterAsset(character_id=cid, kind="source", label=(label.strip() or "your photo")[:80], path=rel, approved=True)
-    db.add(a)
-    db.commit()
-    emit(db, None, "bible.updated", {"character_id": cid})
+    save_character_image(db, c, await file.read(), ext, user=user, label=label, ai_made=ai_made, request=request)
     return character_out(db, c)
 
 
 @router.post("/characters/{cid}/board")
-async def upload_board(cid: int, file: UploadFile = File(...), label: str = Form(""), project_id: int | None = Form(None),
+async def upload_board(cid: int, request: Request, file: UploadFile = File(...), label: str = Form(""),
+                       project_id: int | None = Form(None), ai_made: bool = Form(False),
                        user: User = Depends(require("creator")), db: Session = Depends(get_db)):
     """Split a character board: one image with many views (turnaround, expressions, outfits). It is kept as the
     character's own picture (never used whole as a reference), its panels are found, and a small vision job labels them
-    for you to review before anything is saved as a view."""
+    for you to review before anything is saved as a view. `ai_made` attests the board is AI-generated, not photos of a
+    real person: only then may the views cut from it go to BytePlus."""
     from ..core import char_board
+    from ..core.character_images import attest_upload
     c = get_or_404(db, Character, cid)
     _check_unlocked(c, user)
     ext = IMG_TYPES.get(file.content_type or "")
@@ -302,6 +309,8 @@ async def upload_board(cid: int, file: UploadFile = File(...), label: str = Form
     if len(data) > 25 * 1024 * 1024:
         raise HTTPException(400, "Image too large (max 25 MB)")
     a = char_board.add_board(db, c, data, ext, label)
+    if ai_made:
+        attest_upload(db, user, a, c, via="board", request=request)
     out = _label_board(db, user, c, a, project_id, find_boxes=not char_board.board_state(a).get("clean"))
     emit(db, None, "bible.updated", {"character_id": cid})
     return {"asset_id": a.id, "board": char_board.board_state(a), "jobs": out, "character": character_out(db, c)}
@@ -387,14 +396,37 @@ class AssetPatch(BaseModel):
 def patch_char_asset(aid: int, body: AssetPatch, user: User = Depends(require("reviewer")), db: Session = Depends(get_db)):
     a = get_or_404(db, CharacterAsset, aid)
     _check_unlocked(db.get(Character, a.character_id), user)
-    for k, v in body.model_dump(exclude_unset=True).items():
+    data = body.model_dump(exclude_unset=True)
+    # an upload stays an upload: relabelling a real person's photo as a sheet view would make it eligible for BytePlus
+    if "kind" in data and (data["kind"] == "source") != (a.kind == "source"):
+        raise HTTPException(400, "An uploaded image can't become a generated view, or the other way round")
+    for k, v in data.items():
         setattr(a, k, v)
     db.commit()
     from ..workers.handlers_hub import REGISTER_KINDS, maybe_auto_register
-    if body.approved and a.kind in REGISTER_KINDS and not a.archived:  # an approved sheet view: register it by itself
+    eligible = a.kind in REGISTER_KINDS or (a.kind == "source" and a.ai_made)
+    if body.approved and eligible and not a.archived:  # an approved sheet view or AI-made upload: register it by itself
         maybe_auto_register(db, user, db.get(Character, a.character_id))
     emit(db, None, "bible.updated", {"character_id": a.character_id})
     return a.to_dict()
+
+
+class AiMadeIn(BaseModel):
+    ai_made: bool
+
+
+@router.put("/character-assets/{aid}/ai-made")
+def set_char_asset_ai_made(aid: int, body: AiMadeIn, request: Request, user: User = Depends(require("creator")),
+                           db: Session = Depends(get_db)):
+    """Attest an upload is AI-generated (it may then go to BytePlus), or mark it a real person's photo. The latter
+    removes the character from BytePlus at once when it is registered."""
+    from ..core.character_images import set_ai_made
+    a = get_or_404(db, CharacterAsset, aid)
+    ch = db.get(Character, a.character_id)
+    if body.ai_made:  # saying it shows a real person is always allowed, even on a locked character
+        _check_unlocked(ch, user)
+    out = set_ai_made(db, user, a, body.ai_made, request=request)
+    return {**out, "character": character_out(db, ch)}
 
 
 # ── voices ───────────────────────────────────────────────────────────────────

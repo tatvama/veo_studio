@@ -140,6 +140,11 @@ class CharacterAsset(Base, Serializable):
     origin: Mapped[str] = mapped_column(String(80), default="")
     # extra facts: a board's detected panels {"board": {status, width, height, panels, method}}, a crop's box
     meta: Mapped[Any] = mapped_column(JSON, default=dict)
+    # an upload (kind "source") the user attested is AI-generated, not a photo of a real person: it may go to the
+    # BytePlus asset library. Uploads default to a real person's photo, which never leaves for that library.
+    ai_made: Mapped[bool] = mapped_column(Boolean, default=False)
+    ai_attested_by: Mapped[int | None] = mapped_column(Integer, nullable=True)  # who said so last (either way)
+    ai_attested_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 

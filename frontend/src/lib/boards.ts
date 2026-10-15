@@ -36,10 +36,11 @@ export interface BoardState {
 }
 export interface BoardUpload { asset_id: number; board: BoardState; jobs: SubmitResult | { status: "failed"; reason: string; jobs: []; total_usd: 0 } }
 
-export const uploadBoard = (cid: number, file: File, projectId?: number | null) => {
+export const uploadBoard = (cid: number, file: File, projectId?: number | null, aiMade = false) => {
   const fd = new FormData();
   fd.append("file", file);
   if (projectId) fd.append("project_id", String(projectId));
+  fd.append("ai_made", aiMade ? "true" : "false");
   return api.post<BoardUpload>(`/api/characters/${cid}/board`, fd);
 };
 export const relabelBoard = (aid: number, body: { panels?: BoardPanel[]; find_boxes?: boolean; project_id?: number | null }) =>

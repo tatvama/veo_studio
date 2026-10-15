@@ -12,6 +12,7 @@ import { usd } from "../../lib/format";
 import { tr, useT } from "../../lib/i18n";
 import type { Character, CharacterAsset, SubmitResult } from "../../lib/types";
 import { announce, useGenerate } from "../Generate";
+import { AiMadeCheck } from "./AiMade";
 import { capturePointer, releasePointer } from "../hub/util";
 import { Alert, Badge, Button, Input, Modal, Select } from "../ui";
 
@@ -36,6 +37,7 @@ export function BoardSplitCard({ character: c, projectId, editable }: { characte
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  const [aiMade, setAiMade] = useState(false);
   const [review, setReview] = useState<number | null>(null);
   const boards = boardsOf(c);
   const open = boards.find((b) => b.id === review) ?? null;
@@ -44,7 +46,7 @@ export function BoardSplitCard({ character: c, projectId, editable }: { characte
   const upload = async (f: File) => {
     setBusy(true);
     try {
-      const res = await uploadBoard(c.id, f, projectId);
+      const res = await uploadBoard(c.id, f, projectId, aiMade);
       const n = res.board.panels?.length ?? 0;
       if (res.jobs.status === "failed") {
         toast.warning(tr("Board added. The AI labelling didn't start: {why}. Label the views yourself in the review.", { why: (res.jobs as { reason: string }).reason }));
@@ -76,6 +78,7 @@ export function BoardSplitCard({ character: c, projectId, editable }: { characte
         )}
         <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" hidden
           onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void upload(f); }} />
+        {editable && <AiMadeCheck checked={aiMade} onChange={setAiMade} disabled={busy} className="basis-full" />}
       </div>
       {boards.length > 0 && (
         <ul className="mt-3 divide-y divide-line rounded-lg border border-line">
