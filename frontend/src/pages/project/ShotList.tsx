@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { ImportWizard } from "../../components/board/ImportWizard";
 import { newScene, sceneAnchor, ShotListEditor, withKeys, type ShotPickerProps } from "../../components/board/ShotListEditor";
 import { useGenerate } from "../../components/Generate";
+import { uploadCharacterImage } from "../../components/room/AiMade";
 import { Fact, LoadError, RoomHeader, RoomPage, SaveStatus, type SaveState } from "../../components/room/kit";
 import { Outline, StatStrip, Workspace, pad, sceneCode, type OutlineItem } from "../../components/room/workspace";
 import { Alert, Badge, Button, Meter, Modal, Select, Skeleton, Toggle } from "../../components/ui";
@@ -118,11 +119,11 @@ export default function ShotListPage() {
   const pickers: ShotPickerProps = useMemo(() => ({
     projectCast: projectCast ?? [], library: library ?? [], engines, quality: project.quality_mode,
     locations: [...new Set([...(projectLocs ?? []), ...(allLocs ?? [])].map((l) => l.name))],
-    onCreateCharacter: async (name: string, photo: File | null) => {
+    onCreateCharacter: async (name: string, photo: File | null, aiMade: boolean) => {
       try {
         const ch = await api.post<Character>("/api/characters", { name, project_id: project.id });
         if (photo) {
-          try { await api.upload(`/api/characters/${ch.id}/upload`, photo); } catch { /* the character exists; add the photo in Characters */ }
+          try { await uploadCharacterImage(ch.id, photo, aiMade); } catch { /* the character exists; add the photo in Characters */ }
         }
         await qc.invalidateQueries({ queryKey: ["characters"] });
         toast.success(tr("{name} added to this project", { name }));

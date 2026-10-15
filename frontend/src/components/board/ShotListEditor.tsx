@@ -14,7 +14,7 @@ import "../../styles/board.css";
 
 /** Extras for the full shot builder: pick characters from the library or make new ones, and the video model per shot. */
 export interface ShotPickerProps {
-  projectCast: Character[]; library: Character[]; onCreateCharacter?: (name: string, photo: File | null) => Promise<Character | undefined>;
+  projectCast: Character[]; library: Character[]; onCreateCharacter?: (name: string, photo: File | null, aiMade: boolean) => Promise<Character | undefined>;
   engines?: VideoEngines; quality: string; locations?: string[];
 }
 

@@ -101,7 +101,21 @@ export interface Episode {
   marketing: MarketingPack;
 }
 
-export interface CharacterAsset { id: number; character_id: number; kind: string; label: string; outfit: string; url: string; approved: boolean; archived: boolean; created_at: string }
+export interface CharacterAsset {
+  id: number; character_id: number; kind: string; label: string; outfit: string; url: string; approved: boolean; archived: boolean; created_at: string;
+  /** An upload ("source") the user attested is AI-generated, not a photo of a real person: it may be registered with BytePlus. */
+  ai_made?: boolean; ai_attested_by?: number | null; ai_attested_at?: string | null;
+}
+/** What registering a character with BytePlus would send now (GET /api/characters/{id}/byteplus/plan). */
+export interface BytePlusPlan {
+  /** Why it can't be registered at all, e.g. made from a photo of a real person ("" = it can). */
+  blocked: string;
+  /** Setup that's missing (access key, bucket storage); "" when ready. */
+  setup: string;
+  max: number;
+  images: { id: number; kind: string; label: string; url: string; ai_made: boolean; resize: boolean; note: string; registered: string }[];
+  skipped: { id: number; kind: string; label?: string; url?: string; ai_made?: boolean; reason: string }[];
+}
 export interface VoiceProfile {
   id: number; character_id: number; language: string; provider: string; voice_id: string; voice_name: string;
   description: string; style_prompt: string; sample_url: string; sts_voice_id: string;
@@ -115,11 +129,19 @@ export interface Character {
   /** The character registered with outside services: BytePlus asset library entries that Seedance takes as references. */
   provider_assets?: { byteplus?: { status?: "registering" | "ready" | "failed"; group_id?: string; error?: string; registered_at?: string;
     updated_at?: string; checked_at?: string;
-    assets?: { asset_id: string; source_id: number; path: string; kind: string; status: "Active" | "Processing" | "Failed" | "Missing" | string; error?: string }[] } };
+    /** Taken back for safety (archived, or an upload marked as a real person) and the removal from BytePlus failed: never used; Remove again. */
+    withdrawn?: string; remove_error?: string;
+    /** Images BytePlus can't take (too small, unusual shape), with the reason. */
+    skipped?: { source_id: number; kind: string; reason: string }[];
+    assets?: { asset_id: string; source_id: number; path: string; kind: string; status: "Active" | "Processing" | "Failed" | "Missing" | string; error?: string;
+      resized?: boolean }[] } };
   /** Registered with BytePlus with at least one image accepted: Seedance keeps this character's look. */
   seedance_ready?: boolean;
   /** Why the character isn't registered with BytePlus by itself ("" = it will be when its sheet is approved or it is locked). */
   byteplus_auto?: string;
+  /** Why the character can't be registered with BytePlus at all ("" = it can): archived, or made from a photo of a real person. */
+  byteplus_block?: string;
+  archived?: boolean;
   /** What a face model would be trained on now: the user's photos + approved variations (or the sheet if no photos). */
   training?: { basis: "your_photos" | "sheet"; own: number; variations_approved: number; variations_waiting: number; count: number; min: number;
     good: number; auto_fill: boolean;
