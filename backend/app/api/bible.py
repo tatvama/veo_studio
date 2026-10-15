@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from .. import catalog
-from ..core import generation, jobs, studio
+from ..core import generation, jobs, reference_images, studio
 from ..db import get_db
 from ..events import emit
 from ..models import (Character, CharacterAsset, Consent, Location, LocationAsset, Project, ProjectCast, ProjectLocation, Style,
@@ -17,7 +17,7 @@ from ..storage import get_storage
 from .common import character_out, get_or_404, location_out
 
 router = APIRouter(prefix="/api", tags=["bible"])
-IMG_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
+IMG_TYPES = reference_images.IMAGE_TYPES
 
 
 def _check_unlocked(row, user: User) -> None:
@@ -198,14 +198,9 @@ async def upload_character_photo(cid: int, file: UploadFile = File(...), label: 
     if not ext:
         raise HTTPException(400, "Upload a PNG, JPG or WEBP image")
     data = await file.read()
-    if len(data) > 15 * 1024 * 1024:
+    if len(data) > reference_images.MAX_BYTES:
         raise HTTPException(400, "Image too large (max 15 MB)")
-    st = get_storage()
-    rel = st.save_bytes(st.new_path(f"characters/{cid}", ext), data)
-    a = CharacterAsset(character_id=cid, kind="source", label=(label.strip() or "your photo")[:80], path=rel, approved=True)
-    db.add(a)
-    db.commit()
-    emit(db, None, "bible.updated", {"character_id": cid})
+    reference_images.save_character_image(db, c, data, ext, label=label)
     return character_out(db, c)
 
 
@@ -487,10 +482,7 @@ async def upload_location_photo(lid: int, file: UploadFile = File(...), user: Us
     ext = IMG_TYPES.get(file.content_type or "")
     if not ext:
         raise HTTPException(400, "Upload a PNG, JPG or WEBP image")
-    st = get_storage()
-    rel = st.save_bytes(st.new_path(f"locations/{lid}", ext), await file.read())
-    db.add(LocationAsset(location_id=lid, kind="source", label="uploaded photo", path=rel, approved=True))
-    db.commit()
+    reference_images.save_location_image(db, l, await file.read(), ext)
     return location_out(db, l)
 
 
