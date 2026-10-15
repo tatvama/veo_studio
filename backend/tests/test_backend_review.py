@@ -34,9 +34,11 @@ def test_media_private_check_uses_the_cleaned_key(client: TestClient):
     st.save_bytes("projects/1/review_open.txt", b"public enough")
     viewer = _viewer(client)
     # a producer (the admin) opens the release, however the path is spelled
-    for spelled in ("consents/review_release.pdf", "./consents/review_release.pdf", "/consents//review_release.pdf",
-                    "Consents/review_release.pdf"):
+    for spelled in ("consents/review_release.pdf", "./consents/review_release.pdf", "/consents//review_release.pdf"):
         assert client.get(f"/media/{spelled}").status_code == 200, spelled
+    # "Consents/" is treated as the private folder too; whether the file is then found depends on the file system's
+    # case sensitivity (200 on Windows/macOS, 404 on Linux), but it is never a permission error for a producer
+    assert client.get("/media/Consents/review_release.pdf").status_code in (200, 404)
     # a viewer is refused on every spelling: "." and empty parts are dropped before the folder is looked at
     for spelled in ("consents/review_release.pdf", "./consents/review_release.pdf", "/consents//review_release.pdf",
                     ".//consents/review_release.pdf", "Consents/review_release.pdf", "consents\\review_release.pdf"):
