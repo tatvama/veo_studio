@@ -69,6 +69,70 @@ def video_size(path: Path | str) -> tuple[int, int]:
     return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
 
 
+# ── video encoder ────────────────────────────────────────────────────────────
+
+HW_H264 = ("h264_nvenc", "h264_qsv", "h264_amf", "h264_videotoolbox")  # tried in this order under VIDEO_ENCODER=auto
+ENCODERS = ("auto", "libx264", *HW_H264)
+
+
+def _parse_encoders(listing: str) -> frozenset[str]:
+    """Video encoder names out of `ffmpeg -encoders` (" V....D libx264   libx264 H.264 / AVC ...")."""
+    return frozenset(re.findall(r"^\s*V[.A-Z]{5}\s+([a-z0-9_]+)", listing, re.M))  # not the " V..... = Video" legend
+
+
+@lru_cache
+def available_encoders() -> frozenset[str]:
+    """The video encoders this FFmpeg was built with (`ffmpeg -encoders`, read once per process)."""
+    try:
+        p = subprocess.run([ffmpeg_exe(), "-hide_banner", "-encoders"], capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=30)
+    except Exception:
+        return frozenset({"libx264"})
+    return _parse_encoders(p.stdout)
+
+
+def _encoder_works(name: str) -> bool:
+    """A hardware encoder that is built in still needs its GPU and driver on this machine: a two-frame test encode tells."""
+    try:
+        p = subprocess.run([ffmpeg_exe(), "-hide_banner", "-v", "error", "-f", "lavfi", "-i", "color=c=black:s=64x64:d=0.1",
+                            "-frames:v", "2", "-c:v", name, "-f", "null", "-"], capture_output=True, timeout=60)
+        return p.returncode == 0
+    except Exception:
+        return False
+
+
+@lru_cache
+def video_encoder() -> str:
+    """The H.264 encoder every encode uses: the VIDEO_ENCODER setting, or under `auto` the first hardware encoder
+    that is built in and works here (NVIDIA, Intel Quick Sync, AMD, Apple VideoToolbox), else libx264."""
+    want = (get_settings().video_encoder or "auto").strip().lower()
+    if want == "auto":
+        built_in = available_encoders()
+        return next((name for name in HW_H264 if name in built_in and _encoder_works(name)), "libx264")
+    if want not in ENCODERS:
+        print(f"[ffmpeg] VIDEO_ENCODER={want!r} is not one of {', '.join(ENCODERS)}: using libx264")
+        return "libx264"
+    return want
+
+
+def h264_args(quality: int = 20) -> list[str]:
+    """`-c:v … -pix_fmt yuv420p` for the chosen encoder at an x264-CRF-like quality (lower is better; 20 looks good),
+    with each encoder's own quality flag: -crf (x264), -cq (NVENC), -global_quality (QSV), -qp (AMF), -q:v (VideoToolbox)."""
+    enc = video_encoder()
+    q = str(int(quality))
+    if enc == "h264_nvenc":
+        flags = ["-preset", "p4", "-rc", "vbr", "-cq", q, "-b:v", "0"]
+    elif enc == "h264_qsv":
+        flags = ["-preset", "veryfast", "-global_quality", q]
+    elif enc == "h264_amf":
+        flags = ["-quality", "speed", "-rc", "cqp", "-qp_i", q, "-qp_p", q]
+    elif enc == "h264_videotoolbox":
+        flags = ["-q:v", str(max(1, min(100, 100 - 2 * int(quality))))]  # VideoToolbox: 1–100, higher is better
+    else:
+        flags = ["-preset", "veryfast", "-crf", q]
+    return ["-c:v", enc, *flags, "-pix_fmt", "yuv420p"]
+
+
 def dims_for(aspect: str, height: int = 1080) -> tuple[int, int]:
     """Even pixel dims for an aspect at a given short side."""
     if aspect == "9:16":
@@ -185,8 +249,7 @@ def still_to_video(image: Path, out: Path, seconds: float, w: int, h: int, fps: 
     else:
         args += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
     args += ["-t", f"{seconds:.3f}", "-vf", vf, "-map", "0:v", "-map", "1:a",
-             "-af", f"apad,atrim=0:{seconds:.3f}" + (f",{af}" if af else ""), "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
-             "-pix_fmt", "yuv420p", "-c:a", "aac", "-ar", "48000", "-ac", "2", "-shortest", out]
+             "-af", f"apad,atrim=0:{seconds:.3f}" + (f",{af}" if af else ""), *h264_args(20), "-c:a", "aac", "-ar", "48000", "-ac", "2", "-shortest", out]
     run(args)
     return out
 
@@ -251,7 +314,7 @@ def normalize_clip(src: Path, out: Path, w: int, h: int, seconds: float | None =
     post = fxlib.video_filters(fx, w, h, seg, fps, luts)
     fc += f";[0:v]{clip_vf(pre, w, h, center, fps, post)}[vv]"
     args += ["-filter_complex", fc, "-map", "[vv]", "-map", amap, "-t", f"{seg:.3f}",
-             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+             *h264_args(20),
              "-c:a", "aac", "-ar", "48000", "-ac", "2", out]
     run(args)
     return out
@@ -287,14 +350,20 @@ def xfade_concat(clips: list[Path], lengths: list[float], transitions: list[tupl
             length += lengths[i]
         vcur, acur = vo, ao
     run([*args, "-filter_complex", ";".join(f), "-map", f"[{vcur}]", "-map", f"[{acur}]",
-         "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p",
+         *h264_args(20),
          "-c:a", "aac", "-ar", "48000", "-ac", "2", out], timeout=3600)
     return out
 
 
+def concat_list_line(clip: Path) -> str:
+    """One `file` line for the concat demuxer: the path single-quoted, a quote inside it written as '\\'' (the
+    demuxer's rule: close the quote, an escaped quote, open again)."""
+    return "file '" + clip.resolve().as_posix().replace("'", "'\\''") + "'\n"
+
+
 def concat(clips: list[Path], out: Path) -> Path:
     lst = out.parent / f"{out.stem}_list.txt"
-    lst.write_text("".join(f"file '{c.resolve().as_posix()}'\n" for c in clips), encoding="utf-8")
+    lst.write_text("".join(concat_list_line(c) for c in clips), encoding="utf-8")
     run(["-f", "concat", "-safe", "0", "-i", lst, "-c", "copy", out])
     return out
 
@@ -358,7 +427,7 @@ def replace_audio_mix(video: Path, audio: Path, out: Path, loudnorm: bool = True
         vf = f"ass='{sub}':shaping=complex"
         if fontsdir:
             vf += f":fontsdir='{fontsdir.resolve().as_posix().replace(':', chr(92) + ':')}'"
-        args += ["-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "19", "-pix_fmt", "yuv420p"]
+        args += ["-vf", vf, *h264_args(19)]
     else:
         args += ["-c:v", "copy"]
     args += ["-map", "0:v", "-map", "1:a", "-af", af, "-c:a", "aac", "-b:a", "192k", "-ar", "48000",

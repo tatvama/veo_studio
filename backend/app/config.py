@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     # Background worker
     run_worker_in_process: bool = True
     worker_concurrency: int = 4
+    # Name this worker stamps on the jobs it runs (empty = the host name). After a restart a worker resumes only its
+    # own interrupted jobs (and jobs whose worker stopped reporting), never another machine's in-flight paid work.
+    worker_id: str = ""
 
     # "auto" = use a mock provider when its API key is missing; "true" = always mock; "false" = never mock.
     mock_providers: str = "auto"
@@ -79,6 +82,9 @@ class Settings(BaseSettings):
 
     make_webhook_url: str = ""
     ffmpeg_path: str = ""
+    # H.264 encoder for every render: auto (the first working hardware encoder, else libx264), libx264, h264_nvenc
+    # (NVIDIA), h264_qsv (Intel), h264_amf (AMD) or h264_videotoolbox (Apple)
+    video_encoder: str = "auto"
     caption_font: str = "Nirmala UI" if sys.platform == "win32" else "Noto Sans"
 
     spike_budget_usd: float = 30.0

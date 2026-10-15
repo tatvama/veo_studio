@@ -11,6 +11,7 @@ from .. import catalog, settings_store
 from ..db import utcnow
 from ..events import emit
 from ..models import Approval, CostEntry, Job, Project, Shot, User, role_rank
+from .job_types import ORCHESTRATORS
 from ..pipeline.prompting import effective_quality, effective_voice_mode, shot_lines
 from ..providers.base import Usage
 from ..providers.services import provider_mode
@@ -215,10 +216,11 @@ def spent(db: Session, *, user_id: int | None = None, project_id: int | None = N
 
 def reserved(db: Session, *, user_id: int | None = None, project_id: int | None = None) -> float:
     # each job holds what it may still spend (never less than 0: a job that overran does not free others' room);
-    # a running orchestrator holds nothing, its child jobs reserve their own cost
+    # a running orchestrator (dub, autopilot, produce, campaign, scene_chain) holds nothing: its child jobs reserve
+    # their own cost, else the run's money would be counted twice
     left = case((Job.cost_estimate > Job.cost_actual, Job.cost_estimate - Job.cost_actual), else_=0.0)
     q = (db.query(func.coalesce(func.sum(left), 0.0)).filter(Job.status.in_(RESERVING))
-         .filter(~((Job.status == "running") & Job.type.in_(("dub", "autopilot", "produce")))))
+         .filter(~((Job.status == "running") & Job.type.in_(tuple(sorted(ORCHESTRATORS))))))
     if user_id is not None:
         q = q.filter(Job.requested_by == user_id)
     if project_id is not None:
