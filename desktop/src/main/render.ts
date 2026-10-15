@@ -32,6 +32,9 @@ import type { Upstream } from "./upstream.ts";
 /** Headroom under a loudness preset's true-peak ceiling before AAC: the encode overshoots most on sharp transients. */
 export const AAC_TP_MARGIN_DB = 1;
 
+/** A render step that reports no progress for this long is killed and the job fails (a stalled encoder or graphics driver). */
+export const RENDER_STALL_MS = 10 * 60_000;
+
 export interface RenderDeps {
   upstream: Upstream;
   library: Library;
@@ -406,7 +409,7 @@ export class RenderManager {
           this.emit(job, true);
           const expected = seconds ?? st?.seconds ?? 0;
           await runFfmpeg(run.ff, args, {
-            signal: run.signal, cwd: run.tmp,
+            signal: run.signal, cwd: run.tmp, stallMs: RENDER_STALL_MS,
             onProgress: (pr: FfProgress) => {
               job.speed = pr.speed;
               set(done + share * (expected > 0 ? Math.min(1, pr.outTimeS / expected) : 0));
