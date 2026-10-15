@@ -15,7 +15,7 @@ from ..core import budget, continuity, dependencies, generation, jobs, lock as l
 from ..db import utcnow
 from ..models import Character, Episode, Location, Project, Scene, Shot, Style, User
 from ..pipeline import ffmpeg as ff
-from ..pipeline.selection import current, takes
+from ..pipeline.selection import current, is_real, takes
 from ..storage import get_storage
 
 
@@ -186,9 +186,36 @@ def generate_keyframes(c: AgentCtx, shot_codes: list[str] | None = None) -> dict
 
 
 def generate_videos(c: AgentCtx, shot_codes: list[str] | None = None, quality: str = "") -> dict:
+    """Shots that continue another one (a Film Map link, or "continue from the previous shot") are made in link order
+    (core/scene_chain.py, as Autopilot and the scene runs do): one run makes them wave by wave, so each linked shot
+    starts from the finished clip before it. Shots with no link between them are queued at once, as before."""
+    from ..core import scene_chain
     q = quality if quality in catalog.QUALITY_MODES else None
+    what = f"videos ({q or 'project default'})"
     shots = c.shots(shot_codes or None)
-    return c.submit(generation.video_specs(c.db, c.project, shots, q, only_missing=not shot_codes), f"videos ({q or 'project default'})")
+    if not shot_codes:  # all that still need one
+        shots = [s for s in shots if not is_real(current(c.db, s.id, "video"))]
+    specs = generation.video_specs(c.db, c.project, shots, q)
+    waves = scene_chain.waves(c.db, shots)
+    if len(waves) <= 1:
+        return c.submit(specs, what)
+    from ..core.budget import Estimator
+    est, ids = Estimator(c.db), {s.id for s in shots}
+    total = sum(sp["estimate"] for sp in specs)
+    for s in shots:  # a linked shot's keyframe is remade from the clip before it (make_videos_in_order)
+        src, kf = scene_chain.source(c.db, s), current(c.db, s.id, "keyframe")
+        uploaded = kf is not None and (kf.provider == "upload" or (kf.params or {}).get("uploaded"))
+        if src is not None and src.id in ids and not scene_chain.extends(s) and kf is not None and not kf.stale and not uploaded:
+            total += est.image(1)
+    ep = c.ep()
+    spec = jobs.spec("produce", payload={"steps": ["videos"], "shot_ids": [s.id for s in shots], "quality": q,
+                                         "remake": bool(shot_codes),
+                                         "items": [{"label": f"Videos in link order · {len(shots)}", "usd": round(total, 4)}]},
+                     project_id=c.project.id, episode_id=ep.id, estimate=total,
+                     label=f"Videos in link order E{ep.number:02} ({len(shots)} shots)")
+    out = c.submit([spec], f"{what} in link order")
+    return {**out, "order": [[s.code for s in w] for w in waves],
+            "note": "Linked shots are made one wave after another, so each starts from the finished clip it continues."}
 
 
 def voice_and_lipsync(c: AgentCtx, language: str = "", shot_codes: list[str] | None = None) -> dict:
@@ -832,7 +859,8 @@ TOOL_DECLS = [
        {"character": {"type": "string"}, "outfit": {"type": "string"}, "description": {"type": "string"},
         "regenerate_keyframes": {"type": "boolean"}}, ["character", "outfit"]),
     _t("generate_keyframes", "Generate keyframe images (cheap).", {"shot_codes": _codes}),
-    _t("generate_videos", "Generate videos for shots (paid).", {"shot_codes": _codes,
+    _t("generate_videos", "Generate videos for shots (paid). Shots linked to the shot they continue are made in link order, "
+       "each from the finished clip before it. For whole scenes prefer generate_scenes.", {"shot_codes": _codes,
         "quality": {"type": "string", "enum": list(catalog.QUALITY_MODES)}}),
     _t("voice_and_lipsync", "Voice the dialogue/narration and lip-sync it (paid).", {"language": _lang, "shot_codes": _codes}),
     _t("generate_music", "Compose background music for the episode.", {"prompt": {"type": "string"}}),

@@ -252,8 +252,9 @@ def generate_scenes(project_id: ProjectId,
 
 def generate_videos(project_id: ProjectId, shot_codes: ShotCodes = None, quality: Quality = "", episode: EpisodeNo = None,
                     run_now: RunNow = False) -> dict:
-    """Make videos for individual shots, all at once. For whole scenes use generate_scenes instead: it keeps the
-    links between shots (a linked shot made here before its source clip exists starts from the source's keyframe)."""
+    """Make videos for individual shots. Shots linked to another shot in the same request are made in link order (each
+    from the finished clip before it); the others at once. For whole scenes use generate_scenes instead: it also
+    carries continuity from scene to scene."""
     with call("write") as c:
         p = c.project(project_id)
         return director(c, p, c.episode(p, episode), "generate_videos", {"shot_codes": shot_codes, "quality": quality},
