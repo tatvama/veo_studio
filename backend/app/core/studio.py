@@ -480,6 +480,23 @@ def undo(db: Session, entity: str, row: Any) -> bool:
 
 # ── Writers' room v2: script versions, scene cards, critic, continuity, native polish, trends, marketing ───────
 
+AI_SCRIPT_SOURCES = ("ai", "critic")  # versions the writer made (a critic version only adds a report to the same text)
+
+
+def users_script_reason(db: Session, project: Project, episode: Episode) -> str:
+    """Why the writer must not rewrite this script on its own ("" = it may). Imported, typed, restored or shot-listed
+    scripts are the user's words, and rewriting one that already has shots would leave the shots telling another story."""
+    if project.workflow in ("script", "shots"):
+        return "your own script"
+    if db.query(Shot).filter(Shot.episode_id == episode.id).count():
+        return "shots are already made from it"
+    last = (db.query(ScriptVersion).filter(ScriptVersion.episode_id == episode.id)
+            .order_by(ScriptVersion.version.desc()).first())
+    if not last or last.source not in AI_SCRIPT_SOURCES:
+        return "written, imported or picked by you"
+    return ""
+
+
 def save_script_version(db: Session, episode: Episode, source: str, user: User | None, note: str = "",
                         critic: dict | None = None) -> ScriptVersion:
     last = (db.query(ScriptVersion).filter(ScriptVersion.episode_id == episode.id)
