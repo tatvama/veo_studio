@@ -21,6 +21,7 @@ import { Gateway } from "./gateway.ts";
 import { gpuGate } from "./gpu-gate.ts";
 import { chooseLibraryRoot, projectTitle, registerIpc, writeEdits, type AppCtx } from "./ipc.ts";
 import { Library } from "./library.ts";
+import { HeldLocks } from "./locks.ts";
 import { initLog, logsDir } from "./log.ts";
 import { isInside } from "./paths.ts";
 import { buildMenu } from "./menu.ts";
@@ -166,8 +167,10 @@ async function start(): Promise<void> {
     return c ? `${COOKIE}=${c.value}` : undefined;
   };
   let windows: WindowManager | null = null;
+  const locks = new HeldLocks(); // the cuts this app checked out, released on quit (docs/DESKTOP.md §2.1)
   const gateway = new Gateway({
     upstream: () => config.get().serverUrl,
+    onApiResponse: (m, p, st) => locks.observe(m, p, st),
     uiDir: () => dir,
     uiSource: () => config.get().uiSource,
     uiDirs: () => uiCache.dirs(),
@@ -390,10 +393,11 @@ async function start(): Promise<void> {
     appCtx.upscaler.stopAll();
     appCtx.editor.stopAll();
     void assistants.stopAll();
-    void gateway.close().catch(() => undefined).finally(() => {
+    // the cut stays checked out for ever otherwise (a lock never expires): give it back, best effort, while the gateway closes
+    void Promise.allSettled([locks.releaseAll(upstream, os.hostname(), 2500, log), gateway.close()]).finally(() => {
       library.closeAll();
       app.exit(0);
     });
-    setTimeout(() => app.exit(0), 3000).unref?.();
+    setTimeout(() => app.exit(0), 4000).unref?.();
   });
 }

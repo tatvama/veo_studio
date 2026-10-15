@@ -1,5 +1,8 @@
 # Tatvam Studio desktop installer (npm run dist → desktop/release). Code signing comes from the environment:
 #   CSC_LINK (path or base64 of the .pfx) and CSC_KEY_PASSWORD; without them the installer is built unsigned.
+# Updates (electron-updater) check the downloaded installer's Authenticode signature against win.publisherName before
+# installing it. That check only has teeth once builds are signed: an unsigned build has no signature to compare, so
+# until a certificate is added (docs/DESKTOP.md §6) an update is protected by TLS to GitHub and the blockmap alone.
 appId: com.tatvam.studio
 productName: Tatvam Studio
 copyright: Copyright © 2026 Tatvam
@@ -25,6 +28,11 @@ win:
     - target: nsis
       arch: [x64]
   artifactName: Tatvam-Studio-Setup-${version}.${ext}
+  # The certificate's subject name(s): electron-updater refuses an update whose signature was made by anyone else.
+  # Must match the CN of the certificate behind CSC_LINK exactly (change it here when the certificate is bought).
+  publisherName:
+    - Tatvam
+  verifyUpdateCodeSignature: true
 nsis:
   oneClick: false
   perMachine: false

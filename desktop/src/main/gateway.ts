@@ -62,6 +62,8 @@ export interface GatewayDeps {
   /** The session cookie header to replay queued writes with (defaults to the last one the UI sent). */
   getCookie?(): Promise<string | undefined>;
   onStatus?(s: OfflineStatus): void;
+  /** Every answer forwarded from the server for an /api request (method, pathname, status): the checkout-lock tracker listens. */
+  onApiResponse?(method: string, pathname: string, status: number): void;
   log?(msg: string): void;
   healthIntervalMs?: number;
   connectTimeoutMs?: number;
@@ -561,6 +563,7 @@ export class Gateway {
     await new Promise<void>((resolve) => {
       const preq = mod.request({ protocol: up.protocol, hostname: up.hostname, port: up.port || undefined, method, path: url, headers }, (pres) => {
         if (!this.online) this.setOnline(true);
+        if (isApi) { try { this.deps.onApiResponse?.(method, pathnameOf(url), pres.statusCode ?? 0); } catch { /* a listener's problem */ } }
         const outHeaders: Record<string, string | string[]> = {};
         for (const [k, v] of Object.entries(pres.headers)) {
           if (v === undefined || HOP.has(k)) continue;

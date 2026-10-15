@@ -30,7 +30,10 @@ back to the server, copies the `veo_session` cookie onto the gateway origin, and
 
 The table is `cut_locks`: `episode_id` (unique), `user_id`, `client` ("desktop" | "web"), `machine`, `acquired_at`
 and `heartbeat_at`. It lives in Postgres, so it survives restarts. A lock **does not expire on its own**: an editor
-can keep it through a long offline stretch. A producer or admin can force-release it.
+can keep it through a long offline stretch. A producer or admin can force-release it. The desktop app releases the
+cuts it still holds when it quits (`main/locks.ts`: the gateway notes every checkout, heartbeat, check-in and release
+it forwards; on quit each held lock is read back and `DELETE`d only if it is still ours and from this machine, best
+effort within 2.5 s). Closing the web page does not release a lock: there the heartbeat age shows how stale it is.
 
 | Method & path | Body | Result |
 | --- | --- | --- |
@@ -186,6 +189,8 @@ The upload is chunked, so a 4K master survives a flaky connection.
 
 Init may also send the plan's `fingerprint`. Over the size cap returns 413, a chunk past the declared size 400, and
 a wrong offset or an early complete 409 `{detail, received}`. The status call returns `{upload_id, received, size}`.
+The desktop resumes at the `received` a 409 names, but gives up after 5 consecutive 409s at the same byte ("upload
+stuck"), so a server that never takes the chunk it asks for can't keep it looping.
 The file keeps a `.mov` / `.mkv` / `.webm` extension from `filename` (ProRes masters), else `.mp4`. Unfinished
 uploads older than a week are cleared.
 
@@ -565,8 +570,15 @@ npm run dist       # Windows installer (NSIS) in desktop/release, with the built
 - **One-time setup:** a fine-grained personal access token with access to that repository only (permission
   **Contents: read and write**), saved as the Actions secret `DESKTOP_RELEASES_TOKEN`. Without it the release job
   stops with a message saying so. After adding it, run the Release workflow with `publish_tag` = that tag.
-- **Signing** uses the optional `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` secrets; without them the installer is
-  unsigned and Windows SmartScreen warns on first run.
+- **Signing** uses the optional `WIN_CSC_LINK` / `WIN_CSC_KEY_PASSWORD` (or `CSC_LINK` / `CSC_KEY_PASSWORD`)
+  secrets, passed to electron-builder as `CSC_LINK` / `CSC_KEY_PASSWORD`; as soon as they exist every release is signed,
+  nothing else to change. Without them the installer is unsigned and Windows SmartScreen warns on first run.
+- **Update verification.** `desktop/electron-builder.yml` sets `win.verifyUpdateCodeSignature: true` and
+  `win.publisherName` (the certificate's subject CN; change it to match the certificate that is bought), so
+  electron-updater refuses an update whose Authenticode signature isn't that publisher's. **This only protects anything
+  once builds are signed**: an unsigned build has no signature to compare, so until then an update's integrity rests on
+  TLS to GitHub and the blockmap. `desktop/test/release-config.test.ts` keeps the two settings and the workflow's
+  signing variables in place.
 
 ## 7. Status (13 October 2026)
 
