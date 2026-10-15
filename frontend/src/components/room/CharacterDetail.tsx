@@ -171,6 +171,8 @@ export function CharacterDetail({ cid, chars, onBack, onOpen, backLabel }: {
   const packN = countPack(pack);
 
   const ownPhotos = refsAll.filter((a) => a.kind === "source");
+  // archived uploads too: a real person's photo blocks BytePlus even after it is archived, so it must stay attestable
+  const allUploads = ((c.assets ?? []) as Asset[]).filter((a) => a.kind === "source");
   const registered = !!c.provider_assets?.byteplus;
   const voices = ((c.voices ?? []) as any[]).filter((v) => typeof v === "object" && v.language);
   const voiceCount = scope.languages.filter((l) => voices.some((v) => v.language === l)).length;
@@ -378,7 +380,7 @@ export function CharacterDetail({ cid, chars, onBack, onOpen, backLabel }: {
                 <AiMadeCheck checked={aiMade} onChange={setAiMade} disabled={busy === "upload"} className="basis-full" />
               </div>
             )}
-            <UploadAttestations character={c} uploads={ownPhotos} canAttest={editable} canUnattest={canEdit} />
+            <UploadAttestations character={c} uploads={allUploads} canAttest={editable} canUnattest={canEdit} />
 
             {/* pack completeness: seven stations of the look */}
             <div className="rounded-lg border border-line bg-bg/40 p-3.5">

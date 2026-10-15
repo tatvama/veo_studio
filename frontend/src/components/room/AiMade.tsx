@@ -97,6 +97,7 @@ export function UploadAttestations({ character: c, uploads, canAttest, canUnatte
                 <span className="block truncate text-sm font-medium">{uploadLabel(a)}</span>
                 <span className="block text-2xs text-dim">
                   {a.ai_made ? t("AI-generated: can be registered with BytePlus") : t("A real person's photo: never sent to BytePlus, needs a likeness consent")}
+                  {a.archived && !a.ai_made && ` · ${t("archived, still blocks BytePlus (views made from it show this person)")}`}
                 </span>
               </span>
               {a.ai_made

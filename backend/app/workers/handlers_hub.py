@@ -114,9 +114,10 @@ def _library():
 
 def made_from_photo(db, ch: Character) -> bool:
     """The character comes from a photo of a real person (an upload nobody attested is AI-generated): its face never
-    goes to the BytePlus asset library, by hand or by itself."""
+    goes to the BytePlus asset library, by hand or by itself. Archived uploads count too: sheet views made from a
+    photo still show that person after the photo itself is archived."""
     return db.query(CharacterAsset).filter(CharacterAsset.character_id == ch.id, CharacterAsset.kind == "source",
-                                           CharacterAsset.ai_made.is_(False), CharacterAsset.archived.is_(False)).count() > 0
+                                           CharacterAsset.ai_made.is_(False)).count() > 0
 
 
 def withdrawn(reg: dict | None) -> bool:

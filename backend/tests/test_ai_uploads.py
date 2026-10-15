@@ -104,11 +104,15 @@ def test_made_from_photo_and_auto_register_reason(client):
         reg = _reg(cid)
         assert reg["status"] == "ready" and [a["kind"] for a in reg["assets"]] == ["source", "front"]
         # a real person's photo next to it: made from a photo, never registered by itself again
-        _upload(c, cid)
+        photo = _upload(c, cid)
         with SessionLocal() as db:
             ch = db.get(Character, cid)
             assert hub.made_from_photo(db, ch)
             assert hub.auto_register_reason(db, ch) == hub.PHOTO_REASON.rstrip(".")
+        # archiving the photo doesn't clear it: views made from it still show that person
+        ok(c.patch(f"/api/character-assets/{photo['id']}", headers=H, json={"archived": True}))
+        with SessionLocal() as db:
+            assert hub.made_from_photo(db, db.get(Character, cid))
     finally:
         _setting("byteplus_auto_register", settings_store.DEFAULTS["byteplus_auto_register"])
 
