@@ -309,7 +309,7 @@ export function EditorCanvas({ designId }: { designId: number }) {
 
   const onTransform = (e: KonvaEventObject<Event>) => {
     const g = gesture.current;
-    const node = e.target as Konva.Group;
+    const node = e.target as unknown as Konva.Group;
     if (!g || g.kind === "drag" || !node.hasName("layer")) return;
     if (!g.scaleMode) {
       const l0 = g.startLayers[node.id()];
