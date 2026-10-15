@@ -151,7 +151,7 @@ def update_shot(c: AgentCtx, shot_code: str, changes: dict | None = None, **kw) 
         except HTTPException as e:
             return {"error": str(e.detail)}
     studio.save_revision(c.db, "shot", s, studio.SHOT_FIELDS, c.user)
-    for k in ("framing", "camera", "action", "sfx", "music_cue", "mode", "quality_mode", "voice_mode", "notes"):
+    for k in ("framing", "camera", "action", "sfx", "music_cue", "mode", "quality_mode", "voice_mode", "notes", "end_note"):
         if k in changes:
             setattr(s, k, str(changes[k]))
     if "duration_s" in changes and int(changes["duration_s"]) in (4, 6, 8):
@@ -183,6 +183,26 @@ def set_outfit(c: AgentCtx, character: str, outfit: str, description: str = "", 
 def generate_keyframes(c: AgentCtx, shot_codes: list[str] | None = None) -> dict:
     shots = c.shots(shot_codes or None)
     return c.submit(generation.keyframe_specs(c.db, c.project, shots, only_missing=not shot_codes), "keyframes")
+
+
+def storyboard_frames(c: AgentCtx, scene_numbers: list[int] | None = None, shot_codes: list[str] | None = None,
+                      end_frames: bool = True, sync: bool = False, redo: bool = False) -> dict:
+    """Start + end frames of these scenes' shots, in order, each following the one before (core/frames.py). With sync
+    each shot of a scene starts exactly on the end frame before, so the clips join without a jump."""
+    from ..models import Scene
+    shots = c.shots(shot_codes or None)
+    if scene_numbers:
+        ids = {sc.id for sc in c.db.query(Scene).filter(Scene.episode_id == c.ep().id).all()
+               if sc.order + 1 in {int(n) for n in scene_numbers}}
+        shots = [s for s in shots if s.scene_id in ids]
+    if not shots:
+        return {"error": "No shots in those scenes"}
+    spec, pl = generation.storyboard_spec(c.db, c.project, c.ep(), shots, end_frames=end_frames, sync=sync, redo=redo)
+    if not pl["steps"] and not sync:
+        return {"status": "nothing_to_do", "message": "Every start and end frame is already made."}
+    what = f"storyboard frames ({pl['images']} images, {pl['copies']} synced copies, {pl['engine_label']})"
+    return {**c.submit([spec], what), "frames": [f"{st['code']} {'start' if st['kind'] == 'keyframe' else 'end'}"
+                                                 for st in pl["steps"]]}
 
 
 def generate_videos(c: AgentCtx, shot_codes: list[str] | None = None, quality: str = "") -> dict:
@@ -292,7 +312,8 @@ def regenerate_stale(c: AgentCtx, shot_codes: list[str] | None = None) -> dict:
 
 
 def next_shot(c: AgentCtx, shot_code: str, action: str = "", mode: str = "last_frame", generate: bool = False) -> dict:
-    """Add the shot after `shot_code` with the same cast/wardrobe/location, linked by last frame or as an extension."""
+    """Add the shot after `shot_code` with the same cast/wardrobe/location, linked by last frame, as an extension, or
+    starting exactly on its end frame (end_frame)."""
     src = next((s for s in c.shots([shot_code])), None)
     if not src:
         return {"error": f"No shot {shot_code}"}
@@ -691,6 +712,7 @@ _LABELS = {
     "update_brief": "Updating the brief", "generate_hooks": "Writing hooks", "select_hook": "Choosing a hook",
     "write_script": "Writing the script", "plan_series": "Planning the season", "build_bible": "Building the bible",
     "breakdown_shots": "Planning the shots", "generate_keyframes": "Setting up keyframes", "generate_videos": "Setting up videos",
+    "storyboard_frames": "Setting up storyboard frames",
     "voice_and_lipsync": "Setting up voices and lip-sync", "generate_music": "Setting up music",
     "make_animatic": "Rendering an animatic", "export_video": "Rendering the export", "make_cutdowns": "Cutting shorts",
     "start_autopilot": "Setting up Autopilot", "wardrobe_report": "Checking the wardrobe", "impact_report": "Checking what is stale",
@@ -794,6 +816,7 @@ TOOL_FUNCS: dict[str, Callable[..., dict]] = {
     "select_hook": select_hook, "write_script": write_script, "plan_series": plan_series, "build_bible": build_bible,
     "breakdown_shots": breakdown_shots, "update_shot": update_shot, "set_outfit": set_outfit,
     "generate_keyframes": generate_keyframes, "generate_videos": generate_videos, "voice_and_lipsync": voice_and_lipsync,
+    "storyboard_frames": storyboard_frames,
     "generate_music": generate_music, "make_animatic": make_animatic, "dub_episode": dub_episode,
     "export_video": export_video, "edit_clip": edit_clip, "make_cutdowns": make_cutdowns, "start_autopilot": start_autopilot,
     # v3: continuity, change impact, Film Map, Character Lab, dialogue route
@@ -826,12 +849,19 @@ TOOL_DECLS = [
     _t("build_bible", "Create characters, locations and style from the script."),
     _t("breakdown_shots", "Turn the script into a shot list (replaces existing shots)."),
     _t("update_shot", "Edit one shot.", {"shot_code": {"type": "string"}, "changes": {"type": "object",
-        "description": "framing, camera, action, duration_s (4/6/8), quality_mode, voice_mode, mode, sfx, music_cue, include"}},
+        "description": "framing, camera, action, end_note (how the shot ends: its end frame), duration_s (4/6/8), "
+                       "quality_mode, voice_mode, mode, sfx, music_cue, include"}},
        ["shot_code", "changes"]),
     _t("set_outfit", "Give a character a new outfit in this episode and redo their keyframes.",
        {"character": {"type": "string"}, "outfit": {"type": "string"}, "description": {"type": "string"},
         "regenerate_keyframes": {"type": "boolean"}}, ["character", "outfit"]),
     _t("generate_keyframes", "Generate keyframe images (cheap).", {"shot_codes": _codes}),
+    _t("storyboard_frames", "Make the storyboard frames of scenes in order (paid, cheap): each shot's start frame and its "
+       "end frame (where the shot ends; its clip then runs from start to end frame), each frame following the one before. "
+       "sync=true links each shot of a scene to the one before so it starts exactly on that end frame and the clips join "
+       "without a jump (for one continuous action). Uses the project's frames engine (e.g. Seedream).",
+       {"scene_numbers": {"type": "array", "items": {"type": "integer"}}, "shot_codes": _codes,
+        "end_frames": {"type": "boolean"}, "sync": {"type": "boolean"}, "redo": {"type": "boolean"}}),
     _t("generate_videos", "Generate videos for shots (paid).", {"shot_codes": _codes,
         "quality": {"type": "string", "enum": list(catalog.QUALITY_MODES)}}),
     _t("voice_and_lipsync", "Voice the dialogue/narration and lip-sync it (paid).", {"language": _lang, "shot_codes": _codes}),
@@ -851,8 +881,10 @@ TOOL_DECLS = [
     _t("wardrobe_report", "Who wears what in every scene, with continuity breaks flagged."),
     _t("impact_report", "What became stale after edits (keyframes, videos, voices, lip-syncs) and the cost of redoing it."),
     _t("regenerate_stale", "Redo every stale take (paid).", {"shot_codes": _codes}),
-    _t("next_shot", "Add the shot after a given one with the same cast, wardrobe and location, starting from its last frame or extending its clip.",
-       {"shot_code": {"type": "string"}, "action": {"type": "string"}, "mode": {"type": "string", "enum": ["last_frame", "extend"]},
+    _t("next_shot", "Add the shot after a given one with the same cast, wardrobe and location, starting from its last frame, "
+       "extending its clip, or starting exactly on its end frame (end_frame).",
+       {"shot_code": {"type": "string"}, "action": {"type": "string"},
+        "mode": {"type": "string", "enum": ["last_frame", "extend", "end_frame"]},
         "generate": {"type": "boolean"}}, ["shot_code"]),
     _t("lock_character", "Set a character's lock: face, body, skin_hair, voice, costume_continuity (booleans), gestures, age, lighting (text), strictness 0-1.",
        {"character": {"type": "string"}, "lock": {"type": "object"}}, ["character", "lock"]),

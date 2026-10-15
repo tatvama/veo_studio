@@ -9,6 +9,7 @@ from .. import catalog
 from ..models import Character, Episode, Location, Project, Shot, Take
 from ..pipeline.prompting import effective_voice_mode, shot_lines
 from ..pipeline.selection import current, has_fresh, is_real
+from . import frames
 from .budget import Estimator
 from .jobs import spec
 
@@ -24,7 +25,9 @@ def episode_shots(db: Session, episode: Episode, shot_ids: list[int] | None = No
 
 def keyframe_specs(db: Session, project: Project, shots: list[Shot], only_missing: bool = False, hero: bool = False) -> list[dict]:
     """Each scene's anchor first; the scene's other keyframes carry `after_shot` and are claimed once the anchor's
-    keyframe is done (core/scene_order.py), so they can follow its look. Scenes still run side by side."""
+    keyframe is done (core/scene_order.py), so they can follow its look. Scenes still run side by side. A synced
+    shot's keyframe is a copy of the end frame it starts on (core/frames.py): free once that end frame exists, and
+    held back (`after_end`) while the shot before is still making it."""
     from ..pipeline.scene_look import anchor_map
     est = Estimator(db)
     anchors = anchor_map(db, shots)
@@ -35,10 +38,37 @@ def keyframe_specs(db: Session, project: Project, shots: list[Shot], only_missin
         payload: dict[str, Any] = {"hero": hero}
         if s.id in anchors:
             payload["after_shot"] = anchors[s.id]
+        src = frames.sync_source(db, s)
+        usd = frames.image_price(db, project, 1, hero=hero)
+        if src is not None:
+            payload["after_end"] = frames.after_end(db, s)
+            usd = 0.0 if frames.end_take(db, src) is not None else usd  # (else it makes the end frame first)
+            payload = {k: v for k, v in payload.items() if v}
         (after if s.id in anchors else first).append(
             spec("keyframe", payload=payload, project_id=project.id, episode_id=s.episode_id, shot_id=s.id,
-                 estimate=est.image(1, hero), label=f"Keyframe {s.code}"))
+                 estimate=usd, label=f"Keyframe {s.code}"))
     return first + after
+
+
+def endframe_spec(db: Session, project: Project, shot: Shot, hero: bool = False, engine: str | None = None) -> dict:
+    """The shot's end frame (core/frames.py), its start frame first when it has none."""
+    usd = frames.image_price(db, project, 1, engine, hero)
+    if current(db, shot.id, "keyframe") is None:
+        usd += frames.image_price(db, project, 1, engine, hero) if frames.sync_source(db, shot) is None else 0.0
+    payload: dict[str, Any] = {k: v for k, v in (("hero", hero), ("engine", engine), ("after_end", frames.after_end(db, shot))) if v}
+    return spec("endframe", payload=payload, project_id=project.id, episode_id=shot.episode_id, shot_id=shot.id,
+                estimate=usd, label=f"End frame {shot.code}")
+
+
+def storyboard_spec(db: Session, project: Project, episode: Episode, shots: list[Shot], *, end_frames: bool = True,
+                    sync: bool = False, redo: bool = False, engine: str | None = None, hero: bool = False) -> tuple[dict, dict]:
+    """(job spec, plan): every start and end frame of these shots, made in order (workers/handlers_frames.py)."""
+    pl = frames.plan(db, project, shots, end_frames=end_frames, redo=redo, engine=engine, sync=sync, hero=hero)
+    payload = {"shot_ids": [s.id for s in shots], "end_frames": end_frames, "sync": sync, "redo": redo,
+               "engine": engine or "", "hero": hero}
+    label = f"Storyboard frames ({len(pl['shots'])} shot{'s' if len(pl['shots']) != 1 else ''})"
+    return spec("storyboard_frames", payload=payload, project_id=project.id, episode_id=episode.id,
+                estimate=pl["total_usd"], label=label), pl
 
 
 def enhance_spec(db: Session, project: Project, shot: Shot, take: Take) -> dict:
@@ -61,10 +91,19 @@ def video_specs(db: Session, project: Project, shots: list[Shot], quality: str |
         cost = est.video(s, project, q)
         kf = current(db, s.id, "keyframe")
         payload: dict[str, Any] = {"quality": q, "mode": mode}
-        if not kf or kf.stale:  # the video job makes the missing (or stale) keyframe first
-            cost += est.image(1)
+        src = frames.sync_source(db, s)
+        if src is not None:  # a synced shot: its start frame is a copy of the end frame before (core/frames.py) ...
+            if frames.end_take(db, src) is None:
+                cost += frames.image_price(db, project, 1)  # ... which it makes first when the shot before hasn't
+                if (wait := frames.after_end(db, s)) is not None:
+                    payload["after_end"] = wait  # ... and waits for while the shot before is making it
+        elif not kf or kf.stale:  # the video job makes the missing (or stale) keyframe first
+            cost += frames.image_price(db, project, 1)
             if s.id in anchors:  # ... after its scene's anchor has one to follow (core/scene_order.py)
                 payload["after_shot"] = anchors[s.id]
+        if frames.end_take(db, s) is None and frames.wants_end(db, s) and (mode or s.mode or "auto") in (
+                "auto", "keyframe_to_video", "interpolate"):
+            cost += frames.image_price(db, project, 1)  # its end frame (out of date, or one a shot starts on) first
         (after if "after_shot" in payload else first).append(
             spec("video", payload=payload, project_id=project.id, episode_id=s.episode_id, shot_id=s.id, estimate=cost,
                  label=f"Video {s.code} ({q})"))

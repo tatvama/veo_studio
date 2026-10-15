@@ -286,6 +286,8 @@ def compile_video_prompt(db: Session, shot: Shot, project: Project, lang: str | 
         out.append(f"[CONTINUITY] {cont}.")
     if style:
         out.append(f"[STYLE] {style.look}. {style.lens}. {style.grade}. {style.grain}.".replace("..", "."))
+    if (shot.end_note or "").strip():  # where the clip has to arrive (its end frame, core/frames.py)
+        out.append(f"[END] The shot ends on: {shot.end_note.strip().rstrip('.')}.")
     audio = ", ".join(x for x in [shot.sfx, shot.music_cue] if x)
     if vm in ("audio_first", "narration", "audio_driven"):
         audio = (audio + ", " if audio else "") + "no background music, no narration"
@@ -425,18 +427,17 @@ LOCATION_LABEL = "location: copy the architecture, layout and set dressing; igno
 
 
 def _prev_label(prev_from: str) -> str:
-    what = "last frame" if prev_from == "video" else "keyframe"
+    what = {"video": "last frame", "endframe": "end frame"}.get(prev_from, "keyframe")
     return f"the shot before ({what}): continue positions, props and screen direction; not its faces, not its framing"
 
 
 def keyframe_refs(db: Session, shot: Shot, continuity_frame: Path | None, anchor_frame: Path | None = None,
-                  prev_from: str = "video") -> list[tuple[str, Path]]:
+                  prev_from: str = "video", limit: int = KEYFRAME_REF_LIMIT) -> list[tuple[str, Path]]:
     """Up to 8 labelled references, each with what to copy from it. Guaranteed: one face reference per character, the
     scene anchor's keyframe and the location; then the shot's own references, more character views, props, and the
     previous shot's frame when there is room. In the prompt they read in this order: characters, the shot's own
     references, anchor, location, props, previous frame."""
     st = get_storage()
-    limit = KEYFRAME_REF_LIMIT
     chars = _chars(db, shot)[:4]
     ep_no = _episode_no(db, shot)
     per_char: list[list[tuple[str, Path]]] = []
@@ -471,6 +472,17 @@ def keyframe_refs(db: Session, shot: Shot, continuity_frame: Path | None, anchor
     prev = prev[: max(room, 0)]
     faces = [r for i, refs in enumerate(per_char) if refs for r in [refs[0], *extra[i]]]
     return (faces + own + anchor + loc + props + prev)[:limit]
+
+
+START_LABEL = ("the start frame of this same shot: keep its camera, lens, set, light, colour palette, wardrobe and faces; "
+               "show the moment the shot ends")
+
+
+def endframe_refs(db: Session, shot: Shot, start_frame: Path) -> list[tuple[str, Path]]:
+    """An end frame's references: the shot's own start frame first, then what keyframe_refs guarantees (a face per
+    character, the location) and more while there is room. No scene anchor and no shot before: the start frame
+    already follows them."""
+    return [(START_LABEL, start_frame)] + keyframe_refs(db, shot, None, None, limit=KEYFRAME_REF_LIMIT - 1)
 
 
 def enhance_refs(db: Session, shot: Shot, frame: Path) -> list[tuple[str, Path]]:
@@ -547,6 +559,57 @@ def compile_keyframe_prompt(db: Session, shot: Shot, project: Project, ref_label
     if style:
         lens = "" if "lens" in cam else style.lens  # the framing's own lens wins over the style's default
         parts.append("Style: " + "; ".join(x.strip().rstrip(".") for x in (style.look, lens, style.grade, style.grain)
+                                           if x and x.strip()) + ".")
+    if fix:
+        parts.append("Fix what was wrong last time: " + "; ".join(fix) + ".")
+    avoid = style.avoid_list if style and style.avoid_list else "extra people, warped hands"
+    parts.append(f"No text, subtitles, logos or watermark. Avoid: {avoid}.")
+    return "\n".join(parts)
+
+
+_MOVES = re.compile(r"\b(push|pull|dolly|track|tracking|pan|tilt|crane|zoom|orbit|arc|follow|handheld|steadicam|"
+                    r"truck|pedestal|boom|whip|reveal|drone|aerial|move|moves|moving)\b", re.I)
+
+
+def compile_endframe_prompt(db: Session, shot: Shot, project: Project, ref_labels: list[str],
+                            fix: list[str] | None = None) -> str:
+    """The shot's last frame: image 1 (its start frame) seconds later, where the action has got to. Same scene look,
+    cast and style as the keyframe; the camera stays put unless the shot moves it."""
+    episode = db.get(Episode, shot.episode_id)
+    style = _style(db, project)
+    scene = _scene(db, shot)
+    chars = _chars(db, shot)
+    lines = shot_lines(shot, project.primary_language)
+    secs = int(shot.duration_s or 8)
+    parts = [f"The LAST frame of a {secs}-second shot of an AI film, {project.aspect} frame: the same shot as the start "
+             f"frame (image 1), {secs} seconds later."]
+    if ref_labels:
+        parts.append(image_list(ref_labels))
+        if chars:
+            parts.append("Faces come only from the character images and image 1, never from location images.")
+    look = scene_look.scene_look(db, scene)
+    if look:
+        parts.append(f"Scene look (the same in every shot of this scene): {look}")
+    parts.append(f"The shot: {_sentence(shot.framing, shot.action) or 'the scene'}.")
+    end = (shot.end_note or "").strip().rstrip(".")
+    parts.append(f"This frame shows how it ends: {end}." if end else
+                 "This frame shows where the action has got to at the very end of the shot (the action complete).")
+    cam = (shot.camera or "").strip().rstrip(".")
+    if cam and _MOVES.search(cam):
+        parts.append(f"Camera: {cam}. The move has finished: frame the end of it, same lens and light as image 1.")
+    else:
+        parts.append("Camera: the same position, lens, height and framing as image 1; only the people and what they "
+                     "hold have moved.")
+    cb = character_block(db, shot, episode)
+    if cb:
+        parts.append(f"Characters: {cb}")
+    cont = continuity_block(db, shot)
+    if cont:
+        parts.append(f"Continuity: {cont}.")
+    if lines:
+        parts.append("The speaking character has just finished the line, mouth relaxed.")
+    if style:
+        parts.append("Style: " + "; ".join(x.strip().rstrip(".") for x in (style.look, style.lens, style.grade, style.grain)
                                            if x and x.strip()) + ".")
     if fix:
         parts.append("Fix what was wrong last time: " + "; ".join(fix) + ".")

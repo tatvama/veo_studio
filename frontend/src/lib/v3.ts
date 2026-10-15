@@ -48,7 +48,7 @@ export const useDialogueCheck = (sid: number | null, lang?: string) =>
              enabled: !!sid });
 
 // ── Film Map: next shot ───────────────────────────────────────────────────────
-export interface NextShotIn { action?: string; framing?: string; camera?: string; duration_s?: 4 | 6 | 8; mode?: "last_frame" | "extend"; generate?: boolean; quality?: string | null }
+export interface NextShotIn { action?: string; framing?: string; camera?: string; duration_s?: 4 | 6 | 8; mode?: "last_frame" | "extend" | "end_frame"; generate?: boolean; quality?: string | null }
 export const nextShot = (sid: number, body: NextShotIn) => api.post<{ shot: any; jobs: any }>(`/api/shots/${sid}/next`, body);
 
 // ── dashboards ────────────────────────────────────────────────────────────────
@@ -135,6 +135,6 @@ export const addPropToProject = (pid: number, id: number) => api.post(`/api/proj
 export const removePropFromProject = (pid: number, id: number) => api.del(`/api/projects/${pid}/props/${id}`);
 
 // ── shot fields added in v3 (patch with PATCH /api/shots/{id}) ───────────────
-export interface ShotV3Fields { continuity_from_shot_id?: number | null; continuity_mode?: "last_frame" | "extend"; prop_ids?: number[] }
+export interface ShotV3Fields { continuity_from_shot_id?: number | null; continuity_mode?: "last_frame" | "extend" | "end_frame"; prop_ids?: number[] }
 /** Take fields added in v3 */
 export type TakeV3 = Take & { stale?: boolean; stale_reason?: string };

@@ -8,6 +8,9 @@ keyframe and the cut jumps. Here shots run in waves: a shot starts only once the
 
 Before a scene starts, every earlier scene has its Continuity Bible end state (written by AI from the script when
 missing, core/continuity.py), so the prompts carry who wears what, what is in hand, time of day and weather forward.
+
+A synced link (core/frames.py) is different: the shot starts on the planned END FRAME of the shot before, not on its
+finished clip. Those frames are made first, in order, and then both clips are made at the same time.
 """
 from __future__ import annotations
 
@@ -17,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from ..models import Episode, Project, Scene, Shot, Take, User
 from ..pipeline.selection import current, is_real
-from . import continuity, generation
+from . import continuity, frames, generation
 from .budget import Estimator
 
 LINK_SCENES = ("auto", "always", "never")
@@ -43,9 +46,13 @@ def extends(shot: Shot) -> bool:
 
 
 def follows(kf: Take, src_video: Take) -> bool:
-    """Did this keyframe start from the last frame of `src_video`? Your own uploaded image always counts as right."""
+    """Did this keyframe start from the last frame of `src_video`? Your own uploaded image always counts as right, and
+    so does a keyframe made from (or copied from) the end frame that clip was made to end on."""
     p = kf.params or {}
     if kf.provider == "upload" or p.get("uploaded"):
+        return True
+    ended_on = (src_video.params or {}).get("end_take_id")
+    if ended_on is not None and ended_on in (p.get("continuity_end_take_id"), p.get("end_take_id")):
         return True
     if p.get("continuity_take_id") is not None:
         return p["continuity_take_id"] == src_video.id
@@ -60,6 +67,9 @@ def needs_new_keyframe(db: Session, shot: Shot) -> bool:
     src = source(db, shot)
     if src is None or extends(shot):
         return False
+    if frames.synced(shot):  # it starts on the source's end frame (not its clip): a copy of the current one
+        kf = current(db, shot.id, "keyframe")
+        return frames.end_take(db, src) is not None and kf is not None and not kf.stale and not frames.start_ok(db, shot)
     sv = current(db, src.id, "video")
     if not is_real(sv):
         return False  # nothing better to start from yet
@@ -75,9 +85,19 @@ def link_status(db: Session, shot: Shot) -> dict[str, Any] | None:
     src = source(db, shot)
     if src is None:
         return None
-    mode = "extend" if extends(shot) else "last_frame"
+    mode = "extend" if extends(shot) else frames.SYNC if frames.synced(shot) else "last_frame"
     out: dict[str, Any] = {"from": src.code, "mode": mode, "explicit": bool(shot.continuity_from_shot_id)}
     sv, vid, kf = current(db, src.id, "video"), current(db, shot.id, "video"), current(db, shot.id, "keyframe")
+    if mode == frames.SYNC:
+        st = frames.link_out(db, shot)["status"]
+        if st == "ok" and vid is not None and kf.created_at and vid.created_at and vid.created_at < kf.created_at:
+            out.update(status="broken", note="the start frame was redone after the video; the video is older")
+        else:
+            out.update(status=st, note={"waiting": f"{src.code} has no end frame yet; make the storyboard frames",
+                                        "pending": "not generated yet",
+                                        "broken": f"its first frame is not {src.code}'s end frame"}.get(st, "")
+                       or ("" if vid else "first frame ready; video not generated yet"))
+        return out
     if not is_real(sv):
         out.update(status="waiting", note=f"{src.code} has no video yet; generate in scene order")
     elif mode == "extend":
@@ -104,7 +124,8 @@ def waves(db: Session, shots: list[Shot]) -> list[list[Shot]]:
         if s.id in depth:
             return depth[s.id]
         src = source(db, s)
-        if src is None or src.id not in ids or src.id in seen:
+        # a synced shot needs the source's end frame, not its clip (frames are made before the videos)
+        if src is None or src.id not in ids or src.id in seen or frames.synced(s):
             depth[s.id] = 0
         else:
             depth[s.id] = d(by_id[src.id], seen | {s.id}) + 1
@@ -169,7 +190,9 @@ def plan(db: Session, project: Project, episode: Episode, scenes: list[Scene], q
                 continue
             v = generation.video_specs(db, project, [s], quality)[0]
             usd = v["estimate"]
-            kf_remake = link is not None and not extends(s) and (redo or link["status"] in ("broken", "waiting"))
+            # (a synced start frame is a free copy; the video estimate holds the end frame it starts on)
+            kf_remake = (link is not None and not extends(s) and not frames.synced(s)
+                         and (redo or link["status"] in ("broken", "waiting")))
             kf = current(db, s.id, "keyframe")
             if kf_remake and kf is not None and not kf.stale and not (kf.provider == "upload" or (kf.params or {}).get("uploaded")):
                 usd += est.image(1)
@@ -221,8 +244,18 @@ def make_videos_in_order(open_db: Callable[[], Session], run: Run, project_id: i
     with open_db() as db:
         shots = [s for s in (db.get(Shot, i) for i in shot_ids) if s is not None]
         order = [[s.id for s in w] for w in waves(db, shots)]
+        # synced shots start on end frames: those are made first, one after the other (each may start on the one
+        # before), so the clips that share them can then be made side by side
+        needed = sorted({src.id: src for s in shots if (src := frames.sync_source(db, s)) is not None
+                         and frames.end_take(db, src) is None}.values(), key=lambda x: (x.order, x.id))
+        project = db.get(Project, project_id)
+        end_specs = [generation.endframe_spec(db, project, s) for s in needed]
+        db.commit()
     made_v = made_k = 0
     warnings: list[str] = []
+    for spec_ in end_specs:
+        run([spec_], f"{label}: end frames first")
+        made_k += 1
     for i, wave in enumerate(order, 1):
         step = f"{label} {i}/{len(order)}" if len(order) > 1 else label
         with open_db() as db:

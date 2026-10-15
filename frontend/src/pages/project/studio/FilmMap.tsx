@@ -6,8 +6,8 @@ import {
 } from "@xyflow/react";
 import { clsx } from "clsx";
 import {
-  ArrowRightToLine, ChevronDown, CircleCheck, Clapperboard, Film, ImageIcon, Link2, Loader2, MapPin, MessageSquareWarning, Plus, Sparkles,
-  StepForward, TriangleAlert, Unlink, Video,
+  ArrowRightToLine, ChevronDown, CircleCheck, Clapperboard, Equal, Film, ImageIcon, Link2, Loader2, MapPin, MessageSquareWarning, Plus,
+  Sparkles, StepForward, TriangleAlert, Unlink, Video,
 } from "lucide-react";
 import { memo, useCallback, useEffect, useId, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject } from "react";
 import { toast } from "sonner";
@@ -35,6 +35,25 @@ const SIDE_W = 200;
 const DURATIONS = [4, 6, 8] as const;
 
 type SceneData = { scene: Scene | null; index: number; count: number; secs: number; location?: Location };
+
+/** The three ways a linked shot continues, in the order a click on a link steps through them. */
+const MODES: LinkMode[] = ["last_frame", "end_frame", "extend"];
+const nextMode = (m: LinkMode): LinkMode => MODES[(MODES.indexOf(m) + 1) % MODES.length];
+function ModeIcon({ mode, className }: { mode: LinkMode; className?: string }) {
+  if (mode === "extend") return <ArrowRightToLine className={className} />;
+  if (mode === "end_frame") return <Equal className={className} />;
+  return <Link2 className={className} />;
+}
+/** What a link does, in words (keys for t()). */
+const MODE_SENTENCE: Record<LinkMode, string> = {
+  last_frame: "{target} starts from {source}'s last frame",
+  end_frame: "{target} starts exactly on {source}'s end frame (synced: the clips join without a jump)",
+  extend: "{target}'s video extends {source}'s clip",
+};
+const MODE_CHOICE: Record<LinkMode, string> = {
+  last_frame: "Start from {code}'s last frame", end_frame: "Start exactly on {code}'s end frame", extend: "Extend {code}'s clip",
+};
+const MODE_SHORT: Record<LinkMode, string> = { last_frame: "last frame", end_frame: "end frame", extend: "extend" };
 type ShotData = { shot: Shot; people: Character[]; selected: boolean; lang: string; linkFrom: LinkFrom | null };
 type CharData = { c: Character; lit: boolean };
 type LocData = { l: Location };
@@ -113,9 +132,8 @@ function ShotBadges({ shot, lang, linkFrom }: { shot: Shot; lang: string; linkFr
       )}
       {dlg && <Mark tip={dlgText} className="text-warn"><MessageSquareWarning className="size-3.5" /></Mark>}
       {linkFrom && (
-        <Mark tip={linkFrom.mode === "extend" ? t("Extends {code}'s clip", { code: linkFrom.code }) : t("Starts from {code}'s last frame", { code: linkFrom.code })}
-          className="ml-auto text-accent-ink">
-          {linkFrom.mode === "extend" ? <ArrowRightToLine className="size-3.5" /> : <Link2 className="size-3.5" />}
+        <Mark tip={t(MODE_SENTENCE[linkFrom.mode], { target: shot.code, source: linkFrom.code })} className="ml-auto text-accent-ink">
+          <ModeIcon mode={linkFrom.mode} className="size-3.5" />
         </Mark>
       )}
     </div>
@@ -132,7 +150,8 @@ function Tool({ title, onClick, children }: { title: string; onClick: (e: ReactM
   );
 }
 
-/** "Next shot": the shot after this one, same cast / outfits / place / props, continuing from its last frame or extending its clip. */
+/** "Next shot": the shot after this one, same cast / outfits / place / props, continuing from its last frame, starting exactly on
+ *  its end frame, or extending its clip. */
 function NextShotPopover({ shot, anchor, open, onClose }: { shot: Shot; anchor: RefObject<HTMLButtonElement | null>; open: boolean; onClose: () => void }) {
   const t = useT();
   const s = useStudio();
@@ -159,6 +178,7 @@ function NextShotPopover({ shot, anchor, open, onClose }: { shot: Shot; anchor: 
         <div className="flex flex-wrap items-center justify-between gap-2">
           <Segmented size="sm" aria-label={t("How it continues")} value={mode} onChange={setMode} options={[
             { value: "last_frame", label: t("last frame"), title: t("Its keyframe starts from {code}'s last frame", { code: shot.code }) },
+            { value: "end_frame", label: t("end frame"), title: t("It starts exactly on {code}'s end frame: the two clips join without a jump and are made side by side", { code: shot.code }) },
             { value: "extend", label: t("extend"), title: t("Its video is generated as an extension of {code}'s clip", { code: shot.code }) },
           ]} />
           <Segmented size="sm" aria-label={t("Length")} value={dur} onChange={setDur} options={DURATIONS.map((d) => ({ value: d, label: `${d}s` }))} />
@@ -204,7 +224,7 @@ const ShotNode = memo(function ShotNode({ data }: NodeProps<Node<ShotData>>) {
     setOpen(true);
   };
   const close = useCallback(() => setOpen(false), []);
-  const otherMode: LinkMode = linkFrom?.mode === "extend" ? "last_frame" : "extend";
+  const otherMode: LinkMode = nextMode(linkFrom?.mode ?? "last_frame");
   return (
     <>
       {editable && (
@@ -213,9 +233,9 @@ const ShotNode = memo(function ShotNode({ data }: NodeProps<Node<ShotData>>) {
           <Tool title={t("Add the next shot")} onClick={openNext}><StepForward className="size-3.5" /></Tool>
           {linkFrom && (
             <>
-              <Tool title={linkFrom.mode === "extend" ? t("Start from {code}'s last frame instead", { code: linkFrom.code }) : t("Extend {code}'s clip instead", { code: linkFrom.code })}
+              <Tool title={t("{choice} instead", { choice: t(MODE_CHOICE[otherMode], { code: linkFrom.code }) })}
                 onClick={() => void s.setLinkMode(shot.id, otherMode)}>
-                {linkFrom.mode === "extend" ? <Link2 className="size-3.5" /> : <ArrowRightToLine className="size-3.5" />}
+                <ModeIcon mode={otherMode} className="size-3.5" />
               </Tool>
               <Tool title={t("Unlink from {code}", { code: linkFrom.code })} onClick={() => void s.linkShot(shot.id, null)}><Unlink className="size-3.5" /></Tool>
             </>
@@ -315,8 +335,9 @@ function LinkEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targ
   const [path, labelX, labelY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition });
   if (!data) return <BaseEdge id={id} path={path} />;
   const extend = data.mode === "extend";
-  const other: LinkMode = extend ? "last_frame" : "extend";
+  const other: LinkMode = nextMode(data.mode);
   const vars = { source: data.sourceCode, target: data.targetCode };
+  const tip = t(MODE_SENTENCE[data.mode], vars);
   return (
     <>
       <defs>
@@ -329,14 +350,11 @@ function LinkEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targ
       <EdgeLabelRenderer>
         <div className="nodrag nopan absolute" style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`, pointerEvents: "all" }}>
           <div className={clsx("flex items-center rounded-lg border bg-panel shadow-card transition-colors", selected ? "border-accent shadow-[0_0_14px_-4px_var(--color-accent)]" : "border-accent/40")}>
-            <Tooltip content={s.canEdit
-              ? (extend ? t("{target}'s video extends {source}'s clip — click to start from its last frame instead", vars)
-                : t("{target} starts from {source}'s last frame — click to extend the clip instead", vars))
-              : (extend ? t("{target}'s video extends {source}'s clip", vars) : t("{target} starts from {source}'s last frame", vars))}>
+            <Tooltip content={s.canEdit ? t("{what} — click: {next}", { what: tip, next: t(MODE_CHOICE[other], { code: data.sourceCode }) }) : tip}>
               <button type="button" disabled={!s.canEdit} onClick={() => void s.setLinkMode(data.targetShotId, other)}
                 className="mono inline-flex items-center gap-1 rounded-lg py-0.5 pl-1.5 pr-1.5 text-2xs font-medium uppercase tracking-wider text-accent-ink transition-colors hover:bg-accent/10 disabled:cursor-default disabled:hover:bg-transparent">
-                {extend ? <ArrowRightToLine className="size-3" /> : <Link2 className="size-3" />}
-                {extend ? <>{t("extend")}<span aria-hidden>▸</span></> : t("last frame")}
+                <ModeIcon mode={data.mode} className="size-3" />
+                {extend ? <>{t("extend")}<span aria-hidden>▸</span></> : t(MODE_SHORT[data.mode])}
               </button>
             </Tooltip>
             {s.canEdit && (
@@ -345,10 +363,8 @@ function LinkEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targ
                   <ChevronDown className="size-3" />
                 </button>
               )} items={[
-                { label: t("Start from {code}'s last frame", { code: data.sourceCode }), icon: <Link2 className="size-3.5" />, active: !extend,
-                  onClick: () => { if (extend) void s.setLinkMode(data.targetShotId, "last_frame"); } },
-                { label: t("Extend {code}'s clip", { code: data.sourceCode }), icon: <ArrowRightToLine className="size-3.5" />, active: extend,
-                  onClick: () => { if (!extend) void s.setLinkMode(data.targetShotId, "extend"); } },
+                ...MODES.map((m) => ({ label: t(MODE_CHOICE[m], { code: data.sourceCode }), icon: <ModeIcon mode={m} className="size-3.5" />,
+                  active: data.mode === m, onClick: () => { if (data.mode !== m) void s.setLinkMode(data.targetShotId, m); } })),
                 { label: t("Remove link"), icon: <Unlink className="size-3.5" />, danger: true, separator: true, onClick: () => void s.linkShot(data.targetShotId, null) },
               ]} />
             )}
@@ -551,7 +567,7 @@ function FilmGraph() {
           <span className="eyebrow !text-ink">{t("Film map")}</span>
           <span className="hidden @md:inline">{t("Each row is a scene, its shots in order")}</span>
           {s.canEdit && (
-            <Tooltip content={t("Drag a character's green dot to a shot to put them in it · a location's blue dot to a scene · a shot's right-hand dot to another shot so it continues from that one (click the link's label to switch between last frame and extend) · drag a shot to another row to move it · select a link and press Delete to remove it")}>
+            <Tooltip content={t("Drag a character's green dot to a shot to put them in it · a location's blue dot to a scene · a shot's right-hand dot to another shot so it continues from that one (click the link's label to switch between last frame, end frame and extend) · drag a shot to another row to move it · select a link and press Delete to remove it")}>
               <span className="mono grid size-5 cursor-help place-items-center rounded-md border border-line font-semibold">?</span>
             </Tooltip>
           )}

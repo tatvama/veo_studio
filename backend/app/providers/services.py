@@ -730,8 +730,10 @@ class Services:
         from .byteplus import IMAGE_SIZES, _classify
         from .links import media_link
         client = self.ark()
+        # one image: `sequential_image_generation` is left out (its default is "disabled"; Seedream 5.0 Pro and Flash
+        # don't take the parameter at all, only the models with group generation do)
         body: dict[str, Any] = {"model": m.endpoint, "prompt": req.prompt, "size": IMAGE_SIZES.get(req.aspect, "2048x2048"),
-                                "response_format": "url", "watermark": False, "sequential_image_generation": "disabled"}
+                                "response_format": "url", "watermark": False}
         if req.mode == "i2i":
             imgs = [media_link(p, provider="BytePlus") for p in [*req.refs, *([req.first_frame] if req.first_frame else [])]
                     if p and p.exists()][: int((m.capabilities or {}).get("max_refs") or 10)]

@@ -7,6 +7,7 @@ import {
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
+import { EndFrameControls, FramePair } from "../../components/board/FramePair";
 import { ShotRefs, UploadKeyframeButton } from "../../components/board/ShotMedia";
 import { useGenerate } from "../../components/Generate";
 import { QcChecklist } from "../../components/hub/Qc";
@@ -34,9 +35,10 @@ import { KIND_LABELS, TakeInfo, TakeStrip } from "./production/ViewerPanel";
 export { Comments };
 
 type Tab = "details" | "takes" | "prompt" | "effects" | "comments";
-type View = "final" | "video" | "keyframe";
+type View = "final" | "video" | "keyframe" | "endframe";
 
-const VISUAL = ["lipsync", "voicelock", "video", "keyframe"];
+const VISUAL = ["lipsync", "voicelock", "video", "keyframe", "endframe"];
+const STILLS = ["keyframe", "endframe"];
 
 /** A keyboard-key hint inside a button (inherits the button's colour). */
 function Hint({ children }: { children: ReactNode }) {
@@ -48,7 +50,7 @@ function pickForm(s: Shot): Partial<Shot> {
     duration_s: s.duration_s, framing: s.framing, camera: s.camera, action: s.action, characters: s.characters, outfits: s.outfits,
     location_id: s.location_id, dialogue: s.dialogue, narration: s.narration, sfx: s.sfx, music_cue: s.music_cue, mode: s.mode,
     quality_mode: s.quality_mode, voice_mode: s.voice_mode, continuity_from_prev: s.continuity_from_prev, include: s.include,
-    trim_in: s.trim_in, trim_out: s.trim_out, notes: s.notes,
+    trim_in: s.trim_in, trim_out: s.trim_out, notes: s.notes, end_note: s.end_note ?? "",
     // v3: props, Film Map continuity link (ShotDetails writes these into the form so the Save button sends them)
     ...({ prop_ids: (s as any).prop_ids ?? [], continuity_from_shot_id: (s as any).continuity_from_shot_id ?? null,
           continuity_mode: (s as any).continuity_mode ?? "last_frame" } as Partial<Shot>),
@@ -158,15 +160,17 @@ export default function ShotDrawer({ shotId, onClose, onPrev, onNext, position, 
   const takes = shot.takes ?? [];
   const finalTake = shot.lipsync || shot.voicelock || shot.video;
   const pinnedTake = pinned != null ? takes.find((x) => x.id === pinned) ?? null : null;
-  const media: Take | null = pinnedTake ?? (view === "final" ? finalTake : view === "video" ? shot.video : shot.keyframe);
-  const stageKind = media ? (media.kind === "keyframe" ? "image" : "video") : shot.keyframe ? "image" : "empty";
+  const media: Take | null = pinnedTake ?? (view === "final" ? finalTake : view === "video" ? shot.video
+    : view === "endframe" ? shot.endframe ?? null : shot.keyframe);
+  const stageKind = media ? (STILLS.includes(media.kind) ? "image" : "video") : shot.keyframe ? "image" : "empty";
   const stageSrc = media ? media.url : shot.keyframe?.url;
   // short on purpose: a portrait stage is narrow, and the details sit in the take card beside it
   const stageLabel = pinnedTake ? `${t(KIND_LABELS[pinnedTake.kind] ?? pinnedTake.kind)} #${pinnedTake.id}`
-    : view === "keyframe" ? t("Keyframe") : view === "video" ? t("Raw video") : shot.video || shot.lipsync || shot.voicelock ? t("Final") : undefined;
+    : view === "keyframe" ? t("Start frame") : view === "endframe" ? t("End frame") : view === "video" ? t("Raw video")
+    : shot.video || shot.lipsync || shot.voicelock ? t("Final") : undefined;
   // QC lives on the raw video; the lip-sync score on the lip-sync take
   const qcBase = pinnedTake ? (pinnedTake.kind === "video" ? pinnedTake : pinnedTake.kind === "lipsync" || pinnedTake.kind === "voicelock" ? shot.video : null)
-    : view === "keyframe" ? null : shot.video;
+    : view === "keyframe" || view === "endframe" ? null : shot.video;
   const qcLip = pinnedTake ? (pinnedTake.kind === "lipsync" ? pinnedTake : null) : view === "final" ? shot.lipsync : null;
   const rr = ratioOf(project.aspect);
   const side = rr.w / rr.h <= 0.85;
@@ -177,7 +181,12 @@ export default function ShotDrawer({ shotId, onClose, onPrev, onNext, position, 
     <MediaStage id={`${shot.id}-${media?.id ?? 0}-${stageKind}`} kind={stageKind} src={stageSrc} poster={media?.thumb_url || shot.keyframe?.url}
       aspect={project.aspect} label={stageLabel} />
   );
-  const viewSwitch = <ViewSwitch view={view} onChange={(v) => { setView(v); setPinned(null); }} pinned={pinned != null} />;
+  const viewSwitch = <ViewSwitch view={view} onChange={(v) => { setView(v); setPinned(null); }} pinned={pinned != null} hasEnd={!!shot.endframe} />;
+  // start → end frame, and the link to the end frame before (shown once the shot uses either)
+  const framesRow = shot.endframe || shot.frames_link || shot.end_note ? (
+    <FramePair shot={shot} aspect={project.aspect} viewing={pinned == null && (view === "keyframe" || view === "endframe") ? view : null}
+      onView={(w) => { setView(w); setPinned(null); }} />
+  ) : null;
   const qcBlock = qcBase || qcLip ? <QcChecklist take={qcBase} lipTake={qcLip} compact /> : null;
   const strip = (
     <TakeStrip takes={takes.filter((x) => VISUAL.includes(x.kind))} active={pinned} aspect={project.aspect}
@@ -189,6 +198,7 @@ export default function ShotDrawer({ shotId, onClose, onPrev, onNext, position, 
       <div style={{ width: stageWidth(project.aspect) }} className="mx-auto max-w-full @md:mx-0">{stage}</div>
       <div className="min-w-0 space-y-2.5">{viewSwitch}<TakeInfo take={media} />{qcBlock}</div>
       <div className="min-w-0 @md:col-span-2">{strip}</div>
+      {framesRow && <div className="min-w-0 @md:col-span-2">{framesRow}</div>}
     </div>
   ) : (
     <div className="grid gap-3 @md:grid-cols-2">
@@ -196,6 +206,7 @@ export default function ShotDrawer({ shotId, onClose, onPrev, onNext, position, 
       <div className="min-w-0 space-y-2.5">{viewSwitch}<TakeInfo take={media} /></div>
       <div className="min-w-0">{qcBlock}</div>
       <div className="min-w-0 @md:col-span-2">{strip}</div>
+      {framesRow && <div className="min-w-0 @md:col-span-2">{framesRow}</div>}
     </div>
   );
 
@@ -245,11 +256,12 @@ export default function ShotDrawer({ shotId, onClose, onPrev, onNext, position, 
             {/* picture: keyframe → video (one primary action at a time: the video while there is none, then Approve) */}
             <div className="space-y-1.5">
               <p className="eyebrow">{t("Picture")}</p>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <Button size="sm" icon={<ImageIcon className="size-3.5" />} loading={busy === "keyframe"} onClick={() => act("keyframe", t("Keyframe"))}>
                   {t("Keyframe")}<Hint>K</Hint>
                 </Button>
                 <UploadKeyframeButton shotId={shot.id} label={t("Upload")} onDone={refresh} />
+                <EndFrameControls shot={shot} onDone={refresh} />
                 <div className="inline-flex">
                   <Button size="sm" variant={shot.video ? "secondary" : "primary"} className="rounded-r-none" icon={<Film className="size-3.5" />} loading={busy === "video"}
                     onClick={() => act("video", t("Video"), { quality: quality || undefined })}>
@@ -388,11 +400,13 @@ export default function ShotDrawer({ shotId, onClose, onPrev, onNext, position, 
 }
 
 /** Final / raw clip / keyframe switch for the viewer (no segment is lit while a specific take is being previewed). */
-function ViewSwitch({ view, onChange, pinned }: { view: View; onChange: (v: View) => void; pinned: boolean }) {
+function ViewSwitch({ view, onChange, pinned, hasEnd }: { view: View; onChange: (v: View) => void; pinned: boolean; hasEnd: boolean }) {
   const t = useT();
   return (
     <RailSeg grow size="sm" label={t("What to show")} value={(pinned ? "" : view) as View} onChange={onChange} options={[
-      { value: "final", label: t("Final") }, { value: "video", label: t("Raw video") }, { value: "keyframe", label: t("Keyframe") },
+      { value: "final", label: t("Final") }, { value: "video", label: t("Raw video") },
+      { value: "keyframe", label: hasEnd ? t("Start") : t("Keyframe") },
+      ...(hasEnd ? [{ value: "endframe" as const, label: t("End") }] : []),
     ]} />
   );
 }

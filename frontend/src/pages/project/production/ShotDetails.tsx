@@ -55,6 +55,10 @@ export function Details({ shot, form, setForm, lang, lines, disabled, hasLines, 
             </Field>
           </div>
           <Field label={t("Action")}><Textarea rows={3} value={form.action || ""} disabled={disabled} onChange={(e) => set("action", e.target.value)} /></Field>
+          <Field label={t("How it ends")} hint={t("What the end frame shows: where the action has got to when the shot ends. The clip then runs from the start frame to it.")}>
+            <Textarea rows={2} value={form.end_note || ""} disabled={disabled} onChange={(e) => set("end_note", e.target.value)}
+              placeholder={t("e.g. Ravi kneels by the lamp, the match lit in his hand")} />
+          </Field>
 
           <Field label={t("Characters in shot")}>
             <div className="flex flex-wrap gap-1.5">
@@ -182,7 +186,7 @@ export function Details({ shot, form, setForm, lang, lines, disabled, hasLines, 
           {/* continuity from a specific shot (v3) */}
           <div className="rounded-lg border border-line bg-raised/30 p-2.5">
             <div className="grid items-end gap-3 @md:grid-cols-[minmax(0,1fr)_auto]">
-              <Field label={t("Continues from")} hint={t("Start this shot where another one ends: its last frame becomes the first frame, or its video is extended.")}>
+              <Field label={t("Continues from")} hint={t("Start this shot where another one ends: from its last frame, exactly on its end frame (the clips join without a jump), or by extending its video.")}>
                 <Select value={contFrom ?? ""} disabled={disabled || !ep} aria-label={t("Continues from")}
                   onChange={(e) => { const id = e.target.value ? Number(e.target.value) : null; void v3.set({ continuity_from_shot_id: id, ...(id ? { continuity_mode: contMode } : {}) }); }}>
                   <option value="">{t("— fresh start")}</option>
@@ -196,6 +200,7 @@ export function Details({ shot, form, setForm, lang, lines, disabled, hasLines, 
                     onChange={(v) => !disabled && void v3.set({ continuity_mode: v })}
                     options={[
                       { value: "last_frame" as const, label: t("Last frame"), title: t("Its last frame becomes this shot's first frame") },
+                      { value: "end_frame" as const, label: t("End frame"), title: t("Starts exactly on its end frame: the same picture ends that clip and starts this one, so they join without a jump (and are made side by side)") },
                       { value: "extend" as const, label: t("Extend"), title: t("Extend its video instead of starting a new one") },
                     ]} />
                 </Field>

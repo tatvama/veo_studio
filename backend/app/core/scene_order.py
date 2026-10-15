@@ -10,6 +10,10 @@ in parallel once their anchor is done.
 The wait never deadlocks and never stalls a batch: an anchor that failed or was cancelled no longer holds anything; one
 that backs off for longer than MAX_BACKOFF (rate limit, retry) or runs longer than MAX_RUN releases its shots, which then
 go ahead without it; and only an anchor that waits for nobody itself can hold others (no chains, no cycles).
+
+Synced shots (core/frames.py) wait the same way for the end frame they start on: a job with `after_end` is not claimed
+while a shot up its synced chain has no usable end frame yet and frame work of its own queued or running, so that end
+frame is made once, by that shot's own job, and not a second time by the shot after it.
 """
 from __future__ import annotations
 
@@ -35,6 +39,8 @@ def _holding(r: Job, now: datetime) -> bool:
 
 def held_back(db: Session, cands: list[Job], now: datetime) -> set[int]:
     """Ids of the queued jobs in `cands` that should not be claimed yet."""
+    from .frames import holding_sources
+    held = holding_sources(db, cands, now, MAX_RUN, MAX_BACKOFF)
     waiting: dict[int, int] = {}
     kinds: dict[int, str] = {}
     for j in cands:
@@ -42,7 +48,7 @@ def held_back(db: Session, cands: list[Job], now: datetime) -> set[int]:
         if after:
             waiting[j.id], kinds[j.id] = int(after), j.type
     if not waiting:
-        return set()
+        return held
     anchors = set(waiting.values())
     rows = db.query(Job).filter(Job.type.in_((*ANCHOR_WORK, "video")), Job.shot_id.in_(anchors),
                                 Job.status.in_(("queued", "running"))).all()
@@ -53,4 +59,4 @@ def held_back(db: Session, cands: list[Job], now: datetime) -> set[int]:
         making -= {sid for (sid,) in db.query(Take.shot_id).filter(Take.shot_id.in_(making), Take.kind == "keyframe",
                                                                      Take.archived.is_(False), Take.status == "ready",
                                                                      Take.stale.is_(False)).distinct()}
-    return {jid for jid, sid in waiting.items() if sid in busy or sid in making}
+    return held | {jid for jid, sid in waiting.items() if sid in busy or sid in making}

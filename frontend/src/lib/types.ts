@@ -34,7 +34,14 @@ export interface Shot {
   extend_to: number; extend_prompt: string;
   /** The user's reference images for this shot (product, prop, look). */
   ref_images?: ShotRef[];
+  /** The frame the clip runs to: start frame (keyframe) → end frame (lib/frames.ts). */
+  endframe?: Take | null;
+  /** How the shot ends: what its end frame shows. */
+  end_note?: string;
+  /** A synced shot: it starts exactly on another shot's end frame, and whether its start frame still is that frame. */
+  frames_link?: FramesLink | null;
 }
+export interface FramesLink { from_shot_id: number; from: string; status: "ok" | "waiting" | "pending" | "broken"; end_take_id: number | null }
 export interface ShotRef { label: string; url: string; path?: string }
 export interface ShotBlocked { job_id: number; error: string; engines: string[]; engine_labels: string[]; at: string | null }
 /** Another engine for a shot, priced for this shot (GET /api/shots/{id}/alternatives). */
@@ -132,7 +139,9 @@ export interface Style { id: number; name: string; look: string; lens: string; g
 
 export interface Project {
   id: number; title: string; type: string; concept: string; aspect: string; languages: string[]; primary_language: string;
-  quality_mode: string; agent_mode: string; workflow?: "director" | "script" | "shots"; budget_cap_usd: number | null; brief: Record<string, any>; story: Record<string, any>;
+  quality_mode: string; agent_mode: string; workflow?: "director" | "script" | "shots";
+  /** The image engine for this project's start and end frames ("" = the team's image chain). */
+  frames_engine?: string; budget_cap_usd: number | null; brief: Record<string, any>; story: Record<string, any>;
   style_id: number | null; brand_kit_id: number | null; status: string; autopilot: Record<string, any>; archived: boolean; created_at: string; updated_at: string;
   episodes: Episode[]; spent_usd: number; thumb_url: string; owner: UserBrief | null; cast?: Character[]; locations?: Location[];
   style?: Style | null;

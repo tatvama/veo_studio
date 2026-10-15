@@ -14,7 +14,7 @@ from ..models import Approval, Job, Project, Shot, User, role_rank
 from . import budget
 
 ACTIVE = ("proposed", "queued", "running", "awaiting_approval")
-SHOT_EXCLUSIVE = {"keyframe", "video", "lipsync", "voicelock", "voice", "omni_edit"}
+SHOT_EXCLUSIVE = {"keyframe", "endframe", "video", "lipsync", "voicelock", "voice", "omni_edit"}
 
 JOB_LABELS = {
     "byteplus_register": "Register with BytePlus",
@@ -24,6 +24,7 @@ JOB_LABELS = {
     "voice_preview": "Voice preview", "omni_edit": "Omni edit", "animatic": "Animatic", "export": "Export",
     "dub": "Dub episode", "autopilot": "Autopilot", "produce": "Produce all", "identity_variations": "Photo variations",
     "design_image": "Poster image", "scene_chain": "Scenes in order", "upscale": "AI upscale",
+    "endframe": "End frame", "storyboard_frames": "Storyboard frames",
 }
 
 

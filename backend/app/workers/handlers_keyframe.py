@@ -4,6 +4,8 @@ The check compares the keyframe with the characters' face references and with th
 identity, wardrobe, set and lighting match, extra people, bad hands, and any text or watermark. The scores are stored
 on the take (take.qc, shown as a badge on keyframe takes). A failing keyframe is retaken once (setting
 keyframe_auto_retake) through the normal jobs and cost path, with what was wrong added to the prompt.
+
+An end frame (core/frames.py) gets the same check, compared with the shot's own start frame instead of the anchor.
 """
 from __future__ import annotations
 
@@ -28,9 +30,9 @@ CARRY = ("hero", "engine", "enhance_take_id", "after_shot")  # what a retake rep
 
 
 def queue_qc(ctx: JobContext, take_id: int, shot_id: int, code: str) -> int | None:
-    """After a keyframe job saved its take: check it in a child job, so a run waits for it before making videos.
-    A keyframe made inside a video job is left to the video's own QC."""
-    if ctx.type != "keyframe":
+    """After a keyframe (or end-frame) job saved its take: check it in a child job, so a run waits for it before
+    making videos. A frame made inside a video job is left to the video's own QC."""
+    if ctx.type not in ("keyframe", "endframe"):
         return None
     with SessionLocal() as db:
         if not settings_store.get_setting(db, "keyframe_qc"):
@@ -90,7 +92,8 @@ def keyframe_qc(ctx: JobContext) -> dict:
                 if st.exists(a.path):
                     ref_imgs.append(st.abs(a.path).read_bytes())
                     names.append(f"{ch.name}'s face sheet")
-        anchor = scene_look.anchor_for(db, shot)
+        is_end = take.kind == "endframe"
+        anchor = scene_look.anchor_for(db, shot) if not is_end else shot  # an end frame: against its own start frame
         anchor_path = scene_look.keyframe_of(db, anchor) if anchor else None
         if anchor_path is not None and anchor_path == st.abs(take.path):
             anchor_path = None
@@ -103,7 +106,7 @@ def keyframe_qc(ctx: JobContext) -> dict:
         db.commit()
     order = [f"{i + 1}) {n}" for i, n in enumerate(names)]
     if anchor_path is not None:
-        order.append(f"{len(order) + 1}) the scene anchor frame")
+        order.append(f"{len(order) + 1}) {'the start frame of this same shot' if is_end else 'the scene anchor frame'}")
     order.append(f"{len(order) + 1}) the still to check")
     prompt = (f"Images: {'; '.join(order)}.\nCharacters expected: {' | '.join(dna) or 'none'}\nShot: {desc or 'n/a'}"
               + ("" if anchor_path is not None else "\nNo anchor frame: score set_match and lighting_match 1.0."))
@@ -126,7 +129,7 @@ def keyframe_qc(ctx: JobContext) -> dict:
              ([obj.set_match, obj.lighting_match] if anchor_path is not None else [])
     fix = _issues(obj, identity_ok, wardrobe_ok, set_ok, light_ok)
     report: dict[str, Any] = {
-        "kind": "keyframe", "checked_at": utcnow().isoformat() + "Z", **obj.model_dump(), "face": face,
+        "kind": take.kind if is_end else "keyframe", "checked_at": utcnow().isoformat() + "Z", **obj.model_dump(), "face": face,
         "passed": passed, "score": round(min(scores), 3) if scores else 1.0, "identity_ok": identity_ok,
         "outfit_match": wardrobe_ok, "set_ok": set_ok, "lighting_ok": light_ok, "threshold": thr,
         "face_threshold": fthr, "scene_threshold": kthr, "anchor_shot_id": anchor_id,
@@ -151,6 +154,7 @@ def keyframe_qc(ctx: JobContext) -> dict:
         chk = budget.check(db, user, project, cost) if user else {"ok": False, "reason": "no requester"}
     if not chk.get("ok"):
         return {"passed": False, "retake": None, "reason": chk.get("reason", "")}
-    ctx.enqueue_child("keyframe", {**source, "retake_count": retakes + 1, "fix": fix}, shot_id=shot_id, estimate=cost,
-                      label=f"Auto-retake {code} (keyframe)")
-    return {"passed": False, "retake": "keyframe"}
+    kind = "endframe" if is_end else "keyframe"
+    ctx.enqueue_child(kind, {**source, "retake_count": retakes + 1, "fix": fix}, shot_id=shot_id, estimate=cost,
+                      label=f"Auto-retake {code} ({'end frame' if is_end else 'keyframe'})")
+    return {"passed": False, "retake": kind}
