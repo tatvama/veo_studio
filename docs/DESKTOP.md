@@ -294,7 +294,7 @@ three takes (`…_001_SC02_SH001…`, `…_002_SC01_SH002…`, `…_003_SC01_SH0
 | Module | Job |
 | --- | --- |
 | `main/index.ts` | Lifecycle, single instance, the `tatvam://` deep link, wiring |
-| `main/config.ts` | `settings.json` in userData: `serverUrl`, `gatewayPort`, `uiSource` ("auto", "bundled" or "server", §4.3), `appearance`, `assistants`, `lutFolders`, `editorBackups`, `libraryRoot`, `projectFolders {pid: path}`, `naming {folder: template}`, `pullScope`, `proxyMode`, `encoder` preferences, `workspaces`, `windowState` |
+| `main/config.ts` | `settings.json` in userData: `serverUrl`, `gatewayPort`, `uiSource` ("bundled", the default, or the opt-in "auto" / "server", §4.3), `appearance`, `assistants`, `lutFolders`, `editorBackups`, `libraryRoot`, `projectFolders {pid: path}`, `naming {folder: template}`, `pullScope`, `proxyMode`, `encoder` preferences, `workspaces`, `windowState` |
 | `main/gateway.ts` | The local HTTP gateway (§1): static UI with SPA fallback; `/api` and `/media` forwarded with streaming and Range; WebSocket upgrade forwarded; local-first `/media` (with a proxy file in proxy mode); offline cache and write queue |
 | `main/upstream.ts` | Server calls from the main process (session cookie and `X-Requested-With` added), plus the WebSocket listener that triggers re-syncs |
 | `main/library.ts` | Library root, project folders, folder skeleton, move, open, disk usage, clean |
@@ -332,6 +332,30 @@ three takes (`…_001_SC02_SH001…`, `…_002_SC01_SH002…`, `…_003_SC01_SH0
 the session cookie goes and which program runs, so only the native Studio server window changes them (its IPC
 answers that window alone); folders change only through native folder dialogs. The gateway serves local media only
 to requests that carry the app's own session cookie and rejects unexpected `Host` headers (DNS rebinding).
+
+**Trust boundaries (tightened 15 October 2026).**
+- **The server address must be https** unless the server is on this PC: `normalizeServerUrl` accepts plain `http://`
+  only for `localhost`, `*.localhost`, `127.0.0.0/8` and `[::1]`; a bare host name becomes `https://…`; an explicit
+  `http://` address elsewhere is refused with the reason (shown by the Studio server window). A stored or
+  `TATVAM_SERVER` address that breaks the rule falls back to `http://localhost:8100`. Every call carries the session
+  cookie and, when chosen, the server's screens run inside the app, so a LAN server needs a certificate too.
+- **Screens from the server are opt-in.** `uiSource` defaults to `"bundled"`; "From the server, with an offline copy"
+  (`auto`) and "Always live from the server" (`server`) are labelled as running the server's own code and are chosen
+  in the Studio server window only (a settings file with an unchosen `auto` / `server` moves back to `bundled`). The
+  manifest's sha256 check and the origin rule of §4.3 still apply when they are chosen.
+- **A page imports only what the user handed over.** `editor.importMedia` from the bridge takes paths that came back
+  from a native file dialog, were dropped from Explorer (the preload registers a drop's real paths with the main
+  process before the page sees them, `IPC.editorGrantPaths`), sit in a folder the user chose or dropped (`shell.dropped`,
+  `assistants.chooseFolder`, the assistants' folders, watch folders, the library), lie inside the edit's own folder,
+  or already belong to an edit. Any other absolute path a page names is refused ("wasn't chosen in a file dialog or
+  dropped from Explorer"). In-process callers (the MCP server after its own folder checks, interchange imports) are
+  not gated.
+- **Deep links ask first.** `tatvam://editor?path=…` allow-lists the edit straight away only inside the library's
+  `Edits/` folder; for any other `.tatvamedit` a native dialog ("Open this edit?", with the full path) must be
+  accepted first, because opening an edit lets the editor read and serve every media file it lists.
+- **One path rule.** `main/paths.ts` `isInside(dir, file)` (the folder itself or below it, case-insensitive, either
+  slash; a sibling folder sharing the prefix is outside) is the only confinement check: the editor's allow-list,
+  `library.open`, the renders clean-up and the MCP server's `inside` all use it.
 
 ### 4.1 Encoder presets
 
@@ -374,8 +398,10 @@ Finishing room → AI upscale → **This PC · free** (the cloud Topaz route sta
 
 ### 4.3 Screens from the server, with an offline copy (added 12 October 2026)
 
-`uiSource` gains **`"auto"`**, the new default. `"bundled"` and `"server"` stay as choices in File → Studio
-server…. Settings that only had the old default `"bundled"` (the user never chose it) move to `"auto"`.
+`uiSource` gains **`"auto"`**. Since 15 October it is **opt-in**: the default is `"bundled"` (the copy inside the app),
+and `"auto"` or `"server"` are chosen in File → Studio server…, which says plainly that they run the server's own
+code inside the app. A settings file with an unchosen `"auto"` / `"server"` (no `uiSourceChosen`) moves back to
+`"bundled"`.
 
 **Picking the screens.** In `auto`, the gateway serves the UI from, in this order:
 1. **The server's build**, if it's reachable, allowed and compatible.
@@ -513,7 +539,7 @@ npm run dist       # Windows installer (NSIS) in desktop/release, with the built
 ```
 
 - `TATVAM_SERVER` (default `http://localhost:8100`) sets the server on the first run; after that, File → Studio
-  server… changes it. `TATVAM_UI_DIR` points at another built UI, `TATVAM_USER_DATA` at another settings folder.
+  server… changes it. Off this PC the address must be `https://` (§4, trust boundaries). `TATVAM_UI_DIR` points at another built UI, `TATVAM_USER_DATA` at another settings folder.
 - The end-to-end test (`TATVAM_E2E=1`, see `desktop/test/e2e.test.ts`) syncs a cut, writes the EDL, renders it in 4K
   and uploads it to a running server.
 - CI runs the desktop typecheck and unit tests (job "Desktop app").

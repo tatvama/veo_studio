@@ -125,8 +125,13 @@ const bridge: TatvamDesktop = {
     open: (file) => invoke(IPC.editorOpen, file),
     save: (file, project) => invoke(IPC.editorSave, file, project),
     importMedia: (file, files) => invoke(IPC.editorImportMedia, file, files),
-    // runs here, synchronously: File objects from a drop can't cross IPC, their paths can
-    pathsForDrop: (files) => Array.from(files ?? []).map((f) => { try { return webUtils.getPathForFile(f); } catch { return ""; } }).filter(Boolean),
+    // runs here, synchronously: File objects from a drop can't cross IPC, their paths can. The main process is told the
+    // paths first (sendSync), so an import that follows may use them: a page can't import a path it made up itself.
+    pathsForDrop: (files) => {
+      const paths = Array.from(files ?? []).map((f) => { try { return webUtils.getPathForFile(f); } catch { return ""; } }).filter(Boolean);
+      if (paths.length) { try { ipcRenderer.sendSync(IPC.editorGrantPaths, paths); } catch { /* an older main process: the import then says why */ } }
+      return paths;
+    },
     mediaUrl: (file, media) => invoke(IPC.editorMediaUrl, file, media),
     relink: (file, mediaId) => invoke(IPC.editorRelink, file, mediaId),
     proxy: (file, mediaId) => invoke(IPC.editorProxy, file, mediaId),

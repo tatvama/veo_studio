@@ -18,12 +18,18 @@ export const BUILTIN_WORKSPACES: Workspace[] = [
   { id: "story", name: "Story", builtIn: true, mainDisplay: 0, panels: [{ panel: "bible", display: 1 }, { panel: "media", display: 0 }] },
 ];
 
+export const DEFAULT_SERVER_URL = "http://localhost:8100";
+
 export function defaultSettings(opts: { documents: string; env?: Record<string, string | undefined> }): DesktopSettings {
   const env = opts.env ?? process.env;
+  let serverUrl = DEFAULT_SERVER_URL;
+  if (env.TATVAM_SERVER) {
+    try { serverUrl = normalizeServerUrl(env.TATVAM_SERVER); } catch { /* a plain-http address off this PC: the app starts on the default and the Studio server window says why */ }
+  }
   return {
-    serverUrl: normalizeServerUrl(env.TATVAM_SERVER || "http://localhost:8100"),
+    serverUrl,
     gatewayPort: DEFAULT_GATEWAY_PORT,
-    uiSource: "auto",
+    uiSource: "bundled",
     appearance: { ...DEFAULT_APPEARANCE },
     libraryRoot: path.join(opts.documents, "Tatvam Projects"),
     projectFolders: {},
@@ -63,19 +69,38 @@ export function sanitizeAppearance(input: unknown, base: AppearanceSettings = DE
 }
 
 /**
- * Settings files from before docs/DESKTOP.md §4.3: `uiSource: "bundled"` was the default, so unless the user picked it
- * in the Studio server window (`uiSourceChosen`) it moves to the new default "auto". "server" was always a choice.
+ * Screens from the server are opt-in (docs/DESKTOP.md §4.3): for a while "auto" was written as the default, so a
+ * settings file whose `uiSource` is "auto" or "server" without the user's choice (`uiSourceChosen`, set by the Studio
+ * server window) moves back to "bundled". A chosen source stays.
  */
 export function migrateSettings(stored: unknown): { value: unknown; migrated: boolean } {
   if (typeof stored !== "object" || stored === null || Array.isArray(stored)) return { value: stored, migrated: false };
   const o = stored as Record<string, unknown>;
-  if (o.uiSource === "bundled" && o.uiSourceChosen !== true) return { value: { ...o, uiSource: "auto" }, migrated: true };
+  if ((o.uiSource === "auto" || o.uiSource === "server") && o.uiSourceChosen !== true) return { value: { ...o, uiSource: "bundled" }, migrated: true };
   return { value: stored, migrated: false };
 }
 
+/** localhost, *.localhost, 127.0.0.0/8 and ::1: a server on this PC, the only place plain http is allowed. */
+export function isLoopbackHost(hostname: string): boolean {
+  const h = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return h === "localhost" || h.endsWith(".localhost") || h === "::1" || h === "::ffff:127.0.0.1" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h);
+}
+
+/**
+ * The server origin from what the user typed. Every call to the server carries the session cookie and the gateway runs
+ * the server's answers (and, when chosen, its screens), so a server that isn't on this PC must be reached over https:
+ * a bare host name gets https://, and an explicit http:// off loopback is refused with a message the Studio server
+ * window shows.
+ */
 export function normalizeServerUrl(u: string): string {
   const s = u.trim().replace(/\/+$/, "");
-  const url = new URL(/^https?:\/\//i.test(s) ? s : `http://${s}`);
+  const explicit = /^[a-z][a-z0-9+.-]*:\/\//i.test(s);
+  let url = new URL(explicit ? s : `http://${s}`);
+  if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("The server address must start with https:// (or http:// for a server on this PC)");
+  if (url.protocol === "http:" && !isLoopbackHost(url.hostname)) {
+    if (explicit) throw new Error(`${url.host} must be reached over https://: plain http is only allowed for a server on this PC (localhost)`);
+    url = new URL(`https://${s}`);
+  }
   return url.origin;
 }
 

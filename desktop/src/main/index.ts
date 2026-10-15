@@ -21,6 +21,7 @@ import { Gateway } from "./gateway.ts";
 import { chooseLibraryRoot, projectTitle, registerIpc, writeEdits, type AppCtx } from "./ipc.ts";
 import { Library } from "./library.ts";
 import { initLog, logsDir } from "./log.ts";
+import { isInside } from "./paths.ts";
 import { buildMenu } from "./menu.ts";
 import { ProxyManager } from "./proxies.ts";
 import { RenderManager } from "./render.ts";
@@ -59,13 +60,10 @@ if (mcpStdio) {
     env: process.env, exit: (code) => app.exit(code) });
 }
 
-/** tatvam://open?project=12&episode=3 → /p/12/finish?episode=3; tatvam://editor?path=… → /editor/edit?path=… */
+/** tatvam://open?project=12&episode=3 → /p/12/finish?episode=3; tatvam://editor?path=… → /editor/edit?path=… (pure: followLink allow-lists) */
 export function deepLinkPath(url: string): string | null {
   const ed = editorDeepLink(url);
-  if (ed) {
-    if (ed.file) editorRef?.allowEditFile(ed.file); // the link hands this edit over: the page may open it
-    return ed.urlPath;
-  }
+  if (ed) return ed.urlPath;
   try {
     const u = new URL(url);
     if (u.protocol !== "tatvam:") return null;
@@ -77,6 +75,31 @@ export function deepLinkPath(url: string): string | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Where a tatvam:// link goes, after its side effects. An editor link names an edit file: inside the library's Edits
+ * folder it is allow-listed straight away; anywhere else (a link on a web page, in a chat, from another app) the user is
+ * asked first, because opening an edit lets the editor read and serve every media file it lists.
+ */
+async function followLink(url: string): Promise<string> {
+  const ed = editorDeepLink(url);
+  if (ed?.file && editorRef) {
+    if (!isInside(editorRef.editsRoot(), ed.file) && !(await confirmEditLink(ed.file))) return "/editor";
+    editorRef.allowEditFile(ed.file);
+  }
+  return deepLinkPath(url) ?? "/";
+}
+
+async function confirmEditLink(file: string): Promise<boolean> {
+  const parent = ctx?.windows.main;
+  const opts: Electron.MessageBoxOptions = {
+    type: "question", buttons: ["Open", "Cancel"], defaultId: 1, cancelId: 1, noLink: true, title: "Open this edit?",
+    message: `Open ${path.basename(file)}?`,
+    detail: `A tatvam:// link asks Tatvam Studio to open an edit outside your Edits folder:\n${file}\n\nOpening it lets the editor read the media files it lists. Only open edits you expect.`,
+  };
+  const r = parent && !parent.isDestroyed() ? await dialog.showMessageBox(parent, opts) : await dialog.showMessageBox(opts);
+  return r.response === 0;
 }
 
 function uiDir(): string | null {
@@ -100,12 +123,12 @@ if (mcpStdio) {
     const link = argv.find((a) => a.startsWith("tatvam://"));
     if (link && shellRef?.handleLink(link)) return; // Jump List tasks (tatvam://shell?action=…)
     const w = ctx?.windows.main;
-    if (link && ctx) ctx.windows.navigateMain(deepLinkPath(link) ?? "/");
+    if (link && ctx) void followLink(link).then((p) => ctx?.windows.navigateMain(p));
     else if (w) { if (w.isMinimized()) w.restore(); w.focus(); }
   });
   app.on("open-url", (e, url) => { // macOS
     e.preventDefault();
-    if (ctx) ctx.windows.navigateMain(deepLinkPath(url) ?? "/");
+    if (ctx) void followLink(url).then((p) => ctx?.windows.navigateMain(p));
     else pendingLink = url;
   });
   app.on("window-all-closed", () => app.quit());
@@ -336,7 +359,7 @@ async function start(): Promise<void> {
 
   splash?.step("Opening the window…", 80);
   const shellLink = pendingLink && /^tatvam:\/\/shell/i.test(pendingLink) ? pendingLink : null;
-  const main = wm.createMain(pendingLink && !shellLink ? deepLinkPath(pendingLink) ?? "/" : desk.initialUrl());
+  const main = wm.createMain(pendingLink && !shellLink ? await followLink(pendingLink) : desk.initialUrl());
   if (shellLink) desk.handleLink(shellLink);
   pendingLink = null;
   main.once("ready-to-show", () => splash?.close());

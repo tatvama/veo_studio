@@ -3,8 +3,8 @@
  * the UI comes from and which FFmpeg to use. These settings decide where the session cookie goes and which program
  * runs, so the web UI can't change them through the bridge: only this native window can, and its IPC answers only it.
  *
- * Where the screens come from (docs/DESKTOP.md §4.3): "auto" (the server's build with an offline copy, the default),
- * "bundled" (the copy inside the app) or "server" (always live from the server). The status line says which screens
+ * Where the screens come from (docs/DESKTOP.md §4.3): "bundled" (the copy inside the app, the default), or, opted into
+ * here, "auto" (the server's build with an offline copy) or "server" (always live from the server). The status line says which screens
  * are running, the last check and any reason the server's screens aren't used.
  */
 import { BrowserWindow, dialog, ipcMain, session, type IpcMainInvokeEvent } from "electron";
@@ -33,8 +33,8 @@ export async function testServer(raw: string, timeoutMs = 6000): Promise<{ ok: b
   let url: string;
   try {
     url = normalizeServerUrl(raw);
-  } catch {
-    return { ok: false, error: "That isn't a web address" };
+  } catch (e) {
+    return { ok: false, error: e instanceof TypeError ? "That isn't a web address" : (e as Error).message };
   }
   try {
     const r = await fetch(`${url}/api/health/live`, { signal: AbortSignal.timeout(timeoutMs) });
@@ -71,14 +71,15 @@ footer{display:flex;justify-content:space-between;align-items:center;margin-top:
 <h1>Studio server</h1><p>The Tatvam server this app works with. Your login, approvals and costs live there.</p>
 <div id="first" class="note warn" style="display:none"></div>
 <label for="url">Server address</label>
-<div class="row"><input id="url" type="text" spellcheck="false" placeholder="https://studio.example.com"><button id="test">Test</button></div>
+<div class="row"><input id="url" type="text" spellcheck="false" placeholder="https://studio.example.com (http:// only for a server on this PC)"><button id="test">Test</button></div>
 <div id="testNote" class="note" role="status"></div>
 <label id="uiLabel">Screens</label>
 <div class="seg" role="radiogroup" aria-labelledby="uiLabel">
-<label><input type="radio" name="ui" value="auto"><span>Automatic (recommended)<small>The server's newest screens, with a checked copy on this PC for when it can't be reached</small></span></label>
-<label><input type="radio" name="ui" value="bundled"><span>Built into this app<small>The screens that came with this version; they work offline</small></span></label>
-<label><input type="radio" name="ui" value="server"><span>Always from the server<small>Live from the server, never saved here (needs a connection)</small></span></label>
+<label><input type="radio" name="ui" value="bundled"><span>Built into this app (recommended)<small>The screens that came with this version; they work offline and nothing runs from the server</small></span></label>
+<label><input type="radio" name="ui" value="auto"><span>From the server, with an offline copy<small>Runs the screens your server publishes (its own code, checked against its manifest, only over https or from this PC / a local network), kept on this PC for when it can't be reached</small></span></label>
+<label><input type="radio" name="ui" value="server"><span>Always live from the server<small>Runs the server's screens straight from it, never saved here (needs a connection)</small></span></label>
 </div>
+<div class="note warn">Screens from the server run inside this app with your session: choose them only for a server you run or trust.</div>
 <div id="uiStatus" class="status" role="status" aria-live="polite"><span class="dim">Checking…</span></div>
 <label for="ff">FFmpeg</label>
 <div class="row"><input id="ff" type="text" readonly><button id="pick">Choose…</button><button id="auto">Find automatically</button></div>
@@ -189,7 +190,7 @@ export function registerConnectIpc(deps: ConnectDeps): void {
     const prev = deps.config.get();
     let serverUrl = prev.serverUrl;
     if (typeof patch?.serverUrl === "string") {
-      try { serverUrl = normalizeServerUrl(patch.serverUrl); } catch { return { error: "That isn't a web address" }; }
+      try { serverUrl = normalizeServerUrl(patch.serverUrl); } catch (e) { return { error: e instanceof TypeError ? "That isn't a web address" : (e as Error).message }; }
     }
     const uiSource: UiSource = UI_SOURCES.includes(patch?.uiSource as UiSource) ? (patch!.uiSource as UiSource) : prev.uiSource;
     const ffmpegPath = typeof patch?.ffmpegPath === "string" ? patch.ffmpegPath : prev.ffmpegPath;

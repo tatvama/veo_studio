@@ -995,6 +995,8 @@ export const IPC = {
   editorOpen: "tatvam:editor.open",
   editorSave: "tatvam:editor.save",
   editorImportMedia: "tatvam:editor.importMedia",
+  /** sync (preload → main): the real paths of files dropped on a page, so importMedia may take them */
+  editorGrantPaths: "tatvam:editor.grantPaths",
   editorMediaUrl: "tatvam:editor.mediaUrl",
   editorRelink: "tatvam:editor.relink",
   editorProxy: "tatvam:editor.proxy",

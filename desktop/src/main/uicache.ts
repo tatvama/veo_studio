@@ -1,7 +1,8 @@
 /**
  * Screens from the server, with an offline copy (docs/DESKTOP.md §4.3).
  *
- * In `uiSource: "auto"` the gateway serves the UI from, in this order: the server's build (when it's reachable, allowed
+ * Opt-in (the default is the copy inside the app, docs/DESKTOP.md §4.3). In `uiSource: "auto"` the gateway serves the UI
+ * from, in this order: the server's build (when it's reachable, allowed
  * and compatible), the last good copy of that server's build saved on this PC, then the copy inside the app. Every build
  * is served from disk (`<userData>/ui-cache/<server-hash>/<build>/`), so an index.html and its assets always come from
  * the same build.

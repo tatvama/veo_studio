@@ -19,6 +19,7 @@ import type { Gateway } from "./gateway.ts";
 import type { Library } from "./library.ts";
 import { logsDir } from "./log.ts";
 import { TOKENS } from "./naming.ts";
+import { isInside } from "./paths.ts";
 import type { ProxyManager } from "./proxies.ts";
 import type { RenderManager } from "./render.ts";
 import type { SyncManager } from "./sync.ts";
@@ -109,7 +110,7 @@ export function registerIpc(ctx: AppCtx): void {
     const p = await projectTitle(ctx, id);
     const dir = ctx.library.ensure(p, s().serverUrl);
     const target = sub ? path.resolve(dir, sub) : dir;
-    if (!target.toLowerCase().startsWith(path.resolve(dir).toLowerCase())) throw new Error("Outside the project folder");
+    if (!isInside(dir, target)) throw new Error("Outside the project folder");
     const err = await shell.openPath(target);
     if (err) throw new Error(err);
   });
@@ -224,8 +225,15 @@ export function registerIpc(ctx: AppCtx): void {
     if (!project || typeof project !== "object") throw new Error("Nothing to save");
     return ed().save(str(file, "path"), project);
   });
+  // a page may only import files a native dialog returned or Explorer dropped (EditorManager.grantPaths), never a path it made up
   handle(IPC.editorImportMedia, (file: string, files?: string[]) => ed().importMedia(str(file, "path"),
-    Array.isArray(files) ? files.filter((f) => typeof f === "string").slice(0, 2000) : undefined));
+    Array.isArray(files) ? files.filter((f) => typeof f === "string").slice(0, 2000) : undefined, { fromPage: true }));
+  // the preload registers the real paths of dropped files here, synchronously, before the page can name them in an import
+  ipcMain.on(IPC.editorGrantPaths, (e, paths: unknown) => {
+    const url = e.senderFrame?.url ?? "";
+    if (ctx.windows.isGatewayUrl(url) && Array.isArray(paths)) ed().grantPaths(paths.filter((p): p is string => typeof p === "string").slice(0, 2000));
+    e.returnValue = true;
+  });
   handle(IPC.editorMediaUrl, (file: string, media: string) => ed().mediaUrl(str(file, "path"), str(media, "file")));
   handle(IPC.editorRelink, (file: string, mediaId: string) => ed().relink(str(file, "path"), str(mediaId, "mediaId")));
   handle(IPC.editorProxy, (file: string, mediaId: string) => ed().proxy(str(file, "path"), str(mediaId, "mediaId")));
