@@ -45,11 +45,17 @@ export interface Backend {
   /** `mips`: allocate a mip chain so generateMips() works on it (transitions that blur by mip level). */
   target(w: number, h: number, opts?: { format?: "rgba16f" | "rgba8"; mips?: boolean }): RenderTarget;
   release(rt: RenderTarget | null | undefined): void;
+  /** A new frame begins (release-tracking and ageing of pooled targets). */
+  tick(): void;
+  /** Releases the targets handed out since tick() that nobody released (a frame that threw), except `keep`. */
+  reclaim(keep?: Iterable<RenderTarget | null | undefined>): number;
   clear(rt: RenderTarget | null, rgba: [number, number, number, number]): void;
   /** Compiled lazily and cached by source; `glsl1` = a GLSL ES 1.00 fragment shader (gl-transitions). */
   program(name: string, fragment: string, opts?: { glsl1?: boolean }): Program;
   /** Throws the compile / link error (with the shader's name) if the program failed. */
   check(p: Program): void;
+  /** Resolves once the programs have compiled (background compile), at once where they compile lazily, or after `ms`. */
+  waitReady(programs: Program[], ms: number): Promise<void>;
   draw(call: DrawCall): void;
   read(rt: RenderTarget, x: number, y: number, w: number, h: number, out: Uint8Array): Uint8Array;
   readFloat(rt: RenderTarget, x: number, y: number, w: number, h: number): Float32Array;

@@ -12,6 +12,29 @@ const sameOrigin = (url: string) => {
 
 /** A playbackRate the element accepts (Chrome refuses anything outside 1/16 .. 16). */
 const okRate = (r: number) => Math.min(16, Math.max(0.0625, r));
+/** How long an exact seek waits for the picture before going on with what the element has. */
+const SEEK_TIMEOUT_MS = 4000;
+
+/**
+ * Waits for one of the `ok` events on `target`: resolves "ok"; rejects (with `message(ev)`) on one of the `fail`
+ * events; resolves "timeout" after `ms` (0: no timeout). Whichever comes first, every listener and the timer are
+ * removed, so a media element that errors mid-seek never leaves an export hanging on "seeked".
+ */
+export function waitFor(target: EventTarget, ok: string[], fail: string[], ms: number, message: (ev: Event) => string = () => "the media element failed"): Promise<"ok" | "timeout"> {
+  return new Promise<"ok" | "timeout">((res, rej) => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const off = () => {
+      for (const n of ok) target.removeEventListener(n, onOk);
+      for (const n of fail) target.removeEventListener(n, onFail);
+      if (timer !== null) { clearTimeout(timer); timer = null; }
+    };
+    const onOk = () => { off(); res("ok"); };
+    const onFail = (ev: Event) => { off(); rej(new Error(message(ev))); };
+    for (const n of ok) target.addEventListener(n, onOk);
+    for (const n of fail) target.addEventListener(n, onFail);
+    if (ms > 0 && Number.isFinite(ms)) timer = setTimeout(() => { off(); res("timeout"); }, ms);
+  });
+}
 
 export class LiveVideo implements FrameSource {
   readonly kind = "video" as const;
@@ -22,8 +45,10 @@ export class LiveVideo implements FrameSource {
   private want: number | null = null;
   private half: number;
   private disposed = false;
+  private url: string;
 
   constructor(url: string, fps = 24) {
+    this.url = url;
     const el = document.createElement("video");
     el.muted = true;
     el.playsInline = true;
@@ -85,12 +110,12 @@ export class LiveVideo implements FrameSource {
     const el = this.el;
     if (!el.paused) el.pause();
     if (Math.abs(el.currentTime - t) > 1e-3 || el.seeking) {
-      await new Promise<void>((res) => {
-        const done = () => { el.removeEventListener("seeked", done); res(); };
-        el.addEventListener("seeked", done);
-        el.currentTime = Math.max(0, t);
-      });
-      if (this.rvfc) await new Promise<void>((res) => { el.requestVideoFrameCallback(() => res()); setTimeout(res, 120); });
+      // seeked, or the element erroring mid-seek (rejects), or a seek that never lands (goes on with what it has)
+      const seeked = waitFor(el, ["seeked"], ["error"], SEEK_TIMEOUT_MS, () => `${this.url}: ${el.error?.message || "the video failed while seeking"}`);
+      el.currentTime = Math.max(0, t);
+      const r = await seeked;
+      if (r === "timeout" && el.error) throw new Error(`${this.url}: ${el.error.message || "the video failed while seeking"}`);
+      if (r === "ok" && this.rvfc) await new Promise<void>((res) => { el.requestVideoFrameCallback(() => res()); setTimeout(res, 120); });
     }
     if (el.readyState < 2) await new Promise<void>((res) => { el.addEventListener("canplay", () => res(), { once: true }); setTimeout(res, 2000); });
     this.version++;
