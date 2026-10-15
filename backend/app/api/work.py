@@ -17,7 +17,7 @@ from ..db import SessionLocal, get_db, is_network_error
 from ..events import emit
 from ..models import AgentMessage, Approval, Comment, Episode, Event, Job, Project, User, role_rank
 from ..security import COOKIE, current_user, require, user_from_token, ws_user
-from ..storage import get_storage
+from ..storage import get_storage, safe_key
 from .common import get_or_404, user_brief
 
 router = APIRouter(tags=["work"])
@@ -366,22 +366,38 @@ def _media_role(db: Session, token: str | None) -> str | None:
     return u.role
 
 
+PRIVATE_FOLDERS = ("consents",)  # signed releases hold personal data: producers only
+
+
+def media_key(path: str) -> tuple[str, bool]:
+    """The storage key a /media request names and whether it is a private file. The key is the *cleaned* path
+    (storage.safe_key drops "." and empty parts), so "/media/./consents/x.pdf" is the consents file it reads.
+    ValueError for a path that escapes the media root or names the root itself."""
+    key = safe_key(path.replace("\\", "/").lstrip("/"))  # a leading "/" is the URL's, not an absolute path
+    if not key:
+        raise ValueError("no file named")
+    return key, key.split("/", 1)[0].lower() in PRIVATE_FOLDERS
+
+
 @router.get("/media/{path:path}")
 def media(path: str, request: Request, db: Session = Depends(get_db)):
+    try:
+        key, private = media_key(path)
+    except ValueError:
+        raise HTTPException(404, "file not found")
     role = _media_role(db, request.cookies.get(COOKIE))
-    private = path.replace("\\", "/").lstrip("/").startswith("consents/")
     if not role and not private:
         from ..mcp_server.media import check_link
-        role = "viewer" if check_link(path, request.query_params.get("sig")) else None  # a signed link from the MCP server
+        role = "viewer" if check_link(key, request.query_params.get("sig")) else None  # a signed link from the MCP server
     if not role:
         raise HTTPException(401, "Please log in")
-    if private and role_rank(role) < role_rank("producer"):  # signed releases hold personal data
+    if private and role_rank(role) < role_rank("producer"):
         raise HTTPException(403, "Only a producer can open consent releases")
     st = get_storage()
     try:
-        p = st.abs(path)
+        p = st.abs(key)
     except ValueError:
-        raise HTTPException(400, "bad path")
+        raise HTTPException(404, "file not found")
     if not p.exists() or not p.is_file():
         raise HTTPException(404, "file not found")
     headers = {"Cache-Control": "private, max-age=86400", "X-Content-Type-Options": "nosniff"}

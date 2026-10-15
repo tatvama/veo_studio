@@ -9,9 +9,10 @@ import time
 from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
+from sqlalchemy.orm import Session
 
 mimetypes.add_type("text/javascript", ".js")
 mimetypes.add_type("text/javascript", ".mjs")
@@ -26,7 +27,7 @@ from .api import (admin, auth, bible, board, campaign, designs, desktop, edits, 
                   mcp_access, production, projects, rates, room, shots, work)
 from .api import ui as ui_api
 from .config import ROOT, get_settings
-from .db import Base, engine
+from .db import Base, engine, get_db
 from .middleware import RetryReads
 from .providers.base import ProviderError
 
@@ -75,9 +76,15 @@ async def provider_error(_: Request, exc: ProviderError):
 
 
 @app.get("/api/health")
-def health():
-    from .providers.services import provider_status
-    return {"ok": True, "providers": provider_status()}
+def health(request: Request, db: Session = Depends(get_db)):
+    """Anonymous callers learn only that the app is up (and its version). Which providers are live or mocked is
+    for signed-in people (the same list as GET /api/settings)."""
+    from .security import COOKIE, user_from_token
+    body: dict = {"ok": True, "version": app.version}
+    if user_from_token(db, request.cookies.get(COOKIE)):
+        from .providers.services import provider_status
+        body["providers"] = provider_status()
+    return body
 
 
 @app.get("/api/health/live")
