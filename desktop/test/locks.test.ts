@@ -25,19 +25,19 @@ test("observe: a checkout or heartbeat holds, a check-in or release frees; failu
 });
 
 test("releaseAll: deletes what is still ours on this machine, leaves another PC's lock and a lock someone else took", async () => {
-  const locks: Record<string, { mine: boolean; machine: string } | null> = {
-    "1": { mine: true, machine: "EDIT-PC" }, "2": { mine: true, machine: "OTHER-PC" }, "3": { mine: false, machine: "EDIT-PC" }, "4": null,
-  };
+  const locks = new Map<string, { mine: boolean; machine: string } | null>([
+    ["1", { mine: true, machine: "EDIT-PC" }], ["2", { mine: true, machine: "OTHER-PC" }], ["3", { mine: false, machine: "EDIT-PC" }], ["4", null],
+  ]);
   const deleted: string[] = [];
   const srv = http.createServer((req, res) => {
     const m = /^\/api\/episodes\/(\d+)\/checkout$/.exec(req.url ?? "");
     const json = (code: number, v: unknown) => { res.writeHead(code, { "Content-Type": "application/json" }); res.end(JSON.stringify(v)); };
     if (!m) return json(404, { detail: "nope" });
-    if (req.method === "GET") return json(200, { lock: locks[m[1]] ?? null });
+    if (req.method === "GET") return json(200, { lock: locks.get(m[1]) ?? null });
     if (req.method === "DELETE") {
       assert.equal(req.headers["x-requested-with"], "veo-studio");
       deleted.push(m[1]);
-      locks[m[1]] = null;
+      locks.set(m[1], null);
       return json(200, { lock: null });
     }
     json(405, {});
