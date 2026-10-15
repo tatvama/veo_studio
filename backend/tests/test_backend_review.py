@@ -44,8 +44,9 @@ def test_media_private_check_uses_the_cleaned_key(client: TestClient):
                     ".//consents/review_release.pdf", "Consents/review_release.pdf", "consents\\review_release.pdf"):
         assert viewer.get(f"/media/{spelled}").status_code == 403, spelled
     assert viewer.get("/media/./projects/1/review_open.txt").status_code == 200
-    # invalid keys answer 404 whoever asks (nothing about the file system leaks)
-    for bad in ("..%2Fsecret", "projects/../../x", "C:/x.txt"):
+    # invalid keys answer 404 whoever asks (nothing about the file system leaks). The dots are percent-encoded: the
+    # test client would otherwise resolve "projects/../../x" to "/x" itself, which the built frontend answers with 200
+    for bad in ("..%2Fsecret", "projects/%2E%2E/%2E%2E/x", "C:/x.txt"):
         assert client.get(f"/media/{bad}").status_code == 404, bad
         assert viewer.get(f"/media/{bad}").status_code == 404, bad
     anon = TestClient(app)
