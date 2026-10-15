@@ -18,6 +18,7 @@ import { editorGeneratedHost, registerGeneratedIpc } from "./editor-generated.ts
 import { editorDeepLink } from "./editor-model.ts";
 import { locateFfmpeg, machineCheck, probeHardware, type FfmpegInfo } from "./ffmpeg.ts";
 import { Gateway } from "./gateway.ts";
+import { gpuGate } from "./gpu-gate.ts";
 import { chooseLibraryRoot, projectTitle, registerIpc, writeEdits, type AppCtx } from "./ipc.ts";
 import { Library } from "./library.ts";
 import { initLog, logsDir } from "./log.ts";
@@ -144,6 +145,8 @@ async function start(): Promise<void> {
   const splash = smoke ? null : new Splash(app.getVersion());
   splash?.step("Reading settings…", 10);
   const config = new Config(userData, app.getPath("documents"));
+  gpuGate.setSlots(config.get().encoder.gpuSlots); // how many encodes / GPU tools may share the card at once
+  config.onChange((s) => gpuGate.setSlots(s.encoder.gpuSlots));
   const library = new Library(config, userData, log);
   library.appVersion = app.getVersion();
   const dir = uiDir();
@@ -237,7 +240,8 @@ async function start(): Promise<void> {
     broadcast: (s) => { wm.broadcast(IPC.syncProgress, s); shellRef?.onSync(s); }, writeEdits: (pid, eid) => writeEdits(appCtx, pid, eid), log,
   });
   appCtx.imports = new ImportWatcher({ library, upstream, template: () => config.get().naming.Imports, log });
-  appCtx.proxies = new ProxyManager({ library, ff, probe: () => probe(), broadcast: (s) => wm.broadcast(IPC.proxyProgress, s), log });
+  appCtx.proxies = new ProxyManager({ library, ff, probe: () => probe(), hwDecode: () => config.get().encoder.hwDecode,
+    broadcast: (s) => wm.broadcast(IPC.proxyProgress, s), log });
   appCtx.renders = new RenderManager({ upstream, library, ff, probe: () => probe(), settings: () => config.get(),
     jobsFile: path.join(userData, "renders.json"), broadcast: (j) => { wm.broadcast(IPC.renderProgress, j); shellRef?.onRender(j); }, log,
     openRenderWindow: (urlPath, onClosed) => wm.openRenderWindow(urlPath, onClosed) });
@@ -258,6 +262,7 @@ async function start(): Promise<void> {
     backupSettings: () => config.get().editorBackups,
     signedIn: async () => Boolean(await cookie()),
     prefer: () => config.get().encoder.prefer,
+    hwDecode: () => config.get().encoder.hwDecode,
     lutFolders: () => config.get().lutFolders,
     setLutFolders: (list) => { config.set({ lutFolders: list }); },
     dialogs: {

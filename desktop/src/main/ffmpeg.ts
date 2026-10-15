@@ -299,7 +299,9 @@ export interface PipeOptions {
   spawnImpl?: SpawnFn;
 }
 
-export const PIPE_STALL_MS = 10 * 60_000;
+/** Long encodes (renders, proxies) that make no progress for this long are stopped. */
+export const DEFAULT_STALL_MS = 10 * 60_000;
+export const PIPE_STALL_MS = DEFAULT_STALL_MS;
 
 /**
  * FFmpeg fed through stdin (the GPU engine's raw frames). `write` resolves once FFmpeg has taken the bytes, so the

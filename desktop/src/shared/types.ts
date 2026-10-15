@@ -61,6 +61,10 @@ export interface DesktopSettings {
     hevc10bit: boolean;
     /** Constant quality of the intermediate segments (lower = better). */
     intermediateCq: number;
+    /** Decode source clips on the graphics card (-hwaccel cuda / d3d11va) when a hardware encoder was found; falls back to the CPU on failure. Default on. */
+    hwDecode: boolean;
+    /** How many encodes / GPU tool runs may use the card at once (1..8, default 2: consumer GeForce cards allow few NVENC sessions). */
+    gpuSlots: number;
   };
   /** An FFmpeg build to use instead of the bundled one ("" = find one). */
   ffmpegPath: string;

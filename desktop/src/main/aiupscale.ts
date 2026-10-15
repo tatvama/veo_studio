@@ -16,6 +16,7 @@ import type { LocalUpscaleEstimate, UpscaleJob, UpscaleModel, UpscaleState, Upsc
 import { writeFileAtomic } from "./config.ts";
 import { downloadTo } from "./download.ts";
 import { killTree, probeMedia, runFfmpeg, type FfmpegInfo } from "./ffmpeg.ts";
+import { gpuGate } from "./gpu-gate.ts";
 import type { Library } from "./library.ts";
 import { safePart } from "./naming.ts";
 import { finalEncoder, type PresetDef } from "./render-args.ts";
@@ -326,6 +327,7 @@ export class LocalUpscaler {
     await fsp.rm(work, { recursive: true, force: true });
     await fsp.mkdir(inDir, { recursive: true });
     await fsp.mkdir(outDir, { recursive: true });
+    let releaseGpu: (() => void) | null = null;
     try {
       // 2. frames out
       step("extracting", "Reading frames", 0.03);
@@ -334,7 +336,8 @@ export class LocalUpscaler {
       if (!frames) throw new Error("The clip has no frames");
       job.frames = frames;
 
-      // 3. Real-ESRGAN on the graphics card
+      // 3. Real-ESRGAN on the graphics card: one GPU slot for it and the encode after it (the card is shared with renders)
+      releaseGpu = await gpuGate.acquire(signal);
       if (this.gpus === null) this.gpus = await this.listGpus().catch(() => []);
       const gpu = pickGpu(this.gpus)?.index ?? 0;
       step("upscaling", `Upscaling ${frames} frames on the graphics card`, 0.05);
@@ -378,6 +381,8 @@ export class LocalUpscaler {
       const enc = finalEncoder(UPSCALE_ENCODE, await this.deps.probe(), this.deps.prefer(), false);
       const out = path.join(work, `${safePart(job.code) || "shot"}_upscaled.mp4`);
       await runFfmpeg(ffi.path, encodeArgs({ framesDir: outDir, fps, source: input, out, w: job.to[0], h: job.to[1], enc: enc!.args }), { signal });
+      releaseGpu();
+      releaseGpu = null;
 
       // 5. to the server as the video's upscale take, and into the folder so the next sync needn't download it
       step("uploading", "Uploading to the studio", 0.95);
@@ -399,6 +404,7 @@ export class LocalUpscaler {
           name: path.basename(rel), folder: "Takes", kind: "upscale", role: "take", size: st.size, state: "ready", synced_at: nowIso() });
       }
     } finally {
+      releaseGpu?.();
       await fsp.rm(work, { recursive: true, force: true }).catch(() => undefined);
     }
   }

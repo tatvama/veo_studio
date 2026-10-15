@@ -42,7 +42,8 @@ import {
   mediaKindOf, newProject, safeEditName, sequenceEnd, toDisk, toRuntime, uid, validatePreset, validateProject, VIDEO_EXTS, AUDIO_EXTS, IMAGE_EXTS,
 } from "./editor-model.ts";
 import { runFfmpeg, type FfmpegInfo } from "./ffmpeg.ts";
-import { PRESETS } from "./render-args.ts";
+import { gpuGate } from "./gpu-gate.ts";
+import { hwDecodeArgs, PRESETS } from "./render-args.ts";
 import { mimeOf } from "./gateway.ts";
 import { pathKey, safeFileName, safePart, uniquePath } from "./naming.ts";
 import { proxyArgs } from "./proxies.ts";
@@ -94,6 +95,8 @@ export interface EditorDeps {
   signedIn?(): Promise<boolean>;
   /** the encoder preference (settings.encoder.prefer) */
   prefer?(): "auto" | "nvenc" | "qsv" | "amf" | "software";
+  /** settings.encoder.hwDecode: decode proxy sources on the graphics card (default on) */
+  hwDecode?(): boolean;
   /** the user's LUT folders (settings.lutFolders) */
   lutFolders?(): string[];
   setLutFolders?(list: string[]): void;
@@ -588,8 +591,18 @@ export class EditorManager {
     await fsp.mkdir(cache, { recursive: true });
     const out = path.join(cache, `proxy_${short}.mp4`);
     const part = `${out}.part.mp4`;
-    const nvenc = Boolean((await this.deps.probeHw().catch(() => ({} as Record<string, boolean>))).h264_nvenc);
-    await this.tools().run(proxyArgs(src, part, nvenc, short));
+    const probe = await this.deps.probeHw().catch(() => ({} as Record<string, boolean>));
+    const nvenc = Boolean(probe.h264_nvenc);
+    const hw = hwDecodeArgs(probe, this.deps.hwDecode?.() !== false);
+    // one GPU slot (shared with renders and the local tools); hardware decode falls back to the processor
+    const encode = (hwaccel: string[]) => gpuGate.run(() => this.tools().run(proxyArgs(src, part, nvenc, short, hwaccel)));
+    try {
+      await encode(hw);
+    } catch (e) {
+      if (!hw.length) throw e;
+      this.deps.log(`editor proxy ${it.name}: hardware decoding failed, decoding on the processor (${(e as Error).message.slice(0, 160)})`);
+      await encode([]);
+    }
     await fsp.rm(out, { force: true });
     await retry(() => fsp.rename(part, out));
     this.proxies.set(it.id, out);
@@ -951,6 +964,7 @@ export class EditorManager {
       const work = path.join(dir, "Cache", `rife-${job.id.slice(0, 8)}`);
       const inDir = path.join(work, "in");
       const outDir = path.join(work, "out");
+      let releaseGpu: (() => void) | null = null;
       try {
         // 1. room for the frames
         const need = interpDiskBytes(it.width || 1920, it.height || 1080, est, Math.round(est * (opts.factor ?? 2)));
@@ -969,7 +983,8 @@ export class EditorManager {
         const inFrames = (await fsp.readdir(inDir)).filter((n) => n.endsWith(".png")).length;
         if (inFrames < 2) throw new EditorError("The clip has fewer than two frames there");
         const plan = interpPlan(it.fps || 24, inFrames, opts);
-        // 3. RIFE on the dedicated card
+        // 3. RIFE on the dedicated card: one GPU slot for it and the encode after it
+        releaseGpu = await gpuGate.acquire(c.signal);
         const gpu = pickGpu(await lt.vulkanGpus("rife"));
         const w = it.width || 1920;
         const h = it.height || 1080;
@@ -1008,12 +1023,15 @@ export class EditorManager {
         await tools.run(rifeEncodeArgs({ framesDir: outDir, fpsArg: plan.fpsArg, fps: fn / (fd || 1), frames: plan.outFrames, source: src, in: inS, out: outS,
           stretch: plan.stretch, audio: opts.dropAudio ? "drop" : "stretch", hasAudio: it.hasAudio, outFile: part, enc: enc.args, w, h }), { signal: c.signal });
         await retry(() => fsp.rename(part, outFile));
+        releaseGpu();
+        releaseGpu = null;
         // 5. into the edit
         c.update({ status: "importing", step: "Adding it to the project", progress: 0.97 }, true);
         const item = await this.ingest(dir, outFile, { copy: false, name: path.basename(outFile), keep: { binId: it.binId } });
         c.update({ resultMediaId: item.id }, true);
         return item;
       } finally {
+        releaseGpu?.();
         release();
         await fsp.rm(work, { recursive: true, force: true, maxRetries: 3 }).catch(() => undefined);
       }
@@ -1079,6 +1097,8 @@ export class EditorManager {
         let log = "";
         const env = { ...process.env };
         if (useCuda) env.PATH = [...lt.cudaDirs(), env.PATH ?? ""].join(path.delimiter);
+        // the CUDA build shares the card with renders: one GPU slot while it runs (the CPU build needs none)
+        const releaseGpu = useCuda ? await gpuGate.acquire(c.signal) : () => undefined;
         await run(exe, whisperArgs({ model, wav, outBase: path.join(work, "out"), language, threads: whisperThreads(os.cpus().length), gpu: useCuda,
           translate: Boolean(opts?.translate), prompt: typeof opts?.prompt === "string" ? opts.prompt : undefined }), {
           cwd: path.dirname(exe), signal: c.signal, env,
@@ -1090,7 +1110,7 @@ export class EditorManager {
             c.update({ progress: Math.round((0.05 + 0.92 * p) * 1000) / 1000, step: `Transcribing: ${Math.round(p * 100)}%`,
               speed: secs > 0 && p > 0 ? Math.round(((p * length) / secs) * 10) / 10 : undefined, eta_s: p > 0.02 ? Math.round((secs / p) * (1 - p)) : undefined });
           },
-        });
+        }).finally(releaseGpu);
         if (c.signal.aborted) throw new Error("cancelled");
         const procSecs = (Date.now() - t1) / 1000;
         const device: "cuda" | "cpu" = useCuda && !noGpuInLog(log) ? "cuda" : "cpu";

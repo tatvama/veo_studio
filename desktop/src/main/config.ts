@@ -5,6 +5,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { AppearanceSettings, DesktopSettings, Workspace } from "../shared/types.ts";
+import { defaultGpuSlots } from "./gpu-gate.ts";
 import { DEFAULT_TEMPLATES } from "./naming.ts";
 import { defaultAssistants, sanitizeAssistants } from "./mcp/settings.ts";
 
@@ -36,7 +37,7 @@ export function defaultSettings(opts: { documents: string; env?: Record<string, 
     naming: { ...DEFAULT_TEMPLATES },
     pullScope: "approved",
     proxyMode: false,
-    encoder: { prefer: "auto", hevc10bit: true, intermediateCq: 16 },
+    encoder: { prefer: "auto", hevc10bit: true, intermediateCq: 16, hwDecode: true, gpuSlots: defaultGpuSlots(env) },
     ffmpegPath: "",
     workspaces: BUILTIN_WORKSPACES.map((w) => structuredClone(w)),
     windowState: { panels: {} },
@@ -133,6 +134,8 @@ export function sanitize(input: unknown, defaults: DesktopSettings): DesktopSett
     if (["auto", "nvenc", "qsv", "amf", "software"].includes(e.prefer as string)) s.encoder.prefer = e.prefer as DesktopSettings["encoder"]["prefer"];
     if (typeof e.hevc10bit === "boolean") s.encoder.hevc10bit = e.hevc10bit;
     if (typeof e.intermediateCq === "number" && e.intermediateCq >= 0 && e.intermediateCq <= 51) s.encoder.intermediateCq = Math.round(e.intermediateCq);
+    if (typeof e.hwDecode === "boolean") s.encoder.hwDecode = e.hwDecode;
+    if (typeof e.gpuSlots === "number" && e.gpuSlots >= 1 && e.gpuSlots <= 8) s.encoder.gpuSlots = Math.round(e.gpuSlots);
   }
   if (typeof input.ffmpegPath === "string") s.ffmpegPath = input.ffmpegPath;
   if (Array.isArray(input.workspaces)) {

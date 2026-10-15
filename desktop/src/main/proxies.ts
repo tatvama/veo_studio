@@ -6,22 +6,29 @@
 import { existsSync, promises as fsp } from "node:fs";
 import path from "node:path";
 import type { ProxyStatus } from "../shared/types.ts";
-import { probeMedia, runFfmpeg, type FfmpegInfo } from "./ffmpeg.ts";
+import { DEFAULT_STALL_MS, probeMedia, runFfmpeg, type FfmpegInfo } from "./ffmpeg.ts";
+import { gpuGate } from "./gpu-gate.ts";
 import type { Library } from "./library.ts";
+import { hwDecodeArgs } from "./render-args.ts";
 
 const VIDEO = new Set([".mp4", ".mov", ".m4v", ".webm", ".mkv"]);
 
-/** The proxy encode: short side 1080 (never upscaled; the editor also makes 540p ones), NVENC H.264 when available, else x264 veryfast. */
-export function proxyArgs(src: string, out: string, nvenc: boolean, short = 1080): string[] {
+/**
+ * The proxy encode: short side 1080 (never upscaled; the editor also makes 540p ones), NVENC H.264 when available, else
+ * x264 veryfast. `hwaccel` (hwDecodeArgs) decodes the source on the graphics card.
+ */
+export function proxyArgs(src: string, out: string, nvenc: boolean, short = 1080, hwaccel: string[] = []): string[] {
   const vf = `scale='if(gt(iw,ih),-2,min(${short},iw))':'if(gt(iw,ih),min(${short},ih),-2)',format=yuv420p`;
   const v = nvenc ? ["-c:v", "h264_nvenc", "-preset", "p2", "-rc", "vbr", "-cq", "26", "-b:v", "0"] : ["-c:v", "libx264", "-preset", "veryfast", "-crf", "24"];
-  return ["-i", src, "-map", "0:v:0", "-map", "0:a?", "-vf", vf, ...v, "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-movflags", "+faststart", out];
+  return [...hwaccel, "-i", src, "-map", "0:v:0", "-map", "0:a?", "-vf", vf, ...v, "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-movflags", "+faststart", out];
 }
 
 export interface ProxyDeps {
   library: Library;
   ff(): FfmpegInfo | null;
   probe(): Promise<Record<string, boolean>>;
+  /** settings.encoder.hwDecode (default on) */
+  hwDecode?(): boolean;
   broadcast(s: ProxyStatus): void;
   log(msg: string): void;
 }
@@ -59,7 +66,9 @@ export class ProxyManager {
     this.runs.set(pid, { status, abort });
     const folder = this.deps.library.folderFor(pid).path;
     try {
-      const nvenc = Boolean((await this.deps.probe()).h264_nvenc);
+      const probe = await this.deps.probe();
+      const nvenc = Boolean(probe.h264_nvenc);
+      let hw = hwDecodeArgs(probe, this.deps.hwDecode?.() !== false);
       const todo = mirror.files({ state: "ready" }).filter((f) => VIDEO.has(path.extname(f.local_path).toLowerCase())
         && !f.local_path.startsWith("Cache/") && !f.local_path.startsWith("Proxies/") && !f.local_path.startsWith("Renders/")
         && !(f.proxy_path && existsSync(path.join(folder, f.proxy_path))));
@@ -77,7 +86,17 @@ export class ProxyManager {
           const out = path.join(folder, rel);
           const part = `${out}.part.mp4`;
           await fsp.mkdir(path.dirname(out), { recursive: true });
-          await runFfmpeg(ffi.path, proxyArgs(src, part, nvenc), { signal: abort.signal });
+          // one GPU slot per proxy (the card is shared with renders and the local tools); hardware decode falls back to the CPU once
+          const encode = (hwaccel: string[]) => gpuGate.run(() => runFfmpeg(ffi.path, proxyArgs(src, part, nvenc, 1080, hwaccel),
+            { signal: abort.signal, stallMs: DEFAULT_STALL_MS }), abort.signal);
+          try {
+            await encode(hw);
+          } catch (e) {
+            if (abort.signal.aborted || !hw.length) throw e;
+            this.deps.log(`proxies: hardware decoding failed on ${f.name}, decoding on the processor from here (${(e as Error).message.slice(0, 160)})`);
+            hw = [];
+            await encode([]);
+          }
           await fsp.rm(out, { force: true });
           await fsp.rename(part, out);
           mirror.setFile(f.key, { proxy_path: rel });
