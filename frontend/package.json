@@ -46,7 +46,7 @@
     "dockview": "8.4.1",
     "dockview-react": "8.4.1",
     "gl-transitions": "1.74.0",
-    "konva": "^9.3.22",
+    "konva": "^10.7.1",
     "lucide-react": "^1.55.0",
     "motion": "^14.1.0",
     "mp4box": "2.4.1",
