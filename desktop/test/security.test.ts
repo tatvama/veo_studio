@@ -3,9 +3,11 @@
  * this PC, and one path-confinement rule serves the editor, the library, the bridge and the MCP server.
  */
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { defaultSettings, isLoopbackHost, isPrivateNetworkHost, normalizeServerUrl, sanitize } from "../src/main/config.ts";
+import { Config, defaultSettings, isLoopbackHost, isPrivateNetworkHost, migrateSettings, normalizeServerUrl, sanitize } from "../src/main/config.ts";
 import { isInside } from "../src/main/paths.ts";
 import { inside } from "../src/main/mcp/security.ts";
 
@@ -39,6 +41,32 @@ test("a stored plain-http public address falls back to the default; LAN and TATV
   assert.equal(defaultSettings({ documents: "D:\\Docs", env: { TATVAM_SERVER: "http://10.1.1.1:8100" } }).serverUrl, "http://10.1.1.1:8100");
   assert.equal(defaultSettings({ documents: "D:\\Docs", env: { TATVAM_SERVER: "http://8.8.8.8:8100" } }).serverUrl, "http://localhost:8100");
   assert.equal(defaultSettings({ documents: "D:\\Docs", env: { TATVAM_SERVER: "https://studio.example.com" } }).serverUrl, "https://studio.example.com");
+});
+
+test("the installed app starts on the studio server, a run from source on this PC; an unpicked old localhost moves", () => {
+  const p = defaultSettings({ documents: "D:\\Docs", env: {}, packaged: true });
+  assert.equal(p.serverUrl, "https://studio.taatvam.com");
+  assert.equal(sanitize({ serverUrl: "http://8.8.8.8:8100" }, p).serverUrl, "https://studio.taatvam.com");
+  assert.equal(defaultSettings({ documents: "D:\\Docs", env: { TATVAM_SERVER: "http://10.1.1.1:8100" }, packaged: true }).serverUrl, "http://10.1.1.1:8100");
+  assert.deepEqual(migrateSettings({ serverUrl: "http://localhost:8100" }, true), { value: { serverUrl: "https://studio.taatvam.com" }, migrated: true });
+  assert.equal(migrateSettings({ serverUrl: "http://localhost:8100", serverUrlChosen: true }, true).migrated, false);
+  assert.equal(migrateSettings({ serverUrl: "http://localhost:8100" }).migrated, false); // a run from source
+  assert.equal(migrateSettings({ serverUrl: "http://192.168.1.20:8100" }, true).migrated, false);
+  // a settings.json an installed app wrote before the studio default
+  const ud = mkdtempSync(path.join(os.tmpdir(), "tatvam-server-"));
+  try {
+    const file = path.join(ud, "settings.json");
+    writeFileSync(file, JSON.stringify({ serverUrl: "http://localhost:8100" }));
+    const c = new Config(ud, ud, {}, true);
+    assert.equal(c.get().serverUrl, "https://studio.taatvam.com");
+    assert.equal(JSON.parse(readFileSync(file, "utf8")).serverUrl, "https://studio.taatvam.com"); // saved back
+    c.set({ serverUrl: "http://localhost:8100", serverUrlChosen: true }); // picked in the Studio server window
+    assert.equal(new Config(ud, ud, {}, true).get().serverUrl, "http://localhost:8100");
+    writeFileSync(file, JSON.stringify({ serverUrl: "http://localhost:8100" }));
+    assert.equal(new Config(ud, ud, { TATVAM_SERVER: "http://localhost:8100" }, true).get().serverUrl, "http://localhost:8100");
+  } finally {
+    rmSync(ud, { recursive: true, force: true });
+  }
 });
 
 test("isInside: the folder itself and below, never a sibling that shares the prefix; case and slashes don't matter", () => {

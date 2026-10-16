@@ -344,7 +344,8 @@ to requests that carry the app's own session cookie and rejects unexpected `Host
   (`localhost`, `*.localhost`, `127.0.0.0/8`, `[::1]`) or on the local network (`10/8`, `172.16/12`, `192.168/16`,
   `fc00::/7`, `*.local`), the same rule `uicache.originRule` applies to screens; a bare host name becomes `https://…`;
   an explicit `http://` to a public address is refused with the reason (shown by the Studio server window). A stored
-  or `TATVAM_SERVER` address that breaks the rule falls back to `http://localhost:8100`. Every call carries the
+  or `TATVAM_SERVER` address that breaks the rule falls back to the default: `https://studio.taatvam.com` in the
+  installed app, `http://localhost:8100` when run from source. Every call carries the
   session cookie and, when chosen, the server's screens run inside the app, so a server reached over the internet
   needs a certificate.
 - **Screens from the server are opt-in.** `uiSource` defaults to `"bundled"`; "From the server, with an offline copy"
@@ -557,8 +558,9 @@ npm run smoke      # starts the app against TATVAM_SERVER, checks UI, sign-in, A
 npm run dist       # Windows installer (NSIS) in desktop/release, with the built UI and FFmpeg 7.1 inside
 ```
 
-- `TATVAM_SERVER` (default `http://localhost:8100`) sets the server on the first run; after that, File → Studio
-  server… changes it. Off this PC and the local network the address must be `https://` (§4, trust boundaries). `TATVAM_UI_DIR` points at another built UI, `TATVAM_USER_DATA` at another settings folder.
+- `TATVAM_SERVER` sets the server on the first run (default `http://localhost:8100` from source; the installed app
+  starts on `https://studio.taatvam.com`, and moves an old unpicked `http://localhost:8100` there); after that,
+  File → Studio server… changes it. Off this PC and the local network the address must be `https://` (§4, trust boundaries). `TATVAM_UI_DIR` points at another built UI, `TATVAM_USER_DATA` at another settings folder.
 - The end-to-end test (`TATVAM_E2E=1`, see `desktop/test/e2e.test.ts`) syncs a cut, writes the EDL, renders it in 4K
   and uploads it to a running server.
 - CI runs the desktop typecheck and unit tests (job "Desktop app").

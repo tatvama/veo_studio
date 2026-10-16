@@ -16,7 +16,8 @@ npm run smoke       # start the app, load the UI through the gateway, sign in, c
 npm run dist        # Windows installer (NSIS, x64) in desktop/release
 ```
 
-- `TATVAM_SERVER` sets the studio server on first run (default `http://localhost:8100`); `TATVAM_UI_DIR` points at a
+- `TATVAM_SERVER` sets the studio server on first run (default `http://localhost:8100` from source; the installed
+  app starts on `https://studio.taatvam.com`); `TATVAM_UI_DIR` points at a
   built UI (otherwise `resources/web` in the installed app, or `../frontend/dist` in dev).
 - `npm run smoke` uses a throw-away userData folder. On an empty server it creates the first admin through the
   gateway; on a server that is already set up it signs in with `TATVAM_SMOKE_EMAIL` / `TATVAM_SMOKE_PASSWORD`, or
