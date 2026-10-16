@@ -1,4 +1,4 @@
 """VEO STUDIO backend."""
 
 # Bumped by release-please on every release (see release-please-config.json); shown by /api/health/live.
-__version__ = "3.2.0"  # x-release-please-version
+__version__ = "3.3.0"  # x-release-please-version
