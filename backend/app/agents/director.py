@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from .. import catalog, settings_store
-from ..core import budget
+from ..core import budget, chat_attachments, mentions
 from ..db import utcnow
 from ..events import emit
 from ..models import AgentMessage, Episode, Project, User
@@ -98,10 +98,16 @@ def public(d: dict) -> dict:
 
 
 def run(db: Session, user: User, project: Project, episode: Episode | None, message: str,
-        selection: dict | None = None) -> list[dict]:
+        selection: dict | None = None, attachments: list[dict] | None = None) -> list[dict]:
+    """One chat turn. `attachments` are the pictures sent with the message (chat_attachments.for_message: checked,
+    tagged); they are kept on the user's message and shown to the AI."""
     selection = selection or {}
-    um = _save(db, project, user, "user", message, {"selection": selection})
-    c = AgentCtx(db=db, user=user, project=project, episode=episode, turn=um.id)
+    attachments = attachments or []
+    um = _save(db, project, user, "user", message, {"selection": selection, **({"attachments": attachments} if attachments else {})})
+    if attachments:
+        chat_attachments.link(db, um.id, attachments)
+        db.commit()
+    c = AgentCtx(db=db, user=user, project=project, episode=episode, turn=um.id, attachments=attachments)
     eng = engine(db)
     extra: dict = {}
     if eng == "claude":
@@ -110,7 +116,7 @@ def run(db: Session, user: User, project: Project, episode: Episode | None, mess
     elif eng == "gemini":
         text = _live_agent(c, message, selection)
     else:
-        text = _mock_agent(c, message)
+        text = _mock_agent(c, mentions.plain(message))
     msg = _save(db, project, None, "assistant", text, {"proposals": c.proposals, "actions": c.actions,
                                                          "confirmations": c.confirmations,
                                                          "interaction_id": getattr(c, "_iid", ""), "engine": eng,
@@ -119,7 +125,27 @@ def run(db: Session, user: User, project: Project, episode: Episode | None, mess
     return [public(msg.to_dict())]
 
 
+def turn_notes(c: AgentCtx, message: str) -> tuple[str, list[str]]:
+    """The user's message as the AI reads it (@mention tokens as @Name) and notes about it for the turn context: its
+    chat message id, what each @mention is (ids and names), and how many pictures came with it."""
+    plain, found = mentions.chat_context(c.db, c.project, message)
+    notes: list[str] = []
+    if c.turn:
+        notes.append(f"This message is chat message #{c.turn}.")
+    if found:
+        notes.append("Mentions in this message:\n" + "\n".join(f"- {line}" for line in found))
+    if c.attachments:
+        n = len(c.attachments)
+        notes.append(f"{n} picture{'' if n == 1 else 's'} attached to this message (attachment ids "
+                     + ", ".join(f"#{a['id']}" for a in c.attachments) + ").")
+    return plain, notes
+
+
 def _summary(tool: str, out: dict) -> str:
+    if tool == "import_script":
+        return f"Script imported: {out.get('scenes', 0)} scenes, {out.get('shots', 0)} shots."
+    if tool == "add_cast_from_image":
+        return f"The picture is now the reference of {out.get('name', 'it')}."
     if tool == "write_script":
         return f"Script rewritten: {out.get('scenes', 0)} scenes."
     if tool == "breakdown_shots":
@@ -213,7 +239,13 @@ def _live_agent(c: AgentCtx, message: str, selection: dict) -> str:
             .order_by(AgentMessage.id.desc()).first())
     prev_iid = (last.data or {}).get("interaction_id") if last else None
     sel = f"\n[Selected in UI: {json.dumps(selection)}]" if selection else ""
-    input_: Any = [{"type": "user_input", "content": message + sel}]
+    plain, notes = turn_notes(c, message)
+    if c.attachments:  # this engine gets the pictures as a note: their tags (look_at_attachment can't show them here)
+        notes.append("The pictures (this AI engine can't see them here; go by their tags):\n"
+                     + "\n".join(f"- {chat_attachments.label(c.db, a, i, len(c.attachments))}"
+                                 for i, a in enumerate(c.attachments, 1)))
+    note = ("\n\n[" + "\n".join(notes) + "]") if notes else ""
+    input_: Any = [{"type": "user_input", "content": (plain or "(see the attached pictures)") + note + sel}]
     text = ""
     for _ in range(MAX_STEPS):
         try:

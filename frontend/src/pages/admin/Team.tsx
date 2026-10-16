@@ -20,6 +20,7 @@ import "../../styles/admin.css";
 import "../../styles/console.css";
 import { ChipGroup } from "./shared/ChipGroup";
 import { Pill } from "./shared/Pill";
+import { WaitlistPanel } from "./shared/WaitlistPanel";
 
 type Tone = "neutral" | "accent" | "ok" | "warn" | "bad" | "info";
 
@@ -643,6 +644,8 @@ export default function TeamPage() {
           )}
         </>
       )}
+
+      {isAdmin && <WaitlistPanel />}
 
       {!isLoading && !isError && <RoleLegend counts={countsByRole} />}
 

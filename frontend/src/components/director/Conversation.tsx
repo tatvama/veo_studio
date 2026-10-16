@@ -9,6 +9,7 @@ import { getUiLanguage, tr, useT } from "../../lib/i18n";
 import type { AgentMessage, UserBrief } from "../../lib/types";
 import "../../styles/console.css";
 import { Alert, Button, rise, Skeleton } from "../ui";
+import { ChatText, MessageAttachments, type ShownAttachment } from "./Attachments";
 import { ConfirmCard } from "./ConfirmCard";
 import { Proposal, type Decision } from "./Proposal";
 import { RichText, splitNote } from "./RichText";
@@ -97,6 +98,31 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
+/** Long messages (a whole brief or script) open folded: the start, and a button for the rest. */
+const FOLD_AT = 1600;
+const FOLD_SHOW = 1200;
+
+function UserText({ text }: { text: string }) {
+  const t = useT();
+  const [open, setOpen] = useState(false);
+  if (!text.trim()) return null;
+  const long = text.length > FOLD_AT;
+  return (
+    <div className="whitespace-pre-wrap break-words px-3 py-2.5 text-sm leading-relaxed text-ink [overflow-wrap:anywhere]">
+      <ChatText text={long && !open ? text.slice(0, FOLD_SHOW).trimEnd() + "…" : text} />
+      {long && (
+        <button type="button" onClick={() => setOpen((o) => !o)} aria-expanded={open}
+          className="mono mt-1.5 block text-2xs font-medium uppercase tracking-[0.12em] text-accent-ink hover:underline">
+          {open ? t("Show less") : t("Show all ({n} characters)", { n: text.length.toLocaleString() })}
+        </button>
+      )}
+    </div>
+  );
+}
+
+const shownFrom = (m: AgentMessage): ShownAttachment[] =>
+  (m.data?.attachments ?? []).map((a) => ({ key: a.id, src: a.thumb_url || a.url, href: a.url, name: a.name, tag: a.tag }));
+
 const clock = (iso: string) => {
   try { return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); } catch { return ""; }
 };
@@ -149,7 +175,8 @@ const Row = memo(function Row({ item, me, boot, canEdit, decisions, busy, onDeci
       {mine ? (
         <div className="dr-msg cx-block group overflow-hidden" data-from="user">
           <BlockHead iso={m.created_at} tone="you">{sender}</BlockHead>
-          <div className="whitespace-pre-wrap break-words px-3 py-2.5 text-sm leading-relaxed text-ink [overflow-wrap:anywhere]">{m.content}</div>
+          <MessageAttachments items={shownFrom(m)} className="px-3 pt-2.5" />
+          <UserText text={m.content} />
         </div>
       ) : (
         <div className="group min-w-0">
@@ -327,8 +354,8 @@ export interface ConversationProps {
   loading: boolean;
   failed: boolean;
   onRetry: () => void;
-  /** Message the user just sent that the server hasn't returned yet. */
-  pending: { text: string; baseId: number } | null;
+  /** Message the user just sent that the server hasn't returned yet (with its pictures' local previews). */
+  pending: { text: string; baseId: number; attachments?: ShownAttachment[] } | null;
   sending: boolean;
   me?: UserBrief | null;
   canEdit: boolean;
@@ -459,7 +486,8 @@ export function Conversation({ messages, loading, failed, onRetry, pending, send
                     <span className="flex-1" />
                     <span className="mono text-2xs text-dim">{t("Sending…")}</span>
                   </header>
-                  <div className="whitespace-pre-wrap break-words px-3 py-2.5 text-sm leading-relaxed text-ink [overflow-wrap:anywhere]">{pending.text}</div>
+                  <MessageAttachments items={pending.attachments ?? []} className="px-3 pt-2.5" />
+                  <UserText text={pending.text} />
                 </div>
               </motion.div>
             )}

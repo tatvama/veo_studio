@@ -1,0 +1,115 @@
+/* The public landing page (pages/Landing.tsx). Built from the app's own tokens, so it works in both themes. It scrolls
+   inside .ld because the app's body never scrolls. The showreel stage and the marquee come from login.css. */
+@import "@fontsource-variable/anek-devanagari/wght.css";
+@import "@fontsource-variable/anek-kannada/wght.css";
+@import "@fontsource-variable/anek-telugu/wght.css";
+@import "@fontsource-variable/anek-tamil/wght.css";
+
+.ld {
+  position: relative; height: 100%; overflow-x: clip; overflow-y: auto; scroll-behavior: smooth;
+  background: var(--color-bg); color: var(--color-ink);
+}
+.ld-section { scroll-margin-top: 4rem; }
+
+/* Two faint colour glows that repeat down the page, so the long stretch between sections is never flat. */
+.ld-flow {
+  background-image:
+    radial-gradient(46rem 26rem at 4% 22rem, var(--glow-a), transparent 66%),
+    radial-gradient(46rem 26rem at 98% 62rem, var(--glow-b), transparent 66%);
+  background-size: 100% 92rem; background-repeat: repeat-y;
+}
+
+/* ── Type ───────────────────────────────────────────────────────────────────── */
+.ld-h1 {
+  font-size: clamp(2.7rem, 6.4vw, 5.6rem); line-height: 1.02; letter-spacing: -0.04em; font-weight: 650;
+  text-shadow: 0 2px 30px color-mix(in oklab, var(--color-bg) 70%, transparent);
+}
+.ld-h2 { font-size: clamp(1.9rem, 3.8vw, 3.25rem); line-height: 1.08; letter-spacing: -0.032em; font-weight: 650; }
+
+/* Indian scripts: Anek has all four, in a weight that matches the headline. */
+.ld-script, .ld-words > span { letter-spacing: 0; }
+[lang="hi"].ld-script, .ld-words > [lang="hi"] { font-family: "Anek Devanagari Variable", var(--font-sans); }
+[lang="kn"].ld-script, .ld-words > [lang="kn"] { font-family: "Anek Kannada Variable", var(--font-sans); }
+[lang="te"].ld-script, .ld-words > [lang="te"] { font-family: "Anek Telugu Variable", var(--font-sans); }
+[lang="ta"].ld-script, .ld-words > [lang="ta"] { font-family: "Anek Tamil Variable", var(--font-sans); }
+
+/* The word that changes in the headline. All five sit in one grid cell, so the line never changes width; the padding
+   keeps tall Indic glyphs inside the box that the gradient is painted in. */
+.ld-words { display: inline-grid; vertical-align: baseline; }
+.ld-words > span {
+  grid-area: 1 / 1; display: block; padding-block: 0.16em; margin-block: -0.16em; line-height: 1.1;
+  opacity: 0; transform: translateY(0.4em); filter: blur(8px);
+  transition: opacity 0.6s ease, transform 0.7s var(--ease-out-expo), filter 0.6s ease;
+}
+.ld-words > span[data-on] { opacity: 1; transform: none; filter: none; }
+
+/* Light theme only: a stronger wash on the text side of the hero, so copy stays readable over a bright frame. */
+.ld-scrim { position: absolute; inset: 0; z-index: 1; display: none; pointer-events: none; }
+:root[data-theme="light"] .ld-scrim {
+  display: block;
+  background: linear-gradient(90deg, color-mix(in oklab, var(--color-bg) 74%, transparent) 0%, color-mix(in oklab, var(--color-bg) 46%, transparent) 46%, transparent 78%);
+}
+@media (max-width: 1023px) {
+  :root[data-theme="light"] .ld-scrim { background: linear-gradient(180deg, color-mix(in oklab, var(--color-bg) 58%, transparent), color-mix(in oklab, var(--color-bg) 30%, transparent) 60%, transparent); }
+}
+
+/* ── Navigation ─────────────────────────────────────────────────────────────── */
+.ld-nav { border-bottom: 1px solid transparent; transition: background-color 0.25s ease, border-color 0.25s ease, backdrop-filter 0.25s ease; }
+.ld-nav[data-stuck] {
+  background: color-mix(in oklab, var(--color-bg) 82%, transparent); border-bottom-color: var(--color-line);
+  -webkit-backdrop-filter: blur(16px) saturate(1.4); backdrop-filter: blur(16px) saturate(1.4);
+}
+
+/* ── Cards ──────────────────────────────────────────────────────────────────── */
+.ld-card {
+  position: relative; overflow: hidden; border-radius: 1.25rem; border: 1px solid var(--color-line);
+  background: color-mix(in oklab, var(--color-panel) 78%, transparent); box-shadow: var(--shadow-card);
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
+}
+.ld-card:hover { border-color: color-mix(in oklab, var(--color-accent) 38%, var(--color-line)); box-shadow: var(--shadow-lift); }
+.ld-card > * { position: relative; z-index: 1; }
+/* a soft light under the pointer (--mx / --my are set by <Spot>) */
+.ld-spot::before {
+  content: ""; position: absolute; inset: 0; z-index: 0; pointer-events: none; opacity: 0; transition: opacity 0.3s ease;
+  background: radial-gradient(22rem circle at var(--mx, 50%) var(--my, 0%), color-mix(in oklab, var(--color-accent) 17%, transparent), transparent 62%);
+}
+.ld-spot:hover::before { opacity: 1; }
+
+/* ── The studio window ──────────────────────────────────────────────────────── */
+.ld-window {
+  max-width: 64rem; margin-inline: auto; overflow: hidden; border-radius: 1.25rem; border: 1px solid var(--color-line);
+  background: color-mix(in oklab, var(--color-panel) 94%, transparent);
+  box-shadow: 0 50px 120px -30px rgb(0 0 0 / 0.7), 0 0 90px -20px rgb(34 211 238 / 0.18), 0 0 0 1px color-mix(in oklab, var(--color-accent) 10%, transparent);
+}
+:root[data-theme="light"] .ld-window { box-shadow: 0 40px 90px -30px rgb(15 23 42 / 0.35), 0 0 0 1px var(--color-line); }
+
+/* ── Made in India ──────────────────────────────────────────────────────────── */
+.ld-india-glow {
+  position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(40rem 26rem at 0% 28%, rgb(255 153 51 / 0.13), transparent 66%),
+    radial-gradient(40rem 26rem at 100% 74%, rgb(19 136 8 / 0.15), transparent 66%);
+}
+
+/* ── Cost estimator slider ──────────────────────────────────────────────────── */
+.ld-range {
+  -webkit-appearance: none; appearance: none; height: 6px; border-radius: 9999px; cursor: pointer;
+  background: linear-gradient(90deg, var(--color-accent) 0, var(--color-accent-2) var(--p, 0%), var(--color-raised) var(--p, 0%));
+}
+.ld-range::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 24px; height: 24px; border-radius: 9999px; background: var(--color-ink);
+  border: 4px solid var(--color-accent); box-shadow: 0 2px 12px rgb(0 0 0 / 0.4); transition: transform 0.15s ease;
+}
+.ld-range::-webkit-slider-thumb:hover { transform: scale(1.12); }
+.ld-range::-moz-range-thumb { width: 16px; height: 16px; border-radius: 9999px; background: var(--color-ink); border: 4px solid var(--color-accent); }
+.ld-range::-moz-range-track { background: transparent; }
+.ld-range:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 8px; }
+
+/* ── Waitlist ───────────────────────────────────────────────────────────────── */
+.ld-wait-bg {
+  position: absolute; inset: 0; z-index: -1;
+  background:
+    linear-gradient(90deg, color-mix(in oklab, var(--color-bg) 93%, transparent) 0%, color-mix(in oklab, var(--color-bg) 62%, transparent) 55%, color-mix(in oklab, var(--color-bg) 78%, transparent) 100%),
+    linear-gradient(180deg, var(--color-bg) 0%, transparent 28%, transparent 72%, var(--color-bg) 100%),
+    url("/showcase/backwaters.webp") center / cover;
+}

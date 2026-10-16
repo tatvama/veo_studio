@@ -57,6 +57,10 @@ dollars, audit log, roles (Admin, Producer, Creator, Reviewer, Viewer), command 
 installable PWA, **Tatvam Studio desktop** (Electron) for 4K finishing on the editor's own graphics card, and **Mock mode** so
 the whole flow runs free before you add any keys.
 
+The web address itself opens on a public **landing page** (features, a rupee cost estimator, the showreel, an FAQ and a
+**waitlist** for email and mobile number). *Sign in* is at `/login`, and admins read the waitlist on the **Team** page
+([user guide](docs/USER_GUIDE.md#interface)).
+
 ## Architecture
 
 ```mermaid
@@ -605,7 +609,7 @@ backend/app/
   models.py          database tables       settings_store.py  team settings + encrypted API keys
   api/               REST: auth, admin, projects, bible, board, shots, generate, work (jobs, approvals, agent, ws, media),
                      production, campaign, hub (Model Hub), room (writers' room), growth, designs (posters), layers,
-                     mcp_access, rates, fx, desktop (checkout, versions, manifest, render plan, uploads, upscale)
+                     mcp_access, rates, fx, waitlist (public landing page: join, rates), desktop (checkout, versions, manifest, render plan, uploads, upscale)
   core/              studio, generation, model_hub, budget, jobs, lock, continuity, mentions, dependencies (change impact),
                      scene_chain + scene_order (continuity ordering), autopilot, recovery, youtube, audit, rates, desktop …
   agents/            director.py (agent loop: Claude or Gemini, keyword mock), director_claude.py, tools.py, prompts.py
