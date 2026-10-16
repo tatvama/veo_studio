@@ -5,6 +5,27 @@ All notable changes to Tatvam AI Studio. From 3.0.0 on, this file is written by
 ([Conventional Commits](https://www.conventionalcommits.org/)); see [CONTRIBUTING.md](CONTRIBUTING.md#releases).
 Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.2.0](https://github.com/tatvama/veo_studio/compare/v3.1.0...v3.2.0) (2026-10-16)
+
+
+### Features
+
+* **cast:** character boards, one-request Seedream boards and a per-character image engine ([#51](https://github.com/tatvama/veo_studio/issues/51)) ([c79ad56](https://github.com/tatvama/veo_studio/commit/c79ad569ea7c62b4fa48d86454da346e55e33edb))
+* **cast:** register AI-made character uploads with BytePlus, safely ([#49](https://github.com/tatvama/veo_studio/issues/49)) ([ab2bd9b](https://github.com/tatvama/veo_studio/commit/ab2bd9b35eecfd9465bf23b15b568a439da856d3))
+* **director:** one long prompt with tagged pictures and [@mentions](https://github.com/mentions) ([#52](https://github.com/tatvama/veo_studio/issues/52)) ([b5b81cf](https://github.com/tatvama/veo_studio/commit/b5b81cf4ecefd20d08de51a4f56efff492770eb9))
+* public landing page with a rupee cost estimator and a waitlist ([#53](https://github.com/tatvama/veo_studio/issues/53)) ([7634f12](https://github.com/tatvama/veo_studio/commit/7634f12b6b10d8e90c32cf960ac2d96b6e09be20))
+
+
+### Bug Fixes
+
+* **autopilot:** keep the user's script in the critic pass ([#48](https://github.com/tatvama/veo_studio/issues/48)) ([ae97461](https://github.com/tatvama/veo_studio/commit/ae9746169f6394d08604b1a22dc0a87fec507f05))
+* **backend:** close review findings in auth, migrations, jobs and rendering ([#43](https://github.com/tatvama/veo_studio/issues/43)) ([ebc1b70](https://github.com/tatvama/veo_studio/commit/ebc1b707bad569a7702863836079df910d1f67fc))
+* **byteplus:** don't send removal error text to the browser ([#50](https://github.com/tatvama/veo_studio/issues/50)) ([d2d4f53](https://github.com/tatvama/veo_studio/commit/d2d4f53145af4c6b05851c8dcfcf89e18bd61246))
+* **desktop:** ffmpeg pipe hangs, trust boundaries and GPU gating ([#46](https://github.com/tatvama/veo_studio/issues/46)) ([0f8582e](https://github.com/tatvama/veo_studio/commit/0f8582e4450d6282fbccfc718c17a1a596c6e5e8))
+* **director:** keep thread pictures as files, not base64 in the database ([#55](https://github.com/tatvama/veo_studio/issues/55)) ([39b3d1c](https://github.com/tatvama/veo_studio/commit/39b3d1cac9ac3d0d583ca548bade6e9a83b08adb))
+* **engine:** decoder fallback, GPU leaks and bounded caches ([#45](https://github.com/tatvama/veo_studio/issues/45)) ([67a3388](https://github.com/tatvama/veo_studio/commit/67a3388eba0de51f587793116eaec02ddb4d95c1))
+* **frontend:** guard paid actions, offline shell and lazy dictionaries ([#44](https://github.com/tatvama/veo_studio/issues/44)) ([5be2a4a](https://github.com/tatvama/veo_studio/commit/5be2a4a793853f6b37db46f791af58c4fbbd5656))
+
 ## [3.1.0](https://github.com/tatvama/veo_studio/compare/v3.0.0...v3.1.0) (2026-10-15)
 
 
