@@ -5,6 +5,13 @@ All notable changes to Tatvam AI Studio. From 3.0.0 on, this file is written by
 ([Conventional Commits](https://www.conventionalcommits.org/)); see [CONTRIBUTING.md](CONTRIBUTING.md#releases).
 Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.3.0](https://github.com/tatvama/veo_studio/compare/v3.2.0...v3.3.0) (2026-10-16)
+
+
+### Features
+
+* **frames:** start and end frames, synced clips and a Seedream frames engine ([#54](https://github.com/tatvama/veo_studio/issues/54)) ([746354b](https://github.com/tatvama/veo_studio/commit/746354bc909726bf6ad280a4dbec615a9f1e997b))
+
 ## [3.2.0](https://github.com/tatvama/veo_studio/compare/v3.1.0...v3.2.0) (2026-10-16)
 
 
