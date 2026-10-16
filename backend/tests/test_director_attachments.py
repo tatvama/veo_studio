@@ -275,3 +275,19 @@ def test_character_sheets_for_cast_with_only_a_photo(client: TestClient):
         assert job.type == "character_sheet" and job.payload["kinds"] == ["front", "three_quarter", "full_body"]
         assert "error" in T.run_tool(c, "make_character_sheets", {"characters": ["Nobody Here"]})
         ok(client.post(f"/api/batches/{out['batch_id']}/cancel", headers=H))
+
+
+def test_mention_tokens_stay_fast_on_hostile_text():
+    """A 30k-character chat line of "@[" with no closing "]" must not make the token regex rescan the line from
+    every "@[" (polynomial time); names longer than NAME_MAX are never tokens anyway."""
+    import time
+
+    from app.core import mentions
+
+    hostile = "@[" * 15_000
+    t0 = time.perf_counter()
+    assert mentions.find(hostile) == [] and mentions.plain(hostile) == hostile
+    assert time.perf_counter() - t0 < 1.0
+    ok_token = "@[" + "N" * mentions.NAME_MAX + "](character:7)"
+    assert mentions.find(ok_token) == [("character", 7, "N" * mentions.NAME_MAX)]
+    assert mentions.find("@[" + "N" * (mentions.NAME_MAX + 1) + "](character:7)") == []

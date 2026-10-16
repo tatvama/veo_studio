@@ -14,7 +14,10 @@ from sqlalchemy.orm import Session
 from ..models import Character, Location, Project, ProjectLocation, ProjectProp, Prop, User
 
 KINDS = ("character", "location", "prop")
-TOKEN_RE = re.compile(r"@\[([^\]\n]+)\]\((character|location|prop):(\d+)\)")
+# Names are at most 160 characters (Location/Prop.name). The bound keeps a long line full of "@[" with no closing "]"
+# linear, instead of rescanning the rest of the line from every "@[" (chat messages are user text up to 30k chars).
+NAME_MAX = 160
+TOKEN_RE = re.compile(r"@\[([^\]\n]{1,%d})\]\((character|location|prop):(\d{1,12})\)" % NAME_MAX)
 # a bare @Name typed or imported without the picker: one word, any script (Latin, Devanagari, Kannada ...)
 BARE_RE = re.compile(r"(?<![\w@\]])@([^\s@\[\]().,;:!?\"']+)", re.U)
 TEXT_FIELDS = ("action", "summary", "logline")  # script text fields that may hold mentions (plus every line)
@@ -238,7 +241,7 @@ def resolve_script(db: Session, project: Project, script: dict | None, create_mi
 
 def rename(script: dict | None, kind: str, id_: int, new_name: str) -> dict:
     """Update the display name inside every token of that entity (the id is what matters)."""
-    pat = re.compile(r"@\[[^\]\n]+\]\(" + re.escape(kind) + ":" + str(int(id_)) + r"\)")
+    pat = re.compile(r"@\[[^\]\n]{1,%d}\]\(" % NAME_MAX + re.escape(kind) + ":" + str(int(id_)) + r"\)")
     return walk(script, lambda t: pat.sub(token(kind, id_, new_name), t))
 
 
