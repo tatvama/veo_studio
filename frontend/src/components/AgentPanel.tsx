@@ -2,7 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import { Rocket, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
-import { useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { toast } from "sonner";
 import { clearAgentProgress, useMyAgentLive } from "../lib/agentProgress";
 import { api } from "../lib/api";
@@ -10,8 +10,9 @@ import { usd } from "../lib/format";
 import { tr, useT } from "../lib/i18n";
 import { useAgentMessages, useAuthStatus, useEpisode } from "../lib/queries";
 import { useUI } from "../lib/store";
-import type { Project } from "../lib/types";
+import type { AgentAttachment, AgentAttachmentTag, Project } from "../lib/types";
 import { useProjectCtx } from "../pages/project/context";
+import { MAX_ATTACHMENT_BYTES, MAX_ATTACHMENTS, type DraftAttachment, type ShownAttachment } from "./director/Attachments";
 import { Composer } from "./director/Composer";
 import { Conversation } from "./director/Conversation";
 import { ModeSwitch, type AgentMode } from "./director/ModeSwitch";
@@ -22,8 +23,10 @@ import "../styles/console.css";
 import "../styles/director.css";
 import { Button, IconButton } from "./ui";
 
-/** Unsent text per project: survives closing and re-opening the panel. */
+/** Unsent text and pictures per project: survive closing and re-opening the panel. */
 const drafts = new Map<number, string>();
+const pictureDrafts = new Map<number, DraftAttachment[]>();
+let pictureSeq = 0;
 
 /**
  * The project's AI co-pilot. ProjectLayout docks it on wide screens and floats it over the page on narrow ones;
@@ -41,8 +44,9 @@ export default function AgentPanel() {
   const { data: episode } = useEpisode(eid, lang);
 
   const [text, setText] = useState(() => drafts.get(project.id) ?? "");
+  const [pictures, setPicturesState] = useState<DraftAttachment[]>(() => pictureDrafts.get(project.id) ?? []);
   const [sending, setSending] = useState(false);
-  const [pending, setPending] = useState<{ text: string; baseId: number } | null>(null);
+  const [pending, setPending] = useState<{ text: string; baseId: number; attachments?: ShownAttachment[] } | null>(null);
   const [decisions, setDecisions] = useState<Record<string, Decision>>({});
   const [busy, setBusy] = useState<Record<string, "approve" | "reject">>({});
   const [confirmBusy, setConfirmBusy] = useState<Record<string, "yes" | "no">>({});
@@ -72,25 +76,65 @@ export default function AgentPanel() {
   const link = sending ? "working" : apRunning ? "autopilot" : ap.status === "paused" ? "paused" : "standby";
 
   const edit = (v: string) => { setText(v); drafts.set(project.id, v); };
+  // the pictures are kept per project (a functional update, so uploads finishing in any order all land)
+  const pid = project.id;
+  const setPictures = (fn: (cur: DraftAttachment[]) => DraftAttachment[]) =>
+    setPicturesState((cur) => { const next = fn(cur); pictureDrafts.set(pid, next); return next; });
+
+  /** Upload pictures for the next message at once (each shows a local preview meanwhile), up to 8 per message. */
+  const addPictures = (files: File[]) => {
+    const room = MAX_ATTACHMENTS - (pictureDrafts.get(pid) ?? pictures).length;
+    if (files.length > room) toast.warning(tr("Up to {n} pictures per message", { n: MAX_ATTACHMENTS }));
+    for (const file of files.slice(0, Math.max(0, room))) {
+      if (file.size > MAX_ATTACHMENT_BYTES) { toast.error(tr("{name} is too large (max 15 MB)", { name: file.name || tr("The picture") })); continue; }
+      const key = `p${++pictureSeq}`;
+      const draft: DraftAttachment = { key, preview: URL.createObjectURL(file), name: file.name || tr("Pasted picture"), status: "uploading", tag: null };
+      setPictures((cur) => [...cur, draft]);
+      api.upload<AgentAttachment>(`/api/projects/${pid}/agent/attachments`, file)
+        .then((up) => setPictures((cur) => cur.map((a) => (a.key === key ? { ...a, id: up.id, status: "ready" } : a))))
+        .catch(() => { // api() already showed the reason
+          setPictures((cur) => cur.filter((a) => a.key !== key));
+          URL.revokeObjectURL(draft.preview);
+        });
+    }
+  };
+  const removePicture = (key: string) => setPictures((cur) => {
+    const gone = cur.find((a) => a.key === key);
+    if (gone) URL.revokeObjectURL(gone.preview);
+    return cur.filter((a) => a.key !== key);
+  });
+  const tagPicture = (key: string, tag: AgentAttachmentTag | null) => setPictures((cur) => cur.map((a) => (a.key === key ? { ...a, tag } : a)));
+  // a picture removed or sent frees its preview once nothing shows it any more
+  const sentPreviews = useRef<string[]>([]);
+  useEffect(() => () => { for (const u of sentPreviews.current) URL.revokeObjectURL(u); }, []);
 
   const send = async (msg?: string) => {
     const m = (msg ?? text).trim();
-    if (!m || sending) return;
+    const withPictures = msg === undefined ? pictures : []; // a quick order goes without them
+    if ((!m && !withPictures.length) || sending || withPictures.some((a) => a.status !== "ready")) return;
     const baseId = messages?.[messages.length - 1]?.id ?? 0;
     edit("");
+    if (withPictures.length) setPictures(() => []);
     clearAgentProgress(project.id, auth?.user?.id);
-    setPending({ text: m, baseId });
+    setPending({ text: m, baseId, attachments: withPictures.map((a) => ({ key: a.key, src: a.preview, name: a.name, tag: a.tag })) });
     setSending(true);
     try {
       await api.post(`/api/projects/${project.id}/agent/chat`, {
         message: m, episode_id: eid, selection: selectedCode ? { shot: selectedCode, language: lang } : { language: lang },
+        attachments: withPictures.map((a) => ({ id: a.id, tag: a.tag })),
       });
+      sentPreviews.current.push(...withPictures.map((a) => a.preview));
       await qc.invalidateQueries({ queryKey: ["agent", project.id] });
       qc.invalidateQueries({ queryKey: ["episode"] });
       qc.invalidateQueries({ queryKey: ["project", project.id] });
+      if (withPictures.length) {
+        qc.invalidateQueries({ queryKey: ["characters"] });
+        qc.invalidateQueries({ queryKey: ["mentions", project.id] });
+      }
     } catch {
-      // api() already showed the reason; give the text back so nothing is lost
+      // api() already showed the reason; give the text and the pictures back so nothing is lost
       setText((cur) => { const next = cur || m; drafts.set(project.id, next); return next; });
+      if (withPictures.length) setPictures((cur) => [...withPictures, ...cur].slice(0, MAX_ATTACHMENTS));
     } finally {
       setSending(false);
       setPending(null);
@@ -298,6 +342,11 @@ export default function AgentPanel() {
       />
 
       <Composer
+        pid={project.id}
+        attachments={pictures}
+        onFiles={addPictures}
+        onRemoveAttachment={removePicture}
+        onTagAttachment={tagPicture}
         value={text}
         onChange={edit}
         onSend={() => void send()}

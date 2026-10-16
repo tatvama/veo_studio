@@ -380,7 +380,8 @@ def produce(ctx: JobContext) -> dict:
             if step == "keyframes":
                 specs = generation.keyframe_specs(db, project, shots, only_missing=True)
             elif step == "videos":  # in link order: a shot that continues another starts from its finished clip
-                need = [s.id for s in shots if not is_real(current(db, s.id, "video"))]
+                # remake: the Director was asked for these shots by name, so they are made again even with a video
+                need = [s.id for s in shots if p.get("remake") or not is_real(current(db, s.id, "video"))]
                 db.commit()
                 res = scene_chain.make_videos_in_order(SessionLocal, run_children, project.id, need, quality, label)
                 done[step] = res["videos"]

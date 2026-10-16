@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from .. import catalog
-from ..core import generation, jobs, sheet_engine, studio
+from ..core import generation, jobs, reference_images, sheet_engine, studio
 from ..db import get_db
 from ..events import emit
 from ..models import (Character, CharacterAsset, Consent, Location, LocationAsset, Project, ProjectCast, ProjectLocation, Style,
@@ -17,7 +17,7 @@ from ..storage import get_storage
 from .common import character_out, get_or_404, location_out
 
 router = APIRouter(prefix="/api", tags=["bible"])
-IMG_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
+IMG_TYPES = reference_images.IMAGE_TYPES
 
 
 def _check_unlocked(row, user: User) -> None:
@@ -686,10 +686,7 @@ async def upload_location_photo(lid: int, file: UploadFile = File(...), user: Us
     ext = IMG_TYPES.get(file.content_type or "")
     if not ext:
         raise HTTPException(400, "Upload a PNG, JPG or WEBP image")
-    st = get_storage()
-    rel = st.save_bytes(st.new_path(f"locations/{lid}", ext), await file.read())
-    db.add(LocationAsset(location_id=lid, kind="source", label="uploaded photo", path=rel, approved=True))
-    db.commit()
+    reference_images.save_location_image(db, l, await file.read(), ext)
     return location_out(db, l)
 
 

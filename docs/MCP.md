@@ -45,7 +45,7 @@ A token can be limited to some projects.
 | Scenes | `plan_scenes` (scene cards: goal, conflict, turn, wardrobe, props, blocking, coverage), `list_scenes`, `update_scene` |
 | Cast & places | `build_bible`, `get_cast`, `lock_character`, `add_costume`, `set_outfit`, `freeze_look`, `set_dialogue_route` |
 | Storyboard | `breakdown_shots`, `get_storyboard` (returns the keyframe pictures), `get_shot` (exact prompt, takes, QC, a 6-hour link to watch the clip), `update_shot` (incl. `continues_from`), `add_shot_after`, `generate_keyframes` |
-| Video, scene by scene | `generate_scenes` (see below), `generate_videos` (single shots), `regenerate_stale`, `impact_report`, `edit_clip` |
+| Video, scene by scene | `generate_scenes` (see below), `generate_videos` (single shots; linked ones in link order), `regenerate_stale`, `impact_report`, `edit_clip` |
 | Continuity | `get_continuity` (end states, wardrobe timeline, every shot link: ok / waiting / broken), `continuity_state`, `edit_end_state`, `continuity_check` |
 | Finish | `voice_and_lipsync`, `generate_music`, `make_animatic`, `export_video`, `dub_episode`, `make_cutdowns`, `start_autopilot` |
 | Jobs & money | `job_status` (with `wait_seconds`, reports progress), `list_pending`, `approve_spend`, `cancel_jobs` |

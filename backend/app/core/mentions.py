@@ -14,7 +14,10 @@ from sqlalchemy.orm import Session
 from ..models import Character, Location, Project, ProjectLocation, ProjectProp, Prop, User
 
 KINDS = ("character", "location", "prop")
-TOKEN_RE = re.compile(r"@\[([^\]\n]+)\]\((character|location|prop):(\d+)\)")
+# Names are at most 160 characters (Location/Prop.name). The bound keeps a long line full of "@[" with no closing "]"
+# linear, instead of rescanning the rest of the line from every "@[" (chat messages are user text up to 30k chars).
+NAME_MAX = 160
+TOKEN_RE = re.compile(r"@\[([^\]\n]{1,%d})\]\((character|location|prop):(\d{1,12})\)" % NAME_MAX)
 # a bare @Name typed or imported without the picker: one word, any script (Latin, Devanagari, Kannada ...)
 BARE_RE = re.compile(r"(?<![\w@\]])@([^\s@\[\]().,;:!?\"']+)", re.U)
 TEXT_FIELDS = ("action", "summary", "logline")  # script text fields that may hold mentions (plus every line)
@@ -180,6 +183,55 @@ def resolve(db: Session, project: Project | None, text: str, create_missing: boo
     return BARE_RE.sub(sub, text)
 
 
+def chat_context(db: Session, project: Project, text: str, limit: int = 30) -> tuple[str, list[str]]:
+    """A Director chat message as the AI reads it: tokens become `@Name`, and every mention (picked from the list or
+    typed as a bare `@Name`) is listed with the id and what it is. Nothing is created or linked."""
+    from ..models import CharacterAsset
+    from . import studio
+    models = {"character": Character, "location": Location, "prop": Prop}
+    cast = studio.cast(db, project)
+    cast_ids = {c.id for c in cast}
+    proj_locs = {r.location_id for r in db.query(ProjectLocation).filter(ProjectLocation.project_id == project.id).all()}
+    proj_props = {r.prop_id for r in db.query(ProjectProp).filter(ProjectProp.project_id == project.id).all()}
+
+    def about(kind: str, row: Any) -> str:
+        if kind == "character":
+            n = db.query(CharacterAsset).filter(CharacterAsset.character_id == row.id, CharacterAsset.archived.is_(False),
+                                                CharacterAsset.approved.is_(True)).count()
+            where = "in the cast" if row.id in cast_ids else "in the shared library, not in this project's cast yet"
+            return f"{where}, {n} approved reference image{'' if n == 1 else 's'}" + (", locked" if row.locked else "")
+        mine = row.id in (proj_locs if kind == "location" else proj_props)
+        pic = ", has a picture" if kind == "prop" and row.path else ""
+        return ("in this project" if mine else "in the shared library") + pic
+
+    lines: list[str] = []
+    seen: set[tuple[str, int]] = set()
+    for kind, id_, name in find(text):
+        if (kind, id_) in seen:
+            continue
+        seen.add((kind, id_))
+        row = db.get(models[kind], id_)
+        if row is None or getattr(row, "archived", False):
+            lines.append(f"@{name}: {kind} #{id_} no longer exists")
+        else:
+            lines.append(f"@{row.name} = {kind} #{row.id} ({about(kind, row)})")
+    chars = cast + [c for c in db.query(Character).filter(Character.shared.is_(True), Character.archived.is_(False)).all()
+                    if c.id not in cast_ids]
+    locs = db.query(Location).filter(Location.archived.is_(False)).all()
+    props = db.query(Prop).filter(Prop.archived.is_(False)).all()
+    for m in BARE_RE.finditer(text or ""):
+        name = m.group(1)
+        hit = next(((k, r) for k, rows in (("character", chars), ("location", locs), ("prop", props))
+                    if (r := _match_name(name, rows)) is not None), None)
+        if hit and (hit[0], hit[1].id) not in seen:
+            seen.add((hit[0], hit[1].id))
+            lines.append(f"@{name} = {hit[0]} #{hit[1].id} {hit[1].name} ({about(*hit)})")
+        elif not hit and ("?", hash(name.lower())) not in seen:
+            seen.add(("?", hash(name.lower())))
+            lines.append(f"@{name}: no character, location or prop with that name yet")
+    return TOKEN_RE.sub(lambda m: "@" + m.group(1), text or ""), lines[:limit]
+
+
 def resolve_script(db: Session, project: Project, script: dict | None, create_missing: bool = False,
                    user: User | None = None) -> tuple[dict, list[dict]]:
     created: list[dict] = []
@@ -189,7 +241,7 @@ def resolve_script(db: Session, project: Project, script: dict | None, create_mi
 
 def rename(script: dict | None, kind: str, id_: int, new_name: str) -> dict:
     """Update the display name inside every token of that entity (the id is what matters)."""
-    pat = re.compile(r"@\[[^\]\n]+\]\(" + re.escape(kind) + ":" + str(int(id_)) + r"\)")
+    pat = re.compile(r"@\[[^\]\n]{1,%d}\]\(" % NAME_MAX + re.escape(kind) + ":" + str(int(id_)) + r"\)")
     return walk(script, lambda t: pat.sub(token(kind, id_, new_name), t))
 
 

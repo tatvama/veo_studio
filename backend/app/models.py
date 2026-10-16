@@ -635,6 +635,26 @@ class AgentMessage(Base, Serializable):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 
+class AgentAttachment(Base, Serializable):
+    """A picture attached to a Director chat message (core/chat_attachments.py). Uploaded first, then sent with a
+    message, which records it in its data["attachments"] with the tag the user gave it."""
+    __tablename__ = "agent_attachments"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    project_id: Mapped[int] = mapped_column(Integer, index=True)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    message_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)  # the chat message it went with
+    path: Mapped[str] = mapped_column(String(500))
+    thumb_path: Mapped[str] = mapped_column(String(500), default="")
+    mime: Mapped[str] = mapped_column(String(40), default="image/jpeg")
+    filename: Mapped[str] = mapped_column(String(200), default="")
+    width: Mapped[int] = mapped_column(Integer, default=0)
+    height: Mapped[int] = mapped_column(Integer, default=0)
+    size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    # what the user said it is: {kind: character|location|prop|style, id?, name?} (None = untagged)
+    tag: Mapped[Any] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
 class Event(Base, Serializable):
     __tablename__ = "events"
     id: Mapped[int] = mapped_column(primary_key=True)

@@ -23,7 +23,7 @@ How to use the studio day to day. For installing, configuring and deploying it, 
 | Finishing room | 4 Edit › Finishing room | **Check out** the cut so the web timeline goes read-only for everyone else, **check in** with a note (every check-in is a version you can **restore**), **AI upscale** to 4K or 2K (free on the desktop's graphics card, or in the cloud with the price shown first), **review notes** from your renders as markers on the timeline, and **pop-out** program monitor, scopes, mixer and notes windows. In the **desktop app** it also has the project folder, file names in series, local 4K renders on your graphics card and the machine check (see below) |
 | Export | 5 Deliver › Export | **Animatic** (free preview), **Render** (Shorts / Reels / YouTube / Square, karaoke or clean captions, auto-reframe, brand-kit end card), **Dub**, **Cut into shorts**, **Marketing pack** (titles, descriptions, hashtags and thumbnails per platform and language), **Publish to YouTube** (or schedule it), **Client link** |
 | Review | 5 Deliver › Review | Frame-accurate player, timecoded comments, draw on the frame, A/B **wipe compare** between renders, approve the final. Clients get a link that works without an account, on phone or desktop |
-| Director | Right panel (`Ctrl+J`) | Ask in plain words, e.g. *"dub into Telugu"*, *"Ravi wears his wedding outfit in this episode"*, *"cut this into 3 shorts"*, *"freeze Ravi's look for episodes 1-3"*, *"what is stale?"*. In Co-pilot mode it proposes the work with a price and you click **Approve** |
+| Director | Right panel (`Ctrl+J`) | Ask in plain words, e.g. *"dub into Telugu"*, *"Ravi wears his wedding outfit in this episode"*, *"cut this into 3 shorts"*, *"freeze Ravi's look for episodes 1-3"*, *"what is stale?"*. Or give it the whole film in one message with tagged pictures ([below](#the-director-one-long-prompt-with-pictures)). In Co-pilot mode it proposes the work with a price and you click **Approve** |
 | World | 2 Cast › Props & wardrobe | **Props** (reusable objects with a reference image, mentioned in scripts with `@`), the **wardrobe timeline** (who wears what in every scene, continuity breaks flagged) and the **Continuity Bible** (the state at the end of every scene, written by AI and corrected by hand, carried into the next scene's prompts) |
 | Dashboard | Overview (project home) | Shots by status, approved vs planned seconds, spend by provider, **cost per approved second**, **change impact** (everything stale after an edit, with a one-click regenerate), seasons |
 | Ads & Reels | 5 Deliver › Ads & Reels | One brief into every language x aspect variant with **locked brand facts**; reels cut from highlights of what you already made |
@@ -31,6 +31,23 @@ How to use the studio day to day. For installing, configuring and deploying it, 
 **v3 (Tatvam):** `@mentions` in the script editor (characters, places, props stored by id), an import wizard that previews visuals and dialogue before anything is saved, Film Map **shot-to-shot links** (last frame or extension) and **next shot**, the **Character Lock** (face, body, voice, costume, gestures, strictness), **character versions** per episode range, **costumes** with 3-angle turnarounds, the **back view** and **lighting variants** in the reference pack, the **Google dialogue route** (Veo speaks each line itself in the languages you allow; dubbing regenerates per language; QC checks the words spoken), **change impact** (edits mark takes stale instead of deleting anything), and a professional timeline (right-click AI actions, roll trims, speed, keyframe animation on layers). Design notes: [docs/V3.md](docs/V3.md); the plan: [TATVAM_PLAN.md](TATVAM_PLAN.md).
 
 **Anywhere:** `Ctrl+K` opens the command palette (pages, projects, actions, theme, language, search). `?` lists every shortcut. **Search everything** finds shots, takes, scenes, characters and renders by what's in them ("Ravi near the lamp at night").
+
+### The Director: one long prompt with pictures
+
+Give the Director the whole film in one message, up to 30,000 characters: a story, a brief or your finished script, with reference pictures of the cast, the places and the look.
+
+- **Attach pictures** with the picture button in the Director box, by pasting them (`Ctrl+V`) or by dropping them on the box: up to 8 per message (PNG, JPG or WEBP, 15 MB each).
+- **Tag each picture** with the label under its thumbnail: an existing character, location or prop (the project's, or the shared library's), a **new name** (it becomes cast), or **Look / style reference**. An untagged picture is fine; the Director asks when it matters.
+- **@mentions:** type `@` in the box to pick a character, place or prop from the same list as the script editor. The Director gets exactly that one, not just a name.
+- What the Director then does, with a live checklist:
+  1. adds the tagged people, places and props to **2 Cast**, with your picture as their approved reference (the same as uploading it there);
+  2. imports your script **word for word** (scenes, shots and lines as you wrote them; it leaves out the instructions around the script), or writes the script from your story;
+  3. plans the scene cards and the shots, and checks continuity;
+  4. proposes the paid steps with their price, cheapest first: character sheets for cast that only has your photo, keyframes, then the **videos scene by scene**. Each scene carries the wardrobe, props and time of day of the one before, a scene that picks up straight from the previous one starts from its last frame, and linked shots start from the last frame of the clip they continue. Ask it to pause after each scene to review as you go.
+- **Engines:** say *"make it on Seedance"* (or name another engine of the Model Hub) and the Director sets that engine on the shots. Otherwise every shot stays on **Auto** (the team's routing, Google first).
+- **Money and your work:** in **Ask me first** mode every paid step waits for **Approve**, and anything that would replace your work (a new script, a new shot list) shows a Confirm card first. Budgets, limits and producer approvals apply as everywhere.
+- The pictures stay in the chat with their tags, and long messages open folded (**Show all**). With Claude as the Director's engine it sees the pictures; with Gemini it goes by their tags.
+- Shots that continue another shot are always made in link order, also when you ask for the videos of a few shots.
 
 ### Quality modes
 | Mode | How | ≈ $/second |

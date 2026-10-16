@@ -8,18 +8,17 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..core import continuity, dashboard, dependencies, generation, jobs, lock as lock_core, mentions, studio
+from ..core import continuity, dashboard, dependencies, generation, jobs, lock as lock_core, mentions, reference_images, studio
 from ..db import get_db
 from ..events import emit
 from ..models import (Character, CharacterAsset, CharacterVersion, Costume, Episode, Project, ProjectProp, Prop, Scene, Season,
                       Shot, User)
 from ..pipeline.prompting import dialogue_warnings, look_of
 from ..security import current_user, require
-from ..storage import get_storage
 from .common import get_or_404, url
 
 router = APIRouter(prefix="/api", tags=["production"])
-IMG_TYPES = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
+IMG_TYPES = reference_images.IMAGE_TYPES
 
 
 def _episode(db: Session, eid: int) -> tuple[Episode, Project]:
@@ -509,11 +508,9 @@ async def upload_prop_image(prid: int, file: UploadFile = File(...), user: User 
     if not ext:
         raise HTTPException(400, "Upload a PNG, JPEG or WebP image")
     data = await file.read()
-    if len(data) > 15 * 1024 * 1024:
+    if len(data) > reference_images.MAX_BYTES:
         raise HTTPException(400, "Image is too large (max 15 MB)")
-    st = get_storage()
-    p.path = st.save_bytes(st.new_path(f"props/{p.id}", ext), data)
-    db.commit()
+    reference_images.save_prop_image(db, p, data, ext)
     return _prop_out(p)
 
 

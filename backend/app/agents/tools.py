@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import shutil
 import uuid
 from dataclasses import dataclass, field
@@ -13,9 +14,9 @@ from sqlalchemy.orm import Session
 from .. import catalog
 from ..core import budget, continuity, dependencies, generation, jobs, lock as lock_core, studio
 from ..db import utcnow
-from ..models import Character, Episode, Location, Project, Scene, Shot, Style, User
+from ..models import AgentMessage, Character, Episode, Location, Project, Scene, Shot, Style, User
 from ..pipeline import ffmpeg as ff
-from ..pipeline.selection import current, takes
+from ..pipeline.selection import current, is_real, takes
 from ..storage import get_storage
 
 
@@ -32,6 +33,7 @@ class AgentCtx:
     plan: list[dict] = field(default_factory=list)  # the agent's working checklist (update_plan), saved on the reply
     steps: list[dict] = field(default_factory=list)  # tool calls this turn: live progress, then a list on the reply
     turn: int = 0  # id of the user's chat message this turn answers (tags the live progress events)
+    attachments: list[dict] = field(default_factory=list)  # pictures sent with this turn's message (core/chat_attachments)
 
     @property
     def copilot(self) -> bool:
@@ -113,8 +115,16 @@ def select_hook(c: AgentCtx, index: int = 0) -> dict:
     return {"ok": True}
 
 
-def write_script(c: AgentCtx, instructions: str = "") -> dict:
-    sc = studio.generate_script(c.db, c.user, c.ep(), instructions or "")
+def write_script(c: AgentCtx, instructions: str = "", message_id: int = 0, from_message: bool = False) -> dict:
+    brief = ""
+    if message_id:  # the user's own brief, word for word (run_tool fills message_id in for from_message)
+        m = _user_message(c, message_id)
+        if m is None:
+            return {"error": f"No message #{message_id} from the user in this chat"}
+        from ..core import mentions
+        brief = ("\n\nThe user's brief in their own words (keep their names, events, places and any lines they wrote):\n"
+                 + mentions.plain(m.content)[:30000])
+    sc = studio.generate_script(c.db, c.user, c.ep(), (instructions or "") + brief)
     c.actions.append("script written")
     return {"logline": sc.get("logline"), "scenes": len(sc.get("scenes", []))}
 
@@ -143,6 +153,11 @@ def update_shot(c: AgentCtx, shot_code: str, changes: dict | None = None, **kw) 
     if not shots:
         return {"error": f"No shot {shot_code}"}
     s = shots[0]
+    engine = None
+    if "engine" in changes:  # only when the user asked for an engine: checked against the Model Hub
+        engine = _video_engine(c.db, str(changes.get("engine") or ""))
+        if "error" in engine:
+            return engine
     if "include" in changes:  # in or out of the cut: not while someone else has the cut checked out
         from fastapi import HTTPException
         from ..core.desktop import check_cut_fields
@@ -158,8 +173,10 @@ def update_shot(c: AgentCtx, shot_code: str, changes: dict | None = None, **kw) 
         s.duration_s = int(changes["duration_s"])
     if "include" in changes:
         s.include = bool(changes["include"])
+    if engine is not None:
+        s.engine = engine["id"]
     c.db.commit()
-    c.actions.append(f"{s.code} updated")
+    c.actions.append(f"{s.code} updated" + (f" (engine: {engine['name']})" if engine is not None else ""))
     return {"shot": _shot_brief(c.db, s, c.project.primary_language)}
 
 
@@ -186,9 +203,36 @@ def generate_keyframes(c: AgentCtx, shot_codes: list[str] | None = None) -> dict
 
 
 def generate_videos(c: AgentCtx, shot_codes: list[str] | None = None, quality: str = "") -> dict:
+    """Shots that continue another one (a Film Map link, or "continue from the previous shot") are made in link order
+    (core/scene_chain.py, as Autopilot and the scene runs do): one run makes them wave by wave, so each linked shot
+    starts from the finished clip before it. Shots with no link between them are queued at once, as before."""
+    from ..core import scene_chain
     q = quality if quality in catalog.QUALITY_MODES else None
+    what = f"videos ({q or 'project default'})"
     shots = c.shots(shot_codes or None)
-    return c.submit(generation.video_specs(c.db, c.project, shots, q, only_missing=not shot_codes), f"videos ({q or 'project default'})")
+    if not shot_codes:  # all that still need one
+        shots = [s for s in shots if not is_real(current(c.db, s.id, "video"))]
+    specs = generation.video_specs(c.db, c.project, shots, q)
+    waves = scene_chain.waves(c.db, shots)
+    if len(waves) <= 1:
+        return c.submit(specs, what)
+    from ..core.budget import Estimator
+    est, ids = Estimator(c.db), {s.id for s in shots}
+    total = sum(sp["estimate"] for sp in specs)
+    for s in shots:  # a linked shot's keyframe is remade from the clip before it (make_videos_in_order)
+        src, kf = scene_chain.source(c.db, s), current(c.db, s.id, "keyframe")
+        uploaded = kf is not None and (kf.provider == "upload" or (kf.params or {}).get("uploaded"))
+        if src is not None and src.id in ids and not scene_chain.extends(s) and kf is not None and not kf.stale and not uploaded:
+            total += est.image(1)
+    ep = c.ep()
+    spec = jobs.spec("produce", payload={"steps": ["videos"], "shot_ids": [s.id for s in shots], "quality": q,
+                                         "remake": bool(shot_codes),
+                                         "items": [{"label": f"Videos in link order · {len(shots)}", "usd": round(total, 4)}]},
+                     project_id=c.project.id, episode_id=ep.id, estimate=total,
+                     label=f"Videos in link order E{ep.number:02} ({len(shots)} shots)")
+    out = c.submit([spec], f"{what} in link order")
+    return {**out, "order": [[s.code for s in w] for w in waves],
+            "note": "Linked shots are made one wave after another, so each starts from the finished clip it continues."}
 
 
 def voice_and_lipsync(c: AgentCtx, language: str = "", shot_codes: list[str] | None = None) -> dict:
@@ -250,6 +294,287 @@ def start_autopilot(c: AgentCtx, through: str = "final") -> dict:
     spec = jobs.spec("autopilot", payload={"through": through}, project_id=c.project.id, episode_id=c.ep().id,
                      estimate=est, label=f"Autopilot → {label}")
     return c.submit([spec], f"autopilot through '{through}'")
+
+
+# ── one long prompt: pictures, the user's script, scenes in order, engines ───
+
+def _user_message(c: AgentCtx, message_id: Any) -> AgentMessage | None:
+    try:
+        m = c.db.get(AgentMessage, int(message_id))
+    except (TypeError, ValueError):
+        return None
+    return m if m is not None and m.project_id == c.project.id and m.role == "user" else None
+
+
+def read_chat_message(c: AgentCtx, message_id: int, offset: int = 0) -> dict:
+    """The full text of one of the user's chat messages (a long brief or script), in pieces of 10,000 characters."""
+    from ..core import chat_attachments, mentions
+    m = _user_message(c, message_id)
+    if m is None:
+        return {"error": f"No message #{message_id} from the user in this chat"}
+    text = mentions.plain(m.content)
+    start = max(0, int(offset or 0))
+    piece = text[start: start + 10_000]
+    nxt = start + len(piece)
+    return {"message_id": m.id, "at": m.created_at.isoformat() + "Z" if m.created_at else None, "chars": len(text),
+            "offset": start, "text": piece, "next_offset": nxt if nxt < len(text) else None,
+            "attachments": [chat_attachments.placeholder(c.db, a) for a in (m.data or {}).get("attachments") or []]}
+
+
+def look_at_attachment(c: AgentCtx, attachment_id: Any) -> dict:
+    from ..core import chat_attachments as CA
+    att = CA.get(c.db, c.project, attachment_id)
+    if att is None:
+        return {"error": f"No attachment #{attachment_id} in this project's chat"}
+    entry = {**CA.out(att), "tag": att.tag or None}
+    img = CA.model_jpeg(att)
+    images = [(CA.label(c.db, entry), img)] if img else []
+    return {"attachment_id": att.id, "name": att.filename, "size": f"{att.width}×{att.height}", "tag": CA.tag_text(c.db, att.tag or None),
+            "sent_with_message": att.message_id, "pictures": [label for label, _ in images],
+            "message": "" if images else "The picture's file can't be read.", "_images": images}
+
+
+def add_cast_from_image(c: AgentCtx, attachment_id: Any, name: str, kind: str = "character", description: str = "") -> dict:
+    """Make a chat picture the reference of a character, location or prop: found by name in the project (or the one
+    the picture was tagged with), else created. Saved exactly like an upload in the Cast step (approved "source")."""
+    from ..core import chat_attachments as CA, mentions, reference_images
+    from ..models import ProjectProp, Prop, role_rank
+    db, p = c.db, c.project
+    att = CA.get(db, p, attachment_id)
+    if att is None:
+        return {"error": f"No attachment #{attachment_id} in this project's chat"}
+    kind = (kind or "character").strip().lower()
+    if kind not in CA.CAST_KINDS:
+        return {"error": "kind must be character, location or prop"}
+    name = " ".join((name or "").split())[:120]
+    if not name:
+        return {"error": "Give the name it should have"}
+    data = CA.read_original(att)
+    ext = reference_images.sniff(data)
+    if not ext:
+        return {"error": f"Attachment #{att.id} isn't a PNG, JPG or WEBP picture"}
+    row = CA.find_by_name(db, p, kind, name)
+    tag = att.tag or {}
+    if row is None and tag.get("kind") == kind and tag.get("id") and str(tag.get("name", "")).lower() == name.lower():
+        row = CA._entity(db, p, kind, int(tag["id"]))  # the library entry the user picked when tagging it
+    created = row is None
+    desc = " ".join((description or "").split())[:2000]
+    if kind == "character":
+        if row is None:
+            row = Character(name=name, shared=False, created_by=c.user.id, dna_text=desc or f"{name}: ")
+            db.add(row)
+            db.flush()
+        elif row.locked and role_rank(c.user.role) < role_rank("producer"):
+            return {"error": f"{row.name} is locked. Ask a producer to unlock them before adding pictures."}
+        elif desc and (row.dna_text or "").strip() in ("", f"{row.name}:"):
+            row.dna_text = desc
+        studio.link_character(db, p, row)
+        db.commit()
+        # a chat picture counts as a real person's photo until the user marks it AI-made under Your uploads
+        ref = reference_images.save_character_image(db, row, data, ext, user=c.user, label="reference from the Director chat",
+                                                    via="director", project_id=p.id)
+        saved = f"reference image #{ref.id} (approved)"
+    elif kind == "location":
+        if row is None:
+            row = Location(name=name, description_text=desc or name)
+            db.add(row)
+            db.flush()
+        elif desc and (row.description_text or "").strip() in ("", row.name):
+            row.description_text = desc
+        studio.link_location(db, p, row)
+        db.commit()
+        ref = reference_images.save_location_image(db, row, data, ext, label="reference from the Director chat", project_id=p.id)
+        saved = f"reference image #{ref.id} (approved)"
+    else:
+        if row is None:
+            row = Prop(name=name, description=desc, shared=False)
+            db.add(row)
+            db.flush()
+        elif desc and not (row.description or "").strip():
+            row.description = desc
+        if not db.get(ProjectProp, (p.id, row.id)):
+            db.add(ProjectProp(project_id=p.id, prop_id=row.id))
+        db.commit()
+        reference_images.save_prop_image(db, row, data, ext, project_id=p.id)
+        saved = "the prop's picture"
+    att.tag = {"kind": kind, "id": row.id, "name": row.name, "new": False}
+    db.commit()
+    c.actions.append(f"{'added' if created else 'updated'} {kind} {row.name} from attachment #{att.id}")
+    return {"kind": kind, "id": row.id, "name": row.name, "created": created, "saved": saved,
+            "mention": mentions.token(kind, row.id, row.name)}
+
+
+SHEET_VIEW_NAMES = ("front", "three_quarter", "profile", "full_body", "back")
+
+
+def make_character_sheets(c: AgentCtx, characters: list[str] | None = None, views: list[str] | None = None) -> dict:
+    """Character sheet images (front, three-quarter, full body …) made from each character's reference photo (paid).
+    No names = every cast member that has no sheet yet (e.g. only a photo from the chat)."""
+    from ..models import CharacterAsset
+    db, p = c.db, c.project
+    if characters:
+        try:
+            picked = list(dict.fromkeys(_char(c, n) for n in characters))
+        except ValueError as e:
+            return {"error": str(e)}
+    else:
+        picked = [ch for ch in studio.cast(db, p)
+                  if not db.query(CharacterAsset).filter(CharacterAsset.character_id == ch.id, CharacterAsset.archived.is_(False),
+                                                         CharacterAsset.kind.in_(SHEET_VIEW_NAMES)).count()]
+    if not picked:
+        return {"status": "nothing_to_do", "message": "Every cast member already has a character sheet."}
+    kinds = [v for v in views or [] if v in SHEET_VIEW_NAMES] or ["front", "three_quarter", "full_body"]
+    specs = [generation.character_sheet_spec(db, p.id, ch, kinds) for ch in picked]
+    out = c.submit(specs, f"character sheets ({', '.join(ch.name for ch in picked)})")
+    return {**out, "characters": [ch.name for ch in picked], "views": kinds}
+
+
+def _script_source(c: AgentCtx, text: str, message_id: Any, start: str, end: str) -> tuple[str, str]:
+    """(script text, error): the text given, or a chat message of the user cut between `start` and `end`."""
+    from ..core import mentions
+    if not (text or "").strip():
+        m = _user_message(c, message_id) if message_id else None
+        if m is None:
+            return "", "Give the script as text, or the chat message it is in (message_id)."
+        text = m.content
+    text = mentions.plain(text)  # @[Name](character:1) → Name, so the layout parser sees plain speaker names
+    for marker, cut in ((start, "start"), (end, "end")):
+        marker = (marker or "").strip()
+        if not marker:
+            continue
+        i = text.find(marker)
+        if i < 0:
+            i = text.lower().find(marker.lower())
+        if i < 0:
+            return "", f"The {cut} text {marker[:60]!r} isn't in the message: quote it exactly."
+        text = text[i:] if cut == "start" else text[: i + len(marker)]
+    if not text.strip():
+        return "", "The script is empty."
+    return text, ""
+
+
+def import_script(c: AgentCtx, text: str = "", message_id: int = 0, start: str = "", end: str = "", method: str = "auto",
+                  create_missing_characters: bool = True) -> dict:
+    """The user's own script, laid out word for word as scenes and shots (the Import Wizard): speakers become cast
+    (matched to the cast by name, or created), the Story script is written, the shot list replaced."""
+    from ..api.board import ImportApplyIn, _match, import_apply
+    from ..core import script_import
+    if method not in ("auto", "markers", "ai"):
+        return {"error": "method must be auto, markers or ai"}
+    src, err = _script_source(c, text, message_id, start, end)
+    if err:
+        return {"error": err}
+    db, p, ep = c.db, c.project, c.ep()
+    draft = script_import.build_draft(db, c.user, p, src, method)
+    mapping: dict[str, Any] = {}
+    for ch in draft["characters"]:
+        hit = _match(db, p, ch["name"])
+        mapping[ch["name"]] = hit["id"] if hit else ("new" if create_missing_characters else "")
+    out = import_apply(ep.id, ImportApplyIn(draft=draft["draft"], mapping=mapping, create_missing=create_missing_characters),
+                       c.user, db)
+    st = draft["stats"]
+    c.actions.append(f"script imported ({st.get('scenes')} scenes, {st.get('shots')} shots)")
+    return {"scenes": st.get("scenes"), "shots": st.get("shots"), "lines": st.get("lines"), "method": draft.get("method"),
+            "warnings": draft.get("warnings") or [], "cast": {n: i for n, i in (out.get("characters") or {}).items()},
+            "created_characters": [x["name"] for x in out.get("created") or []],
+            "shot_codes": [s.code for s in c.shots()][:80]}
+
+
+def generate_scenes(c: AgentCtx, scenes: list[int] | None = None, quality: str = "", link_scenes: str = "auto",
+                    fix_links: bool = False, pause_after_each_scene: bool = False, plan_only: bool = False) -> dict:
+    """Make the videos scene by scene with continuity carried forward (the scene_chain job)."""
+    from ..core import scene_chain
+    db, p, ep = c.db, c.project, c.ep()
+    rows = db.query(Scene).filter(Scene.episode_id == ep.id).order_by(Scene.order, Scene.id).all()
+    if not rows:
+        return {"error": "No scenes yet: import or write the script, then breakdown_shots."}
+    nums = sorted({int(n) for n in scenes or []})
+    bad = [n for n in nums if not 1 <= n <= len(rows)]
+    if bad:
+        return {"error": f"There are {len(rows)} scenes; pick 1..{len(rows)}"}
+    picked = [rows[n - 1] for n in nums] if nums else rows
+    if link_scenes not in scene_chain.LINK_SCENES:
+        return {"error": "link_scenes must be auto, always or never"}
+    q = quality if quality in catalog.QUALITY_MODES else None
+    plan = scene_chain.plan(db, p, ep, picked, q, bool(fix_links), link_scenes)
+    if plan_only or not plan["shots_to_make"]:
+        return {**plan, "submitted": False,
+                **({"message": "Every shot in these scenes already has its video."} if not plan["shots_to_make"] else {})}
+    spec = jobs.spec("scene_chain", payload={"scene_ids": [s.id for s in picked], "quality": q, "fix_links": bool(fix_links),
+                                             "link_scenes": link_scenes, "pause_after_each": bool(pause_after_each_scene)},
+                     project_id=p.id, episode_id=ep.id, estimate=plan["total_usd"],
+                     label=f"Scenes {', '.join(str(s.order + 1) for s in picked)} in order")
+    res = c.submit([spec], f"scenes {', '.join(str(s.order + 1) for s in picked)} in order")
+    return {**res, "scenes": [{k: s[k] for k in ("scene", "title", "shots", "notes", "usd")} for s in plan["scenes"]],
+            "shots_to_make": plan["shots_to_make"]}
+
+
+VIDEO_MODES = {"t2v", "i2v", "ref2v", "flf", "a2v"}
+_ENGINE_FILLER = {"the", "model", "engine", "on", "via", "with", "use", "using", "video", "videos", "by"}
+
+
+def _video_engine(db: Session, text: str) -> dict:
+    """A video engine of the Model Hub from what the user called it ("Seedance 2.0 on BytePlus", an id, "auto").
+    {id, name, provider, alternatives} or {error}. A hand-picked engine is used as picked (the Hub's rules)."""
+    from ..core import model_hub
+    from ..models import AIModel
+    from ..providers.services import provider_mode
+    raw = " ".join(str(text or "").split())
+    low = raw.lower()
+    if low in ("", "auto", "automatic", "default"):
+        return {"id": "auto", "name": "Automatic (the team's engine policy)", "provider": "", "alternatives": []}
+    rows = [m for m in db.query(AIModel).filter(AIModel.task.in_(("video", "avatar")), AIModel.status != "retired").all()
+            if set((m.capabilities or {}).get("modes") or []) & VIDEO_MODES]
+    hits = [m for m in rows if m.id.lower() == low]
+    if not hits:
+        words = [w for w in re.split(r"[\s()/,:]+", low) if w and w not in _ENGINE_FILLER]
+        hits = [m for m in rows if words and all(w in f"{m.id} {m.display_name} {m.family} {m.provider} {m.maker}".lower()
+                                                 for w in words)]
+    if not hits:
+        usable = sorted({m.display_name for m in rows if m.status == "enabled" and provider_mode(m.provider) != "missing"})
+        return {"error": f"No video engine matches {raw!r}. Engines you can pick: {', '.join(usable[:15])}"}
+    hits.sort(key=lambda m: (low not in (m.display_name.lower(), (m.family or "").lower()), m.status != "enabled",
+                             provider_mode(m.provider) == "missing", not m.builtin, model_hub.PROVIDER_RANK.get(m.provider, 9),
+                             len(m.display_name), m.display_name))
+    m = hits[0]
+    if provider_mode(m.provider) == "missing":
+        return {"error": f"{m.display_name} can't run here: there is no {m.provider} API key (an admin adds it in Settings → AI services)."}
+    if (m.capabilities or {}).get("usable") is False:
+        return {"error": f"{m.display_name} can't be used for shots yet (see the Model Hub)."}
+    return {"id": m.id, "name": m.display_name, "provider": m.provider,
+            "alternatives": [f"{h.display_name} ({h.id})" for h in hits[1:6]]}
+
+
+def set_video_engine(c: AgentCtx, engine: str, shot_codes: list[str] | None = None, scene: int = 0) -> dict:
+    """Make these shots (a scene's, or every shot of the episode) with one video engine; "auto" goes back to the
+    team's policy. Only when the user asked for an engine."""
+    pick = _video_engine(c.db, engine)
+    if "error" in pick:
+        return pick
+    if scene:
+        rows = c.db.query(Scene).filter(Scene.episode_id == c.ep().id).order_by(Scene.order, Scene.id).all()
+        if not 1 <= int(scene) <= len(rows):
+            return {"error": f"There are {len(rows)} scenes; pick 1..{len(rows)}"}
+        shots = [s for s in c.shots() if s.scene_id == rows[int(scene) - 1].id]
+    else:
+        shots = c.shots(shot_codes or None)
+        missing = sorted({x.upper() for x in shot_codes or []} - {s.code for s in shots})
+        if missing:
+            return {"error": f"No shot {', '.join(missing)} in this episode"}
+    if not shots:
+        return {"error": "There are no shots yet: import or write the script and plan the shots first."}
+    for s in shots:
+        if s.engine != pick["id"]:
+            studio.save_revision(c.db, "shot", s, studio.SHOT_FIELDS, c.user)
+            s.engine = pick["id"]
+    c.db.commit()
+    c.actions.append(f"video engine {pick['name']} on {len(shots)} shot{'' if len(shots) == 1 else 's'}")
+    from ..core.budget import Estimator
+    est = Estimator(c.db)
+    return {"engine": pick["id"], "name": pick["name"], "provider": pick["provider"], "shots": [s.code for s in shots],
+            "estimate_usd_all_shots": round(sum(est.video(s, c.project) for s in shots), 2),
+            "alternatives": pick["alternatives"],
+            "note": "Videos made from now on use it; finished takes stay as they are."}
 
 
 # ── confirmation for actions that replace work ───────────────────────────────
@@ -698,6 +1023,9 @@ _LABELS = {
     "critique_script": "Reviewing the script", "check_continuity": "Checking continuity", "plan_scene_cards": "Planning scene cards",
     "marketing_copy": "Writing marketing copy", "update_plan": "Updating the plan", "remember": "Saving a note to project memory",
     "forget": "Removing a note from project memory", "web_search": "Searching the web",
+    "import_script": "Importing your script", "generate_scenes": "Setting up the scenes in order",
+    "set_video_engine": "Choosing the video engine", "make_character_sheets": "Setting up character sheets",
+    "read_chat_message": "Reading your message",
 }
 
 
@@ -721,6 +1049,10 @@ def step_label(name: str, args: dict | None) -> str:
     if name in ("set_outfit", "lock_character", "freeze_look", "add_costume") and who:
         return {"set_outfit": f"Changing {who}'s outfit", "lock_character": f"Locking {who}'s look",
                 "freeze_look": f"Freezing {who}'s look", "add_costume": f"Adding a costume for {who}"}[name]
+    if name == "look_at_attachment" and a.get("attachment_id") is not None:
+        return f"Looking at attachment #{a['attachment_id']}"
+    if name == "add_cast_from_image" and a.get("name"):
+        return f"Adding {_clip(a['name'], 40)} from a picture"
     if name == "continuity_state" and a.get("scene_number"):
         return f"Writing the continuity state of scene {a['scene_number']}"
     return _LABELS.get(name) or name.replace("_", " ").capitalize()
@@ -769,7 +1101,33 @@ def _needs_confirmation(c: AgentCtx, name: str, args: dict) -> tuple[str, str] |
                     f"Translates {len(had)} shots again that already have {lname} lines; edits to those lines are lost.")
     if name == "marketing_copy" and (ep.marketing or {}).get("copies"):
         return ("Write new marketing copy", "Replaces this episode's current titles, descriptions and hashtags.")
+    if name == "import_script":
+        n = len(c.shots())
+        if n:
+            return ("Replace the shot list with your script",
+                    f"Episode {ep.number} already has {n} shots. Your script becomes the episode's script and shot list; "
+                    "shots with paid takes are dropped from the cut, not deleted, and the current script stays in "
+                    "Story → Versions.")
+        if scenes:
+            return ("Replace the script with yours",
+                    f"Replaces the current {scenes}-scene script. The old one stays in Story → Versions.")
+    if name == "add_cast_from_image" and str(args.get("kind") or "character").lower() == "prop":
+        from ..core import chat_attachments
+        prop = chat_attachments.find_by_name(c.db, c.project, "prop", str(args.get("name") or ""))
+        if prop is not None and prop.path:
+            return (f"Replace the picture of {prop.name}", "A prop has one reference picture; this one replaces it.")
     return None
+
+
+def _prepare(c: AgentCtx, name: str, args: dict) -> dict:
+    """Fill in what the model left implicit, so a confirmation card stores everything it needs to run later:
+    "this message" becomes the id of the user's message this turn."""
+    if name in ("import_script", "write_script") and c.turn and not args.get("message_id"):
+        if args.get("from_message") or (name == "import_script" and not str(args.get("text") or "").strip()):
+            args = {**args, "message_id": c.turn}
+    if name == "import_script":
+        args = {k: v for k, v in args.items() if k != "from_message"}
+    return args
 
 
 def run_tool(c: AgentCtx, name: str, args: dict) -> dict:
@@ -777,6 +1135,7 @@ def run_tool(c: AgentCtx, name: str, args: dict) -> dict:
     fn = TOOL_FUNCS.get(name)
     if not fn:
         return {"error": f"unknown tool {name}"}
+    args = _prepare(c, name, args)
     if not c.confirmed:
         need = _needs_confirmation(c, name, args)
         if need:
@@ -805,6 +1164,10 @@ TOOL_FUNCS: dict[str, Callable[..., dict]] = {
     "critique_script": critique_script, "check_continuity": check_continuity, "plan_scene_cards": plan_scene_cards,
     "polish_dialogue": polish_dialogue, "localize_script": localize_script, "marketing_copy": marketing_copy,
     "update_plan": update_plan, "remember": remember, "forget": forget,
+    # one long prompt with pictures: cast from images, the user's script, scenes in order, engines
+    "look_at_attachment": look_at_attachment, "add_cast_from_image": add_cast_from_image, "read_chat_message": read_chat_message,
+    "import_script": import_script, "generate_scenes": generate_scenes, "set_video_engine": set_video_engine,
+    "make_character_sheets": make_character_sheets,
 }
 
 _codes = {"type": "array", "items": {"type": "string"}, "description": "Shot codes like E01-SH03. Empty = all that still need it."}
@@ -821,18 +1184,24 @@ TOOL_DECLS = [
     _t("update_brief", "Change brief fields.", {"fields": {"type": "object", "description": "title, audience, tone, duration_s, key_message, cta, platform, notes"}}, ["fields"]),
     _t("generate_hooks", "Write N hook options for the opening seconds.", {"n": {"type": "integer"}, "angle": {"type": "string"}}),
     _t("select_hook", "Choose a hook by index.", {"index": {"type": "integer"}}, ["index"]),
-    _t("write_script", "Write or rewrite the episode script.", {"instructions": {"type": "string"}}),
+    _t("write_script", "Write or rewrite the episode script from the brief. When the user gave a story or treatment in their "
+       "message, set from_message=true: their text goes to the writer word for word (don't retype it into instructions).",
+       {"instructions": {"type": "string"},
+        "from_message": {"type": "boolean", "description": "Use the user's message of this turn as the brief"},
+        "message_id": {"type": "integer", "description": "Use an earlier chat message of the user as the brief"}}),
     _t("plan_series", "Plan a season (series projects).", {"episodes": {"type": "integer"}}),
     _t("build_bible", "Create characters, locations and style from the script."),
     _t("breakdown_shots", "Turn the script into a shot list (replaces existing shots)."),
     _t("update_shot", "Edit one shot.", {"shot_code": {"type": "string"}, "changes": {"type": "object",
-        "description": "framing, camera, action, duration_s (4/6/8), quality_mode, voice_mode, mode, sfx, music_cue, include"}},
+        "description": "framing, camera, action, duration_s (4/6/8), quality_mode, voice_mode, mode, sfx, music_cue, include, "
+                       "engine (only when the user asks for one: a Model Hub engine like 'Seedance 2.0 BytePlus', or 'auto')"}},
        ["shot_code", "changes"]),
     _t("set_outfit", "Give a character a new outfit in this episode and redo their keyframes.",
        {"character": {"type": "string"}, "outfit": {"type": "string"}, "description": {"type": "string"},
         "regenerate_keyframes": {"type": "boolean"}}, ["character", "outfit"]),
     _t("generate_keyframes", "Generate keyframe images (cheap).", {"shot_codes": _codes}),
-    _t("generate_videos", "Generate videos for shots (paid).", {"shot_codes": _codes,
+    _t("generate_videos", "Generate videos for shots (paid). Shots linked to the shot they continue are made in link order, "
+       "each from the finished clip before it. For whole scenes prefer generate_scenes.", {"shot_codes": _codes,
         "quality": {"type": "string", "enum": list(catalog.QUALITY_MODES)}}),
     _t("voice_and_lipsync", "Voice the dialogue/narration and lip-sync it (paid).", {"language": _lang, "shot_codes": _codes}),
     _t("generate_music", "Compose background music for the episode.", {"prompt": {"type": "string"}}),
@@ -894,4 +1263,43 @@ TOOL_DECLS = [
     _t("remember", "Save a lasting note in project memory: a team preference or decision. Notes come back to you every turn.",
        {"note": {"type": "string", "description": "One short sentence (up to 300 characters)"}}, ["note"]),
     _t("forget", "Remove a note from project memory by its number.", {"index": {"type": "integer"}}, ["index"]),
+    # one long prompt with pictures
+    _t("look_at_attachment", "See a picture the user attached in this chat (by its attachment id), with the tag they gave it.",
+       {"attachment_id": {"type": "integer"}}, ["attachment_id"]),
+    _t("add_cast_from_image", "Make an attached picture the reference image of a character, location or prop: the one with "
+       "that name in the project, else a new one (added to the project). Saved and approved like an upload in the Cast "
+       "step. Free.",
+       {"attachment_id": {"type": "integer"}, "name": {"type": "string"},
+        "kind": {"type": "string", "enum": ["character", "location", "prop"]},
+        "description": {"type": "string", "description": "For a new entry: a concrete visual description from the picture "
+                                                         "(a character's age, face, skin, hair, build, outfit; no personality)"}},
+       ["attachment_id", "name", "kind"]),
+    _t("read_chat_message", "Read the full text of one of the user's chat messages (a long brief or script), 10,000 characters "
+       "at a time.", {"message_id": {"type": "integer"}, "offset": {"type": "integer"}}, ["message_id"]),
+    _t("import_script", "Import the user's own script word for word (the Import Wizard): scenes and shots laid out as written, "
+       "speakers matched to the cast or created, the Story script saved; replaces the shot list. With no text it takes "
+       "the user's message of this turn; start / end cut out the script part when the message also has instructions.",
+       {"text": {"type": "string", "description": "The script, only when it is not in a chat message"},
+        "message_id": {"type": "integer", "description": "An earlier chat message holding the script"},
+        "start": {"type": "string", "description": "The exact first words of the script in the message"},
+        "end": {"type": "string", "description": "The exact last words of the script in the message"},
+        "method": {"type": "string", "enum": ["auto", "markers", "ai"]},
+        "create_missing_characters": {"type": "boolean"}}),
+    _t("generate_scenes", "Make the videos scene by scene with continuity (paid): for each scene in order the earlier scenes' "
+       "end states (wardrobe, props, time of day) go into its prompts, its first shot starts from the last frame of the "
+       "scene before when it picks up straight from it, its shots run in link order with QC, then the next scene. "
+       "Videos that exist are kept.",
+       {"scenes": {"type": "array", "items": {"type": "integer"}, "description": "Scene numbers; empty = all, in order"},
+        "quality": {"type": "string", "enum": list(catalog.QUALITY_MODES)},
+        "link_scenes": {"type": "string", "enum": ["auto", "always", "never"]},
+        "fix_links": {"type": "boolean", "description": "Also remake clips whose link is already broken"},
+        "pause_after_each_scene": {"type": "boolean", "description": "Stop after each scene for review; run again to go on"},
+        "plan_only": {"type": "boolean", "description": "Only show what would be made and the cost"}}),
+    _t("set_video_engine", "Make shots with one video engine of the Model Hub, e.g. 'Seedance 2.0 BytePlus' (or 'auto' for the "
+       "team's policy). Only when the user asks for an engine. No shots and no scene = every shot of the episode.",
+       {"engine": {"type": "string"}, "shot_codes": _codes, "scene": {"type": "integer"}}, ["engine"]),
+    _t("make_character_sheets", "Character sheet images (front, three-quarter, full body …) made from each character's "
+       "reference photo, so every angle keeps the face (paid images). No names = cast members without a sheet yet.",
+       {"characters": {"type": "array", "items": {"type": "string"}},
+        "views": {"type": "array", "items": {"type": "string", "enum": list(SHEET_VIEW_NAMES)}}}),
 ]

@@ -228,7 +228,15 @@ export interface AgentMessage {
     steps?: AgentStep[];
     /** The Director's working checklist for a multi-step request. */
     plan?: AgentPlanStep[];
+    /** Pictures sent with a user's message, with the tag the user gave each. */
+    attachments?: AgentAttachment[];
   };
+}
+
+/** What a chat picture is: an existing character / location / prop (id), a new name to add, or a look reference. */
+export interface AgentAttachmentTag { kind: "character" | "location" | "prop" | "style"; id?: number; name?: string; new?: boolean }
+export interface AgentAttachment {
+  id: number; url: string; thumb_url: string; name: string; width: number; height: number; tag?: AgentAttachmentTag | null;
 }
 
 export interface AgentStep { tool: string; label: string; ok: boolean | null }
