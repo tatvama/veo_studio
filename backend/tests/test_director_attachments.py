@@ -5,20 +5,27 @@ Mock providers and fake AI clients only: nothing here calls a paid API."""
 from __future__ import annotations
 
 import base64
+import copy
+import hashlib
 import io
 import json
+import shutil
 
+import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
+from sqlalchemy import text as sql
 
 from app.agents import director
+from app.agents import director_claude as DC
 from app.agents import tools as T
 from app.db import SessionLocal
 from app.models import (AgentAttachment, AgentMessage, Character, CharacterAsset, Episode, Job, Location, LocationAsset, Project,
                         Prop, User)
+from app.storage import get_storage
 from conftest import H, ok
-from test_director_agentic import FakeGemini
-from test_director_claude import THINK, chat, claude, msg, project, text, tool  # noqa: F401  (claude: fixture)
+from test_director_agentic import FakeGemini, _with_takes
+from test_director_claude import THINK, chat, claude, msg, project, segments, text, tool  # noqa: F401  (claude: fixture)
 
 SCRIPT = """SCENE 1 - INT. TEMPLE COURTYARD - DUSK
 VISUAL: Rows of brass lamps on worn stone. Ishvani walks in carrying an oil lamp.
@@ -291,3 +298,139 @@ def test_mention_tokens_stay_fast_on_hostile_text():
     ok_token = "@[" + "N" * mentions.NAME_MAX + "](character:7)"
     assert mentions.find(ok_token) == [("character", 7, "N" * mentions.NAME_MAX)]
     assert mentions.find("@[" + "N" * (mentions.NAME_MAX + 1) + "](character:7)") == []
+
+
+# ── pictures in the stored Claude thread: files, not base64 in the database ──
+
+def _images(messages: list[dict]) -> list[dict]:
+    """Every image block of a thread: in user turns and inside tool results."""
+    out = []
+    for m in messages:
+        for b in m["content"] if isinstance(m["content"], list) else []:
+            if b.get("type") == "image":
+                out.append(b)
+            elif b.get("type") == "tool_result" and isinstance(b.get("content"), list):
+                out += [x for x in b["content"] if x.get("type") == "image"]
+    return out
+
+
+def _send(c: TestClient, pid: int, eid: int, message: str, attachments: list[dict]) -> dict:
+    return ok(c.post(f"/api/projects/{pid}/agent/chat", headers=H,
+                     json={"message": message, "episode_id": eid, "attachments": attachments}))[0]
+
+
+def _last_assistant(db, pid: int) -> AgentMessage:
+    return (db.query(AgentMessage).filter(AgentMessage.project_id == pid, AgentMessage.role == "assistant")
+            .order_by(AgentMessage.id.desc()).first())
+
+
+def test_thread_pictures_are_stored_as_files_and_replayed_byte_for_byte(client: TestClient, claude):  # noqa: F811
+    pid, eid, code, _ = _with_takes(client)
+    up = ok(_upload(client, pid, _png(), "ravi.png"))
+    fake = claude(msg([THINK, tool("l1", "look_at_shot", {"shot_code": code}),
+                       tool("l2", "look_at_attachment", {"attachment_id": up["id"]})], "tool_use"),
+                  msg([THINK, text("Seen them.")]),
+                  msg([THINK, text("Again.")]))
+    assert _send(client, pid, eid, "Look at this and the first shot", [{"id": up["id"]}])["content"] == "Seen them."
+    turn1 = fake.calls[1]["messages"] + [{"role": "assistant", "content": [THINK, text("Seen them.")]}]
+    sent = _images(turn1)
+    # the attachment in the user turn, the keyframe + 3 video frames (look_at_shot), the attachment again (look_at_attachment)
+    assert len(sent) == 6 and all(b["source"]["type"] == "base64" for b in sent)
+
+    # the saved row holds references: no base64 in the database, each picture's exact bytes in a file named by its sha256
+    with SessionLocal() as db:
+        row = _last_assistant(db, pid)
+        raw = db.execute(sql("SELECT data FROM agent_messages WHERE id = :i"), {"i": row.id}).scalar()
+        stored = _images(row.data["claude"]["messages"])
+    assert '"base64"' not in raw and not any(b["source"]["data"][:100] in raw for b in sent)
+    assert len(raw) < 60_000 < sum(len(b["source"]["data"]) for b in sent)
+    st = get_storage()
+    for b, ref in zip(sent, stored):
+        data = base64.b64decode(b["source"]["data"])
+        sha = hashlib.sha256(data).hexdigest()
+        assert ref == {"type": "image", "source": {"type": "tatvam_ref", "media_type": "image/jpeg",
+                                                   "key": f"agent/{pid}/thread/{sha}.jpg", "sha256": sha}}
+        assert st.abs(ref["source"]["key"]).read_bytes() == data
+    assert stored[0] == stored[-1]  # the same picture twice: saved once
+    assert len({r["source"]["key"] for r in stored}) == 5 == len(list(st.abs(f"agent/{pid}/thread").iterdir()))
+
+    # the source picture changes later: the stored thread still has the bytes it sent
+    with SessionLocal() as db:
+        st.abs(db.get(AgentAttachment, up["id"]).path).write_bytes(_png(1600, 1200, (0, 0, 255)))
+    assert chat(client, pid, eid, "and again")["content"] == "Again."
+    replay, sent1 = fake.calls[2]["messages"], fake.calls[1]["messages"]
+    assert json.dumps(replay[: len(sent1)]) == json.dumps(sent1)  # what went to the API, byte for byte, key order included
+    assert replay[len(sent1)] == turn1[-1] and replay[: len(turn1)] == turn1
+    assert len(replay) == len(turn1) + 1 and replay[-1]["content"][-1]["text"] == "and again"
+
+
+@pytest.mark.parametrize("damage", ["missing", "changed"])
+def test_a_thread_whose_picture_file_is_gone_starts_over(client: TestClient, claude, damage):  # noqa: F811
+    pid, eid = project(client, f"A temple picture that goes {damage}")
+    up = ok(_upload(client, pid, _png(), "temple.png"))
+    fake = claude(msg([THINK, text("Nice temple.")]), msg([THINK, text("Fresh start.")]))
+    _send(client, pid, eid, "Use this temple", [{"id": up["id"], "tag": {"kind": "location", "name": "Old Temple Q"}}])
+    [seg] = segments(pid)
+    [ref] = _images(seg["messages"])
+    path = get_storage().abs(ref["source"]["key"])
+    if damage == "missing":
+        path.unlink()
+    else:
+        path.write_bytes(path.read_bytes() + b"\x00")
+    assert chat(client, pid, eid, "and now?")["content"] == "Fresh start."
+    # a new thread (as when the API rejects a stored conversation): only the new turn, the earlier chat carried over as text
+    [first] = fake.calls[1]["messages"]
+    ctx = first["content"][0]["text"]
+    assert "Earlier in this chat (before this conversation thread started)" in ctx and f"look_at_attachment({up['id']})" in ctx
+    assert first["content"][-1]["text"] == "and now?" and not _images(fake.calls[1]["messages"])
+    s1, s2 = segments(pid)
+    assert s2["thread"] != s1["thread"] and s2["turn"] == 0
+
+
+def test_old_inline_thread_segments_still_replay(client: TestClient, claude):  # noqa: F811
+    pid, eid = project(client, "A thread from before picture files")
+    up = ok(_upload(client, pid, _png(), "lamp.png"))
+    fake = claude(msg([THINK, text("Got it.")]), msg([THINK, text("Still here.")]))
+    _send(client, pid, eid, "This is the lamp", [{"id": up["id"]}])
+    turn1 = fake.calls[0]["messages"] + [{"role": "assistant", "content": [THINK, text("Got it.")]}]
+    with SessionLocal() as db:  # stored the way earlier versions did: the picture inline, and no file
+        row = _last_assistant(db, pid)
+        row.data = {**row.data, "claude": {**row.data["claude"], "messages": turn1}}
+        db.commit()
+        old = row.id
+    shutil.rmtree(get_storage().abs(f"agent/{pid}/thread"))
+    assert chat(client, pid, eid, "more")["content"] == "Still here."
+    assert json.dumps(fake.calls[1]["messages"][: len(turn1)]) == json.dumps(turn1)
+    with SessionLocal() as db:  # nothing migrated: the old row is left as it was
+        assert db.get(AgentMessage, old).data["claude"]["messages"] == turn1
+
+
+def _small_jpeg() -> bytes:
+    buf = io.BytesIO()
+    Image.new("RGB", (80, 60), (90, 30, 160)).save(buf, "JPEG", quality=82)
+    return buf.getvalue()
+
+
+def test_stash_and_load_images_round_trip():
+    jpg = base64.b64encode(_small_jpeg()).decode()
+    png = base64.b64encode(_png(64, 48)).decode()
+    msgs = [{"role": "user", "content": [
+                {"type": "text", "text": "hi"},
+                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": jpg}},
+                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "QR=="}},  # not canonical
+                {"type": "image", "source": {"type": "base64", "media_type": "image/tiff", "data": jpg}},  # no file type for it
+                {"type": "image", "source": {"type": "url", "url": "https://example.com/x.jpg"}}]},
+            {"role": "assistant", "content": [THINK, tool("t1", "look_at_shot", {"shot_code": "E01-SH01"})]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "t1", "content": [
+                    {"type": "text", "text": "{}"},
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": png}}]},
+                {"type": "tool_result", "tool_use_id": "t2", "content": "plain", "is_error": True}]}]
+    before = copy.deepcopy(msgs)
+    stored = DC._stash_images(10 ** 6, msgs)
+    assert msgs == before  # copies: what was sent is never edited
+    assert [b["source"]["type"] for b in _images(stored)] == ["tatvam_ref", "base64", "base64", "url", "tatvam_ref"]
+    assert stored[1] == msgs[1] and stored[2]["content"][1] == msgs[2]["content"][1]
+    assert _images(stored)[-1]["source"]["key"].endswith(".png")
+    assert json.dumps(DC._load_images(stored)) == json.dumps(msgs)
+    assert json.dumps(DC._load_images(before)) == json.dumps(msgs)  # an inline thread passes through as it is

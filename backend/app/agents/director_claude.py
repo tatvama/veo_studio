@@ -6,7 +6,11 @@ Memory: the exact API messages of each turn are saved on that turn's assistant A
 replayed append-only. Claude's thinking blocks are only valid while the system prompt, the tools and every earlier
 message stay byte-identical, so nothing stored is ever edited: per-turn facts (project, UI selection, what happened
 since the last reply) go at the start of the new user turn instead. A thread starts over when the model, system prompt
-or tools change, after 6 idle hours, past ~60k input tokens, or when the API rejects the stored history."""
+or tools change, after 6 idle hours, past ~60k input tokens, or when the API rejects the stored history.
+
+Pictures (attachments in a user turn, look_at_shot results) are not kept in the database: each one's exact bytes are
+saved once as a file named by their sha256 and the stored block points at it; loading the thread puts the same base64
+back, so the replayed request is byte-identical. A thread whose picture file is gone starts over."""
 from __future__ import annotations
 
 import base64
@@ -25,6 +29,7 @@ from ..db import utcnow
 from ..models import AgentMessage
 from ..providers.base import Usage
 from ..providers.claude_text import cost
+from ..storage import get_storage
 from . import prompts
 from .director import _step, progress, turn_notes
 from .tools import TOOL_DECLS, TOOL_FUNCS, AgentCtx, memory_text, step_label
@@ -39,6 +44,8 @@ TASK_BUDGET = 120_000  # tokens Claude may spend across one turn's steps: it see
 THREAD_IDLE = timedelta(hours=6)
 THREAD_MAX_INPUT = 60_000  # prompt tokens of the last call; past this the next turn starts a new thread
 RESULT_CHARS = 12000
+IMAGE_REF = "tatvam_ref"  # a stored image block's source: {type, media_type, key, sha256} instead of the base64
+IMAGE_EXT = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif"}
 
 # Same tools, same order, every call (they render first: any change breaks the cache and the stored thread). Web search
 # runs on Anthropic's side; its results come back inside the assistant turn (server_tool_use / web_search_tool_result).
@@ -79,6 +86,83 @@ def _new_thread() -> str:
     return "t" + uuid.uuid4().hex[:12]
 
 
+def _map_images(messages: list[dict], fn) -> list[dict]:
+    """The messages with fn applied to each image block (in a user turn and inside its tool results); copies, never
+    edits them."""
+    def blocks(content: Any) -> Any:
+        if not isinstance(content, list):
+            return content
+        out = []
+        for b in content:
+            if isinstance(b, dict) and b.get("type") == "image":
+                b = fn(b)
+            elif isinstance(b, dict) and b.get("type") == "tool_result" and isinstance(b.get("content"), list):
+                b = {**b, "content": blocks(b["content"])}
+            out.append(b)
+        return out
+    return [{**m, "content": blocks(m["content"])} if isinstance(m, dict) and "content" in m else m for m in messages]
+
+
+def _read_image(key: str, sha: str) -> bytes | None:
+    """A stored picture's bytes, or None when the file is gone or isn't those bytes any more."""
+    st = get_storage()
+    try:
+        data = st.abs(key).read_bytes() if st.exists(key) else None
+    except (OSError, ValueError):  # unreadable, or not a valid storage key
+        return None
+    return data if data is not None and hashlib.sha256(data).hexdigest() == sha else None
+
+
+def _stash_images(project_id: int, messages: list[dict]) -> list[dict]:
+    """A thread segment as stored: each picture's bytes saved once in agent/<project>/thread/<sha256>.<ext> and the
+    block pointing there. A picture whose base64 wouldn't come back byte for byte, or whose file can't be written,
+    stays inline."""
+    def ref(b: dict) -> dict:
+        src = b.get("source")
+        if not isinstance(src, dict) or src.get("type") != "base64" or not isinstance(src.get("data"), str):
+            return b
+        ext = IMAGE_EXT.get(src.get("media_type"))
+        try:
+            raw = base64.b64decode(src["data"], validate=True)
+        except ValueError:
+            return b
+        if not ext or base64.b64encode(raw).decode() != src["data"]:
+            return b
+        sha = hashlib.sha256(raw).hexdigest()
+        key = f"agent/{project_id}/thread/{sha}.{ext}"
+        if _read_image(key, sha) is None:
+            try:
+                get_storage().save_bytes(key, raw)
+            except (OSError, ValueError) as e:
+                print(f"[director] couldn't save a thread picture, keeping it inline: {e}")
+                return b
+        return {**b, "source": {"type": IMAGE_REF, "media_type": src["media_type"], "key": key, "sha256": sha}}
+    return _map_images(messages, ref)
+
+
+def _load_images(messages: list[dict]) -> list[dict] | None:
+    """A stored thread as it was sent: each pointer back to the same base64 (inline pictures of older threads are left
+    as they are). None when a picture's file is gone or changed: that thread can't be continued."""
+    seen: dict[str, str] = {}
+
+    def load(b: dict) -> dict:
+        src = b.get("source")
+        if not isinstance(src, dict) or src.get("type") != IMAGE_REF:
+            return b
+        key, sha = str(src.get("key") or ""), str(src.get("sha256") or "")
+        if key not in seen:
+            data = _read_image(key, sha)
+            if data is None:
+                raise FileNotFoundError(key)
+            seen[key] = base64.b64encode(data).decode()
+        return {**b, "source": {"type": "base64", "media_type": src.get("media_type"), "data": seen[key]}}
+    try:
+        return _map_images(messages, load)
+    except FileNotFoundError as e:
+        print(f"[director] stored thread picture {e} is missing: starting a new thread")
+        return None
+
+
 def _thread(db: Session, project_id: int, fp: str) -> tuple[str, list[dict], AgentMessage | None, int]:
     """(thread id, history, message holding its last turn, turns so far) of the thread to continue, or a new id and
     no history when there is none to continue."""
@@ -102,7 +186,10 @@ def _thread(db: Session, project_id: int, fp: str) -> tuple[str, list[dict], Age
     segs.reverse()
     if [s.get("turn") for _, s in segs] != list(range(len(segs))):  # cut short (too old to load) or forked by two chats at once
         return fresh
-    return str(last["thread"]), [msg for _, s in segs for msg in s["messages"]], last_msg, len(segs)
+    history = _load_images([msg for _, s in segs for msg in s["messages"]])
+    if history is None:  # a picture's file is gone: start over rather than send a broken request
+        return fresh
+    return str(last["thread"]), history, last_msg, len(segs)
 
 
 def _since(db: Session, project_id: int, after_id: int, before_id: int) -> list[str]:
@@ -175,8 +262,8 @@ def _turn(c: AgentCtx, message: str, selection: dict, since: list[str], carry: l
     the pictures attached to the message (each after a line saying what it is), then the message itself.
 
     The pictures stay in the stored thread (it is replayed append-only: editing an earlier turn would invalidate every
-    later thinking block), served from the prompt cache on later turns. A new thread gets them as text placeholders
-    (_carry) and look_at_attachment shows one again."""
+    later thinking block), kept as file references (_stash_images) and served from the prompt cache on later turns. A
+    new thread gets them as text placeholders (_carry) and look_at_attachment shows one again."""
     p, ep = c.project, c.ep()
     ctx = (f"[Context from the studio, not typed by the user] Project '{p.title}' ({p.type}, {p.aspect}, primary language "
            f"{p.primary_language}, languages {', '.join(p.languages or [])}, quality {p.quality_mode}, mode {p.agent_mode}). "
@@ -330,6 +417,6 @@ def run(c: AgentCtx, message: str, selection: dict, user_msg_id: int) -> tuple[s
         text = (text + "\n\n" if text else "") + (f"I stopped after {CLAUDE_MAX_STEPS} steps so this turn doesn't run on.{done} "
                                                   "Say \"continue\" and I'll pick up from here.")
     if keep:
-        extra["claude"] = {"thread": tid, "turn": turn, "messages": new, "fingerprint": fp, "model": model,
-                           "input_tokens": prompt_tokens}
+        extra["claude"] = {"thread": tid, "turn": turn, "messages": _stash_images(c.project.id, new), "fingerprint": fp,
+                           "model": model, "input_tokens": prompt_tokens}
     return text or "Done. " + "; ".join(c.actions), extra
