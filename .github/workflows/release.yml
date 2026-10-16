@@ -9,7 +9,8 @@
 #    to the public, releases-only repository tatvama/tatvam-desktop-releases (no source code). Installed apps update
 #    themselves from there, so they need no token even when this repository is private. Optional secrets
 #    WIN_CSC_LINK + WIN_CSC_KEY_PASSWORD (or CSC_LINK + CSC_KEY_PASSWORD) sign it; once they are set every release is
-#    signed automatically and installed apps verify the signature of each update (electron-builder.yml win.publisherName).
+#    signed automatically and installed apps verify the signature of each update (electron-builder.yml
+#    win.signtoolOptions.publisherName). Unsigned builds don't pin the publisher, or they could never install an update.
 #
 # Optional secrets (Settings → Secrets and variables → Actions):
 #   RELEASE_PLEASE_TOKEN  fine-grained PAT (contents + pull requests: read/write). Without it the release PR is
@@ -156,9 +157,14 @@ jobs:
         working-directory: desktop
         shell: bash
         run: |
-          [ -n "$CSC_LINK" ] || unset CSC_LINK CSC_KEY_PASSWORD   # unsigned build when no certificate is set
+          # Unsigned build when no certificate is set, and then without the pinned publisher: an installed app refuses
+          # every update that publisher didn't sign, so an unsigned build that pins it would never update again.
+          sign_args=()
+          [ -n "$CSC_LINK" ] || { unset CSC_LINK CSC_KEY_PASSWORD; sign_args=(-c.win.verifyUpdateCodeSignature=false); }
           npm ci --no-audit --no-fund
-          npm run dist -- --publish never
+          # dist already passes --publish never (the steps below upload); a second one turns electron-builder's own
+          # publishing back on, which uploads with GITHUB_TOKEN to a releases-repo release under two hours old
+          npm run dist -- "${sign_args[@]}"
 
       - name: Upload to the release
         working-directory: desktop
