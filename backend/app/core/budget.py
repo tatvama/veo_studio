@@ -164,6 +164,10 @@ class Estimator:
         p = self.prices["text_per_million"].get(model, {"in": 0.3, "out": 2.5})
         return (chars_in / 3.5 * float(p["in"]) + (chars_out / 3.5 + 2000 * calls) * float(p["out"])) / 1e6
 
+    def vision(self, images: int, chars_out: int = 1800, calls: int = 1) -> float:
+        """A vision check on the team's text route: about 500 tokens per image (sent at most 640 px) plus the prompt."""
+        return self.text(int((max(images, 1) * 500 + 800 * calls) * 3.5), chars_out, calls)
+
     def sfx(self, seconds: float) -> float:
         """ElevenLabs sound effects (the same rate services.sound_effect books)."""
         return 0.02 * max(seconds, 1) / 10 if self._live("elevenlabs") else 0.0

@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from .. import catalog
-from ..core import generation, jobs, studio
+from ..core import generation, jobs, sheet_engine, studio
 from ..db import get_db
 from ..events import emit
 from ..models import (Character, CharacterAsset, Consent, Location, LocationAsset, Project, ProjectCast, ProjectLocation, Style,
@@ -83,17 +83,30 @@ class CharacterPatch(BaseModel):
     lock: dict | None = None
     name_pronunciation: str | None = None
     performance_notes: str | None = None
+    sheet_engine: str | None = None  # the image engine for this character's reference pack; "auto" = the team chain
 
 
 @router.patch("/characters/{cid}")
-def patch_character(cid: int, body: CharacterPatch, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
+def patch_character(cid: int, body: CharacterPatch, request: Request, user: User = Depends(require("creator")),
+                    db: Session = Depends(get_db)):
     c = get_or_404(db, Character, cid)
     _check_unlocked(c, user)
-    for k, v in body.model_dump(exclude_unset=True).items():
+    archiving = body.archived is True and not c.archived
+    data = body.model_dump(exclude_unset=True)
+    if "sheet_engine" in data:  # checked against the Model Hub's image engines, then remembered
+        sheet_engine.resolve(db, c, data.pop("sheet_engine") or "auto")
+    for k, v in data.items():
         setattr(c, k, v)
     db.commit()
+    removal = None
+    if archiving:  # an archived character leaves the BytePlus asset library too (best effort; Remove retries)
+        from ..workers.handlers_hub import withdraw_byteplus
+        removal = withdraw_byteplus(db, user, c, "archived", request=request)
     emit(db, None, "bible.updated", {"character_id": c.id})
-    return character_out(db, c)
+    out = character_out(db, c)
+    if removal is not None:
+        out["byteplus_removal"] = removal
+    return out
 
 
 class LockIn(BaseModel):
@@ -138,13 +151,81 @@ def remove_from_cast(pid: int, cid: int, user: User = Depends(require("creator")
 class SheetIn(BaseModel):
     kinds: list[str] | None = None
     project_id: int | None = None
+    # the image engine (a Model Hub image engine id, e.g. "byteplus:seedream-5.0-pro"), remembered on the character for
+    # its next sheets, expressions, lighting and outfits; "auto" = the team's image chain; left out = the last pick
+    engine: str | None = None
 
 
 @router.post("/characters/{cid}/sheet")
 def gen_sheet(cid: int, body: SheetIn, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
     c = get_or_404(db, Character, cid)
     p = db.get(Project, body.project_id) if body.project_id else None
-    return jobs.submit(db, user, p, [generation.character_sheet_spec(db, body.project_id, c, body.kinds)])
+    engine = sheet_engine.resolve(db, c, body.engine)
+    return jobs.submit(db, user, p, [generation.character_sheet_spec(db, body.project_id, c, body.kinds, engine)])
+
+
+class BoardGenIn(BaseModel):
+    project_id: int | None = None
+    engine: str | None = None  # an engine that makes a whole board in one request; default: the first one available
+    panels: list[str] | None = None  # "front" … "back", "expression:happy", "outfit:front"; default: views + expressions
+    outfit_name: str = ""  # with a description: the outfit's mini turnaround is on the board too
+    outfit_description: str = ""
+    fill_missing: bool = True  # images BytePlus doesn't return are made one by one on the same engine
+
+
+@router.get("/characters/{cid}/sheet/board")
+def board_options(cid: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """What a whole board in one request can hold for this character: the panels, the engines that can make it, and
+    how many images one request takes (references count toward the engine's limit)."""
+    from ..core import model_hub
+    from ..workers.handlers import _char_ref
+    from ..workers.handlers_board import default_board_engine, panel_keys
+    c = get_or_404(db, Character, cid)
+    refs = 1 if _char_ref(db, c) else 0
+    engines = [{"id": m.id, "display_name": m.display_name, "provider": m.provider,
+                "provider_mode": provider_mode(m.provider), "price_usd": round(model_hub.price_for(m), 4),
+                "max_images": max(0, min(model_hub.group_max(m), 15) - refs)}
+               for m in sheet_engine.image_engines(db) if model_hub.group_max(m) > 0]
+    d = default_board_engine(db)
+    return {"engines": engines, "default_engine": d.id if d else None, "references": refs,
+            "panels": panel_keys(outfit=True), "default_panels": panel_keys(outfit=False)}
+
+
+@router.post("/characters/{cid}/sheet/board")
+def gen_board(cid: int, body: BoardGenIn, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
+    """A whole character board in ONE request (BytePlus Seedream group generation): turnaround, expressions and an
+    outfit, each image saved as its view."""
+    from ..core import model_hub
+    from ..workers.handlers import _char_ref
+    from ..workers.handlers_board import default_board_engine, panel_keys, valid_key
+    c = get_or_404(db, Character, cid)
+    _check_unlocked(c, user)
+    m = sheet_engine.check(db, body.engine) if body.engine else default_board_engine(db)
+    if m is None:
+        raise HTTPException(400, "No engine here makes a whole board in one request. Switch on Seedream 5.0 Lite "
+                                 "(BytePlus) in the Model Hub and add the BytePlus API key.")
+    if model_hub.group_max(m) <= 0:
+        raise HTTPException(400, f"{m.display_name} makes one image per request. Pick Seedream 5.0 Lite (BytePlus) for a "
+                                 "board in one go (BytePlus doesn't offer it on Seedream 5.0 Pro yet).")
+    outfit = None
+    if body.outfit_name.strip() or body.outfit_description.strip():
+        if not (body.outfit_name.strip() and body.outfit_description.strip()):
+            raise HTTPException(400, "Give the outfit a name and a description")
+        outfit = {"name": body.outfit_name.strip()[:120], "description": body.outfit_description.strip()[:600]}
+    panels = list(dict.fromkeys(body.panels or panel_keys(outfit=bool(outfit))))
+    bad = [k for k in panels if not valid_key(k)]
+    if bad:
+        raise HTTPException(400, f"Unknown panel(s): {', '.join(bad[:5])}")
+    if any(k.startswith("outfit:") for k in panels) and not outfit:
+        raise HTTPException(400, "Outfit panels need the outfit's name and description")
+    refs = 1 if _char_ref(db, c) else 0
+    room = min(model_hub.group_max(m), 15) - refs
+    if not panels or len(panels) > room:
+        raise HTTPException(400, f"One request makes at most {room} images here (references count toward BytePlus's limit "
+                                 f"of 15): pick {room} panels or fewer")
+    p = db.get(Project, body.project_id) if body.project_id else None
+    return jobs.submit(db, user, p, [generation.sheet_board_spec(db, body.project_id, c, m, panels, outfit,
+                                                                 body.fill_missing)])
 
 
 class OutfitIn(BaseModel):
@@ -153,6 +234,7 @@ class OutfitIn(BaseModel):
     episode_scope: int | None = None
     project_id: int | None = None
     views: list[str] | None = None  # default: front, three_quarter, full_body (a mini turnaround per outfit)
+    engine: str | None = None  # as SheetIn.engine
 
 
 @router.post("/characters/{cid}/outfits")
@@ -165,48 +247,142 @@ def gen_outfit(cid: int, body: OutfitIn, user: User = Depends(require("creator")
         db.add(Costume(character_id=c.id, name=body.name.strip(), description=body.description,
                        episode_from=body.episode_scope, episode_to=body.episode_scope))
         db.commit()
+    engine = sheet_engine.resolve(db, c, body.engine)
     return jobs.submit(db, user, p, [generation.outfit_spec(db, body.project_id, c, body.name, body.description, body.episode_scope,
-                                                            body.views)])
+                                                            body.views, engine)])
 
 
 class LightingIn(BaseModel):
     project_id: int | None = None
     variants: list[str] | None = None  # day | dusk | night_interior
+    engine: str | None = None  # as SheetIn.engine
 
 
 @router.post("/characters/{cid}/lighting")
 def gen_lighting(cid: int, body: LightingIn, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
     c = get_or_404(db, Character, cid)
     p = db.get(Project, body.project_id) if body.project_id else None
-    return jobs.submit(db, user, p, [generation.lighting_spec(db, body.project_id, c, body.variants)])
+    engine = sheet_engine.resolve(db, c, body.engine)
+    return jobs.submit(db, user, p, [generation.lighting_spec(db, body.project_id, c, body.variants, engine)])
 
 
 @router.post("/characters/{cid}/expressions")
 def gen_expressions(cid: int, body: SheetIn, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
     c = get_or_404(db, Character, cid)
     p = db.get(Project, body.project_id) if body.project_id else None
-    return jobs.submit(db, user, p, [generation.expressions_spec(db, body.project_id, c)])
+    engine = sheet_engine.resolve(db, c, body.engine)
+    return jobs.submit(db, user, p, [generation.expressions_spec(db, body.project_id, c, engine)])
 
 
 @router.post("/characters/{cid}/upload")
-async def upload_character_photo(cid: int, file: UploadFile = File(...), label: str = Form(""),
-                                 user: User = Depends(require("creator")), db: Session = Depends(get_db)):
-    """The user's own photo of the character. Approved uploads are the first look reference everywhere."""
+async def upload_character_photo(cid: int, request: Request, file: UploadFile = File(...), label: str = Form(""),
+                                 ai_made: bool = Form(False), user: User = Depends(require("creator")),
+                                 db: Session = Depends(get_db)):
+    """An image the user brings for the character: the first look reference everywhere. `ai_made` attests it is
+    AI-generated, not a photo of a real person (only such images may be registered with BytePlus)."""
+    from ..core.character_images import save_character_image
+    c = get_or_404(db, Character, cid)
+    _check_unlocked(c, user)
+    ext = IMG_TYPES.get(file.content_type or "")
+    if not ext:
+        raise HTTPException(400, "Upload a PNG, JPG or WEBP image")
+    save_character_image(db, c, await file.read(), ext, user=user, label=label, ai_made=ai_made, request=request)
+    return character_out(db, c)
+
+
+@router.post("/characters/{cid}/board")
+async def upload_board(cid: int, request: Request, file: UploadFile = File(...), label: str = Form(""),
+                       project_id: int | None = Form(None), ai_made: bool = Form(False),
+                       user: User = Depends(require("creator")), db: Session = Depends(get_db)):
+    """Split a character board: one image with many views (turnaround, expressions, outfits). It is kept as the
+    character's own picture (never used whole as a reference), its panels are found, and a small vision job labels them
+    for you to review before anything is saved as a view. `ai_made` attests the board is AI-generated, not photos of a
+    real person: only then may the views cut from it go to BytePlus."""
+    from ..core import char_board
+    from ..core.character_images import attest_upload
     c = get_or_404(db, Character, cid)
     _check_unlocked(c, user)
     ext = IMG_TYPES.get(file.content_type or "")
     if not ext:
         raise HTTPException(400, "Upload a PNG, JPG or WEBP image")
     data = await file.read()
-    if len(data) > 15 * 1024 * 1024:
-        raise HTTPException(400, "Image too large (max 15 MB)")
-    st = get_storage()
-    rel = st.save_bytes(st.new_path(f"characters/{cid}", ext), data)
-    a = CharacterAsset(character_id=cid, kind="source", label=(label.strip() or "your photo")[:80], path=rel, approved=True)
-    db.add(a)
-    db.commit()
+    if len(data) > 25 * 1024 * 1024:
+        raise HTTPException(400, "Image too large (max 25 MB)")
+    a = char_board.add_board(db, c, data, ext, label)
+    if ai_made:
+        attest_upload(db, user, a, c, via="board", request=request)
+    out = _label_board(db, user, c, a, project_id, find_boxes=not char_board.board_state(a).get("clean"))
     emit(db, None, "bible.updated", {"character_id": cid})
-    return character_out(db, c)
+    return {"asset_id": a.id, "board": char_board.board_state(a), "jobs": out, "character": character_out(db, c)}
+
+
+def _label_board(db: Session, user: User, c: Character, a: CharacterAsset, project_id: int | None, find_boxes: bool) -> dict:
+    """Queue the labelling job. When it can't start (over budget) the panels stay for labelling by hand."""
+    from ..core import char_board
+    board = char_board.board_state(a)
+    p = db.get(Project, project_id) if project_id else None
+    try:
+        out = jobs.submit(db, user, p, [generation.board_split_spec(db, project_id, c, a.id, len(board.get("panels") or []),
+                                                                    find_boxes)])
+    except HTTPException as e:
+        char_board.set_board_state(db, a, status="ready" if board.get("panels") else "failed", error=str(e.detail)[:300])
+        return {"status": "failed", "reason": str(e.detail), "jobs": [], "total_usd": 0}
+    char_board.set_board_state(db, a, status="awaiting_approval" if out["status"] == "awaiting_approval" else "labelling",
+                               error="")
+    return out
+
+
+class BoxIn(BaseModel):
+    x: int
+    y: int
+    w: int
+    h: int
+    kind: str = "other"
+    name: str = ""  # an expression's or an outfit's name
+    view: str = ""  # an outfit panel's angle (front, three_quarter, full_body …)
+    description: str = ""
+    keep: bool = True
+
+
+class BoardLabelIn(BaseModel):
+    panels: list[BoxIn] | None = None  # the boxes as adjusted in the review (default: the ones found)
+    find_boxes: bool = False  # ask the vision model to find the panels again
+    project_id: int | None = None
+
+
+@router.post("/character-assets/{aid}/board/label")
+def relabel_board(aid: int, body: BoardLabelIn, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
+    """Label the board's panels (again) with the vision model, e.g. after adjusting the boxes."""
+    from ..core import char_board
+    a = get_or_404(db, CharacterAsset, aid)
+    if not char_board.is_board(a):
+        raise HTTPException(400, "That image isn't a character board")
+    c = db.get(Character, a.character_id)
+    _check_unlocked(c, user)
+    if body.panels is not None:
+        char_board.set_board_state(db, a, panels=[{**x.model_dump(), "id": i + 1}
+                                                  for i, x in enumerate(body.panels[:30]) if x.w >= 16 and x.h >= 16])
+    find = body.find_boxes or not char_board.board_state(a).get("panels")
+    out = _label_board(db, user, c, a, body.project_id, find_boxes=find)
+    emit(db, None, "bible.updated", {"character_id": c.id})
+    return {"asset_id": a.id, "board": char_board.board_state(a), "jobs": out}
+
+
+class BoardSaveIn(BaseModel):
+    panels: list[BoxIn]
+
+
+@router.post("/character-assets/{aid}/board/save")
+def save_board_views(aid: int, body: BoardSaveIn, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
+    """Save the reviewed panels as the character's views (each its own image, marked as cut from this board)."""
+    from ..core import char_board
+    a = get_or_404(db, CharacterAsset, aid)
+    c = db.get(Character, a.character_id)
+    _check_unlocked(c, user)
+    made = char_board.save_views(db, a, [x.model_dump() for x in body.panels])
+    db.commit()
+    emit(db, None, "bible.updated", {"character_id": c.id})
+    return {"saved": [x.id for x in made], "character": character_out(db, c)}
 
 
 class AssetPatch(BaseModel):
@@ -220,14 +396,37 @@ class AssetPatch(BaseModel):
 def patch_char_asset(aid: int, body: AssetPatch, user: User = Depends(require("reviewer")), db: Session = Depends(get_db)):
     a = get_or_404(db, CharacterAsset, aid)
     _check_unlocked(db.get(Character, a.character_id), user)
-    for k, v in body.model_dump(exclude_unset=True).items():
+    data = body.model_dump(exclude_unset=True)
+    # an upload stays an upload: relabelling a real person's photo as a sheet view would make it eligible for BytePlus
+    if "kind" in data and (data["kind"] == "source") != (a.kind == "source"):
+        raise HTTPException(400, "An uploaded image can't become a generated view, or the other way round")
+    for k, v in data.items():
         setattr(a, k, v)
     db.commit()
     from ..workers.handlers_hub import REGISTER_KINDS, maybe_auto_register
-    if body.approved and a.kind in REGISTER_KINDS and not a.archived:  # an approved sheet view: register it by itself
+    eligible = a.kind in REGISTER_KINDS or (a.kind == "source" and a.ai_made)
+    if body.approved and eligible and not a.archived:  # an approved sheet view or AI-made upload: register it by itself
         maybe_auto_register(db, user, db.get(Character, a.character_id))
     emit(db, None, "bible.updated", {"character_id": a.character_id})
     return a.to_dict()
+
+
+class AiMadeIn(BaseModel):
+    ai_made: bool
+
+
+@router.put("/character-assets/{aid}/ai-made")
+def set_char_asset_ai_made(aid: int, body: AiMadeIn, request: Request, user: User = Depends(require("creator")),
+                           db: Session = Depends(get_db)):
+    """Attest an upload is AI-generated (it may then go to BytePlus), or mark it a real person's photo. The latter
+    removes the character from BytePlus at once when it is registered."""
+    from ..core.character_images import set_ai_made
+    a = get_or_404(db, CharacterAsset, aid)
+    ch = db.get(Character, a.character_id)
+    if body.ai_made:  # saying it shows a real person is always allowed, even on a locked character
+        _check_unlocked(ch, user)
+    out = set_ai_made(db, user, a, body.ai_made, request=request)
+    return {**out, "character": character_out(db, ch)}
 
 
 # ── voices ───────────────────────────────────────────────────────────────────

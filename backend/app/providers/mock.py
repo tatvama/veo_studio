@@ -253,6 +253,15 @@ def llm(task: str, ctx: dict[str, Any]) -> dict[str, Any]:
         return {"identity_match": round(0.75 + (seed % 22) / 100, 2), "outfit_match": True, "extra_people": False,
                 "text_artifacts": False, "hand_issues": seed % 7 == 0, "matches_action": True,
                 "notes": "MOCK QC — real QC runs with a Gemini key."}
+    if task == "board_boxes":  # two halves side by side
+        return {"panels": [{"x": 0.02, "y": 0.02, "w": 0.46, "h": 0.96}, {"x": 0.52, "y": 0.02, "w": 0.46, "h": 0.96}]}
+    if task == "board_labels":  # a turnaround first, then expressions, an outfit and the rest
+        order = [("front", ""), ("three_quarter", ""), ("profile", ""), ("back", ""), ("full_body", ""),
+                 ("expression", "happy"), ("expression", "angry"), ("outfit", "board outfit")]
+        n = int(ctx.get("n", 0))
+        return {"panels": [{"index": i + 1, "kind": order[i][0] if i < len(order) else "other",
+                            "name": order[i][1] if i < len(order) else "", "description": f"MOCK panel {i + 1}"}
+                           for i in range(n)]}
     if task == "keyframe_qc":  # always passes: a placeholder keyframe must never trigger a paid retake
         return {"identity_match": 0.9, "wardrobe_match": 0.9, "set_match": 0.9, "lighting_match": 0.9,
                 "extra_people": False, "hand_issues": False, "text_artifacts": False,

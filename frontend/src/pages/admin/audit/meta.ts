@@ -30,6 +30,8 @@ export const ACTION_LABELS: Record<string, string> = {
   "user.update": "User changed", "export.publish": "Render published", "review_link.create": "Review link created",
   "consent.add": "Consent recorded", "approval.approve": "Spending approved", "character.lock": "Character locked",
   "character.train": "Identity training started", "models.update": "Model changed", "models.policy": "Engine policy changed",
+  "character.asset.ai_attested": "Upload marked AI-generated", "character.asset.ai_unattested": "Upload marked as a real person",
+  "character.register_byteplus": "BytePlus registration started", "character.unregister_byteplus": "Removed from BytePlus",
 };
 
 /** A readable name for any action, translated when we know it. */

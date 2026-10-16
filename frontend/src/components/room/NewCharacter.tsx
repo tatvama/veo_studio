@@ -7,6 +7,7 @@ import { api } from "../../lib/api";
 import { tr, useT } from "../../lib/i18n";
 import type { Character } from "../../lib/types";
 import { Button, Input, Modal, Select, Textarea } from "../ui";
+import { AiMadeCheck, uploadCharacterImage } from "./AiMade";
 import "../../styles/room.css";
 
 const IMAGES = ["image/png", "image/jpeg", "image/webp"];
@@ -26,12 +27,13 @@ export function NewCharacterModal({ open, onClose, projectId, onCreated, initial
   const [age, setAge] = useState("");
   const [look, setLook] = useState("");
   const [photos, setPhotos] = useState<File[]>([]);
+  const [aiMade, setAiMade] = useState(false);
   const [busy, setBusy] = useState(false);
   const previews = useMemo(() => photos.map((f) => URL.createObjectURL(f)), [photos]);
   useEffect(() => () => previews.forEach((u) => URL.revokeObjectURL(u)), [previews]);
   useEffect(() => { if (open) setName(initialName); }, [open, initialName]);
 
-  const reset = () => { setName(""); setRole(""); setGender(""); setAge(""); setLook(""); setPhotos([]); };
+  const reset = () => { setName(""); setRole(""); setGender(""); setAge(""); setLook(""); setPhotos([]); setAiMade(false); };
 
   const create = async () => {
     if (!name.trim()) return;
@@ -41,7 +43,7 @@ export function NewCharacterModal({ open, onClose, projectId, onCreated, initial
         name: name.trim(), role, gender, age, project_id: projectId ?? null,
         dna_text: look.trim() ? `${name.trim()}: ${look.trim()}` : "",
       });
-      for (const f of photos) await api.upload(`/api/characters/${c.id}/upload`, f);
+      for (const f of photos) await uploadCharacterImage(c.id, f, aiMade);
       qc.invalidateQueries({ queryKey: ["characters"] });
       toast.success(photos.length ? tr("{name} created with {n} photo(s)", { name: c.name, n: photos.length }) : tr("{name} created", { name: c.name }));
       reset();
@@ -112,7 +114,8 @@ export function NewCharacterModal({ open, onClose, projectId, onCreated, initial
                 ))}
               </div>
             )}
-            <p className="text-2xs text-dim">{t("Using a real person's face? Record their consent on the character page (Consent section).")}</p>
+            {photos.length > 0 && <AiMadeCheck checked={aiMade} onChange={setAiMade} />}
+            {!aiMade && <p className="text-2xs text-dim">{t("Using a real person's face? Record their consent on the character page (Consent section).")}</p>}
           </section>
         </div>
       </div>

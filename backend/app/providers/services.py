@@ -748,6 +748,57 @@ class Services:
         ext = "jpg" if guess_mime(data) == "image/jpeg" else "png"
         return MediaResult(data, ext, Usage("byteplus", m.endpoint, "image", 1, "images", price_for(m)))
 
+    def seedream_group(self, m, prompt: str, refs: list[Path], aspect: str, max_images: int,
+                       labels: list[str] | None = None) -> tuple[list[tuple[MediaResult | None, str]], Usage]:
+        """A set of related images in ONE Seedream request (BytePlus group generation, "sequential_image_generation":
+        "auto"): a whole character board. Returns ([(image or None, error)] in the order BytePlus answered, which the
+        prompt asks to be the order of its numbered list; the usage of the whole request).
+
+        BytePlus decides how many images the prompt warrants (at most `max_images`; references + images ≤ 15) and
+        bills each image made (usage.generated_images). An image refused by moderation comes back as an entry with an
+        `error` while the others are made; an internal error stops the set early, so fewer entries come back."""
+        from ..core.model_hub import price_for
+        from .byteplus import IMAGE_SIZES
+        from .links import media_link
+        caps = m.capabilities or {}
+        refs = [p for p in refs if p and Path(p).exists()][: int(caps.get("max_refs") or 10)]
+        n = max(1, min(int(max_images), int(caps.get("group_max_images") or 15) - len(refs), 15))
+        each = price_for(m)
+        if _require(m.provider) == "mock":
+            names = labels or [f"image {i + 1}" for i in range(n)]
+            outs = [(MediaResult(mock.image(f"{prompt}\n{names[i] if i < len(names) else i + 1}", aspect,
+                                            f"board · {names[i] if i < len(names) else i + 1}", refs=len(refs)), "png",
+                                 Usage(m.provider, m.endpoint, "image", 1, "images", 0.0, mock=True)), "") for i in range(n)]
+            return outs, Usage(m.provider, m.endpoint, "image", n, "images", 0.0, mock=True)
+        client = self.ark()
+        body: dict[str, Any] = {"model": m.endpoint, "prompt": prompt, "size": IMAGE_SIZES.get(aspect, "2048x2048"),
+                                "response_format": "url", "watermark": False, "sequential_image_generation": "auto",
+                                "sequential_image_generation_options": {"max_images": n}}
+        if refs:
+            imgs = [media_link(Path(p), provider="BytePlus") for p in refs]
+            body["image"] = imgs if len(imgs) > 1 else imgs[0]
+        d = client.images(body)
+        outs: list[tuple[MediaResult | None, str]] = []
+        for item in (d.get("data") or [])[:n]:
+            err = item.get("error") or {}
+            if err or not item.get("url"):
+                outs.append((None, f"{err.get('code') or 'error'}: {err.get('message') or 'no image'}"[:300]))
+                continue
+            try:
+                data = client.download(item["url"])
+            except RetryableProviderError:
+                try:  # the set is paid for: one more try before giving this image up
+                    data = client.download(item["url"])
+                except RetryableProviderError as e:
+                    outs.append((None, str(e)[:300]))
+                    continue
+            ext = "jpg" if guess_mime(data) == "image/jpeg" else "png"
+            outs.append((MediaResult(data, ext, Usage("byteplus", m.endpoint, "image", 1, "images", each),
+                                     meta={"size": item.get("size") or ""}), ""))
+        made = sum(1 for r, _ in outs if r is not None)
+        billed = int((d.get("usage") or {}).get("generated_images") or made)
+        return outs, Usage("byteplus", m.endpoint, "image", billed, "images", round(each * billed, 5))
+
 
 def _pick(supported: list[str] | None, want: str) -> str:
     """The model's own spelling of the wanted resolution ("4K"), else 720p, else its first; "" when it lists none."""
@@ -822,6 +873,8 @@ def byteplus_assets(paths: list[Path]) -> dict[int, tuple[str, list[str], set[st
         for path, cid in rows:
             ch = chars.get(cid)
             reg = ((ch.provider_assets or {}).get("byteplus") or {}) if ch else {}
+            if reg.get("withdrawn"):  # taken back for safety, removal from BytePlus still pending: never used
+                continue
             ids = [a["asset_id"] for a in reg.get("assets") or [] if a.get("status") == "Active" and a.get("asset_id")]
             if ids:
                 name, have, mine = out.get(cid, (ch.name, ids, set()))

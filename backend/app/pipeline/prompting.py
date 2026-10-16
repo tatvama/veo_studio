@@ -322,8 +322,9 @@ def character_refs(db: Session, ch: Character, outfit: str | None = None, max_n:
         outfit_assets = [a for a in q if a.kind == "outfit" and a.outfit == outfit]
         outfit_assets.sort(key=lambda a: (a.view != "front", a.view != "three_quarter", not a.approved, -a.id))
         picked += outfit_assets[: min(2, max_n)]
-    # the user's own approved photos come first, in upload order (the first one is their main photo)
-    own = sorted((a for a in q if a.kind == "source" and a.approved), key=lambda a: a.id)
+    # the user's own approved photos come first, in upload order (the first one is their main photo); a whole
+    # character board isn't one (its views, cut out and saved, are)
+    own = sorted((a for a in q if a.kind == "source" and a.approved and a.origin != "board"), key=lambda a: a.id)
     picked += [a for a in own if a not in picked][: max(max_n - len(picked), 0)]
 
     def sheet_pass(approved_only: bool, skip: set[str]) -> set[str]:

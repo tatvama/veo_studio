@@ -3,6 +3,8 @@
 How to use the studio day to day. For installing, configuring and deploying it, see the [README](../README.md).
 
 - [Daily workflow](#daily-workflow)
+- [Character boards](#character-boards)
+- [Seedance characters (BytePlus)](#seedance-characters-byteplus)
 - [Model Hub](#model-hub)
 - [Team, roles and money](#team-roles-and-money)
 - [Interface](#interface) · [Poster Studio](#poster-studio)
@@ -54,6 +56,85 @@ A shot can have a **start frame** (its keyframe) and an **end frame**: the same 
 - **Synced shots:** link a shot to the one before with **End frame** (Details › Advanced › Continues from, or click a link on the Film Map). It then starts on *exactly* that end frame (a free copy), so the two clips join without a jump. Because both clips come from frames known in advance, they are made side by side instead of one after the other.
 - **A whole scene:** **Frames** (Storyboard toolbar, or on a scene's header) makes every start and end frame in order, each following the one before, with a price first. **Sync the clips** links each shot of the scene to the one before (one continuous action); **Remake** redoes frames that are already good. End frames get the same vision check as keyframes (compared with their own start frame), with one automatic retake.
 - **Frames engine:** the dialog's engine choice is saved for the project and used for every start and end frame, including single keyframes. Pick **Seedream 5.0 Pro** for a Seedance film; **Auto** keeps the team's image chain (Google first). The Director (`storyboard_frames`) and the MCP server (`storyboard_frames`) do the same.
+
+## Character boards
+
+Where: **2 Cast › Characters & places**, open a character, **Reference pack**.
+
+### Split a board you already have
+
+A character board is one image with many views of the same character: a turnaround (front, three-quarter, side, back),
+expressions, outfits. **Upload a board** cuts it into separate views:
+
+1. **Panels are found.** On a plain background the studio finds them itself, from the gutters between the pictures (or
+   the separate figures when nothing lines up). On a busy background a vision model finds them instead.
+2. **Each panel is labelled** by a small vision check (front, three-quarter, profile, back, full body, an expression
+   with its name, an outfit, or other). It is a job like any other: priced first (a few cents at most), counted against
+   the budget, and sent for approval when the budget asks for it. If it can't run, you label the panels yourself.
+3. **You review them** in **Review views**: pick what each panel shows, name the expression or the outfit (and its angle),
+   untick the panels you don't want, and fix a crop by dragging its box on the board (or its corner to resize), or by
+   typing the numbers under **Adjust box**. **Add a panel** draws a new box; **Label again with AI** relabels your boxes.
+4. **Save views.** Each kept panel becomes its own approved image in the reference pack (outfit panels also create the
+   outfit), marked *from your board*.
+
+Good to know:
+
+- The board itself is kept as **your own picture**, never used whole as a look reference. Like an uploaded photo, it
+  counts as a real person's pictures unless you tick **This image is AI-generated — not a photo of a real person** when
+  you upload it (or later under **Your uploads**). Only then can the character be registered with BytePlus, and only
+  then are the views cut from the board sent along (see [Seedance characters](#seedance-characters-byteplus)). A face
+  model trains on them as your own photos (no AI variations are added).
+- Removing the board keeps the views you saved.
+
+### A whole board in one request (Seedream on BytePlus)
+
+**Full board in one go** makes the turnaround, the five expressions and, if you describe one, an outfit's mini
+turnaround in **one** Seedream request on BytePlus, from the character's reference image. Each image is saved as its
+view, in the order the request listed them.
+
+- One request makes at most 15 images, and the reference image counts toward that limit (so 14 with a reference).
+- BytePlus decides how many images come back and bills only those. Any it doesn't return (or refuses) are made one by one
+  on the same engine, within the same estimate. The job says which panels are still missing, if any.
+- It needs **Seedream 5.0 Lite (BytePlus)**: BytePlus doesn't offer one-request boards on **Seedream 5.0 Pro** yet. Pro
+  can still make this character's views one at a time (see below).
+
+### The image engine per character
+
+**Image engine for this character** picks the engine that makes this character's sheet, expressions, lighting variants
+and outfits. **Auto** is the team's image chain (Google first, as set in the Model Hub). Pick another engine, for example
+**Seedream 5.0 Pro (BytePlus)**, and it is remembered for the next regenerations. A picked engine is used exactly as
+picked: "Google first" doesn't replace it, and no other engine or provider is tried behind your back (only the team's
+opt-in safety fallback, if it is on). The list shows each engine's price per image.
+## Seedance characters (BytePlus)
+
+Seedance (BytePlus) blocks faces it takes for real people. An **AI character** registered in your private BytePlus asset
+library is trusted instead: Seedance gets the registered images as references and keeps the look. Real people can't be
+registered from the studio; they verify themselves in the BytePlus console.
+
+**Once:**
+1. In the BytePlus ModelArk console, open **Model activation → Advanced Creation Rights** and turn on the free version
+   (50 images, 50 groups).
+2. Add the BytePlus **access key and secret** (an IAM user with ArkFullAccess) in **Settings → AI services**.
+3. Use **bucket storage** (`STORAGE_BACKEND=s3` with the R2 settings): BytePlus downloads the images by link.
+
+**For each AI character** (2 Cast › the character):
+1. Give it a look BytePlus may take: **upload** an AI-generated image and tick **"This image is AI-generated — not a
+   photo of a real person"**, or **Generate sheet** and approve the good views. Every upload counts as a real
+   person's photo until you tick the box; you can change it later under **Reference pack → Your uploads** (with a
+   confirm, and it is recorded in the audit log). The box is on every upload: the character page, **New character**,
+   the import wizard's **Add photo** and **+ Character** in the shot list.
+2. In **Video character**, check **Images that will be sent**: up to 4, best first (the uploads you marked
+   AI-generated, then the approved sheet views). BytePlus takes images of 300–6000 px per side, between 0.4 and 2.5
+   times as wide as tall and under 30 MB: larger ones go as a smaller copy, too small or oddly shaped ones are listed
+   under **Not sent** with the reason.
+3. Press **Register with BytePlus** and wait until the images show **Active** (BytePlus reviews each one; **Re-check
+   status** asks again). The character then shows the Seedance badge.
+
+**Never sent:** a character with an upload that isn't marked AI-generated counts as **made from a photo of a real
+person**: Register is turned off with the reason, and automatic registration (Settings → Generation) skips it. An
+upload can't be relabelled as a sheet view to get around this. If you mark an upload as a real person's photo while
+the character is registered, or **archive** the character, it is removed from BytePlus right away. If BytePlus can't
+be reached then, the registration stays marked (Seedance no longer uses it) and **Remove from BytePlus** tries again.
 
 ## Model Hub
 

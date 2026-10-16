@@ -6,7 +6,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from .. import catalog
-from ..models import Character, Episode, Location, Project, Shot, Take
+from ..models import AIModel, Character, Episode, Location, Project, Shot, Take
 from ..pipeline.prompting import effective_voice_mode, shot_lines
 from ..pipeline.selection import current, has_fresh, is_real
 from . import frames
@@ -178,10 +178,31 @@ def dub_spec(db: Session, project: Project, episode: Episode, lang: str, then_ex
                 estimate=total, label=f"Dub E{episode.number:02} → {catalog.LANGUAGES.get(lang, {}).get('name', lang)}")
 
 
-def character_sheet_spec(db: Session, project_id: int | None, ch: Character, kinds: list[str] | None = None) -> dict:
+def _images_cost(db: Session, n: int, engine: str | None) -> float:
+    """`n` character images: on the engine picked for the character, else the team's image chain (Google first)."""
+    m = db.get(AIModel, engine) if engine else None
+    return Estimator(db).image_engine(m, n) if m else Estimator(db).image(n)
+
+
+def _on(engine: str | None) -> str:
+    return f" on {engine.split(':', 1)[-1]}" if engine else ""
+
+
+def _engine_for(ch: Character, engine: str | None) -> str | None:
+    """The engine given, else the one remembered on the character (so the Director, the MCP tools and "build from
+    script" make its images like the reference pack does); None = the team's image chain. A remembered engine that can
+    no longer run fails the job with that reason: it is never swapped for another one."""
+    return engine or (ch.sheet_engine or None)
+
+
+def character_sheet_spec(db: Session, project_id: int | None, ch: Character, kinds: list[str] | None = None,
+                         engine: str | None = None) -> dict:
+    """`engine`: the character's own image engine (core/sheet_engine.resolve; default: the one remembered on it), used
+    on its own route only."""
     kinds = kinds or ["front", "three_quarter", "profile", "back", "full_body"]
-    return spec("character_sheet", payload={"character_id": ch.id, "kinds": kinds, "project_id": project_id},
-                project_id=project_id, estimate=Estimator(db).image(len(kinds)), label=f"Sheet: {ch.name}")
+    engine = _engine_for(ch, engine)
+    return spec("character_sheet", payload={"character_id": ch.id, "kinds": kinds, "project_id": project_id, "engine": engine},
+                project_id=project_id, estimate=_images_cost(db, len(kinds), engine), label=f"Sheet: {ch.name}{_on(engine)}")
 
 
 OUTFIT_VIEWS = ["front", "three_quarter", "full_body"]
@@ -189,17 +210,23 @@ LIGHTING_VARIANTS = ["day", "dusk", "night_interior"]
 
 
 def outfit_spec(db: Session, project_id: int | None, ch: Character, name: str, description: str, episode_scope: int | None,
-                views: list[str] | None = None) -> dict:
+                views: list[str] | None = None, engine: str | None = None) -> dict:
     views = [v for v in (views or OUTFIT_VIEWS) if v in ("front", "three_quarter", "profile", "back", "full_body")] or OUTFIT_VIEWS
+    engine = _engine_for(ch, engine)
     return spec("character_outfit", payload={"character_id": ch.id, "outfit": name, "description": description,
-                                             "episode_scope": episode_scope, "project_id": project_id, "views": views},
-                project_id=project_id, estimate=Estimator(db).image(len(views)), label=f"Outfit: {ch.name} – {name} ({len(views)} views)")
+                                             "episode_scope": episode_scope, "project_id": project_id, "views": views,
+                                             "engine": engine},
+                project_id=project_id, estimate=_images_cost(db, len(views), engine),
+                label=f"Outfit: {ch.name} – {name} ({len(views)} views){_on(engine)}")
 
 
-def lighting_spec(db: Session, project_id: int | None, ch: Character, variants: list[str] | None = None) -> dict:
+def lighting_spec(db: Session, project_id: int | None, ch: Character, variants: list[str] | None = None,
+                  engine: str | None = None) -> dict:
     variants = [v for v in (variants or LIGHTING_VARIANTS) if v in LIGHTING_VARIANTS] or LIGHTING_VARIANTS
-    return spec("character_lighting", payload={"character_id": ch.id, "project_id": project_id, "variants": variants},
-                project_id=project_id, estimate=Estimator(db).image(len(variants)), label=f"Lighting: {ch.name}")
+    engine = _engine_for(ch, engine)
+    return spec("character_lighting", payload={"character_id": ch.id, "project_id": project_id, "variants": variants,
+                                               "engine": engine},
+                project_id=project_id, estimate=_images_cost(db, len(variants), engine), label=f"Lighting: {ch.name}{_on(engine)}")
 
 
 def native_video_specs(db: Session, project: Project, shots: list[Shot], lang: str) -> list[dict]:
@@ -209,9 +236,30 @@ def native_video_specs(db: Session, project: Project, shots: list[Shot], lang: s
                  shot_id=s.id, estimate=est.video(s, project), label=f"Speak {s.code} [{lang}]") for s in shots if shot_lines(s, lang)]
 
 
-def expressions_spec(db: Session, project_id: int | None, ch: Character) -> dict:
-    return spec("character_expressions", payload={"character_id": ch.id, "project_id": project_id}, project_id=project_id,
-                estimate=Estimator(db).image(5), label=f"Expressions: {ch.name}")
+def expressions_spec(db: Session, project_id: int | None, ch: Character, engine: str | None = None) -> dict:
+    engine = _engine_for(ch, engine)
+    return spec("character_expressions", payload={"character_id": ch.id, "project_id": project_id, "engine": engine},
+                project_id=project_id, estimate=_images_cost(db, 5, engine), label=f"Expressions: {ch.name}{_on(engine)}")
+
+
+def board_split_spec(db: Session, project_id: int | None, ch: Character, asset_id: int, panels: int, find_boxes: bool) -> dict:
+    """Label the panels of an uploaded character board with a vision model (and find them first when the layout isn't
+    clean): one small call per step, the crops sent at most 640 px."""
+    images = panels + (1 if find_boxes else 0) or 2
+    return spec("board_split", payload={"character_id": ch.id, "asset_id": asset_id, "project_id": project_id,
+                                        "find_boxes": find_boxes},
+                project_id=project_id, estimate=Estimator(db).vision(images, calls=2 if find_boxes else 1),
+                label=f"Split board: {ch.name}")
+
+
+def sheet_board_spec(db: Session, project_id: int | None, ch: Character, engine: AIModel, panels: list[str],
+                     outfit: dict | None = None, fill_missing: bool = True) -> dict:
+    """A whole character board in one request (BytePlus Seedream group generation): priced per image asked for (BytePlus
+    bills each image made; missing ones are made one by one on the same engine within the same estimate)."""
+    return spec("sheet_board", payload={"character_id": ch.id, "project_id": project_id, "engine": engine.id,
+                                        "panels": panels, "outfit": outfit or None, "fill_missing": fill_missing},
+                project_id=project_id, estimate=Estimator(db).image_engine(engine, len(panels)),
+                label=f"Full board in one go: {ch.name} ({len(panels)} images)")
 
 
 def location_images_spec(db: Session, project_id: int | None, loc: Location, kinds: list[str] | None = None,

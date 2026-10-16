@@ -209,7 +209,7 @@ def _try_engines(run: _Run, cands: list[tuple[AIModel, str]], build: Callable[[A
 
 
 def run_chain(ctx: JobContext, chain: str, modes_ok: list[str], build: Callable[[AIModel, str], GenRequest],
-              explicit: str | None = None, skip: list[str] | None = None, expected_s: float = 90):
+              explicit: str | None = None, skip: list[str] | None = None, expected_s: float = 90, only: bool = False):
     """Try each engine of a chain until one succeeds. Non-retryable failures (safety block, bad input, unsupported,
     no credit) fall through to the next engine, and so does a rate limit (that provider is then paused for every job,
     see core/ratelimit.py); other transient errors bubble up so the worker retries the job.
@@ -217,13 +217,31 @@ def run_chain(ctx: JobContext, chain: str, modes_ok: list[str], build: Callable[
     Two opt-in fallbacks look past "Google first": the same model through another provider when Google's quota is
     used up ("quota_fallback_routes"), and other models when every engine tried blocked the content
     ("safety_fallback"). A fallback that costs more than the job was approved for (plus "fallback_extra_limit_usd")
-    is skipped; when nothing else works the job waits for approval instead of failing."""
+    is skipped; when nothing else works the job waits for approval instead of failing.
+
+    `only` (with `explicit`): that engine through its own provider and nothing else, not even the same model through
+    another provider (a character's sheet engine picked by hand, e.g. Seedream on BytePlus only). The opt-in safety
+    fallback still applies when the team turned it on."""
     from ..core import credit, recovery
     with SessionLocal() as db:
         cands = model_hub.candidates(db, chain, modes_ok, explicit)
         no_credit = credit.holds(db)
         quota_fallback = bool(settings_store.get_setting(db, "quota_fallback_routes"))
         safety_fallback = bool(settings_store.get_setting(db, "safety_fallback"))
+    if only and explicit:
+        cands = [c for c in cands if c[0].id == explicit]
+        if not cands:
+            with SessionLocal() as db:
+                m = db.get(AIModel, explicit)
+                name = m.display_name if m else explicit
+                mode = model_hub.provider_mode(m.provider) if m else "missing"
+                why = ("is no longer in the Model Hub" if m is None or m.status == "retired"
+                       else f"has no {m.provider} credit left" if m.provider in no_credit
+                       else f"has no {m.provider} API key" if mode == "missing"
+                       else f"can't do {'/'.join(modes_ok)}" if not set(modes_ok) & set((m.capabilities or {}).get("modes") or [])
+                       else f"has no {m.provider} API key, so it would only make placeholders" if mode == "mock"
+                       else "can't run now")
+            raise ProviderNotConfigured(f"{name} was picked for this, and it {why}. Pick another engine (or Auto).")
     if skip and len(cands) > 1:
         rest = [c for c in cands if c[0].id not in skip]
         cands = rest or cands
@@ -274,15 +292,16 @@ def run_chain(ctx: JobContext, chain: str, modes_ok: list[str], build: Callable[
 
 
 def gen_image(ctx: JobContext, prompt: str, refs: list[Path], aspect: str, title: str = "", explicit: str | None = None,
-              seed: int | None = None):
-    """Image through the 'image' chain. Returns (MediaResult, engine_id). `seed` reaches engines that take one."""
+              seed: int | None = None, only: bool = False):
+    """Image through the 'image' chain. Returns (MediaResult, engine_id). `seed` reaches engines that take one; `only`
+    keeps an `explicit` engine to its own route (see run_chain)."""
     refs = [r for r in refs if r and r.exists()]
     # with references only engines that can see them qualify: a text-only engine would ignore the character's look
     # (if none is free, e.g. Google's quota is used up, the job waits for it instead of making an unrelated image)
     modes = ["i2i"] if refs else ["t2i", "i2i"]
     m, mode, res, attempts = run_chain(ctx, "image", modes, lambda m, mode: GenRequest(
         mode=mode, prompt=prompt, refs=refs if mode == "i2i" else [], aspect=aspect, seed=seed), explicit=explicit,
-        expected_s=30)
+        expected_s=30, only=only)
     return res, m.id
 
 
@@ -969,13 +988,14 @@ def _sheet_prompt(ch: Character, view: str, style: Style | None, has_ref: bool, 
 
 def _char_ref(db, ch: Character) -> Path | None:
     """Base image for sheets, outfits and expressions: the user's own approved photo first, so everything generated
-    from it keeps the real face; otherwise the generated front view."""
+    from it keeps the real face; otherwise the front view (generated, or cut from an uploaded board). A whole uploaded
+    board is the last resort."""
     st = get_storage()
     for kind, approved_only in (("source", True), ("front", False), ("source", False)):
         q = db.query(CharacterAsset).filter(CharacterAsset.character_id == ch.id, CharacterAsset.kind == kind,
                                             CharacterAsset.archived.is_(False))
         if approved_only:
-            q = q.filter(CharacterAsset.approved.is_(True))
+            q = q.filter(CharacterAsset.approved.is_(True), CharacterAsset.origin != "board")
         a = q.order_by(CharacterAsset.approved.desc(), CharacterAsset.id.desc()).first()
         if a and st.exists(a.path):
             return st.abs(a.path)
@@ -983,14 +1003,18 @@ def _char_ref(db, ch: Character) -> Path | None:
 
 
 def _save_char_asset(db, ctx: JobContext, ch: Character, kind: str, res, prompt: str, label: str = "", outfit: str = "",
-                     episode_scope: int | None = None, view: str = "", lighting: str = "") -> CharacterAsset:
+                     episode_scope: int | None = None, view: str = "", lighting: str = "", engine: str = "",
+                     book: bool = True) -> CharacterAsset:
+    """Save a generated character image. `book`=False when the request's cost was booked already (a whole board in
+    one request is booked once, then shared out over its images)."""
     st = get_storage()
     rel = st.save_bytes(st.new_path(f"characters/{ch.id}", res.ext), res.data)
     a = CharacterAsset(character_id=ch.id, kind=kind, label=label or kind.replace("_", " "), outfit=outfit,
                        episode_scope=episode_scope, view=view, lighting=lighting, path=rel, prompt=prompt,
-                       cost_usd=res.usage.usd, version=ch.version)
+                       cost_usd=res.usage.usd, version=ch.version, meta={"engine": engine} if engine else {})
     db.add(a)
-    ctx.cost(res.usage, db)
+    if book:
+        ctx.cost(res.usage, db)
     db.commit()
     emit(db, ctx.project_id, "bible.updated", {"character_id": ch.id, "asset_id": a.id})
     return a
@@ -1006,15 +1030,17 @@ def character_sheet(ctx: JobContext) -> dict:
         style = _style_of(db, ctx.payload.get("project_id"))
         ref = _char_ref(db, ch)
         db.commit()
+    engine = ctx.payload.get("engine") or None  # the character's own engine (picked by hand), else the team chain
     for i, kind in enumerate(kinds):
         ctx.check_cancel()
         view, aspect = SHEET_VIEWS.get(kind, SHEET_VIEWS["front"])
         prompt = _sheet_prompt(ch, view, style, ref is not None)
         ctx.progress(i / len(kinds), f"{ch.name}: {kind.replace('_', ' ')}")
-        res, _ = gen_image(ctx, prompt, [ref] if ref else [], aspect, title=f"{ch.name} · {kind}")
+        res, used = gen_image(ctx, prompt, [ref] if ref else [], aspect, title=f"{ch.name} · {kind}", explicit=engine,
+                              only=bool(engine))
         with SessionLocal() as db:
             ch = db.get(Character, cid)
-            a = _save_char_asset(db, ctx, ch, kind, res, prompt)
+            a = _save_char_asset(db, ctx, ch, kind, res, prompt, engine=used)
             made.append(a.id)
             if ref is None and kind == "front":
                 ref = get_storage().abs(a.path)
@@ -1042,11 +1068,12 @@ def character_outfit(ctx: JobContext) -> dict:
         prompt = _sheet_prompt(ch, desc, style, ref is not None,
                                extra=f"Now wearing a different outfit. OUTFIT: {p['description']}.{same_outfit}")
         refs = [x for x in (ref, first) if x]
-        res, _ = gen_image(ctx, prompt, refs, aspect, title=f"{ch.name} · outfit {p['outfit']} {view}")
+        res, used = gen_image(ctx, prompt, refs, aspect, title=f"{ch.name} · outfit {p['outfit']} {view}",
+                              explicit=p.get("engine") or None, only=bool(p.get("engine")))
         with SessionLocal() as db:
             a = _save_char_asset(db, ctx, db.get(Character, p["character_id"]), "outfit", res, prompt,
                                  label=f"outfit: {p['outfit']} ({view.replace('_', ' ')})", outfit=p["outfit"],
-                                 episode_scope=p.get("episode_scope"), view=view)
+                                 episode_scope=p.get("episode_scope"), view=view, engine=used)
             made.append(a.id)
             if first is None:
                 first = get_storage().abs(a.path)
@@ -1072,10 +1099,11 @@ def character_lighting(ctx: JobContext) -> dict:
         prompt = (f"Character reference image for an AI film. Head-and-shoulders portrait, three-quarter view. {same}{ch.dna_text} "
                   f"Lighting: {LIGHTING[v]}. Background: a simple real setting that matches this light, softly out of focus. "
                   f"Rendering style: {look}. No text, no watermark, single person only.")
-        res, _ = gen_image(ctx, prompt, [ref] if ref else [], "3:4", title=f"{ch.name} · {v} light")
+        res, used = gen_image(ctx, prompt, [ref] if ref else [], "3:4", title=f"{ch.name} · {v} light",
+                              explicit=p.get("engine") or None, only=bool(p.get("engine")))
         with SessionLocal() as db:
             a = _save_char_asset(db, ctx, db.get(Character, p["character_id"]), "lighting", res, prompt,
-                                 label=f"{v.replace('_', ' ')} light", lighting=v)
+                                 label=f"{v.replace('_', ' ')} light", lighting=v, engine=used)
             made.append(a.id)
     return {"assets": made}
 
@@ -1093,9 +1121,12 @@ def character_expressions(ctx: JobContext) -> dict:
         ctx.check_cancel()
         ctx.progress(i / len(EXPRESSIONS), f"{ch.name}: {expr}")
         prompt = _sheet_prompt(ch, f"Head-and-shoulders portrait with a {expr} expression", style, ref is not None)
-        res, _ = gen_image(ctx, prompt, [ref] if ref else [], "3:4", title=f"{ch.name} · {expr}")
+        engine = ctx.payload.get("engine") or None
+        res, used = gen_image(ctx, prompt, [ref] if ref else [], "3:4", title=f"{ch.name} · {expr}", explicit=engine,
+                              only=bool(engine))
         with SessionLocal() as db:
-            a = _save_char_asset(db, ctx, db.get(Character, cid), "expression", res, prompt, label=expr.split(",")[0])
+            a = _save_char_asset(db, ctx, db.get(Character, cid), "expression", res, prompt, label=expr.split(",")[0],
+                                 engine=used)
             made.append(a.id)
     return {"assets": made}
 

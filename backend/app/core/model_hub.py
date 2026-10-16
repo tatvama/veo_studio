@@ -86,10 +86,18 @@ BUILTINS: list[dict[str, Any]] = [
     _seedance("seedance-2.5", "dreamina-seedance-2-5-260628", "Seedance 2.5", "premium", 10.7, 30),
     _seedance("seedance-2.5-premium", "dreamina-seedance-2-5-premium-260915", "Seedance 2.5 Premium", "premium", 16.0,
               30, estimate=True),
+    # Seedream 5.0 Pro makes one image per request: BytePlus doesn't offer group ("sequential") generation on Pro or
+    # Flash yet, only on 5.0 Lite, 4.5 and 4.0 (ModelArk image API reference)
     {"id": "byteplus:seedream-5.0-pro", "provider": "byteplus", "endpoint": "seedream-5-0-pro-260628", "task": "image",
      "family": "Seedream 5.0 Pro", "maker": "bytedance", "display_name": "Seedream 5.0 Pro (BytePlus)", "tier": "premium",
      "price_usd": 0.09, "price_unit": "image", "price_source": "catalog",  # 2K output (above 2.36 MP)
      "capabilities": {"modes": ["t2i", "i2i"], "max_refs": 10}},
+    # Seedream 5.0 Lite: a whole character board (up to 15 images, references included) in one request. The price is
+    # an estimate (BytePlus bills each image made) until set in the Hub.
+    {"id": "byteplus:seedream-5.0-lite", "provider": "byteplus", "endpoint": "seedream-5-0-260128", "task": "image",
+     "family": "Seedream 5.0 Lite", "maker": "bytedance", "display_name": "Seedream 5.0 Lite (BytePlus)", "tier": "standard",
+     "price_usd": 0.035, "price_unit": "image", "price_source": "estimate",
+     "capabilities": {"modes": ["t2i", "i2i"], "max_refs": 14, "group_max_images": 15}},
 ]
 
 # Engine chains: tried in order; the first enabled engine whose provider is usable and that supports
@@ -478,6 +486,14 @@ def candidates(db: Session, chain: str, modes_ok: list[str], explicit: str | Non
         if google:  # Google can do it: use only Google (other providers stay for what Google can't do, or when picked
             return google  # by hand; turn Google first off to use the cheapest route of every model)
     return out
+
+
+def group_max(m: AIModel | None) -> int:
+    """How many images the engine makes in one request (a whole character board), references included; 0 = one at a
+    time. Only BytePlus Seedream's group generation is wired up (services.seedream_group)."""
+    if m is None or m.provider != "byteplus" or m.task != "image":
+        return 0
+    return int((m.capabilities or {}).get("group_max_images") or 0)
 
 
 def first_choice(db: Session, chain: str, modes_ok: list[str], explicit: str | None = None) -> tuple[AIModel, str] | None:
