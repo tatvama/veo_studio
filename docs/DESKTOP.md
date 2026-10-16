@@ -576,11 +576,13 @@ npm run dist       # Windows installer (NSIS) in desktop/release, with the built
   secrets, passed to electron-builder as `CSC_LINK` / `CSC_KEY_PASSWORD`; as soon as they exist every release is signed,
   nothing else to change. Without them the installer is unsigned and Windows SmartScreen warns on first run.
 - **Update verification.** `desktop/electron-builder.yml` sets `win.verifyUpdateCodeSignature: true` and
-  `win.publisherName` (the certificate's subject CN; change it to match the certificate that is bought), so
-  electron-updater refuses an update whose Authenticode signature isn't that publisher's. **This only protects anything
-  once builds are signed**: an unsigned build has no signature to compare, so until then an update's integrity rests on
-  TLS to GitHub and the blockmap. `desktop/test/release-config.test.ts` keeps the two settings and the workflow's
-  signing variables in place.
+  `win.signtoolOptions.publisherName` (the certificate's subject CN; change it to match the certificate that is bought),
+  so electron-updater refuses an update whose Authenticode signature isn't that publisher's. **This only protects
+  anything once builds are signed**: a build that pins the publisher refuses unsigned updates too, so the release
+  workflow builds unsigned installers with `-c.win.verifyUpdateCodeSignature=false` (no pin), and until then an update's
+  integrity rests on TLS to GitHub and the blockmap. The first signed release is accepted by those unpinned installs and
+  pins the publisher from then on. `desktop/test/release-config.test.ts` keeps these settings and the workflow's signing
+  variables in place, and checks the configuration against electron-builder's own schema.
 
 ## 7. Status (13 October 2026)
 
