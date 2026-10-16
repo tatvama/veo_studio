@@ -40,6 +40,17 @@ keyframe that sets the look of the same scene). Score 0-1:
 Score 1.0 for what does not apply (no characters expected, or no anchor frame given). Flag people who are not in the shot
 description, deformed hands or fingers, and any text, subtitles, logo or watermark. Notes: one short sentence on what to fix."""
 
+BOARD_BOXES = """You find the separate pictures (panels) on a character reference board: one image that shows the same
+character several times, e.g. a turnaround (front, three-quarter, side, back), expressions and outfits. Return one box per
+picture of the character, as fractions of the board (x, y = top-left corner; w, h = size), in reading order. Leave out
+captions, titles, colour swatches and logos. A box holds one figure or face with a little margin, never two."""
+
+BOARD_LABELS = """You label the pictures cut out of one character reference board, in the order given. For each, say what
+it shows: front (facing the camera, head and shoulders or upper body), three_quarter (head turned about 45 degrees),
+profile (side view), back (seen from behind), full_body (head to toe, front), expression (a close face that mainly shows an
+emotion: name it), outfit (the character in a different set of clothes from the main look: name the outfit) or other
+(a prop, detail, hands, colour swatch, text, or another person). One label per picture, using its 1-based number."""
+
 SUMMARY = """Summarise this episode for the writers' room so the next episode stays consistent: who knows what, open threads,
 relationships, injuries/outfits/props that must carry over, and where each character ended up. Under 150 words."""
 

@@ -35,6 +35,7 @@ VARIATIONS = [
 # verify themselves in the BytePlus console instead.
 REGISTER_KINDS = ["front", "three_quarter", "full_body", "profile", "outfit"]
 REGISTER_MAX = 4
+REMOVE_FAILED = "BytePlus didn't confirm the removal (the BytePlus panel shows why)"
 PHOTO_REASON = "Made from a photo of a real person: they verify themselves in the BytePlus console."
 
 
@@ -49,6 +50,11 @@ def register_candidates(db, ch: Character) -> list[CharacterAsset]:
     sheet = (db.query(CharacterAsset).filter(CharacterAsset.character_id == ch.id, CharacterAsset.archived.is_(False),
                                              CharacterAsset.kind.in_(REGISTER_KINDS))
              .order_by(CharacterAsset.id.desc()).all())
+    # Views cut out of an uploaded character board (origin "board:<board asset id>") are the uploader's own images,
+    # maybe of a real person: sent only when that board is attested AI-made, like the uploads themselves.
+    ai_boards = {f"board:{i}" for (i,) in db.query(CharacterAsset.id).filter(
+        CharacterAsset.character_id == ch.id, CharacterAsset.origin == "board", CharacterAsset.ai_made.is_(True))}
+    sheet = [a for a in sheet if not (a.origin or "").startswith("board") or a.origin in ai_boards]
     rows = [a for a in sheet if a.approved] or sheet
     rows.sort(key=lambda a: REGISTER_KINDS.index(a.kind))
     out, kinds = [], set()
@@ -276,7 +282,9 @@ def withdraw_byteplus(db, user, ch: Character, why: str, request=None) -> dict |
         audit(db, user, "character.unregister_byteplus", ch.name, {"reason": why, "error": msg}, request=request,
               commit=False)
         db.commit()
-        return {"removed": 0, "error": msg}
+        # the caller answers the browser: a fixed line there, the reason itself stays on the registration (shown in the
+        # BytePlus panel) and in the audit log
+        return {"removed": 0, "error": REMOVE_FAILED}
     audit(db, user, "character.unregister_byteplus", ch.name, {"assets": removed, "reason": why}, request=request)
     return {"removed": removed, "error": ""}
 

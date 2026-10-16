@@ -17,7 +17,12 @@ GOOD_IMAGES = 10  # recommended for a reliable face
 def training_set(db: Session, ch: Character) -> dict:
     assets = (db.query(CharacterAsset).filter(CharacterAsset.character_id == ch.id, CharacterAsset.archived.is_(False))
               .order_by(CharacterAsset.id).all())
-    own = [a for a in assets if a.kind == "source" and a.approved]
+    # the user's own images: approved photos, and views cut out of an uploaded character board (the uploader's own
+    # pictures, maybe of a real person: they count as photos, never as an AI sheet to fill up with variations).
+    # TODO(feat/ai-upload-registration): crops of a board attested "AI-generated, not a real person" (ai_made) may
+    # count as the AI sheet instead.
+    own = [a for a in assets if a.approved and ((a.kind == "source" and a.origin != "board")
+                                                or (a.origin or "").startswith("board:"))]
     # sheet fill-ins made for an AI-designed character are not variations of a real photo: once the user has their
     # own photos, only the variations they asked for and approved count
     variations = [a for a in assets if a.kind == "training" and not (own and a.label.startswith("training "))]
@@ -29,7 +34,7 @@ def training_set(db: Session, ch: Character) -> dict:
     else:
         # an AI-designed character has no real face to protect: train on its sheet and fill up with variations of it
         sheet_kinds = ("front", "three_quarter", "profile", "full_body", "expression", "outfit")
-        sheet = [a for a in assets if a.kind in sheet_kinds]
+        sheet = [a for a in assets if a.kind in sheet_kinds and not (a.origin or "").startswith("board:")]
         chosen = ([a for a in sheet if a.approved] or sheet) + approved_var
         basis = "sheet"
         auto_fill = True

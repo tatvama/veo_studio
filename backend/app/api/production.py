@@ -383,6 +383,7 @@ class CostumeIn(BaseModel):
     generate: bool = True  # make the 3-angle turnaround now
     views: list[str] | None = None
     project_id: int | None = None
+    engine: str | None = None  # the image engine (remembered on the character); "auto" = the team chain; left out = last pick
 
 
 @router.post("/characters/{cid}/costumes")
@@ -405,7 +406,10 @@ def create_costume(cid: int, body: CostumeIn, user: User = Depends(require("crea
     if body.generate:
         p = db.get(Project, body.project_id) if body.project_id else None
         scope = body.episode_from if body.episode_from == body.episode_to else None
-        out["jobs"] = jobs.submit(db, user, p, [generation.outfit_spec(db, body.project_id, c, name, body.description, scope, body.views)])
+        from ..core import sheet_engine
+        engine = sheet_engine.resolve(db, c, body.engine)
+        out["jobs"] = jobs.submit(db, user, p, [generation.outfit_spec(db, body.project_id, c, name, body.description, scope, body.views,
+                                                                        engine)])
     emit(db, None, "bible.updated", {"character_id": cid})
     return out
 

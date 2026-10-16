@@ -105,6 +105,10 @@ export interface CharacterAsset {
   id: number; character_id: number; kind: string; label: string; outfit: string; url: string; approved: boolean; archived: boolean; created_at: string;
   /** An upload ("source") the user attested is AI-generated, not a photo of a real person: it may be registered with BytePlus. */
   ai_made?: boolean; ai_attested_by?: number | null; ai_attested_at?: string | null;
+  /** "" generated · "board" an uploaded character board (kind source) · "board:<id>" a view cut out of that board */
+  origin?: string;
+  /** a board's state (meta.board), a crop's box, the engine that made a generated image (meta.engine) */
+  meta?: Record<string, any>;
 }
 /** What registering a character with BytePlus would send now (GET /api/characters/{id}/byteplus/plan). */
 export interface BytePlusPlan {
@@ -139,6 +143,8 @@ export interface Character {
   seedance_ready?: boolean;
   /** Why the character isn't registered with BytePlus by itself ("" = it will be when its sheet is approved or it is locked). */
   byteplus_auto?: string;
+  /** The image engine picked for this character's reference pack (a Model Hub engine id); "" = the team's image chain. */
+  sheet_engine?: string;
   /** Why the character can't be registered with BytePlus at all ("" = it can): archived, or made from a photo of a real person. */
   byteplus_block?: string;
   archived?: boolean;

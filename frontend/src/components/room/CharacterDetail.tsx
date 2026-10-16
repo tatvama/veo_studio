@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Archive, ArchiveRestore, ImagePlus, Images, Lock, LockOpen, Mic, ScanFace, Shirt, ShieldAlert, ShieldCheck, Smile, SunMedium, Upload, UserRound, Wand2 } from "lucide-react";
+import { Archive, ArchiveRestore, ImagePlus, Images, Lock, LockOpen, Shirt, ShieldAlert, ShieldCheck, Smile, SunMedium, Upload, UserRound, Wand2 } from "lucide-react";
 import { motion } from "motion/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -17,18 +17,20 @@ import { GroupHead, IdMark, JobStrip, LangChips, LEVEL_TEXT, LockMeter, PackBar,
 import { CharacterLockPanel } from "./CharacterLock";
 import { Costumes } from "./Costumes";
 import { BytePlusPanel } from "./BytePlusPanel";
+import { BoardSplitCard, OneCallBoardButton } from "./CharacterBoard";
 import { ConsentPanel, IdentityBadge, IdentityPanel } from "./Identity";
 import { DetailBar, FloatingSaveBar, RField, RoomEmpty, type SaveState } from "./kit";
 import { Gallery, type GalleryItem } from "./Lightbox";
 import { LEVEL_LABEL, LIGHT_LABEL, LIGHT_ORDER, VIEW_LABEL, VIEW_ORDER, strictnessLevel } from "./look";
 import { useCharScope } from "./scope";
 import { consentNeeds, useActiveJobs, useConsentRows, useSaveShortcut } from "./util";
+import { SheetEnginePicker } from "./SheetEngine";
 import { Versions } from "./Versions";
 import { Voices } from "./Voices";
 import { IdChip, Outline, WorkPanel, Workspace, ViewSwitch, code, scrollToSection, type OutlineItem } from "./workspace";
 
 type Asset = NonNullable<CharacterV3["assets"]>[number];
-const IMAGE_JOBS = ["character_sheet", "character_outfit", "character_expressions", "character_lighting"];
+const IMAGE_JOBS = ["character_sheet", "character_outfit", "character_expressions", "character_lighting", "sheet_board"];
 const seed = (c: CharacterV3): Partial<CharacterV3> => ({
   name: c.name, role: c.role, gender: c.gender, age: c.age, dna_text: c.dna_text, personality: c.personality, voice_description: c.voice_description,
   name_pronunciation: c.name_pronunciation ?? "", performance_notes: c.performance_notes ?? "",
@@ -80,7 +82,8 @@ export function CharacterDetail({ cid, chars, onBack, onOpen, backLabel }: {
   useSaveShortcut(dirty && editable && busy !== "save", save);
 
   const assets = useMemo(() => ((c?.assets ?? []) as Asset[]).filter((a) => !a.archived), [c?.assets]);
-  const refsAll = assets.filter((a) => a.kind !== "identity_test" && a.kind !== "training");
+  // an uploaded character board is listed under "Split a character board", not among the references
+  const refsAll = assets.filter((a) => a.kind !== "identity_test" && a.kind !== "training" && a.origin !== "board");
   const training = assets.filter((a) => a.kind === "training");
   const tests = assets.filter((a) => a.kind === "identity_test");
 
@@ -129,6 +132,7 @@ export function CharacterDetail({ cid, chars, onBack, onOpen, backLabel }: {
 
   // ── the reference pack, grouped ──────────────────────────────────────────
   const toItem = (a: Asset, label: string, sub?: string): GalleryItem => ({ id: a.id, url: a.url, label, sub, approved: a.approved });
+  const fromBoard = (a: Asset) => ((a as { origin?: string }).origin ?? "").startsWith("board:") ? t("from your board") : undefined;
   const views = refsAll.filter((a) => VIEW_ORDER.includes(a.kind)).sort((a, b) => VIEW_ORDER.indexOf(a.kind) - VIEW_ORDER.indexOf(b.kind) || a.id - b.id);
   const expressions = refsAll.filter((a) => a.kind === "expression");
   const outfitAssets = refsAll.filter((a) => a.kind === "outfit");
@@ -140,7 +144,8 @@ export function CharacterDetail({ cid, chars, onBack, onOpen, backLabel }: {
   // skeleton tiles per group while a job runs (progress ≈ images already made / planned)
   const pendingFor = (type: string, planned: (j: (typeof imageJobs)[number]) => number) =>
     imageJobs.filter((j) => j.type === type).reduce((n, j) => n + Math.max(0, planned(j) - Math.round((j.progress || 0) * planned(j))), 0);
-  const pendViews = pendingFor("character_sheet", (j) => (j.payload?.kinds as string[] | undefined)?.length ?? SHEET_VIEWS.length);
+  const pendViews = pendingFor("character_sheet", (j) => (j.payload?.kinds as string[] | undefined)?.length ?? SHEET_VIEWS.length)
+    + pendingFor("sheet_board", (j) => (j.payload?.panels as string[] | undefined)?.length ?? 10);
   const pendExpr = pendingFor("character_expressions", () => 5);
   const pendLight = pendingFor("character_lighting", (j) => (j.payload?.variants as string[] | undefined)?.length ?? LIGHTING_VARIANTS.length);
   const pendOutfitFor = (name: string) => pendingFor("character_outfit", (j) => (j.payload?.outfit === name ? ((j.payload?.views as string[] | undefined)?.length ?? 3) : 0));
@@ -151,8 +156,8 @@ export function CharacterDetail({ cid, chars, onBack, onOpen, backLabel }: {
     { key: "views", title: t("Views"), hint: t("Front, three-quarter, profile, back and full body"), pending: pendViews,
       items: views.map((a) => toItem(a, a.kind === "source" ? `★ ${uploadLabel(a)}` : t(VIEW_LABEL[a.kind] ?? a.kind),
         a.kind === "source" ? (a.ai_made ? (a.approved ? t("AI-made · used first") : t("AI-made · not used (unapproved)"))
-          : (a.approved ? t("your photo · used first") : t("your photo · not used (unapproved)"))) : undefined)) },
-    { key: "expressions", title: t("Expressions"), pending: pendExpr, items: expressions.map((a) => toItem(a, a.label || t("expression"))) },
+          : (a.approved ? t("your photo · used first") : t("your photo · not used (unapproved)"))) : fromBoard(a))) },
+    { key: "expressions", title: t("Expressions"), pending: pendExpr, items: expressions.map((a) => toItem(a, a.label || t("expression"), fromBoard(a))) },
     ...outfitNames.map((o) => ({ key: `outfit-${o}`, title: t("Outfit: {name}", { name: o }), pending: pendOutfitFor(o),
       items: outfitAssets.filter((a) => a.outfit === o).map((a) => toItem(a, a.view ? t(VIEW_LABEL[a.view] ?? a.view) : a.label, o)) })),
     ...newOutfitJobs.map((j) => ({ key: `outfit-job-${j.id}`, title: t("Outfit: {name}", { name: String(j.payload?.outfit ?? "") }), pending: (j.payload?.views as string[] | undefined)?.length ?? 3, items: [] })),
@@ -362,6 +367,7 @@ export function CharacterDetail({ cid, chars, onBack, onOpen, backLabel }: {
                 onClick={() => submit(() => api.post<SubmitResult>(`/api/characters/${cid}/expressions`, { project_id: projectId ?? null }), tr("Expressions"))}>{t("Expressions")}</Button>
               <Button size="sm" icon={<SunMedium className="size-3.5" />} className="max-sm:h-10"
                 onClick={() => submit(() => generateLighting(cid, projectId ?? null) as Promise<SubmitResult>, tr("Lighting variants for {name}", { name: c.name }))}>{t("Lighting variants")}</Button>
+              <OneCallBoardButton character={c} projectId={projectId} editable={editable} />
             </>
           )}>
           <div className="space-y-4">
@@ -381,6 +387,12 @@ export function CharacterDetail({ cid, chars, onBack, onOpen, backLabel }: {
               </div>
             )}
             <UploadAttestations character={c} uploads={allUploads} canAttest={editable} canUnattest={canEdit} />
+
+            {/* a board with many views (turnaround, expressions, outfits) → separate, labelled views */}
+            <BoardSplitCard character={c} projectId={projectId} editable={editable} />
+
+            {/* the engine this character's images are made with (Auto = the team's image chain) */}
+            {canEdit && <SheetEnginePicker character={c} editable={editable} />}
 
             {/* pack completeness: seven stations of the look */}
             <div className="rounded-lg border border-line bg-bg/40 p-3.5">

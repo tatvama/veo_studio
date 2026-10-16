@@ -118,7 +118,7 @@ def project_out(db: Session, p: Project, full: bool = False) -> dict:
 def character_out(db: Session, c: Character, brief: bool = False) -> dict:
     assets = (db.query(CharacterAsset).filter(CharacterAsset.character_id == c.id, CharacterAsset.archived.is_(False))
               .order_by(CharacterAsset.id).all())
-    front = (next((a for a in assets if a.kind == "source" and a.approved), None)  # the user's own photo
+    front = (next((a for a in assets if a.kind == "source" and a.approved and a.origin != "board"), None)  # the user's own photo
              or next((a for a in assets if a.kind == "front" and a.approved), None) or next((a for a in assets if a.kind == "front"), None)
              or (assets[0] if assets else None))
     out = c.to_dict(avatar_url=url(front.path) if front else "")
