@@ -195,7 +195,7 @@ export function registerConnectIpc(deps: ConnectDeps): void {
     const uiSource: UiSource = UI_SOURCES.includes(patch?.uiSource as UiSource) ? (patch!.uiSource as UiSource) : prev.uiSource;
     const ffmpegPath = typeof patch?.ffmpegPath === "string" ? patch.ffmpegPath : prev.ffmpegPath;
     if (ffmpegPath && !ffmpegVersion(ffmpegPath).version) return { error: "That FFmpeg doesn't run" };
-    deps.config.set({ serverUrl, uiSource, uiSourceChosen: true, ffmpegPath });
+    deps.config.set({ serverUrl, serverUrlChosen: true, uiSource, uiSourceChosen: true, ffmpegPath });
     if (serverUrl !== prev.serverUrl) {
       // the session belongs to the old server: sign in again on the new one
       await session.defaultSession.cookies.remove(deps.gatewayUrl(), COOKIE).catch(() => undefined);

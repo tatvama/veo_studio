@@ -145,7 +145,7 @@ async function start(): Promise<void> {
   DesktopShell.early(app.isPackaged);
   const splash = smoke ? null : new Splash(app.getVersion());
   splash?.step("Reading settings…", 10);
-  const config = new Config(userData, app.getPath("documents"));
+  const config = new Config(userData, app.getPath("documents"), process.env, app.isPackaged);
   gpuGate.setSlots(config.get().encoder.gpuSlots); // how many encodes / GPU tools may share the card at once
   config.onChange((s) => gpuGate.setSlots(s.encoder.gpuSlots));
   const library = new Library(config, userData, log);

@@ -19,11 +19,14 @@ export const BUILTIN_WORKSPACES: Workspace[] = [
   { id: "story", name: "Story", builtIn: true, mainDisplay: 0, panels: [{ panel: "bible", display: 1 }, { panel: "media", display: 0 }] },
 ];
 
+/** A run from source (npm run dev, smoke, tests) talks to the server on this PC, never to the studio by accident. */
 export const DEFAULT_SERVER_URL = "http://localhost:8100";
+/** The installed app works with the team's studio out of the box: no address to type. */
+export const STUDIO_SERVER_URL = "https://studio.taatvam.com";
 
-export function defaultSettings(opts: { documents: string; env?: Record<string, string | undefined> }): DesktopSettings {
+export function defaultSettings(opts: { documents: string; env?: Record<string, string | undefined>; packaged?: boolean }): DesktopSettings {
   const env = opts.env ?? process.env;
-  let serverUrl = DEFAULT_SERVER_URL;
+  let serverUrl = opts.packaged ? STUDIO_SERVER_URL : DEFAULT_SERVER_URL;
   if (env.TATVAM_SERVER) {
     try { serverUrl = normalizeServerUrl(env.TATVAM_SERVER); } catch { /* a plain-http public address: the app starts on the default and the Studio server window says why */ }
   }
@@ -73,12 +76,16 @@ export function sanitizeAppearance(input: unknown, base: AppearanceSettings = DE
  * Screens from the server are opt-in (docs/DESKTOP.md §4.3): for a while "auto" was written as the default, so a
  * settings file whose `uiSource` is "auto" or "server" without the user's choice (`uiSourceChosen`, set by the Studio
  * server window) moves back to "bundled". A chosen source stays.
+ * Installed apps from before the studio default wrote `http://localhost:8100`: in the installed app, that address
+ * without the user's choice (`serverUrlChosen`, also set by the Studio server window) moves to the studio server.
  */
-export function migrateSettings(stored: unknown): { value: unknown; migrated: boolean } {
+export function migrateSettings(stored: unknown, packaged = false): { value: unknown; migrated: boolean } {
   if (typeof stored !== "object" || stored === null || Array.isArray(stored)) return { value: stored, migrated: false };
-  const o = stored as Record<string, unknown>;
-  if ((o.uiSource === "auto" || o.uiSource === "server") && o.uiSourceChosen !== true) return { value: { ...o, uiSource: "bundled" }, migrated: true };
-  return { value: stored, migrated: false };
+  let o = stored as Record<string, unknown>;
+  let migrated = false;
+  if ((o.uiSource === "auto" || o.uiSource === "server") && o.uiSourceChosen !== true) { o = { ...o, uiSource: "bundled" }; migrated = true; }
+  if (packaged && o.serverUrl === DEFAULT_SERVER_URL && o.serverUrlChosen !== true) { o = { ...o, serverUrl: STUDIO_SERVER_URL }; migrated = true; }
+  return { value: o, migrated };
 }
 
 /** localhost, *.localhost, 127.0.0.0/8 and ::1: a server on this PC. */
@@ -135,6 +142,7 @@ export function sanitize(input: unknown, defaults: DesktopSettings): DesktopSett
   if (typeof input.serverUrl === "string") {
     try { s.serverUrl = normalizeServerUrl(input.serverUrl); } catch { /* keep the default */ }
   }
+  if (typeof input.serverUrlChosen === "boolean") s.serverUrlChosen = input.serverUrlChosen;
   if (typeof input.gatewayPort === "number" && Number.isInteger(input.gatewayPort) && input.gatewayPort > 1023 && input.gatewayPort < 65536) {
     s.gatewayPort = input.gatewayPort;
   }
@@ -197,14 +205,14 @@ export class Config {
   private value: DesktopSettings;
   private listeners = new Set<(s: DesktopSettings, prev: DesktopSettings) => void>();
 
-  constructor(userData: string, documents: string, env: Record<string, string | undefined> = process.env) {
+  constructor(userData: string, documents: string, env: Record<string, string | undefined> = process.env, packaged = false) {
     this.file = path.join(userData, "settings.json");
-    this.defaults = defaultSettings({ documents, env });
+    this.defaults = defaultSettings({ documents, env, packaged });
     let stored: unknown = undefined;
     if (existsSync(this.file)) {
       try { stored = JSON.parse(readFileSync(this.file, "utf8")); } catch { stored = undefined; }
     }
-    const m = migrateSettings(stored);
+    const m = migrateSettings(stored, packaged && !env.TATVAM_SERVER); // a TATVAM_SERVER of localhost is a choice too
     this.value = sanitize(m.value, this.defaults);
     if (!stored || m.migrated) this.save();
   }

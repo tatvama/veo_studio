@@ -41,6 +41,8 @@ export type EncoderPreference = "auto" | "nvenc" | "qsv" | "amf" | "software";
 
 export interface DesktopSettings {
   serverUrl: string;
+  /** additive: the user picked serverUrl in the Studio server window (an unpicked old localhost moves to the studio) */
+  serverUrlChosen?: boolean;
   gatewayPort: number;
   /** additive "auto" (the default, docs/DESKTOP.md §4.3): the server's screens with an offline copy, else the app's own */
   uiSource: UiSource;
