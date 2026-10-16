@@ -7,7 +7,7 @@ const RETURN_TTL_MS = 15 * 60_000;
 export function rememberReturnPath() {
   const to = window.location.pathname + window.location.search;
   try {
-    if (to === "/") sessionStorage.removeItem(RETURN_KEY);
+    if (to === "/" || to === "/login") sessionStorage.removeItem(RETURN_KEY); // nothing to come back to: "/" is where sign-in lands
     else sessionStorage.setItem(RETURN_KEY, JSON.stringify({ to, at: Date.now() }));
   } catch { /* storage blocked */ }
 }

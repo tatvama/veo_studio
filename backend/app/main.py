@@ -24,7 +24,7 @@ mimetypes.add_type("video/mp4", ".mp4")
 
 from . import __version__
 from .api import (admin, auth, bible, board, campaign, designs, desktop, edits, fx, generate, growth, hub, layers,
-                  mcp_access, production, projects, rates, room, shots, work)
+                  mcp_access, production, projects, rates, room, shots, waitlist, work)
 from .api import ui as ui_api
 from .config import ROOT, get_settings
 from .db import get_db
@@ -61,7 +61,7 @@ app.add_middleware(RetryReads)  # re-run a GET once if a dropped database connec
 
 for r in (auth.router, admin.router, projects.router, bible.router, shots.router, generate.router, work.router, hub.router,
           room.router, growth.router, board.router, fx.router, layers.router, production.router, campaign.router, rates.router,
-          designs.router, mcp_access.router, desktop.router, edits.router):
+          designs.router, mcp_access.router, desktop.router, edits.router, waitlist.router):
     app.include_router(r)
 app.include_router(ui_api.router)  # GET /api/ui/manifest for Tatvam Desktop (docs/DESKTOP.md §4.3), before the SPA catch-all
 

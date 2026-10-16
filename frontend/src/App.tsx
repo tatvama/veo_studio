@@ -11,12 +11,14 @@ import { useMotionPref } from "./components/shell/theme";
 import { Button, Empty, PageSkeleton } from "./components/ui";
 import { ApiError } from "./lib/api";
 import { useT } from "./lib/i18n";
+import { isInstalledApp } from "./lib/landing";
 import { useAuthStatus } from "./lib/queries";
 import Home from "./pages/Home";
 import { takeReturnPath } from "./pages/login/returnPath";
 
 // Pages load on first visit, so the first screen (and public review links) stay light.
 const Login = lazy(() => import("./pages/Login"));
+const Landing = lazy(() => import("./pages/Landing"));
 const ApprovalsPage = lazy(() => import("./pages/admin/Approvals"));
 const AuditPage = lazy(() => import("./pages/admin/Audit"));
 const CostsPage = lazy(() => import("./pages/admin/Costs"));
@@ -108,11 +110,18 @@ function AppRoutes() {
   // News Room graphics lab (dev only): no sign-in, so template builders can screenshot it headless.
   if (GfxLab && loc.pathname === "/editor/gfx-lab") return <Suspense fallback={null}><GfxLab /></Suspense>;
 
+  // The public landing page: /welcome for anyone (the admin can preview it while signed in), "/" for visitors who are not.
+  const landing = <Suspense fallback={<PageLoading />}><Landing /></Suspense>;
+  if (loc.pathname === "/welcome") return landing;
+
   if (isError && !data) return <ServerUnreachable error={error} retrying={isFetching} onRetry={() => void refetch()} />;
   if (isLoading || !data) {
     return <PageLoading />;
   }
   if (!data.user) {
+    // Only the bare address on the web shows the landing page (its Sign in goes to /login). A fresh install still opens
+    // to the admin setup card, the installed apps to sign-in, and every deep link (/oauth/consent?request=…) to the card too.
+    if (loc.pathname === "/" && !data.setup_needed && !isInstalledApp()) return landing;
     return (
       <Suspense fallback={<PageLoading />}>
         <Login setupNeeded={data.setup_needed} googleEnabled={data.google_enabled} />
