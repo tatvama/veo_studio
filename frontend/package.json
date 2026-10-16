@@ -1,7 +1,7 @@
 {
   "name": "veo-studio-frontend",
   "private": true,
-  "version": "3.1.0",
+  "version": "3.2.0",
   "type": "module",
   "tatvam": {
     "requiresDesktop": "3.0.0"
