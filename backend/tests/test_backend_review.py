@@ -235,7 +235,8 @@ def test_running_orchestrators_do_not_double_reserve(client: TestClient):
     from app.models import Job
     from app.workers import worker as worker_mod
 
-    assert worker_mod.ORCHESTRATORS == ORCHESTRATORS == {"dub", "autopilot", "produce", "campaign", "scene_chain"}
+    assert worker_mod.ORCHESTRATORS == ORCHESTRATORS == {"dub", "autopilot", "produce", "campaign", "scene_chain",
+                                                         "storyboard_frames"}
     far = utcnow() + timedelta(days=1)
     made: list[int] = []
     try:

@@ -44,7 +44,7 @@ A token can be limited to some projects.
 | Improve the script | `get_script`, `critique_script` (scores, problems, rewrite notes), `improve_script` (one critic + rewrite pass with your notes), `polish_dialogue` (native speaker pass), `restore_script` |
 | Scenes | `plan_scenes` (scene cards: goal, conflict, turn, wardrobe, props, blocking, coverage), `list_scenes`, `update_scene` |
 | Cast & places | `build_bible`, `get_cast`, `lock_character`, `add_costume`, `set_outfit`, `freeze_look`, `set_dialogue_route` |
-| Storyboard | `breakdown_shots`, `get_storyboard` (returns the keyframe pictures), `get_shot` (exact prompt, takes, QC, a 6-hour link to watch the clip), `update_shot` (incl. `continues_from`), `add_shot_after`, `generate_keyframes` |
+| Storyboard | `breakdown_shots`, `get_storyboard` (returns the keyframe pictures), `get_shot` (exact prompt, takes, QC, a 6-hour link to watch the clip), `update_shot` (incl. `continues_from`, `end_note`), `add_shot_after`, `generate_keyframes`, `storyboard_frames` (start + end frames in order, optionally synced) |
 | Video, scene by scene | `generate_scenes` (see below), `generate_videos` (single shots; linked ones in link order), `regenerate_stale`, `impact_report`, `edit_clip` |
 | Continuity | `get_continuity` (end states, wardrobe timeline, every shot link: ok / waiting / broken), `continuity_state`, `edit_end_state`, `continuity_check` |
 | Finish | `voice_and_lipsync`, `generate_music`, `make_animatic`, `export_video`, `dub_episode`, `make_cutdowns`, `start_autopilot` |
@@ -81,6 +81,11 @@ broken (made before the clip they continue from).
 The same ordering now also runs inside **Autopilot** (videos stage; its continuity stage also writes every scene's
 end state before keyframes) and **Produce all** (videos step). Each keyframe records which clip it started from
 (`continuity_take_id`), so `get_continuity` can tell a real link from a broken one.
+
+**Synced links** (`continuity_mode=end_frame`, set by `storyboard_frames(sync=true)` or `update_shot`) are different:
+the shot starts on the planned **end frame** of the shot before (a free copy of that image), not on its finished clip.
+`generate_scenes` makes those end frames first, in order, then every clip of the scene side by side; each clip runs
+from its start frame to its end frame (first + last frame), so the cut between two synced clips doesn't jump.
 
 ## Files
 

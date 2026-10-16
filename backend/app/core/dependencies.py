@@ -2,6 +2,7 @@
 
 The dependency graph of a shot:
     framing / camera / action / cast / outfits / location / props / references  -> keyframe -> video -> lip-sync, voice lock
+    the same, and how the shot ends (end_note)                                   -> end frame -> video
     dialogue[lang]                                                              -> voice[lang] -> lip-sync[lang]
                                                                                 -> video made audio-driven or native in that language
     narration[lang]                                                             -> narration[lang]
@@ -16,16 +17,19 @@ from sqlalchemy.orm import Session
 
 from ..events import emit
 from ..models import Episode, Project, Shot, Take
-from .generation import keyframe_specs, lipsync_specs, video_specs, voice_specs
+from .generation import endframe_spec, keyframe_specs, lipsync_specs, video_specs, voice_specs
 
 KEYFRAME_FIELDS = {"framing", "camera", "action", "characters", "outfits", "location_id", "prop_ids", "ref_images",
                    "continuity_from_shot_id", "continuity_mode", "continuity_from_prev", "scene_id"}
-VIDEO_FIELDS = KEYFRAME_FIELDS | {"duration_s", "mode", "engine", "quality_mode", "voice_mode"}
+# an end frame follows the shot's own start frame, not the links (a new start frame is remade after it anyway)
+ENDFRAME_FIELDS = ((KEYFRAME_FIELDS - {"continuity_from_shot_id", "continuity_mode", "continuity_from_prev", "scene_id"})
+                   | {"end_note"})
+VIDEO_FIELDS = KEYFRAME_FIELDS | {"duration_s", "mode", "engine", "quality_mode", "voice_mode", "end_note"}
 LABELS = {"framing": "framing", "camera": "camera", "action": "action", "characters": "cast", "outfits": "outfits",
           "location_id": "location", "prop_ids": "props", "ref_images": "references", "duration_s": "duration",
           "mode": "video mode", "engine": "engine", "quality_mode": "quality", "voice_mode": "voice mode",
           "continuity_from_shot_id": "continuity link", "continuity_mode": "continuity link", "continuity_from_prev": "continuity",
-          "scene_id": "scene"}
+          "scene_id": "scene", "end_note": "how it ends"}
 
 
 def changed_fields(before: dict[str, Any], after: dict[str, Any]) -> set[str]:
@@ -56,6 +60,10 @@ def mark_stale(db: Session, shot: Shot, fields: set[str], dialogue_before: dict 
     if fields & KEYFRAME_FIELDS:
         for t in takes:
             if t.kind == "keyframe" and t.provider != "upload":
+                _mark(db, t, f"{what} changed", out)
+    if fields & ENDFRAME_FIELDS:
+        for t in takes:
+            if t.kind == "endframe" and t.provider != "upload":
                 _mark(db, t, f"{what} changed", out)
     if fields & VIDEO_FIELDS:
         for t in takes:
@@ -122,20 +130,23 @@ def regenerate_specs(db: Session, project: Project, episode: Episode, shot_ids: 
         shots = [s for s in shots if s.id in set(shot_ids)]
     want = set(kinds or ["keyframe", "video", "voice", "lipsync"])
     specs: list[dict] = []
-    kf_only, vid, voices, lips = [], [], {}, {}
+    kf_only, vid, end_only, voices, lips = [], [], [], {}, {}
     for s in shots:
         stale = db.query(Take).filter(Take.shot_id == s.id, Take.stale.is_(True), Take.archived.is_(False)).all()
         kinds_here = {t.kind for t in stale}
         if "video" in kinds_here and "video" in want:
-            vid.append(s)
+            vid.append(s)  # (the video job remakes an out-of-date end frame first too)
         elif "keyframe" in kinds_here and "keyframe" in want:
             kf_only.append(s)
+        if "endframe" in kinds_here and "keyframe" in want and "video" not in kinds_here:
+            end_only.append(s)
         for t in stale:
             if t.kind in ("voice", "narration") and "voice" in want and t.language:
                 voices.setdefault(t.language, []).append(s)
             if t.kind in ("lipsync", "voicelock") and "lipsync" in want and t.language:
                 lips.setdefault(t.language, []).append(s)
     specs += keyframe_specs(db, project, kf_only)
+    specs += [endframe_spec(db, project, s) for s in end_only]
     specs += video_specs(db, project, vid)
     for lang, ss in voices.items():
         specs += voice_specs(db, project, _uniq(ss), lang)

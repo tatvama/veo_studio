@@ -69,8 +69,11 @@ def shot_out(db: Session, s: Shot, project: Project, lang: str | None = None, *,
                                                               Comment.resolved.is_(False)).scalar()
     else:
         n_comments = int(comment_counts.get(s.id, 0))
+    from ..core import frames
     return s.to_dict(
         keyframe=take_out(current(db, s.id, "keyframe")),
+        endframe=take_out(current(db, s.id, frames.END)),  # the frame the clip runs to (core/frames.py)
+        frames_link=frames.link_out(db, s),  # a synced shot: the end frame it starts on, and whether it does
         video=take_out(current(db, s.id, "video")),
         voice=take_out(current(db, s.id, "voice", lang)),
         narration_take=take_out(current(db, s.id, "narration", lang)),

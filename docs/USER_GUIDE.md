@@ -66,6 +66,14 @@ Each mode is a **routing chain** in the Model Hub (for example Veo 3.1 Lite → 
 
 **Dubbing** either re-syncs the lips on the existing video (**re-dub**, cheaper) or regenerates audio-driven shots per language (**regenerate**, most accurate mouth shapes).
 
+### Start and end frames, synced clips (storyboard frames)
+A shot can have a **start frame** (its keyframe) and an **end frame**: the same shot a few seconds later, where the action has got to. The video is then made with **first + last frame** (Seedance, Veo, Kling …), so the clip runs from one picture to the other instead of wandering. An engine without first + last frame starts from the start frame only.
+
+- **One shot:** in the shot drawer, **End frame** makes it from the start frame, the cast and the shot's **How it ends** text (Details › Shot); the menu next to it uploads your own or stops using one. The viewer switches between **Start** and **End**, and the row under the takes shows start → end.
+- **Synced shots:** link a shot to the one before with **End frame** (Details › Advanced › Continues from, or click a link on the Film Map). It then starts on *exactly* that end frame (a free copy), so the two clips join without a jump. Because both clips come from frames known in advance, they are made side by side instead of one after the other.
+- **A whole scene:** **Frames** (Storyboard toolbar, or on a scene's header) makes every start and end frame in order, each following the one before, with a price first. **Sync the clips** links each shot of the scene to the one before (one continuous action); **Remake** redoes frames that are already good. End frames get the same vision check as keyframes (compared with their own start frame), with one automatic retake.
+- **Frames engine:** the dialog's engine choice is saved for the project and used for every start and end frame, including single keyframes. Pick **Seedream 5.0 Pro** for a Seedance film; **Auto** keeps the team's image chain (Google first). The Director (`storyboard_frames`) and the MCP server (`storyboard_frames`) do the same.
+
 ## Character boards
 
 Where: **2 Cast › Characters & places**, open a character, **Reference pack**.

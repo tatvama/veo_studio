@@ -16,10 +16,12 @@ import { markFresh, type TakeV3 } from "../../../lib/v3";
 import { ratioOf, thumbRatio } from "./shotMeta";
 
 const KIND_LABELS: Record<string, string> = {
-  lipsync: "Lip-sync", voicelock: "Voice lock", video: "Video", keyframe: "Keyframe", voice: "Voice", narration: "Narration",
+  lipsync: "Lip-sync", voicelock: "Voice lock", video: "Video", keyframe: "Keyframe", endframe: "End frame", voice: "Voice",
+  narration: "Narration",
 };
-const KIND_ORDER = ["lipsync", "voicelock", "video", "keyframe", "voice", "narration"];
-const isVisual = (k: string) => k === "video" || k === "keyframe" || k === "lipsync" || k === "voicelock";
+const KIND_ORDER = ["lipsync", "voicelock", "video", "keyframe", "endframe", "voice", "narration"];
+const isStill = (k: string) => k === "keyframe" || k === "endframe";
+const isVisual = (k: string) => k === "video" || isStill(k) || k === "lipsync" || k === "voicelock";
 const isAudio = (k: string) => k === "voice" || k === "narration";
 
 /** The Takes tab: shootout comparison, side-by-side compare, then every take grouped by kind. */
@@ -159,7 +161,7 @@ export function Takes({ shot, canEdit, canReview, refresh, aspect, onShootout, o
       {groups.map((g) => (
         <section key={g.kind}>
           <h4 className="eyebrow mb-2 flex items-center gap-2">
-            <span className="text-mute [&>svg]:size-3.5">{g.kind === "keyframe" ? <ImageIcon /> : isAudio(g.kind) ? <Mic /> : <Film />}</span>
+            <span className="text-mute [&>svg]:size-3.5">{isStill(g.kind) ? <ImageIcon /> : isAudio(g.kind) ? <Mic /> : <Film />}</span>
             {t(KIND_LABELS[g.kind] ?? g.kind)}
             <span className="mono text-dim">{g.items.length}</span>
             <span aria-hidden className="h-px flex-1 bg-line" />
@@ -204,7 +206,7 @@ function TakeCard({ x, aspect, row, showing, canEdit, canReview, comparing, qcOp
   // engines that blocked the shot before this take was made on another one
   const recoveredFrom: string[] = Array.isArray(x.params?.recovered_from) ? x.params.recovered_from : [];
   const visual = isVisual(x.kind);
-  const src = x.thumb_url || (x.kind === "keyframe" ? x.url : "");
+  const src = x.thumb_url || (isStill(x.kind) ? x.url : "");
   const engine = !isAudio(x.kind) ? takeEngine(x) : "";
   const poster = visual ? (
     <button type="button" onClick={onView} aria-label={t("Show in the viewer")} aria-pressed={showing}
@@ -214,7 +216,7 @@ function TakeCard({ x, aspect, row, showing, canEdit, canReview, comparing, qcOp
       {src ? <img src={src} alt="" loading="lazy" className="size-full object-cover" /> : <span className="grid size-full place-items-center text-dim"><Film className="size-5" /></span>}
       <span className="absolute inset-0 grid place-items-center bg-black/10 transition-colors group-hover/th:bg-black/35">
         <span className={clsx("grid place-items-center rounded-full bg-black/55 text-white backdrop-blur-sm transition-transform group-hover/th:scale-110", row ? "size-7" : "size-9")}>
-          {x.kind === "keyframe" ? <Eye className="size-4" /> : <Play className="size-4 translate-x-px" fill="currentColor" />}
+          {isStill(x.kind) ? <Eye className="size-4" /> : <Play className="size-4 translate-x-px" fill="currentColor" />}
         </span>
       </span>
       {x.selected && (

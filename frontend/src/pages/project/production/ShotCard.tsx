@@ -1,7 +1,7 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { clsx } from "clsx";
-import { AudioLines, Check, Cpu, Film, History, Image as ImageIcon, MessageSquare, Mic, Play, ShieldAlert, ShieldCheck } from "lucide-react";
+import { AudioLines, Check, Cpu, Equal, Film, History, Image as ImageIcon, MessageSquare, Mic, Play, ShieldAlert, ShieldCheck } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { memo, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { QcMini } from "../../../components/hub/Qc";
@@ -180,6 +180,22 @@ export const ShotCard = memo(function ShotCard({ shot, lang, aspect, index, sele
                       if (bar.current && v.duration) bar.current.style.transform = `scaleX(${Math.min(1, v.currentTime / v.duration)})`;
                     }}
                     className={clsx("absolute inset-0 h-full w-full object-cover transition-opacity duration-200", playing ? "opacity-100" : "opacity-0")} />
+                )}
+                {/* the end frame the clip runs to, and whether it starts on the end frame before (synced) */}
+                {shot.endframe && !preview && (
+                  <span title={t("Runs to an end frame")} className="absolute right-2 top-2 z-[5] w-[30%] overflow-hidden rounded border border-white/50 bg-black shadow-lg">
+                    <img src={shot.endframe.thumb_url || shot.endframe.url} alt="" loading="lazy" draggable={false} className="block w-full object-cover"
+                      style={{ aspectRatio: thumbRatio(aspect) }} />
+                    <span className="mono absolute bottom-0 left-0 bg-black/75 px-0.5 text-[9px] font-semibold leading-3 text-white">{t("END")}</span>
+                  </span>
+                )}
+                {shot.frames_link && !preview && (
+                  <span title={shot.frames_link.status === "ok" ? t("Starts exactly on {code}'s end frame (synced)", { code: shot.frames_link.from })
+                    : t("Synced to {code}'s end frame: not in step yet", { code: shot.frames_link.from })}
+                    className={clsx("mono absolute left-2 top-2 z-[5] inline-flex items-center gap-0.5 rounded border px-1 text-2xs font-semibold leading-4 backdrop-blur-sm",
+                      shot.frames_link.status === "ok" ? "border-ok/40 bg-black/60 text-ok" : "border-warn/40 bg-black/60 text-warn")}>
+                    <Equal className="size-3" />{shot.frames_link.from.split("-").pop()}
+                  </span>
                 )}
                 {/* legibility scrim for the chips on the picture */}
                 <div aria-hidden className="pointer-events-none absolute inset-x-0 bottom-0 h-12 bg-gradient-to-t from-black/65 to-transparent" />

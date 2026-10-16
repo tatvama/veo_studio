@@ -2,7 +2,8 @@
 import type { Shot } from "../../../lib/types";
 import type { ShotV3Fields, TakeV3 } from "../../../lib/v3";
 
-export type LinkMode = "last_frame" | "extend";
+export type { LinkMode } from "../../../lib/frames";
+import type { LinkMode } from "../../../lib/frames";
 /** A shot as the v3 backend returns it (continuity link, props). */
 export type ShotV3 = Shot & ShotV3Fields;
 
@@ -11,7 +12,8 @@ export interface ShotLink { fromId: number; mode: LinkMode }
 export function linkOf(shot: Shot): ShotLink | null {
   const s = shot as ShotV3;
   if (!s.continuity_from_shot_id) return null;
-  return { fromId: s.continuity_from_shot_id, mode: s.continuity_mode === "extend" ? "extend" : "last_frame" };
+  const mode = s.continuity_mode === "extend" || s.continuity_mode === "end_frame" ? s.continuity_mode : "last_frame";
+  return { fromId: s.continuity_from_shot_id, mode };
 }
 
 export interface LinkFrom { id: number; code: string; mode: LinkMode }

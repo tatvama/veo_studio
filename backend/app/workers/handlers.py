@@ -13,7 +13,7 @@ import httpx
 from .. import catalog, settings_store
 from ..agents import prompts
 from ..agents import schemas as S
-from ..core import budget, dependencies, generation, lock as lock_core, model_hub, ratelimit, studio
+from ..core import budget, dependencies, frames, generation, lock as lock_core, model_hub, ratelimit, studio
 from ..db import SessionLocal, utcnow
 from ..events import emit
 from ..models import (AIModel, AudioAsset, Character, CharacterAsset, Episode, Export, Location, LocationAsset, Project, Shot,
@@ -54,12 +54,12 @@ def save_take(db, ctx: JobContext, shot: Shot, kind: str, data: bytes | None, ex
         st.save_bytes(rel, data or b"")
     abs_p = st.abs(rel)
     thumb = ""
-    if kind in ("keyframe", "video", "lipsync", "voicelock", "upscale"):
+    if kind in ("keyframe", "endframe", "video", "lipsync", "voicelock", "upscale"):
         try:
             thumb = st.save_file(st.new_path(folder, "jpg"), ff.thumbnail(abs_p, abs_p.with_suffix(".thumb.jpg")))
         except Exception:
             thumb = ""
-    if not duration and kind != "keyframe":
+    if not duration and kind not in ("keyframe", "endframe"):
         try:
             duration = ff.duration(abs_p)
         except Exception:
@@ -329,15 +329,27 @@ def _loras_for(db, shot: Shot, episode_no: int | None) -> list[dict]:
 
 @handler("keyframe")
 def keyframe(ctx: JobContext) -> dict:
+    # (called inside a video or end-frame job, the payload is that job's: none of it is for the keyframe)
+    return make_keyframe(ctx, ctx.shot_id, ctx.payload if ctx.type == "keyframe" else {})
+
+
+def make_keyframe(ctx: JobContext, shot_id: int, own: dict, seen: set[int] | None = None) -> dict:
+    """Make and save the start frame (keyframe) of `shot_id`. A shot synced to the one before starts on that shot's
+    end frame: its keyframe is a copy of it (core/frames.py), made first when missing. `seen`: shots already being
+    made up the chain (a cycle of synced links is made normally)."""
+    if not own.get("enhance_take_id"):
+        from .handlers_frames import synced_start
+        done = synced_start(ctx, shot_id, own, seen or set())
+        if done is not None:
+            return done
     st = get_storage()
     tmp = st.tmp_dir()
-    own = ctx.payload if ctx.type == "keyframe" else {}  # (called inside a video job, the payload is the video's)
     retake = int(own.get("retake_count") or 0)
     with SessionLocal() as db:
-        shot = db.get(Shot, ctx.shot_id)
+        shot = db.get(Shot, shot_id)
         project = _project_of(db, shot)
         enhance_id = own.get("enhance_take_id")
-        frames = scene_look.Frames()
+        fr = scene_look.Frames()
         if enhance_id:  # Enhance: re-render this keyframe with the Pro model, same picture
             src_take = db.get(Take, int(enhance_id))
             if not src_take or src_take.shot_id != shot.id or src_take.kind != "keyframe" or not st.exists(src_take.path):
@@ -346,18 +358,20 @@ def keyframe(ctx: JobContext) -> dict:
             prompt = compile_enhance_prompt(db, shot, project, [l for l, _ in refs])
         else:
             # the scene's anchor keyframe (set, light, palette, wardrobe) and the shot before (positions, props);
-            # frames.prev_take_id is the clip whose last frame this keyframe starts from (core/scene_chain.follows)
-            frames = scene_look.continuity_frames(db, shot, _continuity_source(db, shot), tmp)
-            refs = keyframe_refs(db, shot, frames.prev, frames.anchor, frames.prev_from)
+            # fr.prev_take_id is the clip whose last frame this keyframe starts from, fr.prev_end_take_id the end frame
+            # (core/scene_chain.follows)
+            fr = scene_look.continuity_frames(db, shot, _continuity_source(db, shot), tmp)
+            refs = keyframe_refs(db, shot, fr.prev, fr.anchor, fr.prev_from)
             prompt = compile_keyframe_prompt(db, shot, project, [l for l, _ in refs], fix=own.get("fix"))
         aspect, code = project.aspect, shot.code
         ep_row = db.get(Episode, shot.episode_id)
         ep_no = ep_row.number if ep_row else None
         chars = [db.get(Character, int(c)) for c in (shot.characters or [])]
         trained = [c for c in chars if c and _identity(c, db, ep_no)]
-        # "hero" keyframes (and Enhance) use the Pro image model they were priced at. A video job that makes its
+        # "hero" keyframes (and Enhance) use the Pro image model they were priced at, unless the project's frames
+        # have an engine of their own (core/frames.py: Seedream for a Seedance film …). A video job that makes its
         # missing keyframe first names a video engine in its payload: that one is not for the image.
-        own_engine = own.get("engine")
+        own_engine = own.get("engine") or frames.engine_id(db, project)
         explicit = own_engine or ("google:image_hero" if (own.get("hero") or enhance_id) else None)
         ident = _identity(trained[0], db, ep_no) if (len(chars) == 1 and trained and not own_engine
                                                      and not enhance_id) else None
@@ -377,9 +391,10 @@ def keyframe(ctx: JobContext) -> dict:
         res, engine = gen_image(ctx, prompt, [p for _, p in refs], aspect, title=f"{code} keyframe", explicit=explicit,
                                 seed=seed)
     with SessionLocal() as db:
-        shot = db.get(Shot, ctx.shot_id)
-        params = {"refs": [l for l, _ in refs] if not ident else [], "continuity": bool(frames.prev),
-                  "continuity_take_id": frames.prev_take_id, "anchor": bool(frames.anchor), "anchor_shot_id": frames.anchor_shot_id, "engine": engine,
+        shot = db.get(Shot, shot_id)
+        params = {"refs": [l for l, _ in refs] if not ident else [], "continuity": bool(fr.prev),
+                  "continuity_take_id": fr.prev_take_id, "continuity_end_take_id": fr.prev_end_take_id,
+                  "anchor": bool(fr.anchor), "anchor_shot_id": fr.anchor_shot_id, "engine": engine,
                   "engine_label": model_hub.label(db, engine) if not engine.startswith("lora:") else "Trained identity (LoRA)",
                   "seed": seed, "retake_count": retake}
         if enhance_id:
@@ -395,8 +410,9 @@ def keyframe(ctx: JobContext) -> dict:
         db.commit()
         emit(db, ctx.project_id, "take.created", {"shot_id": shot.id, "take_id": t.id, "kind": "keyframe"})
     shutil.rmtree(tmp, ignore_errors=True)
-    from .handlers_keyframe import queue_qc
-    queue_qc(ctx, t.id, ctx.shot_id, code)  # vision check, one automatic retake if it fails
+    if shot_id == ctx.shot_id:  # (a frame made for another shot up a synced chain is not this job's to retake)
+        from .handlers_keyframe import queue_qc
+        queue_qc(ctx, t.id, shot_id, code)  # vision check, one automatic retake if it fails
     return {"take_id": t.id, "engine": engine}
 
 
@@ -437,13 +453,19 @@ def video(ctx: JobContext) -> dict:
         prompt = p.get("prompt_override") or compile_video_prompt(db, shot, project, lang, voice_mode="native" if native else None)
         negative = negative_prompt(project, db)
         kf = current(db, shot.id, "keyframe")
-        # a stale keyframe (the shot changed since) counts as missing: the video job remakes it first
-        kf_path = st.abs(kf.path) if kf and st.exists(kf.path) and not kf.stale else None
+        # a stale keyframe (the shot changed since) counts as missing: the video job remakes it first; so does a synced
+        # shot's keyframe that is not the current end frame of the shot it starts on (core/frames.py)
+        kf_path = st.abs(kf.path) if kf and st.exists(kf.path) and not kf.stale and frames.start_ok(db, shot) else None
+        # the end frame the clip runs to: the shot's own (an out-of-date one, or a missing one a synced shot starts on,
+        # is made first)
+        end = frames.end_take(db, shot)
+        end_path = st.abs(end.path) if end else None
+        want_end = end_path is not None or frames.wants_end(db, shot)
         vr = video_refs(db, shot)
         refs, ref_labels = [x for _, x in vr], [l for l, _ in vr]
         last_frame = extend_from = None
         extend_uri = ""
-        if mode == "interpolate":
+        if mode == "interpolate" and not want_end:
             nxt = (db.query(Shot).filter(Shot.episode_id == shot.episode_id, Shot.include.is_(True), Shot.order > shot.order)
                    .order_by(Shot.order).first())
             nk = current(db, nxt.id, "keyframe") if nxt else None
@@ -467,12 +489,17 @@ def video(ctx: JobContext) -> dict:
         # What the video must follow: the shot's keyframe (yours or generated) and its characters. Text-only video is
         # used only when there is nothing to follow, so a clip never quietly ignores the keyframe or the cast.
         guided = bool(kf_path or shot.characters or refs)
+        # start + end frame: the clip runs from the keyframe to the end frame (an engine without first + last frame
+        # starts from the keyframe only)
+        ends = want_end and mode in ("auto", "keyframe_to_video", "interpolate")
         if extend:
             modes_ok = ["extend"]
         elif audio_driven:
             modes_ok = ["a2v"]
         elif mode == "text_to_video" and not guided:
             modes_ok = ["t2v"]
+        elif ends:
+            modes_ok = ["flf", "i2v", "ref2v"] if refs else ["flf", "i2v"]
         elif mode == "interpolate" and last_frame:
             modes_ok = ["flf", "i2v"]
         elif mode == "reference_to_video" and refs and not kf_path:
@@ -485,7 +512,7 @@ def video(ctx: JobContext) -> dict:
         duration = shot.duration_s
         db.commit()
 
-    state: dict[str, Any] = {"kf": kf_path, "audio": None}
+    state: dict[str, Any] = {"kf": kf_path, "audio": None, "end": end_path, "end_take": end.id if end else None}
 
     def ensure_kf() -> Path | None:
         if state["kf"] is None:
@@ -495,6 +522,16 @@ def video(ctx: JobContext) -> dict:
                 k = current(db2, ctx.shot_id, "keyframe")
                 state["kf"] = st.abs(k.path) if k else None
         return state["kf"]
+
+    def ensure_end() -> Path | None:
+        if state["end"] is None and ends:
+            ctx.progress(0.06, "Making the end frame first")
+            from .handlers_frames import make_endframe
+            make_endframe(ctx, ctx.shot_id)
+            with SessionLocal() as db2:
+                e = frames.end_take(db2, db2.get(Shot, ctx.shot_id))
+                state["end"], state["end_take"] = (st.abs(e.path), e.id) if e else (None, None)
+        return state["end"]
 
     def ensure_voice() -> Path | None:
         if state["audio"] is None:
@@ -509,9 +546,12 @@ def video(ctx: JobContext) -> dict:
 
     def build(m: AIModel, mode_: str) -> GenRequest:
         first = ensure_kf() if mode_ in ("i2v", "flf", "a2v") else None
+        if ends and mode_ in ("flf", "i2v"):
+            ensure_end()  # (also before a start-frame-only clip: the shot after it starts on this end frame)
+        last = (state["end"] or last_frame) if mode_ == "flf" else None
         audio = ensure_voice() if mode_ == "a2v" else None
         return GenRequest(mode=mode_, prompt=prompt, negative=negative, first_frame=first,
-                          last_frame=last_frame if mode_ == "flf" else None, refs=refs if mode_ == "ref2v" else [],
+                          last_frame=last, refs=refs if mode_ == "ref2v" else [],
                           audio=audio, video=extend_from, video_uri=extend_uri, duration=duration, aspect=aspect,
                           resolution="480p" if draft else "720p" if extend else qm["resolution"],
                           generate_audio=not audio_driven,
@@ -534,7 +574,9 @@ def video(ctx: JobContext) -> dict:
                   "language": lang if (used == "a2v" or vm == "native") else None,
                   "native_language": lang if vm == "native" and bool(shot_lines(shot, lang)) else None,
                   "loras": bool(loras), "shootout": bool(p.get("shootout")), "draft": draft,
-                  "recovered_from": p.get("skip_engines") if p.get("recovery") else None}
+                  "recovered_from": p.get("skip_engines") if p.get("recovery") else None,
+                  # the end frame the clip ran to (core/scene_chain.follows: a keyframe made from it follows this clip)
+                  "end_take_id": state["end_take"] if used == "flf" and state["end"] else None}
         # a dubbing clip (another language spoken by Veo) is a lip-synced take of that language, not the main video
         as_kind = "lipsync" if (native and lang != project.primary_language) else "video"
         # a draft never pushes aside a finished (non-draft) clip: it stays one click away in the takes

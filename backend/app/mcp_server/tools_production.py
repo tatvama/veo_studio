@@ -123,8 +123,11 @@ class ShotChanges(BaseModel):
     mode: str | None = Field(default=None, description="auto, keyframe_to_video, reference_to_video, text_to_video, interpolate")
     continues_from: str | None = Field(default=None, description="A shot code to continue from, 'previous' for the shot "
                                                                   "before, or '' to cut (no link)")
-    continuity_mode: str | None = Field(default=None, description="last_frame (start from its last frame) or extend "
-                                                                  "(this clip extends that one)")
+    continuity_mode: str | None = Field(default=None, description="last_frame (start from its last frame), extend "
+                                                                  "(this clip extends that one) or end_frame (start "
+                                                                  "exactly on its end frame: the clips join seamlessly)")
+    end_note: str | None = Field(default=None, description="How the shot ends: what its end frame shows (the clip runs "
+                                                           "from its start frame to it)")
     include: bool | None = Field(default=None, description="false drops the shot from the cut")
     notes: str | None = None
 
@@ -141,7 +144,8 @@ def update_shot(project_id: ProjectId, shot_code: ShotCode, changes: ShotChanges
         d = changes.model_dump(exclude_unset=True)
         lang = d.pop("language", "") or p.primary_language
         patch: dict[str, Any] = {k: d[k] for k in ("framing", "camera", "action", "duration_s", "sfx", "music_cue",
-                                                     "quality_mode", "voice_mode", "mode", "include", "notes", "continuity_mode") if k in d}
+                                                     "quality_mode", "voice_mode", "mode", "include", "notes", "continuity_mode",
+                                                     "end_note") if k in d}
         if "characters" in d:
             patch["characters"] = [character(c.db, p, n).id for n in d["characters"] or []]
         if "outfits" in d:
@@ -171,7 +175,8 @@ def update_shot(project_id: ProjectId, shot_code: ShotCode, changes: ShotChanges
 
 def add_shot_after(project_id: ProjectId, shot_code: ShotCode,
                    action: Annotated[str, Field(description="What happens in the new shot")] = "",
-                   mode: Annotated[str, Field(description="last_frame (starts from its last frame) or extend (continues the clip)")] = "last_frame",
+                   mode: Annotated[str, Field(description="last_frame (starts from its last frame), extend (continues the "
+                                                          "clip) or end_frame (starts exactly on its end frame)")] = "last_frame",
                    episode: EpisodeNo = None) -> dict:
     """Add the shot right after another one: same cast, wardrobe, location and props, linked so it carries on from it."""
     with call("write") as c:
@@ -204,6 +209,28 @@ def generate_keyframes(project_id: ProjectId, shot_codes: ShotCodes = None,
         p = c.project(project_id)
         ep = c.episode(p, episode)
         return director(c, p, ep, "generate_keyframes", {"shot_codes": _scene_codes(c, ep, scene, shot_codes)}, run_now=run_now)
+
+
+def storyboard_frames(project_id: ProjectId,
+                      scenes: Annotated[list[int] | None, Field(description="Scene numbers, e.g. [1] or [2, 3]. Empty = "
+                                                                            "every scene, in order.")] = None,
+                      shot_codes: ShotCodes = None, episode: EpisodeNo = None,
+                      end_frames: Annotated[bool, Field(description="An end frame for every shot (its clip then runs "
+                                                                    "from start to end frame)")] = True,
+                      sync: Annotated[bool, Field(description="Each shot of a scene starts exactly on the end frame of "
+                                                              "the shot before, so the clips join without a jump")] = False,
+                      redo: Annotated[bool, Field(description="Remake frames that are already good")] = False,
+                      run_now: RunNow = False) -> dict:
+    """Make the storyboard frames scene by scene, in order: each shot's start frame and end frame, each frame following
+    the one before (the project's frames engine, e.g. Seedream 5.0 Pro). With sync, a shot's start frame is a free
+    copy of the end frame before it. Then generate_scenes or generate_videos: every clip runs from its start frame to
+    its end frame, and synced clips are made side by side."""
+    with call("write") as c:
+        p = c.project(project_id)
+        ep = c.episode(p, episode)
+        return director(c, p, ep, "storyboard_frames", {"scene_numbers": scenes, "shot_codes": shot_codes,
+                                                        "end_frames": end_frames, "sync": sync, "redo": redo},
+                        run_now=run_now)
 
 
 def generate_scenes(project_id: ProjectId,
@@ -439,7 +466,8 @@ TOOLS = [
     (get_storyboard, "Storyboard", READ), (get_shot, "Shot details", READ),
     (breakdown_shots, "Plan the shot list", REPLACE), (update_shot, "Edit a shot", EDIT),
     (add_shot_after, "Add a linked shot", EDIT), (impact_report, "What is out of date", READ),
-    (generate_keyframes, "Make keyframes", PAID), (generate_scenes, "Make scenes in order", PAID),
+    (generate_keyframes, "Make keyframes", PAID), (storyboard_frames, "Make start and end frames", PAID),
+    (generate_scenes, "Make scenes in order", PAID),
     (generate_videos, "Make shot videos", PAID), (regenerate_stale, "Redo stale takes", PAID),
     (edit_clip, "Edit a clip", PAID), (voice_and_lipsync, "Voices & lip-sync", PAID),
     (generate_music, "Make music", PAID), (make_animatic, "Render a preview", EDIT), (export_video, "Render the final video", EDIT),

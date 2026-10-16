@@ -254,7 +254,7 @@ def add_next_shot(db: Session, src: Shot, action: str = "", framing: str = "", c
              action=action or f"The action continues directly from {src.code}.", characters=list(src.characters or []),
              outfits=dict(src.outfits or {}), location_id=src.location_id, prop_ids=list(src.prop_ids or []),
              quality_mode=src.quality_mode, engine=src.engine or "auto", continuity_from_shot_id=src.id,
-             continuity_mode=mode if mode in ("last_frame", "extend") else "last_frame", mode="auto")
+             continuity_mode=mode if mode in ("last_frame", "extend", "end_frame") else "last_frame", mode="auto")
     db.add(n)
     db.flush()
     renumber(db, db.get(Episode, src.episode_id))
@@ -458,7 +458,7 @@ def make_cutdowns(db: Session, user: User, episode: Episode, n: int = 3, seconds
 
 SHOT_FIELDS = ["duration_s", "framing", "camera", "action", "characters", "outfits", "location_id", "dialogue", "narration",
                "sfx", "music_cue", "mode", "quality_mode", "voice_mode", "engine", "continuity_from_prev", "include", "trim_in",
-               "trim_out", "notes", "scene_id", "overlays", "extend_to", "extend_prompt", "ref_images", "fx"]
+               "trim_out", "notes", "scene_id", "overlays", "extend_to", "extend_prompt", "ref_images", "fx", "end_note"]
 
 
 def save_revision(db: Session, entity: str, row: Any, fields: list[str], user: User | None) -> None:

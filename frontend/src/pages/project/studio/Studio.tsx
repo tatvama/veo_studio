@@ -281,8 +281,10 @@ export default function StudioPage() {
     const src = episode?.shots?.find((s) => s.id === link.fromId);
     try {
       const r = await api.patch<Shot & { stale_takes?: number[] }>(`/api/shots/${shotId}`, { continuity_mode: mode });
-      toast.success(mode === "extend" ? tr("{target} now extends {source}'s clip", { target: shot.code, source: src?.code ?? "" })
-        : tr("{target} now starts from {source}'s last frame", { target: shot.code, source: src?.code ?? "" }));
+      const vars = { target: shot.code, source: src?.code ?? "" };
+      toast.success(mode === "extend" ? tr("{target} now extends {source}'s clip", vars)
+        : mode === "end_frame" ? tr("{target} now starts exactly on {source}'s end frame", vars)
+        : tr("{target} now starts from {source}'s last frame", vars));
       announceStale(r.stale_takes);
     } catch { /* api toasts */ }
     refresh();

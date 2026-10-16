@@ -20,6 +20,8 @@ from ..storage import get_storage
 from .common import get_or_404, shot_out, take_out
 
 router = APIRouter(prefix="/api", tags=["shots"])
+# how a linked shot continues: from the clip's last frame, as an extension of the clip, or exactly on its end frame
+CONTINUITY_MODES = ("last_frame", "extend", "end_frame")
 
 
 def _project(db: Session, shot: Shot) -> Project:
@@ -109,8 +111,9 @@ class ShotPatch(BaseModel):
     extend_to: int | None = None
     extend_prompt: str | None = None
     continuity_from_shot_id: int | None = None
-    continuity_mode: str | None = None  # last_frame | extend
+    continuity_mode: str | None = None  # last_frame | extend | end_frame
     prop_ids: list[int] | None = None
+    end_note: str | None = None  # how the shot ends (its end frame)
 
 
 @router.patch("/shots/{sid}")
@@ -132,8 +135,8 @@ def patch_shot(sid: int, body: ShotPatch, user: User = Depends(require("creator"
             raise HTTPException(400, f"Trims leave less than half a second of this {length:.1f}s clip")
         data["trim_in"], data["trim_out"] = round(ti, 3), round(to, 3)
     desktop.check_cut_fields(db, s, user, data)  # trims / include are cut edits: refused while someone has the cut out
-    if "continuity_mode" in data and data["continuity_mode"] not in ("last_frame", "extend"):
-        raise HTTPException(400, "continuity_mode must be last_frame or extend")
+    if "continuity_mode" in data and data["continuity_mode"] not in CONTINUITY_MODES:
+        raise HTTPException(400, "continuity_mode must be last_frame, extend or end_frame")
     if data.get("continuity_from_shot_id"):
         src = db.get(Shot, data["continuity_from_shot_id"])
         if not src or src.episode_id != s.episode_id or src.id == s.id:
@@ -351,7 +354,7 @@ class NextShotIn(BaseModel):
     framing: str = ""
     camera: str = ""
     duration_s: int = 8
-    mode: str = "last_frame"  # last_frame | extend
+    mode: str = "last_frame"  # last_frame | extend | end_frame
     generate: bool = False  # also queue keyframe + video right away
     quality: str | None = None
 
@@ -359,10 +362,10 @@ class NextShotIn(BaseModel):
 @router.post("/shots/{sid}/next")
 def next_shot(sid: int, body: NextShotIn, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
     """Create the shot after this one with the same cast, wardrobe, location and props, linked so its keyframe starts
-    from this shot's last frame (or its video extends this one)."""
+    from this shot's last frame (or its video extends this one, or it starts exactly on this shot's end frame)."""
     s = get_or_404(db, Shot, sid)
-    if body.mode not in ("last_frame", "extend"):
-        raise HTTPException(400, "mode must be last_frame or extend")
+    if body.mode not in CONTINUITY_MODES:
+        raise HTTPException(400, "mode must be last_frame, extend or end_frame")
     if body.duration_s not in (4, 6, 8):
         raise HTTPException(400, "duration must be 4, 6 or 8 seconds")
     p = _project(db, s)

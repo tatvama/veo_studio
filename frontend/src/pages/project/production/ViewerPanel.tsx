@@ -8,9 +8,10 @@ import type { Take } from "../../../lib/types";
 import { ratioOf } from "./shotMeta";
 
 export const KIND_LABELS: Record<string, string> = {
-  lipsync: "Lip-sync", voicelock: "Voice lock", video: "Video", keyframe: "Keyframe", voice: "Voice", narration: "Narration",
+  lipsync: "Lip-sync", voicelock: "Voice lock", video: "Video", keyframe: "Keyframe", endframe: "End frame", voice: "Voice",
+  narration: "Narration",
 };
-const KIND_LETTER: Record<string, string> = { lipsync: "L", voicelock: "VL", video: "V", keyframe: "K" };
+const KIND_LETTER: Record<string, string> = { lipsync: "L", voicelock: "VL", video: "V", keyframe: "K", endframe: "E" };
 
 /** What the viewer is showing, as a readout: kind, language, engine, then id / length / cost / age in mono. */
 export function TakeInfo({ take, className }: { take: Take | null; className?: string }) {
@@ -53,7 +54,7 @@ export function TakeStrip({ takes, active, aspect, onPick }: { takes: Take[]; ac
         <div className="flex w-max gap-1.5">
           {takes.slice(0, 14).map((x) => {
             const on = active === x.id;
-            const src = x.thumb_url || (x.kind === "keyframe" ? x.url : "");
+            const src = x.thumb_url || (x.kind === "keyframe" || x.kind === "endframe" ? x.url : "");
             const tip = `${t(KIND_LABELS[x.kind] ?? x.kind)}${x.language ? ` ${LANG_SHORT[x.language] ?? x.language}` : ""} #${x.id} · ${takeEngine(x) || x.provider} · ${ago(x.created_at)}`;
             return (
               <Tooltip key={x.id} content={tip}>

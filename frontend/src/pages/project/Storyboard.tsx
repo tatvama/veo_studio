@@ -3,11 +3,13 @@ import { SortableContext, arrayMove, rectSortingStrategy } from "@dnd-kit/sortab
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import {
-  Check, Clock, Ellipsis, Film, Image as ImageIcon, LayoutGrid, Mic, Moon, Music, Plus, SquareCheck, Sun, Sunrise, Sunset, WandSparkles,
+  Check, Clock, Ellipsis, Film, Image as ImageIcon, Layers, LayoutGrid, Mic, Moon, Music, Plus, SquareCheck, Sun, Sunrise, Sunset,
+  WandSparkles,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
+import { StoryboardFramesModal } from "../../components/board/StoryboardFrames";
 import { useGenerate } from "../../components/Generate";
 import { engineShort, isAutoEngine, useModelList } from "../../components/hub/util";
 import { Button, Empty, IconButton, Kbd, Menu, Meter, ProgressRing, ScrollStrip, Skeleton } from "../../components/ui";
@@ -51,6 +53,8 @@ export default function Storyboard() {
   const [order, setOrder] = useState<number[]>([]);
   const [adding, setAdding] = useState(false);
   const [busyAct, setBusyAct] = useState<string | null>(null);
+  // storyboard frames (start + end frames in order) for some scenes or the picked shots
+  const [framesFor, setFramesFor] = useState<{ sceneIds?: number[]; shotIds?: number[]; scope: string } | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
   const threshold = Number(settings?.settings.qc_threshold ?? 0.7);
   const wide = ratioOf(project.aspect).w / ratioOf(project.aspect).h >= 1.2;
@@ -258,6 +262,10 @@ export default function Storyboard() {
                     onClick={() => run("kf", () => generate(eid, { action: "keyframes", shot_ids: ids, only_missing: !ids }, ids ? tr("Keyframes (selected)") : tr("Keyframes for shots missing one")))}>
                     {t("Keyframes")}{sel}
                   </Button>
+                  <Button size="sm" icon={<Layers className="size-3.5" />} title={t("Start and end frames for every shot, made in order (each follows the one before); optionally synced so the clips join without a jump")}
+                    onClick={() => setFramesFor(ids ? { shotIds: ids, scope: t("{n} selected shots", { n: ids.length }) } : { scope: t("Every scene") })}>
+                    {t("Frames")}{sel}
+                  </Button>
                   <div className="inline-flex">
                     <Button size="sm" variant="primary" className="rounded-r-none" icon={<Film className="size-3.5" />} loading={busyAct === "vid"}
                       onClick={() => run("vid", () => generate(eid, { action: "videos", shot_ids: ids, only_missing: !ids, quality: quality || undefined }, ids ? tr("Videos (selected)") : tr("Videos for shots missing one")))}>
@@ -318,6 +326,7 @@ export default function Storyboard() {
                     <section key={g.key} className="pb-5">
                       {g.title && (
                         <SceneHeader group={g} picking={picking && canEdit}
+                          onFrames={canEdit && g.scene !== "none" ? () => setFramesFor({ sceneIds: [Number(g.scene)], scope: g.no ? t("Scene {n}", { n: g.no }) : g.title }) : undefined}
                           allPicked={g.shots.every((s) => picked.includes(s.id))}
                           onTogglePick={() => {
                             const idsIn = g.shots.map((s) => s.id);
@@ -346,6 +355,9 @@ export default function Storyboard() {
           )}
         </div>
       </div>
+
+      <StoryboardFramesModal open={!!framesFor} onClose={() => setFramesFor(null)} projectId={project.id} eid={eid}
+        sceneIds={framesFor?.sceneIds} shotIds={framesFor?.shotIds} scope={framesFor?.scope ?? ""} />
 
       <AnimatePresence>
         {selectedShot && byId[selectedShot] && (
@@ -384,7 +396,9 @@ const TOD_ICON: [RegExp, ReactNode][] = [
 interface Group { key: string; scene: string; no: number; title: string; tod: string; sub: string; shots: Shot[]; done: number; all: number }
 
 /** A sticky mono rail above each scene: "SC01 · title · DUSK · 4 SHOTS" and a segmented progress meter. */
-function SceneHeader({ group, picking, allPicked, onTogglePick }: { group: Group; picking: boolean; allPicked: boolean; onTogglePick: () => void }) {
+function SceneHeader({ group, picking, allPicked, onTogglePick, onFrames }: {
+  group: Group; picking: boolean; allPicked: boolean; onTogglePick: () => void; onFrames?: () => void;
+}) {
   const t = useT();
   const frac = group.all ? group.done / group.all : 0;
   const todIcon = TOD_ICON.find(([re]) => re.test(group.tod))?.[1] ?? <Clock className="size-3" />;
@@ -403,6 +417,12 @@ function SceneHeader({ group, picking, allPicked, onTogglePick }: { group: Group
       {picking && (
         <button type="button" onClick={onTogglePick} className="shrink-0 rounded-md px-1.5 py-0.5 text-2xs font-medium text-info hover:bg-info/10">
           {allPicked ? t("Deselect scene") : t("Select scene")}
+        </button>
+      )}
+      {onFrames && !picking && (
+        <button type="button" onClick={onFrames} title={t("Start and end frames for this scene's shots, in order")}
+          className="inline-flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-2xs font-medium text-mute transition-colors hover:bg-hover hover:text-ink">
+          <Layers className="size-3" />{t("Frames")}
         </button>
       )}
       <div className="flex shrink-0 items-center gap-2" title={t("{vid}/{n} videos", { vid: group.done, n: group.all })}>

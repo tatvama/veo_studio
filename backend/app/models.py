@@ -268,6 +268,9 @@ class Project(Base, Serializable):
     languages: Mapped[Any] = mapped_column(JSON, default=lambda: ["en"])
     primary_language: Mapped[str] = mapped_column(String(8), default="en")
     quality_mode: Mapped[str] = mapped_column(String(20), default="saver")
+    # the image engine this project's start and end frames are made with (a Model Hub engine id picked by hand, e.g.
+    # Seedream 5.0 Pro for Seedance projects); "" = the team's image chain (core/frames.py)
+    frames_engine: Mapped[str] = mapped_column(String(200), default="")
     agent_mode: Mapped[str] = mapped_column(String(20), default="copilot")
     # how the project is made: "director" (from an idea), "script" (imported) or "shots" (built shot by shot);
     # the two own-material ways open on a short set of tabs
@@ -397,9 +400,12 @@ class Shot(Base, Serializable):
     extend_to: Mapped[int] = mapped_column(Integer, default=0)  # target length in seconds via chained extensions (0 = none)
     extend_prompt: Mapped[str] = mapped_column(Text, default="")  # what happens in the extension (default: the action continues)
     continuity_from_prev: Mapped[bool] = mapped_column(Boolean, default=False)
-    # explicit shot-to-shot link (Film Map edge): take the last frame of that shot, or extend its video
+    # explicit shot-to-shot link (Film Map edge): take the last frame of that shot, extend its video, or start exactly
+    # on its end frame ("end_frame": the two clips share that frame and join without a jump, core/frames.py)
     continuity_from_shot_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    continuity_mode: Mapped[str] = mapped_column(String(20), default="last_frame")  # last_frame | extend
+    continuity_mode: Mapped[str] = mapped_column(String(20), default="last_frame")  # last_frame | extend | end_frame
+    # how the shot ends: what its end frame shows (the clip runs from the start frame to it); "" = the action's end
+    end_note: Mapped[str] = mapped_column(Text, default="")
     prop_ids: Mapped[Any] = mapped_column(JSON, default=list)
     include: Mapped[bool] = mapped_column(Boolean, default=True)
     trim_in: Mapped[float] = mapped_column(Float, default=0.0)
@@ -415,7 +421,7 @@ class Take(Base, Serializable):
     __tablename__ = "takes"
     id: Mapped[int] = mapped_column(primary_key=True)
     shot_id: Mapped[int] = mapped_column(ForeignKey("shots.id"), index=True)
-    kind: Mapped[str] = mapped_column(String(20))  # keyframe/video/voice/narration/voicelock/lipsync
+    kind: Mapped[str] = mapped_column(String(20))  # keyframe/endframe/video/voice/narration/voicelock/lipsync
     language: Mapped[str | None] = mapped_column(String(8), nullable=True)
     provider: Mapped[str] = mapped_column(String(40), default="")
     model: Mapped[str] = mapped_column(String(80), default="")
