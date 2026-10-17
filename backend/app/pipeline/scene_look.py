@@ -8,7 +8,7 @@ clothes). Now, unless the team setting `auto_scene_continuity` is off:
 - within the same scene and location, the previous shot's frame (the last frame of its video, else its keyframe) is a
   reference for positions and props by default; an explicit Film Map link or "continue from previous shot" still wins;
 - every keyframe and video prompt of the scene carries the same "scene look" block (time of day, weather, light,
-  palette, set dressing), so every shot is described the same way.
+  palette, set dressing, the look the script writes for the scene, mood), so every shot is described the same way.
 Ordering of a batch (anchor first) is done when jobs are claimed: see core/scene_order.py.
 """
 from __future__ import annotations
@@ -225,8 +225,14 @@ def light_source(db: Session, scene: Scene | None) -> str:
     return _light(tod, _interior(loc, scene))[2]
 
 
+_LIT = re.compile(r"\b(light|lights|lit|lighting|lamps?|glow|shadows?|neon|candles?|sunlight|moonlight|backlit|silhouette)\b", re.I)
+_PAINTED = re.compile(r"\b(palette|colou?rs?|tones?|teal|monochrome|black and white|b&w|grade|graded|desaturated|sepia)\b", re.I)
+
+
 def scene_look(db: Session, scene: Scene | None) -> str:
-    """One text block, the same for every shot of the scene: set, time of day, weather, light, palette, dressing, mood."""
+    """One text block, the same for every shot of the scene: set, time of day, weather, light, palette, dressing, the
+    script's own look for the scene and its mood. Light and palette the script writes win over the ones read from the
+    time of day."""
     if scene is None:
         return ""
     loc = db.get(Location, scene.location_id) if scene.location_id else None
@@ -234,6 +240,11 @@ def scene_look(db: Session, scene: Scene | None) -> str:
     tod = (scene.time_of_day or end.get("time_of_day") or "").strip()
     weather = (end.get("weather") or "").strip()
     light, palette, source = _light(tod, _interior(loc, scene))
+    own = (scene.look or "").strip().rstrip(".")
+    if own and _LIT.search(own):
+        light = ""
+    if own and _PAINTED.search(own):
+        palette = ""
     bits = []
     if loc:
         desc = (loc.description_text or "").strip().rstrip(".")
@@ -246,6 +257,8 @@ def scene_look(db: Session, scene: Scene | None) -> str:
         bits.append(f"light: {light}, the key light from the same side in every shot, motivated by {source}")
     if palette:
         bits.append(f"colour palette: {palette}")
+    if own:
+        bits.append(f"look: {own}")
     dressing = _dressing(db, scene)
     if dressing:
         bits.append("set dressing: " + ", ".join(dressing))

@@ -249,6 +249,17 @@ def dialogue_warnings(shot: Shot, lang: str) -> list[str]:
     return out
 
 
+def audio_block(scene, shot: Shot, vm: str) -> str:
+    """What the clip should sound like: the scene's ambience (the same under every shot of the scene) and this shot's
+    sound effects, as the script writes them. Never music: one score runs under the whole cut (the music step, which
+    reads the scenes' music notes), so a cue in every clip would change the music at every cut. Voices the studio adds
+    later (narration, dubbed or lip-synced dialogue) are kept out of the clip too."""
+    sounds = [x.strip().rstrip(".") for x in ((scene.sound if scene else ""), shot.sfx) if x and x.strip()]
+    said = ("Sound effects and ambience: " + "; ".join(sounds)) if sounds else "Natural ambience and foley that match the action"
+    keep_out = "no music" + (", no narration" if vm in ("audio_first", "narration", "audio_driven") else "")
+    return f"{said}; {keep_out}."
+
+
 def compile_video_prompt(db: Session, shot: Shot, project: Project, lang: str | None = None, voice_mode: str | None = None) -> str:
     lang = lang or project.primary_language
     episode = db.get(Episode, shot.episode_id)
@@ -288,11 +299,7 @@ def compile_video_prompt(db: Session, shot: Shot, project: Project, lang: str | 
         out.append(f"[STYLE] {style.look}. {style.lens}. {style.grade}. {style.grain}.".replace("..", "."))
     if (shot.end_note or "").strip():  # where the clip has to arrive (its end frame, core/frames.py)
         out.append(f"[END] The shot ends on: {shot.end_note.strip().rstrip('.')}.")
-    audio = ", ".join(x for x in [shot.sfx, shot.music_cue] if x)
-    if vm in ("audio_first", "narration", "audio_driven"):
-        audio = (audio + ", " if audio else "") + "no background music, no narration"
-    if audio:
-        out.append(f"[AUDIO] {audio}.")
+    out.append(f"[AUDIO] {audio_block(scene, shot, vm)}")
     avoid = (style.avoid_list if style else "subtitles, on-screen text, extra people, warped hands")
     if "subtitles" not in avoid.lower():
         avoid = "subtitles, on-screen text, " + avoid

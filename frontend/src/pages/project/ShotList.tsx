@@ -19,7 +19,7 @@ import { useBoard, useCharacters, useLocations, useVideoEngines } from "../../li
 import type { Board, BoardScene, Character } from "../../lib/types";
 import { useProjectCtx } from "./context";
 
-const STEPS = ["keyframes", "videos", "extend", "voices", "music", "export"] as const;
+const STEPS = ["cast", "keyframes", "videos", "extend", "voices", "sound", "music", "export"] as const;
 
 /** Clean copy for the API: no client keys, no read-only fields. */
 function payload(scenes: BoardScene[], version?: string) {
@@ -27,9 +27,10 @@ function payload(scenes: BoardScene[], version?: string) {
     version,
     scenes: scenes.map((sc) => ({
       id: sc.id ?? null, title: sc.title, location: sc.location, time_of_day: sc.time_of_day, summary: sc.summary,
+      mood: sc.mood ?? "", look: sc.look ?? "", sound: sc.sound ?? "", music: sc.music ?? "",
       shots: sc.shots.map((s) => ({
         id: s.id ?? null, prompt: s.prompt, characters: s.characters, duration_s: s.duration_s, extend_to: s.extend_to || 0,
-        extend_prompt: s.extend_prompt, framing: s.framing, camera: s.camera, engine: s.engine || "auto",
+        extend_prompt: s.extend_prompt, framing: s.framing, camera: s.camera, engine: s.engine || "auto", sfx: s.sfx ?? "",
         lines: s.lines.map((l) => ({ speaker: l.speaker, text: l.text, emotion: l.emotion })),
       })),
     })),
@@ -272,11 +273,13 @@ function bucket(done: number, total: number, cells: number) {
 /** The production steps, with what each does. Shared by the "Produce all" dialog and the empty state. */
 function stepLabels(t: (s: string) => string): Record<(typeof STEPS)[number], [string, string]> {
   return {
+    cast: [t("Character & place looks"), t("Reference pictures for characters and places that have none, so they look the same in every scene")],
     keyframes: [t("Keyframes"), t("A still image per shot, using your characters' reference photos")],
     videos: [t("Videos"), t("Each shot animated from its keyframe")],
     extend: [t("Extensions"), t("Longer clips for shots with “Extend to”")],
     voices: [t("Voices & lip-sync"), t("Dialogue in each character's voice, lips matched; voice-over by the narrator")],
-    music: [t("Music"), t("A score for the whole episode")],
+    sound: [t("Sound effects"), t("Each scene's ambience and each shot's effects, from your script's sound notes")],
+    music: [t("Music"), t("One score for the whole episode, following each scene's mood and music notes")],
     export: [t("Final export"), t("The finished video with captions")],
   };
 }

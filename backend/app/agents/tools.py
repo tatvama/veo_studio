@@ -255,6 +255,29 @@ def generate_videos(c: AgentCtx, shot_codes: list[str] | None = None, quality: s
             "note": "Linked shots are made one wave after another, so each starts from the finished clip it continues."}
 
 
+def produce_all(c: AgentCtx, steps: list[str] | None = None, quality: str = "") -> dict:
+    """Produce all, as the Shot list's button does: the steps given (default all), only what is still missing, one
+    cost approval for the run. After the videos, steps voices + sound + music + export finish the film."""
+    want = [s for s in generation.PRODUCE_STEPS if s in (steps or generation.PRODUCE_STEPS)]
+    if not want:
+        return {"error": f"steps must be some of {generation.PRODUCE_STEPS}"}
+    q = quality if quality in catalog.QUALITY_MODES else None
+    ep = c.ep()
+    shots = generation.episode_shots(c.db, ep)
+    if not shots:
+        return {"error": "The shot list is empty: import the script or plan the shots first."}
+    total, items = generation.produce_plan(c.db, c.project, ep, shots, want, q, c.project.primary_language)
+    if not items:
+        return {"status": "nothing_to_do", "message": "Everything in those steps is already made."}
+    spec = jobs.spec("produce", payload={"steps": want, "shot_ids": None, "quality": q, "language": None, "items": items},
+                     project_id=c.project.id, episode_id=ep.id, estimate=total,
+                     label=f"Produce all E{ep.number:02} ({len(shots)} shots)")
+    out = c.submit([spec], "produce all (" + ", ".join(generation.PRODUCE_LABELS[s].lower() for s in want) + ")")
+    notes = [] if "sound" not in want or generation.sound_effects_ready() else [
+        "No ElevenLabs key: no separate sound-effects track; the clips' own sound carries the effects the script writes."]
+    return {**out, "steps": [i["label"] for i in items], **({"notes": notes} if notes else {})}
+
+
 def voice_and_lipsync(c: AgentCtx, language: str = "", shot_codes: list[str] | None = None) -> dict:
     lang = language or c.project.primary_language
     shots = c.shots(shot_codes or None)
@@ -1047,7 +1070,7 @@ _LABELS = {
     "forget": "Removing a note from project memory", "web_search": "Searching the web",
     "import_script": "Importing your script", "generate_scenes": "Setting up the scenes in order",
     "set_video_engine": "Choosing the video engine", "make_character_sheets": "Setting up character sheets",
-    "read_chat_message": "Reading your message",
+    "read_chat_message": "Reading your message", "produce_all": "Setting up Produce all",
 }
 
 
@@ -1190,7 +1213,7 @@ TOOL_FUNCS: dict[str, Callable[..., dict]] = {
     # one long prompt with pictures: cast from images, the user's script, scenes in order, engines
     "look_at_attachment": look_at_attachment, "add_cast_from_image": add_cast_from_image, "read_chat_message": read_chat_message,
     "import_script": import_script, "generate_scenes": generate_scenes, "set_video_engine": set_video_engine,
-    "make_character_sheets": make_character_sheets,
+    "make_character_sheets": make_character_sheets, "produce_all": produce_all,
 }
 
 _codes = {"type": "array", "items": {"type": "string"}, "description": "Shot codes like E01-SH03. Empty = all that still need it."}
@@ -1234,6 +1257,13 @@ TOOL_DECLS = [
        "each from the finished clip before it. For whole scenes prefer generate_scenes.", {"shot_codes": _codes,
         "quality": {"type": "string", "enum": list(catalog.QUALITY_MODES)}}),
     _t("voice_and_lipsync", "Voice the dialogue/narration and lip-sync it (paid).", {"language": _lang, "shot_codes": _codes}),
+    _t("produce_all", "Produce all (paid, one approval, only what is missing): character & place looks for cast and "
+       "places with no picture, keyframes, videos in link order (each scene carrying the one before), extensions, "
+       "voices (voice-over and dialogue, lip-synced), sound effects, music and the final export. After generate_scenes, "
+       "steps voices + sound + music + export finish the film.",
+       {"steps": {"type": "array", "items": {"type": "string", "enum": list(generation.PRODUCE_STEPS)},
+                  "description": "Empty = every step"},
+        "quality": {"type": "string", "enum": list(catalog.QUALITY_MODES)}}),
     _t("generate_music", "Compose background music for the episode.", {"prompt": {"type": "string"}}),
     _t("make_animatic", "Render a cheap preview from keyframes + voices + music.", {"language": _lang}),
     _t("dub_episode", "Dub the whole episode into another language (adapt script, voices, lip-sync).", {"language": _lang}, ["language"]),

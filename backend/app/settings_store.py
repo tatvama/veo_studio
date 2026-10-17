@@ -98,7 +98,7 @@ DEFAULTS: dict[str, Any] = {
     # Captions & delivery
     "caption_style": "karaoke",  # karaoke | clean | boxed | none
     "auto_reframe": True,
-    "sfx_auto": False,
+    "sfx_auto": True,  # Autopilot adds sound effects (only with an ElevenLabs key: core/generation.sound_effects_ready)
     "ui_default_language": "en",
     # Desktop finishing room (docs/DESKTOP.md): the largest render it may upload, and the AI upscale step (fal)
     "desktop_upload_max_mb": 8000,

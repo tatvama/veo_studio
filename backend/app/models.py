@@ -355,7 +355,12 @@ class Scene(Base, Serializable):
     goal: Mapped[str] = mapped_column(Text, default="")
     conflict: Mapped[str] = mapped_column(Text, default="")
     turn: Mapped[str] = mapped_column(Text, default="")
-    emotion: Mapped[str] = mapped_column(String(200), default="")
+    emotion: Mapped[str] = mapped_column(String(200), default="")  # the scene's mood
+    # the script's own notes for the whole scene (script import / shot list): its look (lighting, colour, weather,
+    # style), its sound (ambience under every shot) and its music (feeds the episode's score)
+    look: Mapped[str] = mapped_column(Text, default="")
+    sound: Mapped[str] = mapped_column(Text, default="")
+    music: Mapped[str] = mapped_column(Text, default="")
     characters: Mapped[Any] = mapped_column(JSON, default=list)
     props: Mapped[Any] = mapped_column(JSON, default=list)
     wardrobe: Mapped[Any] = mapped_column(JSON, default=dict)  # {character_id: outfit}

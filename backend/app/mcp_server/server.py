@@ -31,7 +31,9 @@ Typical flow:
    previous clip's last frame). Use plan_only=true first to show the user what it makes and costs.
 6. job_status(batch_id, wait_seconds=50) to follow; get_continuity to check links and wardrobe; get_shot for a
    signed link to watch a clip.
-7. voice_and_lipsync, generate_music, make_animatic (free preview), export_video.
+7. produce_all with steps voices, sound, music, export finishes the film in one approval (voice-over and dialogue,
+   sound effects, the score, the final video); or voice_and_lipsync, generate_music, make_animatic (free preview),
+   export_video one by one.
 
 Money: every paid tool returns a PROPOSAL with an estimate and spends nothing. Show the estimate to the user. It
 starts only after approve_spend(batch_id) (token with the 'spend' scope, and only when the user agreed) or approval

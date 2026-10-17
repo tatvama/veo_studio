@@ -1,10 +1,11 @@
 import {
-  AlertTriangle, ArrowDown, ArrowUp, Check, ChevronDown, Clock, Copy, Film, ImageUp, MapPin, Mic, Plus, Sparkles, Trash2, UserRound, X,
+  AlertTriangle, ArrowDown, ArrowUp, AudioLines, Check, ChevronDown, Clock, Copy, Drama, Film, ImageUp, MapPin, Mic, Music, Palette, Plus,
+  Sparkles, Trash2, UserRound, Volume2, X,
 } from "lucide-react";
 import { useMemo, useState, type ReactElement, type ReactNode } from "react";
 import { cn } from "../../lib/cn";
 import { useT } from "../../lib/i18n";
-import type { BoardLine, BoardScene, BoardShot, Character, VideoEngines } from "../../lib/types";
+import type { BoardLine, BoardScene, BoardShot, Character, SceneNotes, VideoEngines } from "../../lib/types";
 import { IdChip, SpeakerChip, sceneCode } from "../room/workspace";
 import { NARRATOR_TONE, TONE_TEXT_SM, makeToneMap, type Tone } from "../room/util";
 import { Avatar, Badge, Button, Input, Segmented, Select, Textarea, Tooltip } from "../ui";
@@ -25,7 +26,7 @@ export const newShot = (over: Partial<BoardShot> = {}): BoardShot => ({
   key: uid(), prompt: "", characters: [], lines: [], duration_s: 8, extend_to: 0, extend_prompt: "", framing: "", camera: "", engine: "auto", ...over,
 });
 export const newScene = (n: number, over: Partial<BoardScene> = {}): BoardScene => ({
-  key: uid(), title: `Scene ${n}`, location: "", time_of_day: "", summary: "", shots: [newShot()], ...over,
+  key: uid(), title: `Scene ${n}`, location: "", time_of_day: "", summary: "", mood: "", look: "", sound: "", music: "", shots: [newShot()], ...over,
 });
 /** Give every scene/shot a stable React key (rows from the server have ids, new rows get a client key). */
 export const withKeys = (scenes: BoardScene[]): BoardScene[] =>
@@ -93,6 +94,31 @@ export function ShotListEditor({ scenes, onChange, cast, disabled, codes = true,
   );
 }
 
+/** The scene's notes: every shot of the scene carries them (its look and mood into the pictures, its sound into the
+ * clips, its music into the episode's score), so the scene keeps one feel from shot to shot. */
+const NOTE_FIELDS: { key: keyof SceneNotes; icon: ReactElement; label: string; placeholder: string }[] = [
+  { key: "mood", icon: <Drama />, label: "Mood", placeholder: "Mood (tense, hopeful…)" },
+  { key: "look", icon: <Palette />, label: "Look", placeholder: "Look: light, colour, weather (one oil lamp…)" },
+  { key: "sound", icon: <AudioLines />, label: "Sound", placeholder: "Ambience under every shot (rain on a tin roof…)" },
+  { key: "music", icon: <Music />, label: "Music", placeholder: "Music for this scene (low flute…)" },
+];
+
+function SceneNotesRow({ scene, disabled, onChange }: { scene: BoardScene; disabled?: boolean; onChange: (k: keyof SceneNotes, v: string) => void }) {
+  const t = useT();
+  if (disabled && !NOTE_FIELDS.some((f) => (scene[f.key] ?? "").trim())) return null;
+  return (
+    <div role="group" aria-label={t("Scene notes: every shot of this scene carries them")}
+      className="grid gap-2 border-b border-line bg-raised/20 px-3 py-2 @xl:grid-cols-2 @3xl:grid-cols-4 @3xl:px-4">
+      {NOTE_FIELDS.map((f) => (
+        <HeadField key={f.key} icon={f.icon} className="min-w-0">
+          <input value={scene[f.key] ?? ""} disabled={disabled} onChange={(e) => onChange(f.key, e.target.value)} placeholder={t(f.placeholder)}
+            aria-label={t(f.label)} title={scene[f.key] || undefined} className="h-full min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-dim" />
+        </HeadField>
+      ))}
+    </div>
+  );
+}
+
 /** A bordered mini field with a leading icon (location, time of day). */
 function HeadField({ icon, className, children }: { icon: ReactNode; className?: string; children: ReactNode }) {
   return (
@@ -147,6 +173,7 @@ function SceneBlock({ n, anchor, scene, firstShot, cast, toneOf, disabled, codes
             </div>
           )}
         </header>
+        <SceneNotesRow scene={scene} disabled={disabled} onChange={(k, v) => set(k, v)} />
         {!!scene.shots.length && (
           <div aria-hidden className={cn("eyebrow hidden gap-x-3 border-b border-line bg-raised/30 px-4 py-1.5 @5xl:grid", COLS)}>
             <span>{t("Shot")}</span><span>{t("Visual")}</span><span>{t("Cast")} · {t("Model")}</span><span>{t("Dialogue")}</span><span>{t("Length")}</span>
@@ -192,7 +219,7 @@ function ShotRow({ no, shot, cast, toneOf, disabled, codes, onChange, onMove, ca
   onMove: (d: number) => void; canUp: boolean; canDown: boolean; onDuplicate: () => void; onDelete: () => void;
 }) {
   const t = useT();
-  const [more, setMore] = useState(!!(shot.framing || shot.camera || shot.extend_prompt));
+  const [more, setMore] = useState(!!(shot.framing || shot.camera || shot.extend_prompt || shot.sfx));
   const set = (k: keyof BoardShot, v: any) => onChange({ ...shot, [k]: v });
   const setLine = (i: number, l: BoardLine) => {
     const lines = shot.lines.map((x, k) => (k === i ? l : x));
@@ -256,12 +283,15 @@ function ShotRow({ no, shot, cast, toneOf, disabled, codes, onChange, onMove, ca
             )}
             <button type="button" onClick={() => setMore((v) => !v)} aria-expanded={more}
               className="mt-2 flex items-center gap-1 rounded text-2xs font-medium text-dim transition-colors hover:text-ink pointer-coarse:h-8">
-              <ChevronDown className={cn("size-3 transition-transform", more && "rotate-180")} />{t("Camera & extension details")}
+              <ChevronDown className={cn("size-3 transition-transform", more && "rotate-180")} />{t("Camera, sound & extension details")}
+              {!more && !!shot.sfx?.trim() && <Volume2 aria-label={t("Has sound effects")} className="size-3 text-accent-ink" />}
             </button>
             {more && (
               <div className="mt-1.5 grid gap-2 @md:grid-cols-2 @3xl:grid-cols-1">
                 <Input value={shot.framing} disabled={disabled} onChange={(e) => set("framing", e.target.value)} placeholder={t("Framing (close-up, wide…)")} aria-label={t("Framing")} className="h-8 text-xs pointer-coarse:h-10" />
                 <Input value={shot.camera} disabled={disabled} onChange={(e) => set("camera", e.target.value)} placeholder={t("Camera (slow push-in…)")} aria-label={t("Camera")} className="h-8 text-xs pointer-coarse:h-10" />
+                <Input value={shot.sfx ?? ""} disabled={disabled} onChange={(e) => set("sfx", e.target.value)} placeholder={t("Sound effects (a match strikes, door creaks…)")}
+                  aria-label={t("Sound effects")} className="h-8 text-xs pointer-coarse:h-10 @md:col-span-2 @3xl:col-span-1" />
                 {!!shot.extend_to && (
                   <Input value={shot.extend_prompt} disabled={disabled} onChange={(e) => set("extend_prompt", e.target.value)} className="h-8 text-xs pointer-coarse:h-10 @md:col-span-2 @3xl:col-span-1"
                     placeholder={t("What happens in the extra seconds (optional — default: the action continues)")} aria-label={t("Extension prompt")} />

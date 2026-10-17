@@ -928,6 +928,20 @@ def voicelock(ctx: JobContext) -> dict:
 
 # ── music ────────────────────────────────────────────────────────────────────
 
+def score_notes(db, episode: Episode) -> str:
+    """The scenes in order as "1) tense · low tabla" for the score: each scene's mood and music notes, and the music
+    cues of its shots ("" when the script says nothing about either)."""
+    from ..models import Scene
+    out = []
+    shots = generation.episode_shots(db, episode)
+    for i, sc in enumerate(db.query(Scene).filter(Scene.episode_id == episode.id).order_by(Scene.order, Scene.id).all(), 1):
+        cues = list(dict.fromkeys(s.music_cue.strip() for s in shots if s.scene_id == sc.id and (s.music_cue or "").strip()))
+        bits = [x.strip() for x in (sc.emotion, sc.music, *cues) if x and x.strip()]
+        if bits:
+            out.append(f"{i}) {sc.title or f'Scene {i}'}: " + " · ".join(bits))
+    return "; ".join(out)[:2000]
+
+
 @handler("music")
 def music(ctx: JobContext) -> dict:
     with SessionLocal() as db:
@@ -937,9 +951,13 @@ def music(ctx: JobContext) -> dict:
         prompt = ctx.payload.get("prompt") or ""
         if not prompt:
             style = db.get(Style, project.style_id) if project.style_id else None
+            arc = score_notes(db, episode)
             p = (f"Write a music prompt for the background score of this {project.type}. Tone: {(project.brief or {}).get('tone', '')}. "
                  f"Style: {style.look if style else ''}. Concept: {project.concept}. About {total} seconds. "
-                 "Instrumental only, no vocals. Mention instruments, tempo and mood. Indian instruments where they fit.")
+                 + (f"The score follows the scenes in order (mood · music the script asks for): {arc}. Keep one theme "
+                    "and instrumentation throughout so the scenes feel like one film; let it shift with each scene's mood. "
+                    "Where the script names music, use it. " if arc else "")
+                 + "Instrumental only, no vocals. Mention instruments, tempo and mood. Indian instruments where they fit.")
             out, usage = ctx.services.llm_json("music_prompt", prompts.WRITER, p, S.MusicPromptOut, mock_ctx={})
             ctx.cost(usage, db)
             prompt = out.prompt

@@ -82,6 +82,12 @@ async def import_parse(eid: int, file: UploadFile | None = File(None), text: str
     return out
 
 
+def _dna_empty(ch: Character) -> bool:
+    """No look written yet: empty, just "Name:", or the Bible's placeholder."""
+    dna = (ch.dna_text or "").strip()
+    return dna in ("", f"{ch.name}:", f"{ch.name.strip()}:") or dna.endswith("(describe this character in the Bible)")
+
+
 class ImportApplyIn(BaseModel):
     draft: dict
     mapping: dict[str, int | str] = {}  # script name -> character id, or "new"
@@ -92,11 +98,15 @@ class ImportApplyIn(BaseModel):
 @router.post("/episodes/{eid}/import/apply")
 def import_apply(eid: int, body: ImportApplyIn, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
     """Second step of the import wizard: every speaker becomes a cast member (matched or created), the draft becomes
-    the shot list, and the episode script is written with @mentions so the Story tab shows who is in each scene."""
+    the shot list, and the episode script is written with @mentions so the Story tab shows who is in each scene.
+    The script's description of a character becomes its look (its DNA) when it has none yet, so every scene shows
+    the same person; an existing look is never overwritten."""
     from ..core import mentions
     e, p = _ctx(db, eid)
     draft = body.draft or {}
     scenes = draft.get("scenes") or []
+    described = {str(c.get("name") or "").strip(): str(c.get("description") or "").strip()
+                 for c in draft.get("cast") or [] if isinstance(c, dict)}
     names: list[str] = []
     for sc in scenes:
         for sh in sc.get("shots") or []:
@@ -123,16 +133,20 @@ def import_apply(eid: int, body: ImportApplyIn, user: User = Depends(require("cr
             db.add(ch)
             db.flush()
             created.append({"id": ch.id, "name": ch.name})
+        desc = script_import.description_for(described, n)[:1500]
+        if desc and _dna_empty(ch) and not ch.locked:
+            ch.dna_text = desc if desc.lower().startswith(ch.name.lower()) else f"{ch.name}: {desc}"
         studio.link_character(db, p, ch)
         ids[n] = ch.id
     board = B.Board(scenes=[B.BoardScene(
         title=sc.get("title", ""), location=sc.get("location", ""), time_of_day=sc.get("time_of_day", ""),
-        summary=sc.get("summary", ""),
+        summary=sc.get("summary", ""), mood=sc.get("mood") or "", look=sc.get("look") or "", sound=sc.get("sound") or "",
+        music=sc.get("music") or "",
         shots=[B.BoardShot(prompt=sh.get("prompt", ""), characters=[ids[n] for n in (sh.get("characters") or []) if n in ids],
                            lines=[B.BoardLine(speaker="VO" if l.get("speaker") in ("VO", None, "") else ids[l["speaker"]],
                                               text=l.get("text", ""), emotion=l.get("emotion", "")) for l in (sh.get("lines") or [])],
                            duration_s=sh.get("duration_s") if sh.get("duration_s") in (4, 6, 8) else 8,
-                           framing=sh.get("framing", ""), camera=sh.get("camera", ""))
+                           framing=sh.get("framing", ""), camera=sh.get("camera", ""), sfx=sh.get("sfx") or "")
                for sh in (sc.get("shots") or [])]) for sc in scenes])
     out = B.save_board(db, user, p, e, board)
     if body.write_script:
@@ -149,7 +163,7 @@ def import_apply(eid: int, body: ImportApplyIn, user: User = Depends(require("cr
                     lines.append({"character": tok, "line": l.get("text", ""), "emotion": l.get("emotion", "")})
             script_scenes.append({"title": sc.get("title", ""), "location": sc.get("location", ""),
                                   "time_of_day": sc.get("time_of_day", ""), "summary": sc.get("summary", ""),
-                                  "action": " ".join(visuals), "lines": lines})
+                                  "mood": sc.get("mood") or "", "action": " ".join(visuals), "lines": lines})
         e.script = {**(e.script or {}), "logline": draft.get("title") or (e.script or {}).get("logline", ""),
                     "beats": (e.script or {}).get("beats", []), "scenes": script_scenes}
         studio.save_script_version(db, e, "manual", user, note="Imported script")
