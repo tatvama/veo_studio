@@ -9,7 +9,7 @@ from .. import catalog
 from ..models import AIModel, Character, Episode, Location, Project, Shot, Take
 from ..pipeline.prompting import effective_voice_mode, shot_lines
 from ..pipeline.selection import current, has_fresh, is_real
-from . import frames
+from . import frames, links
 from .budget import Estimator
 from .jobs import spec
 
@@ -369,13 +369,12 @@ def produce_plan(db: Session, project: Project, episode: Episode, shots: list[Sh
     """Cost of Produce all, step by step (only what is still missing). Returns (total, items for the cost dialog).
     link_scenes "auto": a scene that picks up straight from the one before will start from its last frame (made in the
     run, see workers/handlers_room.produce), so that first shot's keyframe is counted with its video, not twice."""
-    from . import scene_chain
     lang = lang or project.primary_language
     est = Estimator(db)
     items: list[dict] = []
-    planned = scene_chain.planned_links(db, shots, link_scenes)
+    planned = links.planned_links(db, shots, link_scenes)
     # (only when this run also makes the videos: keyframes alone, for a storyboard, are all made)
-    waiting = {s.id for s in shots if "videos" in steps and scene_chain.waits_for_clip(db, s, planned)}
+    waiting = {s.id for s in shots if "videos" in steps and links.waits_for_clip(db, s, planned)}
 
     def add(step: str, n: int, usd: float) -> None:
         if n:

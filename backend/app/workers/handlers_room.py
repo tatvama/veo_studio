@@ -8,7 +8,7 @@ from typing import Any
 
 from .. import settings_store
 from ..core import autopilot as autopilot_def
-from ..core import budget, generation, scene_chain, studio
+from ..core import budget, generation, links, scene_chain, studio
 from ..db import SessionLocal, utcnow
 from ..events import emit
 from ..models import AudioAsset, CharacterAsset, Episode, Job, LocationAsset, Project, VoiceProfile
@@ -344,7 +344,7 @@ def _carry_continuity(ctx: JobContext, shot_ids: list[int] | None) -> list[int]:
 
 def _link_scenes(ctx: JobContext, shot_ids: list[int] | None, rule: str) -> list[str]:
     """Before the first picture: a scene that picks up straight from the one before (same place and time, someone in
-    common: core/scene_chain.scene_link_candidate) starts from its last frame, so the cut doesn't jump between them."""
+    common: core/links.scene_link_candidate) starts from its last frame, so the cut doesn't jump between them."""
     from ..models import Scene
     with SessionLocal() as db:
         episode = db.get(Episode, ctx.episode_id)
@@ -442,7 +442,7 @@ def produce(ctx: JobContext) -> dict:
                 specs = generation.cast_specs(db, project, shots)
             elif step == "keyframes":  # a shot that starts from a clip not made yet gets its keyframe with its video
                 specs = generation.keyframe_specs(db, project, [s for s in shots if "videos" not in steps
-                                                                or not scene_chain.waits_for_clip(db, s)], only_missing=True)
+                                                                or not links.waits_for_clip(db, s)], only_missing=True)
             elif step == "videos":  # in link order: a shot that continues another starts from its finished clip
                 # remake: the Director was asked for these shots by name, so they are made again even with a video
                 need = [s.id for s in shots if p.get("remake") or not is_real(current(db, s.id, "video"))]

@@ -158,7 +158,9 @@ def _is_label(name: str) -> bool:
     return any(w[:1].isascii() and w[:1].isalpha() and w[:1].islower() for w in words[1:])
 
 
-DUR_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(?:s|sec|secs|seconds)\b", re.I)
+# a length in seconds ("6s", "8 sec"); a few digits at most and never from inside a longer number, so a long run of
+# digits can't make the search slow
+DUR_RE = re.compile(r"(?<![\d.])(\d{1,3}(?:\.\d{1,2})?) ?(?:s|sec|secs|seconds)\b", re.I)
 
 
 def _dur(text: str) -> int:
@@ -438,7 +440,7 @@ def parse_marked(text: str) -> dict | None:
             rest = m.group(3).strip()
             if DUR_RE.search(rest):
                 cur["duration_s"], cur["_timed"] = _dur(rest), True  # the script's own length: kept as written
-                rest = re.sub(r"[(\[]?\s*" + DUR_RE.pattern + r"\s*[)\]]?", "", rest, flags=re.I).strip(" -–—:")
+                rest = re.sub(r"[(\[]? ?" + DUR_RE.pattern + r" ?[)\]]?", "", rest, flags=re.I).strip(" -–—:")
             if rest:
                 cur["prompt"] = rest
             markers["shot"] += 1
