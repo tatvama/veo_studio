@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 
 from .. import settings_store
 from ..agents import prompts
@@ -50,24 +51,30 @@ def marketing(ctx: JobContext) -> dict:
     return {"copies": len(pack.get("copies", [])), "thumbnails": len(files)}
 
 
+def _sfx_shots(db, ctx: JobContext) -> list[Shot]:
+    """The shots this sound-design run is for (shot_ids, only_missing: the ones with no effects yet)."""
+    shots = db.query(Shot).filter(Shot.episode_id == ctx.episode_id, Shot.include.is_(True)).order_by(Shot.order).all()
+    if ctx.payload.get("shot_ids"):
+        shots = [s for s in shots if s.id in ctx.payload["shot_ids"]]
+    if ctx.payload.get("only_missing"):
+        shots = [s for s in shots if not (s.sfx_track or {}).get("path")]
+    return shots
+
+
 @handler("sfx")
 def sfx(ctx: JobContext) -> dict:
     """Sound design: plan ambience/spot effects per shot from what the script writes (the scene's ambience, the shot's
     own effects, the scene's mood), generate them, store per shot for the mix. only_missing: shots that have none yet.
-    Without a real sound-effects engine nothing is saved (a placeholder tone would hum under the cut); the clips' own
-    sound still carries the effects the script writes (pipeline/prompting.audio_block)."""
+    Without ElevenLabs (or with `free`) the free route makes them from the bundled library instead: never a
+    placeholder tone humming under the cut."""
     from ..core.generation import sound_effects_ready
-    if not sound_effects_ready():
-        return {"cues": 0, "skipped": "No ElevenLabs key: sound effects come from the clips' own sound"}
+    if ctx.payload.get("free") or not sound_effects_ready():
+        return _free_sfx(ctx)
     st = get_storage()
     with SessionLocal() as db:
         ep = db.get(Episode, ctx.episode_id)
         project = db.get(Project, ep.project_id)
-        shots = db.query(Shot).filter(Shot.episode_id == ep.id, Shot.include.is_(True)).order_by(Shot.order).all()
-        if ctx.payload.get("shot_ids"):
-            shots = [s for s in shots if s.id in ctx.payload["shot_ids"]]
-        if ctx.payload.get("only_missing"):
-            shots = [s for s in shots if not (s.sfx_track or {}).get("path")]
+        shots = _sfx_shots(db, ctx)
         if not shots:
             return {"cues": 0}
         scenes = {sc.id: sc for sc in db.query(Scene).filter(Scene.episode_id == ep.id).all()}
@@ -99,6 +106,45 @@ def sfx(ctx: JobContext) -> dict:
         made += 1
     emit(None, ctx.project_id, "episode.updated", {"episode_id": ctx.episode_id, "what": "sfx"})
     return {"cues": made}
+
+
+def _free_sfx(ctx: JobContext) -> dict:
+    """The free route (no LLM, no ElevenLabs, no cost): for each shot whose script names a sound, the scene's ambience
+    synthesized under the shot's recorded spot effects (pipeline/sfx_library.py), one track of the shot's length."""
+    from ..pipeline import sfx_library
+    from ..pipeline.selection import current
+    st = get_storage()
+    with SessionLocal() as db:
+        shots = _sfx_shots(db, ctx)
+        sound = {sc.id: sc.sound or "" for sc in db.query(Scene).filter(Scene.episode_id == ctx.episode_id).all()}
+        todo = []
+        for s in shots:
+            vid = current(db, s.id, "video")  # the clip may run longer than planned: the sound covers all of it
+            secs = max(float(vid.duration_s or 0) if vid else 0.0, float(s.duration_s), float(s.extend_to or 0))
+            todo.append((s.id, s.code, sound.get(s.scene_id, ""), s.sfx or "", secs))
+    tmp = st.tmp_dir()
+    made = 0
+    try:
+        for i, (sid, code, scene_sound, shot_sfx, secs) in enumerate(todo):
+            ctx.check_cancel()
+            ctx.progress(i / max(len(todo), 1), f"Sound {code}")
+            out = sfx_library.make_shot_sound(scene_sound, shot_sfx, secs, sid, tmp / f"sfx_{sid}.wav")
+            if out is None:
+                continue
+            rel = st.save_file(st.new_path(f"projects/{ctx.project_id}/sfx", "wav"), out)
+            with SessionLocal() as db:
+                db.get(Shot, sid).sfx_track = {"path": rel, "prompt": sfx_library.plan_sound(scene_sound, shot_sfx).label,
+                                               "start": 0.0, "volume_db": sfx_library.FREE_VOLUME_DB, "duration": round(secs, 3),
+                                               "free": True}
+                db.commit()
+            made += 1
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    if not made:
+        return {"cues": 0, "skipped": "No ElevenLabs key, and the script names no sound the free library has: sound "
+                                      "effects come from the clips' own sound"}
+    emit(None, ctx.project_id, "episode.updated", {"episode_id": ctx.episode_id, "what": "sfx"})
+    return {"cues": made, "free": True}
 
 
 @handler("search_index")

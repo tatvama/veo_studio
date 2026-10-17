@@ -53,7 +53,7 @@ export function GenerateProvider({ children }: { children: ReactNode }) {
       toast.info(tr("{what}: nothing to do", { what: title }));
       return;
     }
-    if (est.total_usd === 0 && est.budget.ok) {
+    if (est.total_usd === 0 && est.budget.ok && !est.warnings?.length) {  // a warning is shown even when it's free
       await fire(eid, body, title);
       return;
     }
@@ -110,7 +110,7 @@ function Key({ children }: { children: ReactNode }) {
   return <kbd className="ml-1 hidden rounded bg-current/10 px-1 font-mono text-2xs leading-4 opacity-70 sm:inline">{children}</kbd>;
 }
 
-/** Line items, the total, what it does to the team budget and whether it needs approval. */
+/** Line items, the total, warnings, what it does to the team budget and whether it needs approval. */
 function CostBody({ est }: { est: Estimate }) {
   const t = useT();
   const shown = est.items.slice(0, 60);
@@ -153,6 +153,8 @@ function CostBody({ est }: { est: Estimate }) {
           </tbody>
         </table>
       </div>
+
+      {est.warnings?.map((w) => <Alert key={w} tone="warn">{w}</Alert>)}
 
       {est.team.cap_usd > 0 && <BudgetBar est={est} />}
 

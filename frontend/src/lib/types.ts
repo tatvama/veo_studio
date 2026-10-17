@@ -192,6 +192,8 @@ export interface Estimate {
   count: number; total_usd: number; items: { label: string; usd: number }[];
   budget: { ok: boolean; needs_role: string | null; reason: string };
   team: TeamStatus;
+  /** What to know before paying (e.g. no live lip-sync engine connected), shown in the cost dialog. */
+  warnings?: string[];
 }
 export interface TeamStatus { cap_usd: number; spent_usd: number; reserved_usd: number; remaining_usd: number | null; pct: number }
 

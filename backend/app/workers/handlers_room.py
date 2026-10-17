@@ -288,16 +288,13 @@ def _autopilot_run(ctx: JobContext, stop_at: int, pause_after: list[str], mark) 
                 specs = generation.lipsync_specs(db, project, need, lang) + generation.voice_specs(db, project, narr, lang)
                 db.commit()
                 run_children(specs, "Voices & lip-sync")
-            elif stage == "music" and not db.query(AudioAsset).filter(AudioAsset.episode_id == episode.id,
-                                                                      AudioAsset.kind == "music").count():
-                spec = generation.music_spec(db, project, episode)
+            elif stage == "music" and (mus := generation.music_step(db, project, episode)):
+                db.commit()  # a piece per scene with two or more scenes (or the one score), only what is missing
+                run_children([mus[0]], "Music")
+            elif stage == "sfx" and settings_store.get_setting(db, "sfx_auto") \
+                    and (snd := generation.sound_step(db, project, episode, generation.episode_shots(db, episode))):
                 db.commit()
-                run_children([spec], "Music")
-            elif stage == "sfx" and settings_store.get_setting(db, "sfx_auto") and generation.sound_effects_ready() \
-                    and generation.needs_sfx(generation.episode_shots(db, episode)):
-                spec = generation.sfx_spec(db, project, episode, only_missing=True)
-                db.commit()
-                run_children([spec], "Sound design")
+                run_children([snd[0]], "Sound design")  # ElevenLabs, or the free library without its key
             elif stage == "dubs":
                 others = [l for l in (project.languages or []) if l != project.primary_language]
                 specs = [generation.dub_spec(db, project, episode, l) for l in others]
@@ -421,10 +418,10 @@ def produce(ctx: JobContext) -> dict:
                 need = [s for s in shots if budget.Estimator.needs_lipsync(s, project, lang) and not has_fresh(db, s.id, "lipsync", lang)]
                 narr = [s for s in shots if (s.narration or {}).get(lang) and s not in need and not current(db, s.id, "narration", lang)]
                 specs = generation.lipsync_specs(db, project, need, lang) + generation.voice_specs(db, project, narr, lang)
-            elif step == "sound" and generation.sound_effects_ready() and (quiet := generation.needs_sfx(shots)):
-                specs = [generation.sfx_spec(db, project, episode, [s.id for s in quiet], only_missing=True)]
-            elif step == "music" and not db.query(AudioAsset).filter(AudioAsset.episode_id == episode.id, AudioAsset.kind == "music").count():
-                specs = [generation.music_spec(db, project, episode)]
+            elif step == "sound" and (snd := generation.sound_step(db, project, episode, shots)):
+                specs = [snd[0]]  # ElevenLabs, or the free library without its key
+            elif step == "music" and (mus := generation.music_step(db, project, episode, p.get("music_per_scene"))):
+                specs = [mus[0]]  # the scenes' missing pieces, or the one score
             elif step == "export":
                 preset = "youtube" if project.aspect == "16:9" else ("square" if project.aspect == "1:1" else "shorts")
                 specs = [generation.render_spec(project, episode, lang, "final", preset, {"captions": True})]

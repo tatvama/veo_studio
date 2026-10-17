@@ -12,7 +12,7 @@ from ..core import autopilot as autopilot_def
 from ..core import budget, collab, generation, jobs
 from ..db import get_db
 from ..models import Episode, Project, Shot, Take, User
-from ..pipeline.selection import current
+from ..pipeline.selection import current, has_fresh
 from ..security import current_user, require
 from .common import get_or_404
 
@@ -37,6 +37,8 @@ class BatchIn(BaseModel):
     caption_style: Literal["karaoke", "clean", "boxed", "none"] | None = None
     auto_reframe: bool | None = None
     sfx: bool | None = None
+    ambience: bool | None = None  # renders: the scene's background under dialogue shots whose sound was replaced
+    music_per_scene: bool | None = None  # produce / music: one piece per scene (None: two or more scenes, not scored yet)
     steps: list[str] | None = None  # produce: which of generation.PRODUCE_STEPS to run (default all)
     pause_after: list[str] | None = None  # autopilot: milestones to stop at for approval
     resume: bool = False  # autopilot: continue the paused run (same target, the stops still ahead)
@@ -44,7 +46,7 @@ class BatchIn(BaseModel):
 
 def _render_options(body: BatchIn, **extra) -> dict:
     opts = {"captions": body.captions, "music": body.music, **extra}
-    for k in ("caption_style", "auto_reframe", "sfx"):
+    for k in ("caption_style", "auto_reframe", "sfx", "ambience"):
         if getattr(body, k) is not None:
             opts[k] = getattr(body, k)
     return opts
@@ -77,7 +79,7 @@ def _specs(db: Session, project: Project, episode: Episode, body: BatchIn) -> li
     if a == "voicelock":
         return generation.voicelock_specs(db, project, shots)
     if a == "music":
-        return [generation.music_spec(db, project, episode, body.prompt)]
+        return [generation.music_spec(db, project, episode, body.prompt, per_scene=bool(body.music_per_scene))]
     if a == "animatic":
         return [generation.render_spec(project, episode, lang, "animatic", body.preset or "draft",
                                        _render_options(body))]
@@ -119,11 +121,13 @@ def _specs(db: Session, project: Project, episode: Episode, body: BatchIn) -> li
             raise HTTPException(400, "bad quality")
         if not shots:
             raise HTTPException(400, "The shot list is empty: add or import shots first")
-        total, items = generation.produce_plan(db, project, episode, shots, steps, body.quality, lang)
+        per_scene = (generation.music_per_scene_default(db, episode) if body.music_per_scene is None
+                     else body.music_per_scene)  # decided here, so the run makes what the estimate priced
+        total, items = generation.produce_plan(db, project, episode, shots, steps, body.quality, lang, music_per_scene=per_scene)
         if not items:
             return []
         return [jobs.spec("produce", payload={"steps": steps, "shot_ids": body.shot_ids, "quality": body.quality,
-                                              "language": body.language, "items": items},
+                                              "language": body.language, "items": items, "music_per_scene": per_scene},
                           project_id=project.id, episode_id=episode.id, estimate=total,
                           label=f"Produce all E{episode.number:02} ({len(shots)} shots)")]
     raise HTTPException(400, f"unknown action {a}")
@@ -139,7 +143,21 @@ def estimate(eid: int, body: BatchIn, user: User = Depends(current_user), db: Se
         s["items"] = specs[0]["payload"]["items"]
     s["budget"] = budget.check(db, user, p, s["total_usd"])
     s["team"] = budget.team_status(db)
+    s["warnings"] = _warnings(db, p, e, body, specs)
     return s
+
+
+def _warnings(db: Session, project: Project, episode: Episode, body: BatchIn, specs: list[dict]) -> list[str]:
+    """What to know before paying, shown in the cost dialog: shots that will be lip-synced with no live lip-sync
+    engine connected (their voices would be laid over the clips, lips not matching)."""
+    syncing: list = []
+    if body.action == "lipsync":
+        syncing = [x for x in specs if x["type"] == "lipsync"]
+    elif body.action == "produce" and specs and "voices" in specs[0]["payload"]["steps"]:
+        lang = body.language or project.primary_language
+        syncing = [s for s in generation.episode_shots(db, episode, body.shot_ids)
+                   if budget.Estimator.needs_lipsync(s, project, lang) and not has_fresh(db, s.id, "lipsync", lang)]
+    return generation.lipsync_warnings(db, syncing)
 
 
 @router.post("/episodes/{eid}/generate")

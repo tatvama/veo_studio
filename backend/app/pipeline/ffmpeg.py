@@ -69,6 +69,22 @@ def video_size(path: Path | str) -> tuple[int, int]:
     return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
 
 
+def measure(path: Path | str) -> tuple[float | None, float | None]:
+    """(integrated loudness in LUFS, true peak in dBFS) of a file's sound (EBU R128). Loudness is None when the sound is
+    silent or too short to measure (the meter gates out everything under -70 LUFS); the peak is None when silent."""
+    err = run(["-nostats", "-i", path, "-vn", "-af", "ebur128=framelog=verbose:peak=true", "-f", "null", "-"])
+    lufs = re.findall(r"I:\s+(-?\d+(?:\.\d+)?) LUFS", err)  # the summary comes last (the per-frame lines are hidden)
+    peak = re.findall(r"Peak:\s+(-?\d+(?:\.\d+)?) dBFS", err)
+    i = float(lufs[-1]) if lufs else None
+    p = float(peak[-1]) if peak else None
+    return (i if i is not None and i > -69.5 else None), (p if p is not None and p > -90 else None)
+
+
+def loudness(path: Path | str) -> float | None:
+    """Integrated loudness of a file's sound in LUFS (None: silent or too short to measure)."""
+    return measure(path)[0]
+
+
 # ── video encoder ────────────────────────────────────────────────────────────
 
 HW_H264 = ("h264_nvenc", "h264_qsv", "h264_amf", "h264_videotoolbox")  # tried in this order under VIDEO_ENCODER=auto

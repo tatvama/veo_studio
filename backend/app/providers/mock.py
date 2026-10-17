@@ -275,6 +275,10 @@ def llm(task: str, ctx: dict[str, Any]) -> dict[str, Any]:
         return {"cuts": [{"title": f"Short {i + 1}", "shot_codes": codes[i * size:(i + 1) * size] or codes[:1]} for i in range(n)]}
     if task == "music_prompt":
         return {"prompt": "Instrumental only, no vocals. Soft tanpura drone with gentle bansuri flute, suspenseful, cinematic."}
+    if task == "scene_music":
+        return {"theme": "Bansuri flute over a tanpura drone in D minor, slow and spacious",
+                "scenes": [{"scene": n, "prompt": f"Scene {n}: the theme {'hushed and tense' if n % 2 else 'opening up, hopeful'}"}
+                           for n in ctx.get("scenes", [])]}
     if task == "voice_pick":
         return {"speaker": "anand" if ctx.get("gender") == "male" else "kavya"}
     if task == "end_state":

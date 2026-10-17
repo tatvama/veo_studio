@@ -318,13 +318,17 @@ def voice_and_lipsync(project_id: ProjectId, language: Lang = "", shot_codes: Sh
 def produce_all(project_id: ProjectId,
                 steps: Annotated[list[str] | None, Field(description=f"Some of {', '.join(generation.PRODUCE_STEPS)}; "
                                                                      "empty = all")] = None,
-                quality: Quality = "", episode: EpisodeNo = None, run_now: RunNow = False) -> dict:
+                quality: Quality = "", episode: EpisodeNo = None, run_now: RunNow = False,
+                music_per_scene: Annotated[bool | None, Field(description="One piece of music per scene following its "
+                                                              "mood (default: on with two or more scenes, unless already "
+                                                              "scored); false = one score")] = None) -> dict:
     """Produce all, only what is missing, in one approval: character & place looks, keyframes, videos (each scene
     carrying the one before), extensions, voices (voice-over and dialogue), sound effects, music and the final export.
     After generate_scenes, steps voices + sound + music + export finish the film."""
     with call("write") as c:
         p = c.project(project_id)
-        return director(c, p, c.episode(p, episode), "produce_all", {"steps": steps, "quality": quality}, run_now=run_now)
+        return director(c, p, c.episode(p, episode), "produce_all",
+                        {"steps": steps, "quality": quality, "music_per_scene": music_per_scene}, run_now=run_now)
 
 
 def generate_music(project_id: ProjectId, prompt: str = "", episode: EpisodeNo = None, run_now: RunNow = False) -> dict:
