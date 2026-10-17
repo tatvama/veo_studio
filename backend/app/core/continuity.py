@@ -59,6 +59,8 @@ def end_state(db: Session, user: User | None, project: Project, episode: Episode
     by_name = {c.name.strip().lower(): c for c in db.query(Character).filter(Character.archived.is_(False)).all()}
     chars: dict[str, Any] = {}
     for c in out.characters:
+        if c.name.strip().upper() in ("NARRATOR", "VO", "V.O.", "VOICE-OVER", "VOICE OVER"):
+            continue  # the voice-over is heard, never seen: nothing of it carries into a picture
         row = by_name.get(c.name.strip().lower())
         key = str(row.id) if row else c.name
         chars[key] = {"name": row.name if row else c.name, "outfit": c.outfit, "state": c.state}

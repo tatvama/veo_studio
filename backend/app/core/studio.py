@@ -540,7 +540,10 @@ def plan_scene_cards(db: Session, user: User, episode: Episode) -> list[dict]:
             loc = _find_loc(db, project, card.location)
             sc = Scene(episode_id=episode.id, order=card.scene_index, location_id=loc.id if loc else None)
             db.add(sc)
-        sc.title, sc.goal, sc.conflict, sc.turn, sc.emotion = card.title, card.goal, card.conflict, card.turn, card.emotion
+        # a mood the script itself wrote (MOOD: on import, or the shot list) stays; the card fills it in otherwise
+        written = (script["scenes"][card.scene_index].get("mood") or "") if 0 <= card.scene_index < len(script["scenes"]) else ""
+        sc.title, sc.goal, sc.conflict, sc.turn = card.title, card.goal, card.conflict, card.turn
+        sc.emotion = written or card.emotion
         sc.time_of_day = card.time_of_day or sc.time_of_day
         sc.props, sc.continuity_notes, sc.blocking, sc.coverage = card.props, card.continuity_notes, card.blocking, card.coverage
         chars = [c for c in (_find_char(db, project, n, user) for n in card.characters) if c]

@@ -67,8 +67,12 @@ export interface BoardShot {
   keyframe_uploaded?: boolean; ref_images?: ShotRef[];
   /** video model: "auto" (team policy, Google first) or an engine id */
   engine?: string;
+  /** sound effects in this shot (the script's SFX notes); left out on save = unchanged */
+  sfx?: string;
 }
-export interface BoardScene { id?: number | null; key?: string; title: string; location: string; time_of_day: string; summary: string; shots: BoardShot[] }
+/** The scene's notes (mood, look, sound, music) go into every shot of the scene; left out on save = unchanged. */
+export interface SceneNotes { mood?: string; look?: string; sound?: string; music?: string }
+export interface BoardScene extends SceneNotes { id?: number | null; key?: string; title: string; location: string; time_of_day: string; summary: string; shots: BoardShot[] }
 export interface Board {
   episode_id: number; language: string; scenes: BoardScene[];
   /** content version; sent back on save so a stale editor can't overwrite newer changes */
@@ -77,12 +81,14 @@ export interface Board {
 }
 /** A parsed script before it is saved: speakers and characters are still names from the file. */
 export interface DraftLine { speaker: string; text: string; emotion: string; changed?: boolean }
-export interface DraftShot { prompt: string; characters: string[]; lines: DraftLine[]; duration_s: number; framing: string; camera: string }
-export interface DraftScene { title: string; location: string; time_of_day: string; summary: string; shots: DraftShot[] }
+export interface DraftShot { prompt: string; characters: string[]; lines: DraftLine[]; duration_s: number; framing: string; camera: string; sfx?: string }
+export interface DraftScene extends SceneNotes { title: string; location: string; time_of_day: string; summary: string; shots: DraftShot[] }
 export interface ImportResult {
-  draft: { title: string; scenes: DraftScene[] }; method: "markers" | "ai"; warnings: string[]; source: string; text: string;
+  draft: { title: string; scenes: DraftScene[]; cast?: { name: string; description: string }[] }; method: "markers" | "ai"; warnings: string[];
+  source: string; text: string;
   stats: { scenes: number; shots: number; lines: number };
-  characters: { name: string; lines: number; match: (Character & { in_project: boolean }) | null }[];
+  /** description: how the script describes them; it becomes the look of a new character (or one without a look yet) */
+  characters: { name: string; lines: number; description?: string; match: (Character & { in_project: boolean }) | null }[];
 }
 
 export interface Hook { text: string; type: string; visual: string; scores: Record<string, number>; total: number }

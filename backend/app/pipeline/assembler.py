@@ -105,9 +105,11 @@ def plan(db: Session, episode: Episode, lang: str, kind: str, tmp: Path) -> tupl
         voice_key = voice.path if voice_path else ""
         cues: list[Cue] = _spans_cues((voice.params or {}).get("spans", [])) if voice else []
         extra: list[tuple] = []
+        narr_s = 0.0  # how long the voice-over runs (with a short tail), so it is never cut off mid-sentence
         if narr and narr.path:
             extra.append((st.abs(narr.path), 0.0, 0.0, narr.path))
             cues += _spans_cues((narr.params or {}).get("spans", []))
+            narr_s = float(narr.duration_s or 0) + 0.3 if narr.duration_s else 0.0
         elif (shot.narration or {}).get(lang):
             warnings.append(f"{shot.code}: narration in {lang} not voiced yet")
 
@@ -120,7 +122,7 @@ def plan(db: Session, episode: Episode, lang: str, kind: str, tmp: Path) -> tupl
                 img = tmp / f"ph_{shot.id}.png"
                 img.write_bytes(mock.image(f"{shot.code}: {shot.action}", project.aspect, f"{shot.code} — no keyframe yet"))
                 warnings.append(f"{shot.code}: no keyframe yet (placeholder used)")
-            dur = float(shot.duration_s)
+            dur = max(float(shot.duration_s), narr_s)
             if voice:
                 dur = max(dur, voice.duration_s + 0.2)
             if kind != "animatic" and not video:
@@ -136,6 +138,15 @@ def plan(db: Session, episode: Episode, lang: str, kind: str, tmp: Path) -> tupl
         vdur = max(video.duration_s or ff.duration(st.abs(video.path)), 0.5)
         trim_in = max(shot.trim_in or 0.0, 0.0)
         dur = max(vdur - trim_in - max(shot.trim_out or 0.0, 0.0), 0.5)
+        # words laid over the clip (the voice-over, or a voice that isn't lip-synced yet) that run longer than it:
+        # the clip holds its last frame until they end (normalize_clip pads with it) instead of cutting them off
+        laid = (voice.duration_s + 0.2 if voice and voice.duration_s and lines and not (lips and lips.path)
+                and not (vlock and vlock.path) and not (vm == "native" and lang == project.primary_language) else 0.0)
+        if max(narr_s, laid) > dur + 0.05:
+            warnings.append(f"{shot.code}: the {'voice-over' if narr_s >= laid else 'voice'} runs {max(narr_s, laid):.1f}s "
+                            f"and the clip {dur:.1f}s; its last frame is held until the words end (longer shot or an "
+                            "extension fixes it)")
+            dur = max(narr_s, laid)
         vid = {"source": st.abs(video.path), "source_key": video.path}
         if lines and lips and lips.path:
             segs.append(Segment(shot, st.abs(lips.path), "lipsync", dur, trim_in, extra_audio=extra, cues=cues or _even_cues(lines, dur),

@@ -52,7 +52,13 @@ def marketing(ctx: JobContext) -> dict:
 
 @handler("sfx")
 def sfx(ctx: JobContext) -> dict:
-    """Sound design: plan ambience/spot effects per shot, generate them, store per shot for the mix."""
+    """Sound design: plan ambience/spot effects per shot from what the script writes (the scene's ambience, the shot's
+    own effects, the scene's mood), generate them, store per shot for the mix. only_missing: shots that have none yet.
+    Without a real sound-effects engine nothing is saved (a placeholder tone would hum under the cut); the clips' own
+    sound still carries the effects the script writes (pipeline/prompting.audio_block)."""
+    from ..core.generation import sound_effects_ready
+    if not sound_effects_ready():
+        return {"cues": 0, "skipped": "No ElevenLabs key: sound effects come from the clips' own sound"}
     st = get_storage()
     with SessionLocal() as db:
         ep = db.get(Episode, ctx.episode_id)
@@ -60,7 +66,18 @@ def sfx(ctx: JobContext) -> dict:
         shots = db.query(Shot).filter(Shot.episode_id == ep.id, Shot.include.is_(True)).order_by(Shot.order).all()
         if ctx.payload.get("shot_ids"):
             shots = [s for s in shots if s.id in ctx.payload["shot_ids"]]
-        listing = "\n".join(f"{s.code} ({s.duration_s}s): {s.action}; written sfx: {s.sfx}" for s in shots)
+        if ctx.payload.get("only_missing"):
+            shots = [s for s in shots if not (s.sfx_track or {}).get("path")]
+        if not shots:
+            return {"cues": 0}
+        scenes = {sc.id: sc for sc in db.query(Scene).filter(Scene.episode_id == ep.id).all()}
+
+        def row(s: Shot) -> str:
+            sc = scenes.get(s.scene_id)
+            notes = [f"scene ambience: {sc.sound}" if sc and sc.sound else "", f"written sfx: {s.sfx}" if s.sfx else "",
+                     f"mood: {sc.emotion}" if sc and sc.emotion else ""]
+            return f"{s.code} ({s.duration_s}s): {s.action}" + "".join(f"; {n}" for n in notes if n)
+        listing = "\n".join(row(s) for s in shots)
         plan, usage = ctx.services.llm_json("sfx_plan", prompts.SOUND_DESIGNER,
                                             f"Concept: {project.concept}\nSHOTS:\n{listing}", S.SfxPlanOut,
                                             mock_ctx={"codes": [s.code for s in shots]})

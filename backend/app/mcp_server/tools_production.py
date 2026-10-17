@@ -11,7 +11,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 from pydantic import BaseModel, Field
 
 from .. import catalog
-from ..core import jobs, scene_chain
+from ..core import generation, jobs, scene_chain
 from ..models import Job, Shot
 from ..pipeline.prompting import compile_video_prompt
 from ..pipeline.selection import current, is_real, takes
@@ -315,6 +315,18 @@ def voice_and_lipsync(project_id: ProjectId, language: Lang = "", shot_codes: Sh
                         run_now=run_now)
 
 
+def produce_all(project_id: ProjectId,
+                steps: Annotated[list[str] | None, Field(description=f"Some of {', '.join(generation.PRODUCE_STEPS)}; "
+                                                                     "empty = all")] = None,
+                quality: Quality = "", episode: EpisodeNo = None, run_now: RunNow = False) -> dict:
+    """Produce all, only what is missing, in one approval: character & place looks, keyframes, videos (each scene
+    carrying the one before), extensions, voices (voice-over and dialogue), sound effects, music and the final export.
+    After generate_scenes, steps voices + sound + music + export finish the film."""
+    with call("write") as c:
+        p = c.project(project_id)
+        return director(c, p, c.episode(p, episode), "produce_all", {"steps": steps, "quality": quality}, run_now=run_now)
+
+
 def generate_music(project_id: ProjectId, prompt: str = "", episode: EpisodeNo = None, run_now: RunNow = False) -> dict:
     """Compose background music for the episode."""
     with call("write") as c:
@@ -469,7 +481,7 @@ TOOLS = [
     (generate_keyframes, "Make keyframes", PAID), (storyboard_frames, "Make start and end frames", PAID),
     (generate_scenes, "Make scenes in order", PAID),
     (generate_videos, "Make shot videos", PAID), (regenerate_stale, "Redo stale takes", PAID),
-    (edit_clip, "Edit a clip", PAID), (voice_and_lipsync, "Voices & lip-sync", PAID),
+    (edit_clip, "Edit a clip", PAID), (voice_and_lipsync, "Voices & lip-sync", PAID), (produce_all, "Produce all", PAID),
     (generate_music, "Make music", PAID), (make_animatic, "Render a preview", EDIT), (export_video, "Render the final video", EDIT),
     (dub_episode, "Dub the episode", PAID), (make_cutdowns, "Cut into shorts", EDIT), (start_autopilot, "Start Autopilot", PAID),
     (job_status, "Job progress", READ), (list_pending, "Waiting for approval", READ),

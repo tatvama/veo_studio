@@ -132,6 +132,7 @@ class ImportShot(BaseModel):
     duration_s: int = Field(default=8, description="4, 6 or 8; use the script's timing if it gives one")
     framing: str = ""
     camera: str = ""
+    sfx: str = Field(default="", description="Sound effects the script writes for this shot (SFX:, SOUND:), copied")
 
 
 class ImportScene(BaseModel):
@@ -139,11 +140,21 @@ class ImportScene(BaseModel):
     location: str = ""
     time_of_day: str = ""
     summary: str = ""
+    mood: str = Field(default="", description="The scene's mood in a few words: as the script says, else read from the scene")
+    look: str = Field(default="", description="Lighting, colour, weather or style the script writes for this scene, copied")
+    sound: str = Field(default="", description="Ambience the script writes for the whole scene, copied")
+    music: str = Field(default="", description="Music the script asks for in this scene, copied")
     shots: list[ImportShot]
+
+
+class ImportCast(BaseModel):
+    name: str = Field(description="Character name exactly as the script spells it")
+    description: str = Field(default="", description="How the script describes them (age, looks, clothes), copied; empty if it doesn't")
 
 
 class ImportOut(BaseModel):
     title: str = ""
+    cast: list[ImportCast] = []
     scenes: list[ImportScene]
 
 

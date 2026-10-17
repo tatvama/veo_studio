@@ -292,9 +292,45 @@ def extend_spec(db: Session, project: Project, shot: Shot, prompt: str) -> dict:
                 episode_id=shot.episode_id, shot_id=shot.id, estimate=cost, label=f"Extend {shot.code} +7s")
 
 
-PRODUCE_STEPS = ["keyframes", "videos", "extend", "voices", "music", "export"]
-PRODUCE_LABELS = {"keyframes": "Keyframes", "videos": "Videos", "extend": "Extensions", "voices": "Voices & lip-sync",
-                  "music": "Music", "export": "Final export"}
+PRODUCE_STEPS = ["cast", "keyframes", "videos", "extend", "voices", "sound", "music", "export"]
+PRODUCE_LABELS = {"cast": "Character & place looks", "keyframes": "Keyframes", "videos": "Videos", "extend": "Extensions",
+                  "voices": "Voices & lip-sync", "sound": "Sound effects", "music": "Music", "export": "Final export"}
+
+
+def cast_specs(db: Session, project: Project, shots: list[Shot]) -> list[dict]:
+    """Reference pictures for whoever is in these shots and has none yet (a front and a three-quarter view), and a
+    wide view of every place they're set in that has none. Without them each clip invents its own face and set, so a
+    character or a place looks different in every scene."""
+    from ..models import CharacterAsset, LocationAsset
+    ids = list(dict.fromkeys(int(c) for s in shots for c in (s.characters or [])))
+    rows = {c.id: c for c in db.query(Character).filter(Character.id.in_(ids), Character.archived.is_(False)).all()} if ids else {}
+    out = []
+    for cid in ids:
+        ch = rows.get(cid)
+        if ch and not db.query(CharacterAsset.id).filter(CharacterAsset.character_id == ch.id,
+                                                         CharacterAsset.archived.is_(False)).first():
+            out.append(character_sheet_spec(db, project.id, ch, ["front", "three_quarter"]))
+    loc_ids = list(dict.fromkeys(s.location_id for s in shots if s.location_id))
+    locs = {l.id: l for l in db.query(Location).filter(Location.id.in_(loc_ids)).all()} if loc_ids else {}
+    for lid in loc_ids:
+        loc = locs.get(lid)
+        if loc and not db.query(LocationAsset.id).filter(LocationAsset.location_id == loc.id,
+                                                         LocationAsset.archived.is_(False)).first():
+            out.append(location_images_spec(db, project.id, loc, ["wide"]))
+    return out
+
+
+def sound_effects_ready() -> bool:
+    """Sound effects can be made for real: an ElevenLabs key, or the whole studio on mock providers (tests, demos).
+    With real providers and no ElevenLabs key the mock would save a placeholder tone as each shot's sound."""
+    from ..config import get_settings
+    from ..providers.services import provider_mode
+    mode = provider_mode("elevenlabs")
+    return mode == "live" or (mode == "mock" and get_settings().mock_providers == "true")
+
+
+def needs_sfx(shots: list[Shot]) -> list[Shot]:
+    return [s for s in shots if not (s.sfx_track or {}).get("path")]
 
 
 def extensions_needed(db: Session, shot: Shot) -> int:
@@ -318,6 +354,9 @@ def produce_plan(db: Session, project: Project, episode: Episode, shots: list[Sh
         if n:
             items.append({"label": f"{PRODUCE_LABELS[step]} · {n}", "usd": round(usd, 4)})
 
+    if "cast" in steps:
+        cs = cast_specs(db, project, shots)
+        add("cast", len(cs), sum(s["estimate"] for s in cs))
     if "keyframes" in steps:
         ks = keyframe_specs(db, project, shots, only_missing=True)
         add("keyframes", len(ks), sum(s["estimate"] for s in ks))
@@ -340,6 +379,8 @@ def produce_plan(db: Session, project: Project, episode: Episode, shots: list[Sh
         narr = [s for s in shots if (s.narration or {}).get(lang) and s not in need and not current(db, s.id, "narration", lang)]
         cost = sum(est.lipsync(s) + est.voice(s, lang) for s in need) + sum(est.voice(s, lang) for s in narr)
         add("voices", len(need) + len(narr), cost)
+    if "sound" in steps and sound_effects_ready() and (quiet := needs_sfx(shots)):
+        add("sound", len(quiet), sfx_spec(db, project, episode, [s.id for s in quiet])["estimate"])
     if "music" in steps:
         from ..models import AudioAsset
         if not db.query(AudioAsset).filter(AudioAsset.episode_id == episode.id, AudioAsset.kind == "music").count():
@@ -379,11 +420,13 @@ def shootout_specs(db: Session, project: Project, shot: Shot, engine_ids: list[s
     return out
 
 
-def sfx_spec(db: Session, project: Project, episode: Episode, shot_ids: list[int] | None = None) -> dict:
-    n = len(episode_shots(db, episode, shot_ids))
+def sfx_spec(db: Session, project: Project, episode: Episode, shot_ids: list[int] | None = None,
+             only_missing: bool = False) -> dict:
+    shots = episode_shots(db, episode, shot_ids)
+    n = len(needs_sfx(shots) if only_missing else shots)
     est = 0.002 * 6 * n if Estimator(db)._live("elevenlabs") else 0.0
-    return spec("sfx", payload={"shot_ids": shot_ids}, project_id=project.id, episode_id=episode.id, estimate=est,
-                label=f"Sound design E{episode.number:02}")
+    return spec("sfx", payload={"shot_ids": shot_ids, "only_missing": only_missing}, project_id=project.id,
+                episode_id=episode.id, estimate=est, label=f"Sound design E{episode.number:02}")
 
 
 def marketing_spec(db: Session, project: Project, episode: Episode, platforms: list[str] | None = None,

@@ -6,6 +6,10 @@ no longer listed are removed (a shot that already has paid takes is only dropped
 
 A line's speaker is a character id, or "VO" for voice-over (stored in Shot.narration, read by the project narrator).
 Only the primary language is edited here; other languages are left as they are.
+
+A scene's mood, look, sound and music and a shot's sound effects are the script's own notes: every shot of the scene
+carries them (pipeline/prompting.py, the score and the sound design). Left out (None) they stay as they are, so an
+older editor that doesn't send them never wipes them.
 """
 from __future__ import annotations
 
@@ -42,6 +46,7 @@ class BoardShot(BaseModel):
     framing: str = ""
     camera: str = ""
     engine: str = "auto"  # the video model for this shot: "auto" (Google first) or an engine id
+    sfx: str | None = None  # sound effects in this shot (None = keep)
 
 
 class BoardScene(BaseModel):
@@ -50,6 +55,10 @@ class BoardScene(BaseModel):
     location: str = ""
     time_of_day: str = ""
     summary: str = ""
+    mood: str | None = None  # None = keep what the scene has
+    look: str | None = None
+    sound: str | None = None
+    music: str | None = None
     shots: list[BoardShot] = []
 
 
@@ -65,9 +74,10 @@ def board_version(db: Session, episode: Episode) -> str:
     import json
     scenes = db.query(Scene).filter(Scene.episode_id == episode.id).order_by(Scene.id).all()
     shots = db.query(Shot).filter(Shot.episode_id == episode.id, Shot.include.is_(True)).order_by(Shot.id).all()
-    data = [[sc.id, sc.order, sc.title, sc.location_id, sc.time_of_day, sc.summary] for sc in scenes] + [
+    data = [[sc.id, sc.order, sc.title, sc.location_id, sc.time_of_day, sc.summary, sc.emotion, sc.look, sc.sound,
+             sc.music] for sc in scenes] + [
         [h.id, h.order, h.scene_id, h.action, h.characters, h.dialogue, h.narration, h.duration_s, h.extend_to,
-         h.extend_prompt, h.framing, h.camera] for h in shots]
+         h.extend_prompt, h.framing, h.camera, h.sfx] for h in shots]
     return hashlib.sha1(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest()[:16]
 
 
@@ -105,7 +115,8 @@ def get_board(db: Session, project: Project, episode: Episode) -> dict:
         kf, vid = current(db, s.id, "keyframe"), current(db, s.id, "video")
         return {"id": s.id, "code": s.code, "prompt": s.action, "characters": s.characters or [], "lines": lines,
                 "duration_s": s.duration_s, "extend_to": s.extend_to or 0, "extend_prompt": s.extend_prompt or "",
-                "framing": s.framing, "camera": s.camera, "engine": s.engine or "auto", "status": s.status, "generating": s.generating,
+                "framing": s.framing, "camera": s.camera, "engine": s.engine or "auto", "sfx": s.sfx or "",
+                "status": s.status, "generating": s.generating,
                 "thumb_url": st.url(kf.thumb_path or kf.path) if kf else "", "keyframe_uploaded": bool(kf and kf.provider == "upload"),
                 "ref_images": [{"label": r.get("label", ""), "url": st.url(r.get("path", ""))} for r in (s.ref_images or [])],
                 "video_s": round(vid.duration_s, 1) if vid else 0, "has_video": bool(vid)}
@@ -114,10 +125,11 @@ def get_board(db: Session, project: Project, episode: Episode) -> dict:
     for sc in scenes:
         loc = db.get(Location, sc.location_id) if sc.location_id else None
         out.append({"id": sc.id, "title": sc.title, "location": loc.name if loc else "", "time_of_day": sc.time_of_day,
-                    "summary": sc.summary, "shots": [shot_out(s) for s in by_scene.get(sc.id, [])]})
+                    "summary": sc.summary, "mood": sc.emotion or "", "look": sc.look or "", "sound": sc.sound or "",
+                    "music": sc.music or "", "shots": [shot_out(s) for s in by_scene.get(sc.id, [])]})
     if by_scene.get(None):  # shots added before any scene existed
-        out.append({"id": None, "title": "Unsorted shots", "location": "", "time_of_day": "", "summary": "",
-                    "shots": [shot_out(s) for s in by_scene[None]]})
+        out.append({"id": None, "title": "Unsorted shots", "location": "", "time_of_day": "", "summary": "", "mood": "",
+                    "look": "", "sound": "", "music": "", "shots": [shot_out(s) for s in by_scene[None]]})
     return {"episode_id": episode.id, "language": lang, "scenes": out, "version": board_version(db, episode),
             "limits": {"durations": [4, 6, 8], "extend_step_s": EXTEND_STEP_S, "max_extend_s": MAX_EXTEND_S}}
 
@@ -157,6 +169,10 @@ def save_board(db: Session, user: User, project: Project, episode: Episode, boar
             title = ""
         sc.order, sc.title = si, title or f"Scene {si + 1}"
         sc.time_of_day, sc.summary = bs.time_of_day.strip(), bs.summary.strip()
+        for field, col, cap in (("mood", "emotion", 200), ("look", "look", 4000), ("sound", "sound", 4000),
+                                ("music", "music", 4000)):
+            if getattr(bs, field) is not None:
+                setattr(sc, col, getattr(bs, field).strip()[:cap])
         sc.location_id = loc.id if loc else None
         db.flush()
         keep_scenes.add(sc.id)
@@ -203,6 +219,7 @@ def save_board(db: Session, user: User, project: Project, episode: Episode, boar
             new_vals = {"action": b.prompt.strip(), "characters": chars, "duration_s": b.duration_s, "extend_to": ext,
                         "extend_prompt": b.extend_prompt.strip(), "framing": b.framing.strip(), "camera": b.camera.strip(),
                         "engine": _engine(db, b.engine),
+                        **({"sfx": b.sfx.strip()} if b.sfx is not None else {}),
                         "dialogue": {**((s.dialogue or {}) if s else {}), lang: dialogue},
                         "narration": {**((s.narration or {}) if s else {}), lang: " ".join(narration)},
                         "scene_id": sc.id, "location_id": shot_loc}
@@ -237,8 +254,8 @@ def save_board(db: Session, user: User, project: Project, episode: Episode, boar
             keep_shots.add(s.id)
         sc.characters = scene_chars
         script_scenes.append({"title": sc.title, "location": bs.location.strip(), "time_of_day": sc.time_of_day,
-                              "summary": sc.summary, "action": " ".join(b.prompt.strip() for b in bs.shots)[:2000],
-                              "lines": scene_lines})
+                              "summary": sc.summary, "mood": sc.emotion or "",
+                              "action": " ".join(b.prompt.strip() for b in bs.shots)[:2000], "lines": scene_lines})
 
     # what's no longer on the board
     for sid, s in old_shots.items():

@@ -18,11 +18,21 @@ import "../../styles/board.css";
 
 const EXT = [".docx", ".pdf", ".txt", ".md", ".fountain"];
 
-export const TEMPLATE = `SCENE 1: INT. KITCHEN - MORNING
+export const TEMPLATE = `CHARACTERS:
+AJJI – 70s, silver hair in a bun, round glasses, cotton saree
+RAVI – 25, lean, curly hair, blue kurta
+
+LOOK: warm film grain, soft contrast
+
+SCENE 1: INT. KITCHEN - MORNING
 Grandmother's sunlit kitchen, brass vessels on the shelf.
+MOOD: warm, nostalgic
+SOUND: pressure cooker hiss, birds outside
+MUSIC: soft veena
 
 SHOT 1 (6s)
 VISUAL: Close-up of wrinkled hands twisting open a glass pickle jar.
+SFX: the lid pops open
 AJJI (proud): This recipe is fifty years old.
 
 SHOT 2
@@ -30,9 +40,10 @@ VISUAL: Wide shot of the kitchen, steam rising from the stove.
 VO: Some flavours never leave you.
 
 SCENE 2: EXT. GARDEN - DAY
+MOOD: playful
 VISUAL: Mango trees sway in the breeze.
 RAVI (smiling): I can smell it from here!
-MEERA: Then come inside.`;
+AJJI: Then come inside.`;
 
 type Step = "source" | "cast" | "preview";
 type Method = "auto" | "markers" | "ai";
@@ -234,6 +245,7 @@ export function ImportWizard({ open, onClose, eid, projectId, hasShots, onDone }
               <details className="group/tpl rounded-xl border border-line bg-raised/30 p-3 text-xs">
                 <summary className="cursor-pointer font-medium">{t("Best results: this layout (any language)")}</summary>
                 <p className="mt-2 text-mute">{t("SCENE / INT. / EXT. start a scene · SHOT starts a shot (add 4s, 6s or 8s) · VISUAL: is what we see · NAME: is dialogue (add an emotion in brackets) · VO: is voice-over. Scripts in other layouts are arranged by AI, keeping your words.")}</p>
+                <p className="mt-1.5 text-mute">{t("CHARACTERS: lists who is who and how they look · MOOD:, LOOK: (or LIGHTING:, WEATHER:), SOUND: and MUSIC: under a scene heading hold for the whole scene, and before the first scene for every scene · SFX: inside a shot is that shot's sound effect.")}</p>
                 <pre className="mono mt-2 max-h-48 overflow-auto rounded-lg border border-line bg-panel p-2 text-2xs leading-relaxed">{TEMPLATE}</pre>
                 <Button size="sm" variant="ghost" className="mt-1" icon={<ClipboardCopy className="size-3.5" />}
                   onClick={() => { void navigator.clipboard?.writeText(TEMPLATE); toast.success(tr("Template copied")); }}>{t("Copy template")}</Button>
@@ -268,6 +280,11 @@ export function ImportWizard({ open, onClose, eid, projectId, hasShots, onDone }
                             {!!c.lines && <span className="mono @2xl:hidden">{c.lines === 1 ? t("1 line") : t("{n} lines", { n: c.lines })}{c.match ? " · " : ""}</span>}
                             {[!c.lines ? t("on screen, no lines") : "", c.match ? t("matched {name}", { name: c.match.name }) : ""].filter(Boolean).join(" · ")}
                           </p>
+                          {c.description && p.kind !== "vo" && (
+                            <p className="line-clamp-2 text-2xs leading-snug text-mute" title={c.description}>
+                              <span className="font-medium text-ink/80">{t("Script:")}</span> {c.description}
+                            </p>
+                          )}
                         </div>
                       </div>
                       <span className="mono hidden text-right text-sm text-mute @2xl:block" aria-label={c.lines === 1 ? t("1 line") : t("{n} lines", { n: c.lines })}>{c.lines}</span>

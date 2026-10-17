@@ -293,9 +293,11 @@ def _autopilot_run(ctx: JobContext, stop_at: int, pause_after: list[str], mark) 
                 spec = generation.music_spec(db, project, episode)
                 db.commit()
                 run_children([spec], "Music")
-            elif stage == "sfx" and settings_store.get_setting(db, "sfx_auto"):
+            elif stage == "sfx" and settings_store.get_setting(db, "sfx_auto") and generation.sound_effects_ready() \
+                    and generation.needs_sfx(generation.episode_shots(db, episode)):
+                spec = generation.sfx_spec(db, project, episode, only_missing=True)
                 db.commit()
-                run_children([generation.sfx_spec(db, project, episode)], "Sound design")
+                run_children([spec], "Sound design")
             elif stage == "dubs":
                 others = [l for l in (project.languages or []) if l != project.primary_language]
                 specs = [generation.dub_spec(db, project, episode, l) for l in others]
@@ -320,10 +322,32 @@ def _autopilot_run(ctx: JobContext, stop_at: int, pause_after: list[str], mark) 
     return {"stages": AUTOPILOT_STAGES[: stop_at + 1]}
 
 
+def _carry_continuity(ctx: JobContext, shot_ids: list[int] | None) -> list[int]:
+    """Before the first picture: the Continuity Bible end state of every scene before the last one being made (written
+    by AI from the script when missing, core/continuity.py), so each scene's prompts carry who wears what, what is in
+    hand, time of day and weather from the scene before. Never stops the run: without it the shots are still made."""
+    from ..models import Scene
+    try:
+        with SessionLocal() as db:
+            project, episode = db.get(Project, ctx.project_id), db.get(Episode, ctx.episode_id)
+            scene_ids = {s.scene_id for s in generation.episode_shots(db, episode, shot_ids) if s.scene_id}
+            orders = [sc.order for sc in db.query(Scene).filter(Scene.id.in_(scene_ids)).all()] if scene_ids else []
+            if not orders:
+                return []
+            return scene_chain.ensure_end_states(db, _user(db, ctx), project, episode, max(orders))
+    except (Cancelled, RetryableProviderError):
+        raise
+    except Exception as e:  # a writing hiccup must not cost the user their videos
+        print(f"[produce] continuity end states skipped: {e}")
+        return []
+
+
 @handler("produce")
 def produce(ctx: JobContext) -> dict:
-    """Produce all: the shot list as written, step by step (keyframes → videos → extensions → voices & lip-sync →
-    music → export). No writing or re-planning: only what is missing is made. One budget approval covers the run."""
+    """Produce all: the shot list as written, step by step (character & place looks → keyframes → videos →
+    extensions → voices & lip-sync → sound effects → music → export). No writing or re-planning: only what is missing
+    is made. One budget approval covers the run. Before the first picture every scene gets the end state of the one
+    before it, so the scenes carry on from each other."""
     from ..pipeline.selection import current, has_fresh, is_real
 
     p = ctx.payload
@@ -331,6 +355,7 @@ def produce(ctx: JobContext) -> dict:
     shot_ids = p.get("shot_ids") or None
     quality = p.get("quality")
     done: dict[str, int] = {}
+    carried = False
 
     def guard() -> None:
         ctx.check_cancel()
@@ -350,6 +375,10 @@ def produce(ctx: JobContext) -> dict:
         guard()
         label = generation.PRODUCE_LABELS[step]
         ctx.progress(i / len(steps), label)
+        if step in ("keyframes", "videos") and not carried:
+            carried = True
+            ctx.progress(i / len(steps), "Continuity: what carries from scene to scene")
+            done["continuity"] = len(_carry_continuity(ctx, shot_ids))
         if step == "extend":  # rounds: each extension adds ~7 s; stop a shot if its clip didn't grow
             last_len: dict[int, float] = {}
             for rnd in range(4):
@@ -377,7 +406,9 @@ def produce(ctx: JobContext) -> dict:
             shots = generation.episode_shots(db, episode, shot_ids)
             lang = p.get("language") or project.primary_language
             specs: list[dict] = []
-            if step == "keyframes":
+            if step == "cast":
+                specs = generation.cast_specs(db, project, shots)
+            elif step == "keyframes":
                 specs = generation.keyframe_specs(db, project, shots, only_missing=True)
             elif step == "videos":  # in link order: a shot that continues another starts from its finished clip
                 # remake: the Director was asked for these shots by name, so they are made again even with a video
@@ -390,6 +421,8 @@ def produce(ctx: JobContext) -> dict:
                 need = [s for s in shots if budget.Estimator.needs_lipsync(s, project, lang) and not has_fresh(db, s.id, "lipsync", lang)]
                 narr = [s for s in shots if (s.narration or {}).get(lang) and s not in need and not current(db, s.id, "narration", lang)]
                 specs = generation.lipsync_specs(db, project, need, lang) + generation.voice_specs(db, project, narr, lang)
+            elif step == "sound" and generation.sound_effects_ready() and (quiet := generation.needs_sfx(shots)):
+                specs = [generation.sfx_spec(db, project, episode, [s.id for s in quiet], only_missing=True)]
             elif step == "music" and not db.query(AudioAsset).filter(AudioAsset.episode_id == episode.id, AudioAsset.kind == "music").count():
                 specs = [generation.music_spec(db, project, episode)]
             elif step == "export":

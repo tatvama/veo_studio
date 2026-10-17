@@ -1,5 +1,5 @@
-import { AlertTriangle, AtSign, Check, Clock, MapPin, Mic, Sparkles, UserPlus } from "lucide-react";
-import { useMemo } from "react";
+import { AlertTriangle, AtSign, AudioLines, Check, Clock, Drama, MapPin, Mic, Music, Palette, Sparkles, UserPlus, Volume2 } from "lucide-react";
+import { useMemo, type ReactNode } from "react";
 import { cn } from "../../lib/cn";
 import { useT } from "../../lib/i18n";
 import type { Character, ImportResult } from "../../lib/types";
@@ -7,6 +7,22 @@ import { Fact } from "../room/kit";
 import { NARRATOR_TONE, makeToneMap, type Tone } from "../room/util";
 import { SpeakerChip, pad } from "../room/workspace";
 import { Alert, Badge } from "../ui";
+
+/** The notes the script gave a scene or a shot (mood, look, sound, music, sound effects), one per line. */
+function Notes({ items }: { items: [string, ReactNode, string | undefined][] }) {
+  const shown = items.filter(([, , text]) => text?.trim());
+  if (!shown.length) return null;
+  return (
+    <ul className="mt-1.5 space-y-0.5 text-2xs leading-snug text-mute">
+      {shown.map(([label, icon, text]) => (
+        <li key={label} className="flex items-start gap-1.5">
+          <span aria-hidden className="mt-px shrink-0 text-dim [&>svg]:size-3">{icon}</span>
+          <span className="min-w-0"><span className="font-medium text-ink/80">{label}:</span> {text}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
 
 export type CastPick = { kind: "existing"; id: number } | { kind: "new" } | { kind: "vo" };
 export const NEW_PICK: CastPick = { kind: "new" };
@@ -110,6 +126,8 @@ export function ImportPreview({ res, picks, pool, hasShots, writeScript, onWrite
                   {sc.time_of_day && <Fact icon={<Clock />} className="normal-case tracking-normal">{sc.time_of_day}</Fact>}
                 </h4>
                 {sc.summary && <p className="mt-1 text-xs italic leading-relaxed text-mute">{sc.summary}</p>}
+                <Notes items={[[t("Mood"), <Drama />, sc.mood], [t("Look"), <Palette />, sc.look], [t("Sound"), <AudioLines />, sc.sound],
+                  [t("Music"), <Music />, sc.music]]} />
               </div>
             </div>
             {sc.shots.map((sh, k) => {
@@ -126,6 +144,7 @@ export function ImportPreview({ res, picks, pool, hasShots, writeScript, onWrite
                       {sh.prompt || <span className="text-dim">{t("No visual description")}</span>}
                       <span className="mono ml-2 whitespace-nowrap text-2xs text-dim">{sh.duration_s}s</span>
                     </p>
+                    <Notes items={[[t("Sound effects"), <Volume2 />, sh.sfx]]} />
                     {onScreen.length > 0 && (
                       <p className="flex flex-wrap items-center gap-1 text-2xs text-dim">
                         {t("On screen:")}{onScreen.map((c, m) => <Speaker key={m} {...c} toneOf={toneOf} />)}
