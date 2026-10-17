@@ -103,17 +103,18 @@ def _pdf_text(data: bytes) -> str:
 # ── 2. recognisable layouts ──────────────────────────────────────────────────
 
 # Lines are read with their whitespace collapsed to single spaces (parse_marked), so these patterns take at most one
-# space where one may be, and never two space-eating parts in a row: they run in linear time on any line.
+# space where one may be, and never two space-eating parts in a row; each is anchored with ^ (and used with .match):
+# they run in linear time on any line.
 # a heading word on its own, followed by a number and/or a separator (so "Scarlett: hi", "Screaming…" and
 # "Shots ring out." stay text)
-SCENE_RE = re.compile(r"(?:#+ ?)?(?:scene\b|sc\.) ?(\d+)? ?([:.\-–—)]*) ?(.*)", re.I)
-SLUG_RE = re.compile(r"(INT\.?/EXT\.?|EXT\.?/INT\.?|INT\.|EXT\.|I/E\.?) (.+)", re.I)
-SHOT_RE = re.compile(r"(?:#+ ?)?shot\b ?(\d+)? ?([:.\-–—)]*) ?(.*)", re.I)
-FIELD_RE = re.compile(r"(visual(?: prompt)?|prompt|action|description|camera|framing|shot ?type|duration|length|location|"
+SCENE_RE = re.compile(r"^(?:#+ ?)?(?:scene\b|sc\.) ?(\d+)? ?([:.\-–—)]*) ?(.*)", re.I)
+SLUG_RE = re.compile(r"^(INT\.?/EXT\.?|EXT\.?/INT\.?|INT\.|EXT\.|I/E\.?) (.+)", re.I)
+SHOT_RE = re.compile(r"^(?:#+ ?)?shot\b ?(\d+)? ?([:.\-–—)]*) ?(.*)", re.I)
+FIELD_RE = re.compile(r"^(visual(?: prompt)?|prompt|action|description|camera|framing|shot ?type|duration|length|location|"
                       r"time(?: of day)?|setting) ?[:\-–—](.*)", re.I)
 SPEAK_RE = re.compile(r"^\s*([A-Zऀ-෿][\wऀ-෿ .'’-]{0,38}?)\s*(\((?:v\.?o\.?|o\.?s\.?|voice[ -]?over|off[ -]?screen)\))?\s*(\([^)]{1,60}\))?\s*[:：]\s*(.+)$", re.U)
 # a NAME line on its own (screenplay cue), words separated by single spaces; its length is checked by _cue
-CUE_RE = re.compile(r"([A-Z][A-Z0-9.'’-]*(?: [A-Z0-9.'’-]+)*)(?: ?(\((?:V\.?O\.?|O\.?S\.?|CONT'?D)\)))?$")
+CUE_RE = re.compile(r"^([A-Z][A-Z0-9.'’-]*(?: [A-Z0-9.'’-]+)*)(?: ?(\((?:V\.?O\.?|O\.?S\.?|CONT'?D)\)))?$")
 PAREN_RE = re.compile(r"^\s*\(([^)]{1,80})\)\s*$")
 # "LABEL: text" lines that are notes for the shot, not someone speaking
 NOT_SPEAKERS = {"note", "notes", "music", "bgm", "score", "song", "sfx", "fx", "vfx", "sound", "sounds", "sound effect",
@@ -133,16 +134,16 @@ HEADER_ONLY = {"title", "episode", "series", "season", "written by", "writer", "
                "directed by", "producer", "story", "concept", "duration", "length", "audience"}
 # notes for the scene or the shot: "SFX: thunder", "MOOD: tense", "LIGHTING: one oil lamp" (a dash needs a space before
 # it, so "Style-conscious Meera …" stays text)
-META_RE = re.compile(r"(sfx|fx|sound ?effects?|sounds?|foley|audio|ambien(?:ce|t)|music|bgm|background music|score|"
+META_RE = re.compile(r"^(sfx|fx|sound ?effects?|sounds?|foley|audio|ambien(?:ce|t)|music|bgm|background music|score|"
                      r"song|mood|tone|atmosphere|emotion|feel(?:ing)?|lighting|light|look|colou?r(?: palette)?|palette|"
                      r"grade|weather|style|visual style)(?: ?:| [-–—])(.+)", re.I)
 META_KIND = [(r"^(sfx|fx|sound ?effects?|sounds?|foley|audio)$", "sfx"), (r"^ambien", "sound"),
              (r"^(music|bgm|background music|score|song)$", "music"), (r"^(mood|tone|atmosphere|emotion|feel)", "mood")]
-CAST_HEAD_RE = re.compile(r"(?:#+ ?)?(?:main )?(?:characters?|cast)(?: (?:list|descriptions?|details|bible|sheet|looks?))?",
+CAST_HEAD_RE = re.compile(r"^(?:#+ ?)?(?:main )?(?:characters?|cast)(?: (?:list|descriptions?|details|bible|sheet|looks?))?",
                           re.I)
 _NAME = r"([A-Zऀ-෿][\wऀ-෿ .'’-]{0,38}?)"
-CAST_ENTRY_RE = re.compile(r"(?:[-•*·] ?|\d+[.)] ?)?" + _NAME + r" ?(?:\(([^)]{1,160})\))?(?: ?:| [-–—])(.+)")
-CAST_PAREN_RE = re.compile(r"(?:[-•*·] ?|\d+[.)] ?)?" + _NAME + r" ?\(([^)]{3,200})\)\.?$")
+CAST_ENTRY_RE = re.compile(r"^(?:[-•*·] ?|\d+[.)] ?)?" + _NAME + r" ?(?:\(([^)]{1,160})\))?(?: ?:| [-–—])(.+)")
+CAST_PAREN_RE = re.compile(r"^(?:[-•*·] ?|\d+[.)] ?)?" + _NAME + r" ?\(([^)]{3,200})\)\.?$")
 # a character's first appearance in screenplay style: "RAVI (35, weathered, grey beard) steps in"
 INTRO_RE = re.compile(r"\b([A-Z][A-Z'’.-]+(?:\s+[A-Z][A-Z'’.-]+){0,2})\s*\(([^)]{3,160})\)")
 NOT_INTRO = re.compile(r"^(v\.?o\.?|o\.?s\.?|o\.?c\.?|cont'?d|voice[ -]?over|off[ -]?screen)$", re.I)
