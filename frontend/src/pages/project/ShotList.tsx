@@ -290,7 +290,7 @@ function stepLabels(t: (s: string) => string): Record<(typeof STEPS)[number], [s
     extend: [t("Extensions"), t("Longer clips for shots with “Extend to”")],
     voices: [t("Voices & lip-sync"), t("Dialogue in each character's voice, lips matched; voice-over by the narrator")],
     sound: [t("Sound effects"), t("Each scene's ambience and each shot's effects, from your script's sound notes")],
-    music: [t("Music"), t("One score for the whole episode, following each scene's mood and music notes")],
+    music: [t("Music"), t("Background music from each scene's mood and music notes, on one theme")],
     export: [t("Final export"), t("The finished video with captions")],
   };
 }
@@ -332,7 +332,7 @@ function StartCard({ icon, title, text, onClick, disabled, tag, kicker, index }:
   );
 }
 
-type ProduceOpts = { review_looks: boolean; link_scenes: "auto" | "never" };
+type ProduceOpts = { review_looks: boolean; link_scenes: "auto" | "never"; music_per_scene: boolean };
 
 function ProduceModal({ open, onClose, onGo, dirty }: {
   open: boolean; onClose: () => void; dirty: boolean; onGo: (steps: string[], quality: string, opts: ProduceOpts) => Promise<void>;
@@ -343,6 +343,7 @@ function ProduceModal({ open, onClose, onGo, dirty }: {
   const [quality, setQuality] = useState("");
   const [review, setReview] = useState(true);
   const [link, setLink] = useState(true);
+  const [perScene, setPerScene] = useState(true);  // music: one piece per scene (off: one score for the episode)
   const [busy, setBusy] = useState(false);
   const label = stepLabels(t);
   const steps = STEPS.filter((s) => on[s]);
@@ -352,7 +353,7 @@ function ProduceModal({ open, onClose, onGo, dirty }: {
       footer={<>
         <Button variant="ghost" onClick={onClose} disabled={busy}>{t("Cancel")}</Button>
         <Button variant="primary" loading={busy} disabled={!steps.length}
-          onClick={async () => { setBusy(true); try { await onGo(steps, quality, { review_looks: review, link_scenes: link ? "auto" : "never" }); } finally { setBusy(false); } }}>
+          onClick={async () => { setBusy(true); try { await onGo(steps, quality, { review_looks: review, link_scenes: link ? "auto" : "never", music_per_scene: perScene }); } finally { setBusy(false); } }}>
           {dirty ? t("Save & see the cost") : t("See the cost")}
         </Button>
       </>}>
@@ -368,6 +369,12 @@ function ProduceModal({ open, onClose, onGo, dirty }: {
                 <div className="min-w-0 flex-1">
                   <p className={cn("text-sm font-medium", !on[s] && "text-mute")}>{label[s][0]}</p>
                   <p className="text-2xs leading-snug text-dim">{label[s][1]}</p>
+                  {s === "music" && on[s] && (
+                    <div className="mt-2">
+                      <Toggle checked={perScene} onChange={setPerScene}
+                        label={<span className="text-xs text-mute">{t("One piece per scene (follows each scene's mood)")}</span>} />
+                    </div>
+                  )}
                 </div>
                 <Toggle checked={!!on[s]} onChange={(v) => setOn({ ...on, [s]: v })} label={<span className="sr-only">{label[s][0]}</span>} />
               </li>

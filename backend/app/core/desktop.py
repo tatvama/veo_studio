@@ -13,6 +13,7 @@ import re
 import shutil
 import time
 import uuid
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
@@ -454,7 +455,7 @@ def render_plan(db: Session, episode: Episode, lang: str | None = None, w: int |
 
     tmp = st.tmp_dir()
     try:
-        segs, warnings = assembler.plan(db, episode, lang, "final", tmp)
+        segs, warnings = assembler.plan(db, episode, lang, "final", tmp, ro)
         if not segs:
             raise HTTPException(400, "This episode has no shots to render")
         timed, cues, overlays = assembler.timeline(segs, effects, ro["sfx"])
@@ -526,8 +527,16 @@ def render_plan(db: Session, episode: Episode, lang: str | None = None, w: int |
         bed = None
         m = assembler.music_track(db, episode)
         settings = episode.settings or {}
-        if music and m and m.path and st.exists(m.path):
-            bed = {"key": key(m.path), "volume_db": float(settings.get("music_volume_db", -16)), "duck": bool(settings.get("duck", True))}
+        level = {"volume_db": float(settings.get("music_volume_db", -16)), "duck": bool(settings.get("duck", True))}
+        pieces = assembler.scene_music_plan(db, episode, timed, total) if music else []
+        if pieces:  # music per scene: the scenes' pieces made into one track here, kept in storage by what is in it
+            sig = hashlib.sha1(json.dumps([asdict(p) for p in pieces] + [round(total, 3)]).encode()).hexdigest()[:16]
+            k = f"projects/{project.id}/desktop/music_scenes_{episode.id}_{sig}.m4a"
+            if not st.exists(k):
+                st.save_file(k, assembler.scene_music(pieces, total, tmp / "scene_music.m4a"))
+            bed = {"key": key(k), **level}
+        elif music and m and m.path and st.exists(m.path):
+            bed = {"key": key(m.path), **level}
         elif music:
             warnings.append("No music track yet")
 

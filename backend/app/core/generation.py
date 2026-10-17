@@ -153,10 +153,66 @@ def voicelock_specs(db: Session, project: Project, shots: list[Shot]) -> list[di
             for s in shots if voicelock_eligible(db, project, s)[0]]
 
 
-def music_spec(db: Session, project: Project, episode: Episode, prompt: str = "") -> dict:
+def music_spec(db: Session, project: Project, episode: Episode, prompt: str = "", per_scene: bool = False,
+               only_missing: bool = False) -> dict:
+    """The episode's music: one score, or (per_scene) one piece per scene that follows its mood, all on one theme,
+    priced a track each (only_missing: the scenes with no piece yet)."""
+    if per_scene:
+        todo = music_scenes(db, episode)
+        if only_missing:
+            have = scene_cue_ids(db, episode)
+            todo = [(sc, secs) for sc, secs in todo if sc.id not in have]
+        est = Estimator(db)
+        return spec("music", payload={"prompt": prompt, "per_scene": True, "only_missing": only_missing,
+                                      "scene_ids": [sc.id for sc, _ in todo]},
+                    project_id=project.id, episode_id=episode.id, estimate=sum(est.music(secs) for _, secs in todo),
+                    label=f"Music per scene E{episode.number:02} ({len(todo)} scene{'s' if len(todo) != 1 else ''})")
     total = sum(s.duration_s for s in episode_shots(db, episode))
     return spec("music", payload={"prompt": prompt}, project_id=project.id, episode_id=episode.id,
                 estimate=Estimator(db).music(total), label=f"Music E{episode.number:02}")
+
+
+def music_scenes(db: Session, episode: Episode) -> list[tuple[Any, float]]:
+    """The scenes with shots in the cut, in order, each with its length (its shots' extend_to or duration)."""
+    from ..models import Scene
+    secs: dict[int, float] = {}
+    for s in episode_shots(db, episode):
+        if s.scene_id:
+            secs[s.scene_id] = secs.get(s.scene_id, 0.0) + max(float(s.extend_to or 0), float(s.duration_s))
+    rows = db.query(Scene).filter(Scene.id.in_(list(secs))).order_by(Scene.order, Scene.id).all() if secs else []
+    return [(sc, secs[sc.id]) for sc in rows]
+
+
+def scene_cue_ids(db: Session, episode: Episode) -> set[int]:
+    """The scenes that already have a piece of music of their own (AudioAsset kind "music_scene")."""
+    from ..models import AudioAsset
+    rows = db.query(AudioAsset.params).filter(AudioAsset.episode_id == episode.id, AudioAsset.kind == "music_scene").all()
+    return {int(p["scene_id"]) for (p,) in rows if isinstance(p, dict) and p.get("scene_id") is not None}
+
+
+def music_per_scene_default(db: Session, episode: Episode) -> bool:
+    """One piece per scene once the episode has two or more scenes with shots, unless it is already scored with one
+    piece (Produce all then keeps that score instead of buying new music; ask for per-scene music to switch)."""
+    from ..models import AudioAsset
+    if len(music_scenes(db, episode)) < 2:
+        return False
+    scored = db.query(AudioAsset.id).filter(AudioAsset.episode_id == episode.id, AudioAsset.kind == "music").first()
+    return (episode.settings or {}).get("music_mode") == "scenes" or scored is None
+
+
+def music_step(db: Session, project: Project, episode: Episode, per_scene: bool | None = None) -> tuple[dict, int] | None:
+    """Produce all's music step, only what is missing: a piece for each scene with none yet (per_scene), or the one
+    score when there is none. (job spec, tracks) or None. One scene is one score: per_scene needs two or more."""
+    from ..models import AudioAsset
+    if per_scene is None or (per_scene and len(music_scenes(db, episode)) < 2):
+        per_scene = music_per_scene_default(db, episode)
+    if per_scene:
+        sp = music_spec(db, project, episode, per_scene=True, only_missing=True)
+        n = len(sp["payload"]["scene_ids"])
+        return (sp, n) if n else None
+    if db.query(AudioAsset.id).filter(AudioAsset.episode_id == episode.id, AudioAsset.kind == "music").first():
+        return None
+    return music_spec(db, project, episode), 1
 
 
 def render_spec(project: Project, episode: Episode, lang: str, kind: str = "final", preset: str = "shorts",
@@ -355,6 +411,46 @@ def needs_sfx(shots: list[Shot]) -> list[Shot]:
     return [s for s in shots if not (s.sfx_track or {}).get("path")]
 
 
+def with_sound_notes(db: Session, shots: list[Shot]) -> list[Shot]:
+    """The shots whose script names a sound: written effects of their own, or a sound note on their scene (what the
+    free sound library, pipeline/sfx_library.py, makes its effects from)."""
+    from ..models import Scene
+    ids = {s.scene_id for s in shots if s.scene_id}
+    sound = {sc.id: sc.sound for sc in db.query(Scene).filter(Scene.id.in_(ids)).all()} if ids else {}
+    return [s for s in shots if (s.sfx or "").strip() or (sound.get(s.scene_id) or "").strip()]
+
+
+def sound_step(db: Session, project: Project, episode: Episode, shots: list[Shot]) -> tuple[dict, int] | None:
+    """Produce all's (and Autopilot's) sound step, only the shots with no effects yet: made with ElevenLabs when it is
+    connected, else free from the bundled library for the shots whose script names a sound. (job spec, shots) or None."""
+    quiet = needs_sfx(shots)
+    if not sound_effects_ready():
+        quiet = with_sound_notes(db, quiet)
+    if not quiet:
+        return None
+    return sfx_spec(db, project, episode, [s.id for s in quiet], only_missing=True), len(quiet)
+
+
+LIPSYNC_MISSING = ("No lip-sync engine is connected: the voices will be laid over the clips and the lips won't match. "
+                   "Connect one in Model Hub, or let Veo speak the lines (Settings → dialogue route).")
+
+
+def lipsync_ready(db: Session) -> bool:
+    """A live lip-sync engine is connected (or the whole studio runs on mock providers: tests, demos). Without one the
+    lip-sync jobs make placeholders and the export lays the voices over the clips."""
+    from ..config import get_settings
+    from ..providers.services import provider_mode
+    from . import model_hub
+    if get_settings().mock_providers == "true":
+        return True
+    return any(provider_mode(m.provider) == "live" for m, _ in model_hub.candidates(db, "lipsync", ["lipsync"]))
+
+
+def lipsync_warnings(db: Session, syncing: list) -> list[str]:
+    """What the cost dialog says before shots are paid for and lip-synced with no engine to do it."""
+    return [LIPSYNC_MISSING] if syncing and not lipsync_ready(db) else []
+
+
 def extensions_needed(db: Session, shot: Shot) -> int:
     """How many ~7 s extensions it takes to bring this shot up to its extend_to length."""
     if not shot.extend_to:
@@ -366,10 +462,12 @@ def extensions_needed(db: Session, shot: Shot) -> int:
 
 
 def produce_plan(db: Session, project: Project, episode: Episode, shots: list[Shot], steps: list[str],
-                 quality: str | None = None, lang: str | None = None, link_scenes: str = "never") -> tuple[float, list[dict]]:
+                 quality: str | None = None, lang: str | None = None, link_scenes: str = "never",
+                 music_per_scene: bool | None = None) -> tuple[float, list[dict]]:
     """Cost of Produce all, step by step (only what is still missing). Returns (total, items for the cost dialog).
     link_scenes "auto": a scene that picks up straight from the one before will start from its last frame (made in the
-    run, see workers/handlers_room.produce), so that first shot's keyframe is counted with its video, not twice."""
+    run, see workers/handlers_room.produce), so that first shot's keyframe is counted with its video, not twice.
+    music_per_scene: one piece of music per scene (None: music_per_scene_default)."""
     lang = lang or project.primary_language
     est = Estimator(db)
     items: list[dict] = []
@@ -406,12 +504,10 @@ def produce_plan(db: Session, project: Project, episode: Episode, shots: list[Sh
         narr = [s for s in shots if (s.narration or {}).get(lang) and s not in need and not current(db, s.id, "narration", lang)]
         cost = sum(est.lipsync(s) + est.voice(s, lang) for s in need) + sum(est.voice(s, lang) for s in narr)
         add("voices", len(need) + len(narr), cost)
-    if "sound" in steps and sound_effects_ready() and (quiet := needs_sfx(shots)):
-        add("sound", len(quiet), sfx_spec(db, project, episode, [s.id for s in quiet])["estimate"])
-    if "music" in steps:
-        from ..models import AudioAsset
-        if not db.query(AudioAsset).filter(AudioAsset.episode_id == episode.id, AudioAsset.kind == "music").count():
-            add("music", 1, est.music(sum(max(s.extend_to or 0, s.duration_s) for s in shots)))
+    if "sound" in steps and (snd := sound_step(db, project, episode, shots)):
+        add("sound", snd[1], snd[0]["estimate"])
+    if "music" in steps and (mus := music_step(db, project, episode, music_per_scene)):
+        add("music", mus[1], mus[0]["estimate"])
     if "export" in steps:
         add("export", 1, 0.0)
     return round(sum(i["usd"] for i in items), 2), items
@@ -448,12 +544,15 @@ def shootout_specs(db: Session, project: Project, shot: Shot, engine_ids: list[s
 
 
 def sfx_spec(db: Session, project: Project, episode: Episode, shot_ids: list[int] | None = None,
-             only_missing: bool = False) -> dict:
+             only_missing: bool = False, free: bool | None = None) -> dict:
+    """free: the bundled library instead of ElevenLabs (no cost); by default when ElevenLabs isn't connected."""
+    free = not sound_effects_ready() if free is None else free
     shots = episode_shots(db, episode, shot_ids)
     n = len(needs_sfx(shots) if only_missing else shots)
-    est = 0.002 * 6 * n if Estimator(db)._live("elevenlabs") else 0.0
-    return spec("sfx", payload={"shot_ids": shot_ids, "only_missing": only_missing}, project_id=project.id,
-                episode_id=episode.id, estimate=est, label=f"Sound design E{episode.number:02}")
+    est = 0.002 * 6 * n if Estimator(db)._live("elevenlabs") and not free else 0.0
+    return spec("sfx", payload={"shot_ids": shot_ids, "only_missing": only_missing, "free": free}, project_id=project.id,
+                episode_id=episode.id, estimate=est,
+                label=f"Sound design E{episode.number:02}" + (" (free library)" if free else ""))
 
 
 def marketing_spec(db: Session, project: Project, episode: Episode, platforms: list[str] | None = None,

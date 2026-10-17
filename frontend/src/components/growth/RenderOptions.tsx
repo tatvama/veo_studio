@@ -65,6 +65,7 @@ export default function RenderOptions({ project, episode, canEdit }: { project: 
   const teamReframe = settings?.settings.auto_reframe !== false;
   const autoReframe = es.auto_reframe === undefined || es.auto_reframe === null ? teamReframe : es.auto_reframe !== false;
   const sfxOn = es.sfx !== false;
+  const ambienceOn = es.ambience !== false;
   const caption = (es.caption_style as string | null | undefined) || "default";
   const [volume, setVolume] = useState<number>(Number(es.music_volume_db ?? -16));
   const [saving, setSaving] = useState<string | null>(null);
@@ -172,6 +173,10 @@ export default function RenderOptions({ project, episode, canEdit }: { project: 
             onChange={(v) => saveEpisode("sfx", { sfx: v }, v ? t("Sound effects included in renders") : t("Sound effects left out of renders"))} />}
           hint={t("Mixed into renders when switched on. Loudness is normalised to −14 LUFS.")}>
           <Badge tone={withSfx ? "ok" : "neutral"} className="mono self-start">{t("{n}/{m} shots", { n: withSfx, m: shots.length })}</Badge>
+          {/* lip-synced dialogue loses its clip's rain or room sound: the export lays the scene's background back under it */}
+          <Toggle checked={ambienceOn} disabled={!canEdit || saving === "ambience"}
+            onChange={(v) => saveEpisode("ambience", { ambience: v }, v ? t("The scene's background stays under dialogue") : t("No background added under dialogue"))}
+            label={<span className="text-sm text-mute">{t("Keep the scene's background under dialogue")}</span>} />
         </Cell>
       </div>
     </div>
@@ -187,7 +192,8 @@ export function SoundDesignCard({ project, episode, canEdit }: { project: Projec
   const [open, setOpen] = useState(false);
   const shots = (episode.shots ?? []).filter((s) => s.include);
   const withSfx = shots.filter((s) => s.sfx_track?.path).length;
-  const cost = providerLive(settings, "elevenlabs") ? 0.012 * shots.length : 0;
+  const eleven = providerLive(settings, "elevenlabs");
+  const cost = eleven ? 0.012 * shots.length : 0;
   const running = useActiveJobs((j) => j.type === "sfx" && j.episode_id === eid, project.id);
   const pct = shots.length ? withSfx / shots.length : 0;
 
@@ -210,7 +216,8 @@ export function SoundDesignCard({ project, episode, canEdit }: { project: Projec
       {canEdit && (
         <CostConfirm open={open} onClose={() => setOpen(false)} title={t("Sound design")} amount={cost}
           lines={[{ label: t("Ambience and spot effects for {n} shots", { n: shots.length }), usd: cost }]}
-          note={t("Plans effects per shot, then generates them with ElevenLabs. Replaces existing effects.")}
+          note={eleven ? t("Plans effects per shot, then generates them with ElevenLabs. Replaces existing effects.")
+            : t("No ElevenLabs key: made free from the built-in library (recorded effects and synthesized ambience) for the shots whose script names a sound. Replaces existing effects.")}
           onConfirm={() => submit(() => api.post<SubmitResult>(`/api/episodes/${eid}/sfx`, {}), t("Sound design"))} />
       )}
     </Panel>

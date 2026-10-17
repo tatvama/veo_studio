@@ -255,10 +255,13 @@ def generate_videos(c: AgentCtx, shot_codes: list[str] | None = None, quality: s
             "note": "Linked shots are made one wave after another, so each starts from the finished clip it continues."}
 
 
-def produce_all(c: AgentCtx, steps: list[str] | None = None, quality: str = "", review_looks: bool = False) -> dict:
+def produce_all(c: AgentCtx, steps: list[str] | None = None, quality: str = "", review_looks: bool = False,
+                music_per_scene: bool | None = None) -> dict:
     """Produce all, as the Shot list's button does: the steps given (default all), only what is still missing, one
     cost approval for the run, scenes that pick up straight from the one before linked. After the videos, steps
-    voices + sound + music + export finish the film. review_looks stops after new cast looks and voices."""
+    voices + sound + music + export finish the film. review_looks stops after new cast looks and voices.
+    music_per_scene: one piece of music per scene following its mood (default: with two or more scenes, unless the
+    episode is already scored with one piece)."""
     want = [s for s in generation.PRODUCE_STEPS if s in (steps or generation.PRODUCE_STEPS)]
     if not want:
         return {"error": f"steps must be some of {generation.PRODUCE_STEPS}"}
@@ -267,16 +270,23 @@ def produce_all(c: AgentCtx, steps: list[str] | None = None, quality: str = "", 
     shots = generation.episode_shots(c.db, ep)
     if not shots:
         return {"error": "The shot list is empty: import the script or plan the shots first."}
-    total, items = generation.produce_plan(c.db, c.project, ep, shots, want, q, c.project.primary_language, "auto")
+    per_scene = generation.music_per_scene_default(c.db, ep) if music_per_scene is None else bool(music_per_scene)
+    total, items = generation.produce_plan(c.db, c.project, ep, shots, want, q, c.project.primary_language, "auto",
+                                           music_per_scene=per_scene)
     if not items:
         return {"status": "nothing_to_do", "message": "Everything in those steps is already made."}
     spec = jobs.spec("produce", payload={"steps": want, "shot_ids": None, "quality": q, "language": None, "items": items,
-                                         "review_looks": bool(review_looks), "link_scenes": "auto"},
+                                         "review_looks": bool(review_looks), "link_scenes": "auto",
+                                         "music_per_scene": per_scene},
                      project_id=c.project.id, episode_id=ep.id, estimate=total,
                      label=f"Produce all E{ep.number:02} ({len(shots)} shots)")
     out = c.submit([spec], "produce all (" + ", ".join(generation.PRODUCE_LABELS[s].lower() for s in want) + ")")
     notes = [] if "sound" not in want or generation.sound_effects_ready() else [
-        "No ElevenLabs key: no separate sound-effects track; the clips' own sound carries the effects the script writes."]
+        "No ElevenLabs key: sound effects come free from the bundled library (recorded effects and synthesized "
+        "ambience) for the shots whose script names a sound; the clips' own sound carries the rest."]
+    if "voices" in want:
+        lang = c.project.primary_language
+        notes += generation.lipsync_warnings(c.db, [s for s in shots if budget.Estimator.needs_lipsync(s, c.project, lang)])
     return {**out, "steps": [i["label"] for i in items], **({"notes": notes} if notes else {})}
 
 
@@ -1267,7 +1277,10 @@ TOOL_DECLS = [
        {"steps": {"type": "array", "items": {"type": "string", "enum": list(generation.PRODUCE_STEPS)},
                   "description": "Empty = every step"},
         "quality": {"type": "string", "enum": list(catalog.QUALITY_MODES)},
-        "review_looks": {"type": "boolean", "description": "Stop after new looks and voices so the user checks them"}}),
+        "review_looks": {"type": "boolean", "description": "Stop after new looks and voices so the user checks them"},
+        "music_per_scene": {"type": "boolean", "description": "One piece of music per scene that follows its mood, on one "
+                            "theme, crossfaded (default: on with two or more scenes, unless already scored); false = one "
+                            "score for the episode"}}),
     _t("generate_music", "Compose background music for the episode.", {"prompt": {"type": "string"}}),
     _t("make_animatic", "Render a cheap preview from keyframes + voices + music.", {"language": _lang}),
     _t("dub_episode", "Dub the whole episode into another language (adapt script, voices, lip-sync).", {"language": _lang}, ["language"]),

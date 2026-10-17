@@ -255,6 +255,17 @@ class MusicPromptOut(BaseModel):
     prompt: str
 
 
+class SceneMusicPrompt(BaseModel):
+    scene: int = Field(description="The scene's number in the list")
+    prompt: str = Field(description="Music prompt for this scene: its mood, instruments and tempo, on the shared theme")
+
+
+class SceneMusicOut(BaseModel):
+    """Music per scene: one theme for the whole film and a prompt per scene that follows its mood."""
+    theme: str = Field(description="The shared theme: instruments, key, tempo feel (one or two sentences)")
+    scenes: list[SceneMusicPrompt]
+
+
 # ── accuracy ─────────────────────────────────────────────────────────────────
 
 class LipsyncQCOut(BaseModel):

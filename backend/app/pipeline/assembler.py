@@ -1,6 +1,7 @@
 """Assembles an episode into one MP4 (final export or cheap animatic), per language (PLAN §4 stages 7, 10, 11)."""
 from __future__ import annotations
 
+import math
 import os
 import shutil
 from concurrent.futures import ThreadPoolExecutor
@@ -37,6 +38,7 @@ class Segment:
     cues: list[Cue] = field(default_factory=list)
     source_key: str = ""  # storage keys of source / audio_override ("" = a placeholder made for this render)
     audio_key: str = ""
+    needs_bed: bool = False  # a dialogue clip whose own sound (and the scene's background with it) was swapped for the voice
 
 
 @dataclass
@@ -79,7 +81,10 @@ def _spans_cues(spans: list[dict], offset: float = 0.0) -> list[Cue]:
     return out
 
 
-def plan(db: Session, episode: Episode, lang: str, kind: str, tmp: Path) -> tuple[list[Segment], list[str]]:
+def plan(db: Session, episode: Episode, lang: str, kind: str, tmp: Path,
+         ro: dict[str, Any] | None = None) -> tuple[list[Segment], list[str]]:
+    """The cut as segments (one per included shot) and what to warn about. `ro`: the render options (render_options);
+    with `ambience` on (default) a dialogue clip whose own sound was replaced gets its scene's background back."""
     st = get_storage()
     project = db.get(Project, episode.project_id)
     shots = (db.query(Shot).filter(Shot.episode_id == episode.id, Shot.include.is_(True))
@@ -150,10 +155,11 @@ def plan(db: Session, episode: Episode, lang: str, kind: str, tmp: Path) -> tupl
         vid = {"source": st.abs(video.path), "source_key": video.path}
         if lines and lips and lips.path:
             segs.append(Segment(shot, st.abs(lips.path), "lipsync", dur, trim_in, extra_audio=extra, cues=cues or _even_cues(lines, dur),
-                                source_key=lips.path))
-        elif lines and vlock and vlock.path:
+                                source_key=lips.path, needs_bed=True))
+        elif lines and vlock and vlock.path:  # Demucs keeps the background under the new voice; voice isolation drops it
             segs.append(Segment(shot, st.abs(vlock.path), "voicelock", dur, trim_in, extra_audio=extra,
-                                cues=cues or _even_cues(lines, dur), source_key=vlock.path))
+                                cues=cues or _even_cues(lines, dur), source_key=vlock.path,
+                                needs_bed=(vlock.params or {}).get("separation") != "demucs"))
         elif lines and vm == "native" and lang == project.primary_language:
             segs.append(Segment(shot, source_kind="video", duration=dur, trim_in=trim_in, extra_audio=extra,
                                 cues=cues or _even_cues(lines, dur), **vid))
@@ -161,7 +167,7 @@ def plan(db: Session, episode: Episode, lang: str, kind: str, tmp: Path) -> tupl
             if voice_path:
                 warnings.append(f"{shot.code}: lip-sync for {lang} not done yet — voice laid over video (lips won't match)")
                 segs.append(Segment(shot, source_kind="video", duration=dur, trim_in=trim_in, audio_override=voice_path,
-                                    extra_audio=extra, cues=cues, audio_key=voice_key, **vid))
+                                    extra_audio=extra, cues=cues, audio_key=voice_key, needs_bed=True, **vid))
             else:
                 warnings.append(f"{shot.code}: no {lang} voice yet — original audio used")
                 segs.append(Segment(shot, source_kind="video", duration=dur, trim_in=trim_in, extra_audio=extra,
@@ -170,19 +176,107 @@ def plan(db: Session, episode: Episode, lang: str, kind: str, tmp: Path) -> tupl
             gain = -6.0 if vm == "narration" else 0.0
             segs.append(Segment(shot, source_kind="video", duration=dur, trim_in=trim_in, src_gain_db=gain, extra_audio=extra,
                                 cues=cues, **vid))
+    if (ro or {}).get("ambience", True):
+        warnings += ambience_beds(db, project, segs, lang, bool((ro or {}).get("sfx", True)), tmp)
     return segs, warnings
 
 
+# ── the scene's background under dialogue ────────────────────────────────────
+
+AMBIENCE_GAIN_DB = -14.0  # the bed under the voice (the bed itself is levelled to the mix's loudness first)
+AMBIENCE_LUFS = -14.0
+AMBIENCE_SILENT_LUFS = -55.0  # a clip quieter than this has no background worth carrying
+
+
+def _keeps_sfx(sg: Segment, use_sfx: bool) -> bool:
+    """The shot's own sound-effects track goes into this render (timeline() adds it): it carries the scene's sound."""
+    sfx = sg.shot.sfx_track or {}
+    return bool(use_sfx and sfx.get("path") and get_storage().exists(sfx["path"]))
+
+
+def ambience_beds(db: Session, project: Project, segs: list[Segment], lang: str, use_sfx: bool, tmp: Path) -> list[str]:
+    """A lip-sync take, a voice-lock take without the background, or a voice laid over a clip replaces the clip's own
+    sound, and the scene's rain or room sound goes with it: the cut then drops to dead silence behind every line.
+    Each such segment with no sound-effects track of its own gets its scene's background back, taken from a clip of
+    the same scene where nobody speaks (scene_ambience), at AMBIENCE_GAIN_DB. A clip where Veo speaks the line keeps
+    its own sound and needs none. Returns the warnings for dialogue shots left with no background at all."""
+    st = get_storage()
+    groups: dict[int | None, list[Segment]] = {}
+    for sg in segs:
+        if sg.needs_bed and not _keeps_sfx(sg, use_sfx):
+            groups.setdefault(sg.shot.scene_id, []).append(sg)
+    warnings = []
+    for scene_id, group in groups.items():
+        key = scene_ambience(db, project, scene_id, lang, max(sg.duration for sg in group), tmp) if scene_id else None
+        for sg in group:
+            if key:
+                sg.extra_audio.append((st.abs(key), 0.0, AMBIENCE_GAIN_DB, key))
+            else:
+                warnings.append(f"{sg.shot.code}: the scene's background sound drops out under the dialogue (no clip in the "
+                                "scene without dialogue to take it from): a sound effect for the shot, or a shot without "
+                                "dialogue in the scene, brings it back")
+    return warnings
+
+
+def scene_ambience(db: Session, project: Project, scene_id: int, lang: str, seconds: float, tmp: Path) -> str | None:
+    """Storage key of the scene's background bed, at least `seconds` long: the sound of the longest real clip of the
+    scene where nobody speaks in `lang` (silent or voice-over only: its own sound is the scene's ambience alone; not
+    a mock placeholder, a draft or a stale take), levelled and looped. Kept in storage per clip and length, so later
+    renders and the desktop's render plan (which needs a storage key for every file) reuse it."""
+    st = get_storage()
+    length = 10.0 * math.ceil(max(seconds + 0.5, 20.0) / 10.0)  # a few lengths only: most scenes share one file
+    found = []
+    for s in db.query(Shot).filter(Shot.scene_id == scene_id).all():
+        v = None if shot_lines(s, lang) else current(db, s.id, "video")
+        if v is not None and v.path and not v.stale and not (v.params or {}).get("mock") \
+                and not (v.params or {}).get("draft") and st.exists(v.path):
+            found.append(v)
+    for v in sorted(found, key=lambda t: (-(t.duration_s or 0), t.id)):
+        key = f"projects/{project.id}/ambience/take_{v.id}_{int(length)}s.m4a"
+        if st.exists(key):
+            return key
+        try:
+            made = _ambience_file(st.abs(v.path), length, tmp / f"amb_{v.id}.m4a")
+        except ff.FFmpegError as e:  # an unreadable clip: try the next one
+            print(f"[ambience] take {v.id} skipped: {e}")
+            continue
+        if made:
+            return st.save_file(key, made)
+    return None
+
+
+def _ambience_file(video: Path, length: float, out: Path) -> Path | None:
+    """The clip's sound, levelled to AMBIENCE_LUFS and `length` long: played forward then backward when the clip is
+    shorter (a loop with no seam to click), with a short fade in. None when the clip has no sound worth carrying."""
+    if not ff.has_audio(video):
+        return None
+    wav = out.with_suffix(".src.wav")
+    try:
+        ff.run(["-i", video, "-vn", "-ac", "2", "-ar", "48000", wav])
+        level, d = ff.loudness(wav), ff.duration(wav)
+        if level is None or level < AMBIENCE_SILENT_LUFS or d < 0.5:
+            return None
+        loops = math.ceil(length / (2 * d)) - 1  # finite (cut by -t): an endless source before a trim can stall FFmpeg 7
+        head = (f"[0:a]asplit[f][r];[r]areverse[b];[f][b]concat=n=2:v=0:a=1,aloop=loop={loops}:size={int(2 * d * 48000) + 48000},"
+                if d < length else "[0:a]")
+        fc = head + f"volume={min(AMBIENCE_LUFS - level, 12.0):.2f}dB,afade=t=in:d=0.05[out]"
+        ff.run(["-i", wav, "-filter_complex", fc, "-map", "[out]", "-t", f"{length:.3f}", "-c:a", "aac", "-b:a", "160k", out])
+        return out
+    finally:
+        wav.unlink(missing_ok=True)
+
+
 def render_options(db: Session, episode: Episode, options: dict[str, Any]) -> dict[str, Any]:
-    """Caption style, auto-reframe and sound effects for a render: the render's options, then the episode, then the
-    team setting."""
+    """Caption style, auto-reframe, sound effects and the background under dialogue (ambience) for a render: the
+    render's options, then the episode, then the team setting."""
     from .. import settings_store
     team = settings_store.all_settings(db)
     ep = episode.settings or {}  # None = "use the team setting"
     return {"caption_style": options.get("caption_style") or ep.get("caption_style") or team.get("caption_style", "karaoke"),
             "auto_reframe": options.get("auto_reframe", team.get("auto_reframe", True) if ep.get("auto_reframe") is None
                                         else ep.get("auto_reframe")),
-            "sfx": options.get("sfx", True if ep.get("sfx") is None else ep.get("sfx"))}
+            "sfx": options.get("sfx", True if ep.get("sfx") is None else ep.get("sfx")),
+            "ambience": options.get("ambience", True if ep.get("ambience") is None else ep.get("ambience"))}
 
 
 def timeline(segs: list[Segment], effects: bool, use_sfx: bool) -> tuple[list[Timed], list[Cue], list[dict]]:
@@ -220,6 +314,98 @@ def music_track(db: Session, episode: Episode) -> AudioAsset | None:
     """The episode's music bed: the picked track, else the newest."""
     return (db.query(AudioAsset).filter(AudioAsset.episode_id == episode.id, AudioAsset.kind == "music")
             .order_by(AudioAsset.selected.desc(), AudioAsset.id.desc()).first())
+
+
+# ── music per scene ──────────────────────────────────────────────────────────
+
+MUSIC_OVERLAP = 1.5  # a scene's piece runs on this long into the next one, fading out while the next fades in
+MUSIC_FADE_IN, MUSIC_FADE_OUT = 1.0, 1.5
+MUSIC_LUFS = -14.0  # every piece levelled the same before the bed's own level: a scene change never jumps in loudness
+
+
+@dataclass
+class MusicPiece:
+    """One stretch of the music bed: a storage key (a scene's cue, or the score where a scene has none), where it
+    starts on the cut, how long it plays, where in its file it starts, and its fades."""
+    key: str
+    start: float
+    length: float
+    offset: float = 0.0
+    fade_in: float = 0.0
+    fade_out: float = 0.0
+
+
+def scene_cues(db: Session, episode: Episode) -> dict[int, AudioAsset]:
+    """Each scene's own piece of music (AudioAsset kind "music_scene"): the picked one, else the newest."""
+    st = get_storage()
+    out: dict[int, AudioAsset] = {}
+    for a in (db.query(AudioAsset).filter(AudioAsset.episode_id == episode.id, AudioAsset.kind == "music_scene")
+              .order_by(AudioAsset.selected.desc(), AudioAsset.id.desc()).all()):
+        sid = (a.params or {}).get("scene_id")
+        if sid is not None and int(sid) not in out and a.path and st.exists(a.path):
+            out[int(sid)] = a
+    return out
+
+
+def scene_music_plan(db: Session, episode: Episode, timed: list[Timed], total: float) -> list[MusicPiece]:
+    """Music per scene on the cut (episode.settings.music_mode "scenes"): each run of a scene's segments gets its
+    scene's piece from where the scene starts, looped or trimmed to the scene plus MUSIC_OVERLAP, faded in and out so
+    scenes crossfade; the last one plays on under the end card. A scene with no piece gets the score there (as far in
+    as the score would have played), else silence. [] = no scene pieces: the export uses the one score as before."""
+    if (episode.settings or {}).get("music_mode") != "scenes":
+        return []
+    cues = scene_cues(db, episode)
+    spans: list[list] = []  # [scene id, start, end] per run of segments of one scene
+    for tm in timed:
+        sid, end = tm.sg.shot.scene_id, tm.start + tm.seg_len
+        if spans and spans[-1][0] == sid:
+            spans[-1][2] = end
+        else:
+            spans.append([sid, tm.start, end])
+    if not cues or not any(s[0] in cues for s in spans):
+        return []
+    spans[-1][2] = max(spans[-1][2], total)
+    st = get_storage()
+    score = music_track(db, episode)
+    score_key = score.path if score and score.path and st.exists(score.path) else ""
+    out: list[MusicPiece] = []
+    for i, (sid, start, end) in enumerate(spans):
+        cue = cues.get(sid)
+        key = cue.path if cue else score_key
+        if not key:
+            continue
+        last = i == len(spans) - 1
+        length = end - start + (0.0 if last else MUSIC_OVERLAP)
+        out.append(MusicPiece(key, round(start, 3), round(length, 3), 0.0 if cue else round(start, 3),
+                              round(min(MUSIC_FADE_IN, length / 3), 3), 0.0 if last else round(min(MUSIC_FADE_OUT, length / 3), 3)))
+    return out
+
+
+def scene_music(pieces: list[MusicPiece], total: float, out: Path) -> Path:
+    """The pieces mixed into one music track of the cut's length (WAV, or AAC for an .m4a `out`); ff.music_bed then
+    sets its level and ducks it under the voices like the one score."""
+    st = get_storage()
+    gains: dict[str, float] = {}
+    args: list = []
+    parts: list[str] = []
+    for i, pc in enumerate(pieces):
+        path = st.abs(pc.key)
+        if pc.key not in gains:
+            level = ff.loudness(path)
+            gains[pc.key] = max(min(MUSIC_LUFS - level, 12.0), -24.0) if level is not None else 0.0
+        args += ["-stream_loop", "-1", "-i", path]
+        ms = int(pc.start * 1000)
+        chain = (f"[{i}:a]aresample=48000,aformat=channel_layouts=stereo,atrim={pc.offset:.3f}:{pc.offset + pc.length:.3f},"
+                 f"asetpts=PTS-STARTPTS,volume={gains[pc.key]:.2f}dB")
+        if pc.fade_in:
+            chain += f",afade=t=in:d={pc.fade_in:.3f}"
+        if pc.fade_out:
+            chain += f",afade=t=out:st={max(pc.length - pc.fade_out, 0):.3f}:d={pc.fade_out:.3f}"
+        parts.append(f"{chain},adelay={ms}|{ms}[p{i}]")
+    parts.append("".join(f"[p{i}]" for i in range(len(pieces))) + f"amix=inputs={len(pieces)}:normalize=0:duration=longest,"
+                 f"apad=whole_dur={total:.3f}[out]")  # padded by whole_dur, cut by -t (an endless apad can stall FFmpeg 7)
+    ff.run([*args, "-filter_complex", ";".join(parts), "-map", "[out]", "-t", f"{total:.3f}", "-ar", "48000", "-ac", "2", out])
+    return out
 
 
 def caption_files(cues: list[Cue], overlays: list[dict], burn: bool, caption_style: str, w: int, h: int,
@@ -317,7 +503,7 @@ def render(db: Session, episode: Episode, lang: str, preset: str, kind: str, opt
     caption_style, auto_reframe = ro["caption_style"], ro["auto_reframe"]
     tmp = st.tmp_dir()
     try:
-        segs, warnings = plan(db, episode, lang, kind, tmp)
+        segs, warnings = plan(db, episode, lang, kind, tmp, ro)
         if not segs:
             raise ValueError("This episode has no shots to render")
         luts = project_luts(project)
@@ -362,10 +548,17 @@ def render(db: Session, episode: Episode, lang: str, preset: str, kind: str, opt
         if effects and sounds:
             voice_mix = layerlib.mix(voice_mix, sounds, total, tmp / "voice_layers.wav")
         final_audio = voice_mix
-        music = music_track(db, episode)
         settings = episode.settings or {}
-        if music and music.path and st.exists(music.path) and options.get("music", True):
-            final_audio = ff.music_bed(st.abs(music.path), voice_mix, tmp / "mixed.wav", total,
+        bed: Path | None = None
+        if options.get("music", True):  # each scene's own piece (music per scene), else the one score
+            pieces = scene_music_plan(db, episode, timed, total)
+            music = music_track(db, episode)
+            if pieces:
+                bed = scene_music(pieces, total, tmp / "scene_music.wav")
+            elif music and music.path and st.exists(music.path):
+                bed = st.abs(music.path)
+        if bed:
+            final_audio = ff.music_bed(bed, voice_mix, tmp / "mixed.wav", total,
                                        volume_db=float(settings.get("music_volume_db", -16)), duck=settings.get("duck", True))
         elif options.get("music", True) and kind == "final":
             warnings.append("No music track yet")
@@ -418,7 +611,7 @@ def preview_fx(db: Session, shot: Shot, fx_override: dict | None, out: Path, hei
     project = db.get(Project, episode.project_id)
     w, h = ff.dims_for(project.aspect, height)
     tmp = out.parent
-    segs, _ = plan(db, episode, project.primary_language, "final", tmp)
+    segs, _ = plan(db, episode, project.primary_language, "final", tmp, {"ambience": False})  # a preview mixes no extras
     idx = next((i for i, s in enumerate(segs) if s.shot.id == shot.id), None)
     if idx is None:
         raise ValueError("This shot isn't in the cut")

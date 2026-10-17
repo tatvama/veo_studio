@@ -295,11 +295,17 @@ def approve_export(xid: int, user: User = Depends(require("producer")), db: Sess
 @router.post("/audio/{aid}/select")
 def select_audio(aid: int, user: User = Depends(require("reviewer")), db: Session = Depends(get_db)):
     a = get_or_404(db, AudioAsset, aid)
-    if a.kind == "music" and a.episode_id:  # the music bed is part of the cut
+    music = a.kind in ("music", "music_scene") and a.episode_id
+    if music:  # the music bed is part of the cut
         from ..core.desktop import check_cut
         check_cut(db, a.episode_id, user)
+    scene = (a.params or {}).get("scene_id") if a.kind == "music_scene" else None
     for other in db.query(AudioAsset).filter(AudioAsset.episode_id == a.episode_id, AudioAsset.kind == a.kind).all():
-        other.selected = other.id == a.id
+        if scene is None or (other.params or {}).get("scene_id") == scene:  # a scene's piece: only among that scene's
+            other.selected = other.id == a.id
+    if music:  # picking the score plays the score; picking a scene's piece plays the scenes' pieces
+        ep = db.get(Episode, a.episode_id)
+        ep.settings = {**(ep.settings or {}), "music_mode": "scenes" if a.kind == "music_scene" else "score"}
     db.commit()
     emit(db, a.project_id, "episode.updated", {"episode_id": a.episode_id, "what": "music"}, user_id=user.id)
     return audio_out(a)

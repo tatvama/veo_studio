@@ -942,8 +942,16 @@ def score_notes(db, episode: Episode) -> str:
     return "; ".join(out)[:2000]
 
 
+def _music_mode(db, episode_id: int, mode: str) -> None:
+    """What the export lays under the cut: "score" (one track) or "scenes" (each scene's own piece, crossfaded)."""
+    ep = db.get(Episode, episode_id)
+    ep.settings = {**(ep.settings or {}), "music_mode": mode}
+
+
 @handler("music")
 def music(ctx: JobContext) -> dict:
+    if ctx.payload.get("per_scene"):
+        return _music_per_scene(ctx)
     with SessionLocal() as db:
         episode = db.get(Episode, ctx.episode_id)
         project = db.get(Project, episode.project_id)
@@ -976,9 +984,84 @@ def music(ctx: JobContext) -> dict:
                        selected=True)
         db.add(a)
         ctx.cost(res.usage, db)
+        _music_mode(db, ctx.episode_id, "score")
         db.commit()
         emit(db, ctx.project_id, "audio.created", {"episode_id": ctx.episode_id, "audio_id": a.id})
     return {"audio_id": a.id}
+
+
+def _music_per_scene(ctx: JobContext) -> dict:
+    """One piece per scene that follows its mood, all on one theme (instruments, key, tempo feel) so the film still
+    sounds like one score: one writing call for the theme and every scene's prompt, then a track per scene as long as
+    its shots. The export lays them on the cut with crossfades (assembler.scene_music). Scenes that already have a
+    piece keep their theme for the new ones; only_missing makes only the scenes with none."""
+    from ..models import Scene
+    p = ctx.payload
+    st = get_storage()
+    with SessionLocal() as db:
+        episode = db.get(Episode, ctx.episode_id)
+        project = db.get(Project, episode.project_id)
+        scenes = generation.music_scenes(db, episode)
+        if p.get("scene_ids") is not None:
+            scenes = [(sc, secs) for sc, secs in scenes if sc.id in set(p["scene_ids"])]
+        if p.get("only_missing"):
+            have = generation.scene_cue_ids(db, episode)
+            scenes = [(sc, secs) for sc, secs in scenes if sc.id not in have]
+        if not scenes:
+            return {"cues": 0}
+        prior = (db.query(AudioAsset).filter(AudioAsset.episode_id == episode.id, AudioAsset.kind == "music_scene")
+                 .order_by(AudioAsset.selected.desc(), AudioAsset.id.desc()).first())
+        theme = str(((prior.params or {}).get("theme") if prior else "") or "")
+        shots = generation.episode_shots(db, episode)
+        style = db.get(Style, project.style_id) if project.style_id else None
+
+        def row(i: int, sc: Scene, secs: float) -> str:
+            cues = list(dict.fromkeys(s.music_cue.strip() for s in shots if s.scene_id == sc.id and (s.music_cue or "").strip()))
+            notes = [f"mood: {sc.emotion}" if sc.emotion else "", f"music: {sc.music}" if sc.music else "",
+                     f"shot cues: {'; '.join(cues)}" if cues else "", f"what happens: {sc.summary[:200]}" if sc.summary else ""]
+            return f"{i}. {sc.title or f'Scene {i}'} ({round(secs)} s)" + "".join(f"; {n}" for n in notes if n)
+        listing = "\n".join(row(i, sc, secs) for i, (sc, secs) in enumerate(scenes, 1))
+        text = (f"Write the background music of this {project.type}, one piece per scene, all on one shared theme so the "
+                f"film sounds like one score that shifts with each scene's mood. Tone: {(project.brief or {}).get('tone', '')}. "
+                f"Style: {style.look if style else ''}. Concept: {project.concept}.\n"
+                + (f"Keep this theme (the other scenes already use it): {theme}\n" if theme else "")
+                + f"SCENES (number. title (length); mood; music the script asks for; shot cues):\n{listing}\n"
+                "Return the theme (instruments, key, tempo feel, in one or two sentences) and, for every scene number, a "
+                "music prompt that follows its mood and the music the script names, on that theme. Instrumental only, no "
+                "vocals. Indian instruments where they fit.")
+        out, usage = ctx.services.llm_json("scene_music", prompts.WRITER, text, S.SceneMusicOut,
+                                           mock_ctx={"scenes": list(range(1, len(scenes) + 1))})
+        ctx.cost(usage, db)
+        theme = theme or out.theme.strip()
+        prompts_by = {c.scene: c.prompt.strip() for c in out.scenes}
+        todo = [(sc.id, sc.title or f"Scene {i}", secs, prompts_by.get(i) or " · ".join(x for x in (sc.emotion, sc.music) if x))
+                for i, (sc, secs) in enumerate(scenes, 1)]
+        db.commit()
+    made: list[int] = []
+    for i, (sid, title, secs, prompt) in enumerate(todo):
+        ctx.check_cancel()
+        ctx.progress(0.1 + 0.9 * i / len(todo), f"Composing music: {title}")
+        full = ". ".join(x for x in (theme, prompt) if x)
+        if "instrumental" not in full.lower():
+            full += " Instrumental only, no vocals."
+        res = ctx.services.music(full, secs)
+        with SessionLocal() as db:
+            rel = st.save_bytes(st.new_path(f"projects/{ctx.project_id}/music", res.ext), res.data)
+            for a in db.query(AudioAsset).filter(AudioAsset.episode_id == ctx.episode_id, AudioAsset.kind == "music_scene").all():
+                if (a.params or {}).get("scene_id") == sid:
+                    a.selected = False
+            a = AudioAsset(project_id=ctx.project_id, episode_id=ctx.episode_id, kind="music_scene", provider="gemini",
+                           model=res.usage.model, prompt=full, path=rel, duration_s=res.duration_s, cost_usd=res.usage.usd,
+                           selected=True, params={"scene_id": sid, "theme": theme, "seconds": round(secs, 2)})
+            db.add(a)
+            ctx.cost(res.usage, db)
+            db.commit()
+            made.append(a.id)
+    with SessionLocal() as db:  # the export switches to the scenes' pieces once every one asked for is made
+        _music_mode(db, ctx.episode_id, "scenes")
+        db.commit()
+        emit(db, ctx.project_id, "audio.created", {"episode_id": ctx.episode_id, "audio_ids": made})
+    return {"cues": len(made), "audio_ids": made, "theme": theme}
 
 
 # ── bible media ──────────────────────────────────────────────────────────────
