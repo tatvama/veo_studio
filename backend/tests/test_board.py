@@ -115,8 +115,8 @@ def test_produce_all(client: TestClient):
     ]}]}))
     est = ok(c.post(f"/api/episodes/{eid}/estimate", headers=H, json={"action": "produce"}))
     labels = [i["label"] for i in est["items"]]
-    # Ravi has no pictures yet: his look comes first, so every shot shows the same person
-    assert labels[:4] == ["Character & place looks · 1", "Keyframes · 2", "Videos · 2", "Extensions · 2"]
+    # Ravi has no pictures and no voice yet: his look and voice come first, so every shot shows and sounds the same
+    assert labels[:4] == ["Cast looks & voices · 2", "Keyframes · 2", "Videos · 2", "Extensions · 2"]
     assert "Sound effects · 2" in labels and labels[-1] == "Final export · 1"
     res = ok(c.post(f"/api/episodes/{eid}/generate", headers=H, json={"action": "produce"}))
     assert res["jobs"][0]["type"] == "produce"
@@ -126,7 +126,7 @@ def test_produce_all(client: TestClient):
     kinds = [j["type"] for j in jobs if j["status"] == "succeeded"]
     assert kinds.count("keyframe") == 2 and kinds.count("video") >= 3  # 2 shots + at least one extension
     assert "lipsync" in kinds and "voice" in kinds and "music" in kinds and "export" in kinds
-    assert "character_sheet" in kinds and "sfx" in kinds
+    assert "character_sheet" in kinds and "voice_design" in kinds and "sfx" in kinds
     b = ok(c.get(f"/api/episodes/{eid}/board"))
     assert all(sh["has_video"] for sc in b["scenes"] for sh in sc["shots"])
     # running it again only makes what is missing

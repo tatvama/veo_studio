@@ -142,7 +142,9 @@ export function ImportPreview({ res, picks, pool, hasShots, writeScript, onWrite
                     <p className="text-sm leading-relaxed">
                       <span className="eyebrow mr-1.5">{t("Visual")}</span>
                       {sh.prompt || <span className="text-dim">{t("No visual description")}</span>}
-                      <span className="mono ml-2 whitespace-nowrap text-2xs text-dim">{sh.duration_s}s</span>
+                      <span className="mono ml-2 whitespace-nowrap text-2xs text-dim">
+                        {sh.extend_to ? t("{a}s → {b}s (voice-over)", { a: sh.duration_s, b: sh.extend_to }) : `${sh.duration_s}s`}
+                      </span>
                     </p>
                     <Notes items={[[t("Sound effects"), <Volume2 />, sh.sfx]]} />
                     {onScreen.length > 0 && (

@@ -77,18 +77,24 @@ export interface Board {
   episode_id: number; language: string; scenes: BoardScene[];
   /** content version; sent back on save so a stale editor can't overwrite newer changes */
   version?: string;
+  /** Produce all stopped after making new cast looks and voices, so they can be checked before every shot uses them */
+  produce_paused?: { after: string; at: string } | null;
   limits: { durations: number[]; extend_step_s: number; max_extend_s: number };
 }
 /** A parsed script before it is saved: speakers and characters are still names from the file. */
 export interface DraftLine { speaker: string; text: string; emotion: string; changed?: boolean }
-export interface DraftShot { prompt: string; characters: string[]; lines: DraftLine[]; duration_s: number; framing: string; camera: string; sfx?: string }
+export interface DraftShot {
+  prompt: string; characters: string[]; lines: DraftLine[]; duration_s: number; framing: string; camera: string; sfx?: string;
+  /** set when the voice-over runs longer than one clip: the clip is extended to this length */
+  extend_to?: number;
+}
 export interface DraftScene extends SceneNotes { title: string; location: string; time_of_day: string; summary: string; shots: DraftShot[] }
 export interface ImportResult {
   draft: { title: string; scenes: DraftScene[]; cast?: { name: string; description: string }[] }; method: "markers" | "ai"; warnings: string[];
   source: string; text: string;
   stats: { scenes: number; shots: number; lines: number };
   /** description: how the script describes them; it becomes the look of a new character (or one without a look yet) */
-  characters: { name: string; lines: number; description?: string; match: (Character & { in_project: boolean }) | null }[];
+  characters: { name: string; lines: number; description?: string; gender?: string; age?: string; match: (Character & { in_project: boolean }) | null }[];
 }
 
 export interface Hook { text: string; type: string; visual: string; scores: Record<string, number>; total: number }

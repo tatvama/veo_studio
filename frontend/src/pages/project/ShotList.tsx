@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowRight, Clapperboard, Eye, FileText, ListVideo, Lock, PenLine, Rocket, Save } from "lucide-react";
+import { AlertTriangle, ArrowRight, Clapperboard, Eye, FileText, ListVideo, Lock, PauseCircle, PenLine, Rocket, Save, Users } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
@@ -200,6 +200,17 @@ export default function ShotListPage() {
         </div>
       ) : (
         <div className="space-y-4">
+          {board.produce_paused && !dirty && (
+            <Alert tone="info" icon={<PauseCircle className="size-4" />}>
+              <span className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <span className="min-w-0 flex-1">{t("Produce all stopped after the new character looks and voices. Check the faces and voices in Cast, then carry on: nothing is made twice.")}</span>
+                <span className="flex gap-2">
+                  <Button size="sm" variant="ghost" icon={<Users className="size-3.5" />} onClick={() => nav(`/p/${project.id}/bible`)}>{t("Open Cast")}</Button>
+                  {canEdit && <Button size="sm" variant="primary" icon={<Rocket className="size-3.5" />} onClick={() => setProduce(true)}>{t("Carry on")}</Button>}
+                </span>
+              </span>
+            </Alert>
+          )}
           {listLockedBy && (
             <Alert tone="warn" icon={<Lock className="size-4" />}>
               {t("{name} is editing the shot list. You can look; editing opens up when they save or leave.", { name: listLockedBy })}
@@ -255,10 +266,10 @@ export default function ShotListPage() {
           qc.invalidateQueries({ queryKey: ["characters"] });  // saving linked the script's characters to this project
         }} />
       <ProduceModal open={produce} onClose={() => setProduce(false)} dirty={dirty}
-        onGo={async (steps, quality) => {
+        onGo={async (steps, quality, opts) => {
           if (dirty && !(await save())) return;
           setProduce(false);
-          await generate(eid, { action: "produce", steps, quality: quality || null }, tr("Produce all"));
+          await generate(eid, { action: "produce", steps, quality: quality || null, ...opts }, tr("Produce all"));
         }} />
     </RoomPage>
   );
@@ -273,7 +284,7 @@ function bucket(done: number, total: number, cells: number) {
 /** The production steps, with what each does. Shared by the "Produce all" dialog and the empty state. */
 function stepLabels(t: (s: string) => string): Record<(typeof STEPS)[number], [string, string]> {
   return {
-    cast: [t("Character & place looks"), t("Reference pictures for characters and places that have none, so they look the same in every scene")],
+    cast: [t("Cast looks & voices"), t("Pictures for characters and places that have none, and a voice for each speaker, so they look and sound the same in every scene")],
     keyframes: [t("Keyframes"), t("A still image per shot, using your characters' reference photos")],
     videos: [t("Videos"), t("Each shot animated from its keyframe")],
     extend: [t("Extensions"), t("Longer clips for shots with “Extend to”")],
@@ -321,13 +332,17 @@ function StartCard({ icon, title, text, onClick, disabled, tag, kicker, index }:
   );
 }
 
+type ProduceOpts = { review_looks: boolean; link_scenes: "auto" | "never" };
+
 function ProduceModal({ open, onClose, onGo, dirty }: {
-  open: boolean; onClose: () => void; dirty: boolean; onGo: (steps: string[], quality: string) => Promise<void>;
+  open: boolean; onClose: () => void; dirty: boolean; onGo: (steps: string[], quality: string, opts: ProduceOpts) => Promise<void>;
 }) {
   const t = useT();
   const { project } = useProjectCtx();
   const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(STEPS.map((s) => [s, true])));
   const [quality, setQuality] = useState("");
+  const [review, setReview] = useState(true);
+  const [link, setLink] = useState(true);
   const [busy, setBusy] = useState(false);
   const label = stepLabels(t);
   const steps = STEPS.filter((s) => on[s]);
@@ -337,7 +352,7 @@ function ProduceModal({ open, onClose, onGo, dirty }: {
       footer={<>
         <Button variant="ghost" onClick={onClose} disabled={busy}>{t("Cancel")}</Button>
         <Button variant="primary" loading={busy} disabled={!steps.length}
-          onClick={async () => { setBusy(true); try { await onGo(steps, quality); } finally { setBusy(false); } }}>
+          onClick={async () => { setBusy(true); try { await onGo(steps, quality, { review_looks: review, link_scenes: link ? "auto" : "never" }); } finally { setBusy(false); } }}>
           {dirty ? t("Save & see the cost") : t("See the cost")}
         </Button>
       </>}>
@@ -358,6 +373,12 @@ function ProduceModal({ open, onClose, onGo, dirty }: {
               </li>
             ))}
           </ol>
+        </div>
+        <div className="flex flex-col items-start gap-2.5 rounded-xl border border-line px-3 py-2.5">
+          <Toggle checked={review} onChange={setReview} disabled={!on.cast}
+            label={<span className="text-sm">{t("Stop after new looks & voices so I can check them first")}</span>} />
+          <Toggle checked={link} onChange={setLink} disabled={!on.videos}
+            label={<span className="text-sm">{t("A scene that picks up straight from the last starts on its last frame")}</span>} />
         </div>
         <label className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 text-sm">
           <span className="font-medium">{t("Video quality")}</span>

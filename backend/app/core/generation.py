@@ -293,14 +293,14 @@ def extend_spec(db: Session, project: Project, shot: Shot, prompt: str) -> dict:
 
 
 PRODUCE_STEPS = ["cast", "keyframes", "videos", "extend", "voices", "sound", "music", "export"]
-PRODUCE_LABELS = {"cast": "Character & place looks", "keyframes": "Keyframes", "videos": "Videos", "extend": "Extensions",
+PRODUCE_LABELS = {"cast": "Cast looks & voices", "keyframes": "Keyframes", "videos": "Videos", "extend": "Extensions",
                   "voices": "Voices & lip-sync", "sound": "Sound effects", "music": "Music", "export": "Final export"}
 
 
 def cast_specs(db: Session, project: Project, shots: list[Shot]) -> list[dict]:
-    """Reference pictures for whoever is in these shots and has none yet (a front and a three-quarter view), and a
-    wide view of every place they're set in that has none. Without them each clip invents its own face and set, so a
-    character or a place looks different in every scene."""
+    """Reference pictures for whoever is in these shots and has none yet (a front and a three-quarter view), a wide
+    view of every place they're set in that has none, and a designed voice for everyone who speaks and has none.
+    Without them each clip invents its own face and set, and every unknown speaker gets the same stock voice."""
     from ..models import CharacterAsset, LocationAsset
     ids = list(dict.fromkeys(int(c) for s in shots for c in (s.characters or [])))
     rows = {c.id: c for c in db.query(Character).filter(Character.id.in_(ids), Character.archived.is_(False)).all()} if ids else {}
@@ -317,6 +317,27 @@ def cast_specs(db: Session, project: Project, shots: list[Shot]) -> list[dict]:
         if loc and not db.query(LocationAsset.id).filter(LocationAsset.location_id == loc.id,
                                                          LocationAsset.archived.is_(False)).first():
             out.append(location_images_spec(db, project.id, loc, ["wide"]))
+    return out + cast_voice_specs(db, project, shots)
+
+
+def cast_voice_specs(db: Session, project: Project, shots: list[Shot]) -> list[dict]:
+    """A designed voice (from the character's age, gender and look) for each on-screen speaker in the film's language
+    who has none: a Gemini or ElevenLabs voice made for another language is reused (pipeline/voice.voice_for)."""
+    from .. import settings_store
+    from ..models import VoiceProfile
+    lang = project.primary_language
+    provider = (settings_store.get_setting(db, "tts_provider_by_language") or {}).get(lang, "gemini")
+    out = []
+    for cid in dict.fromkeys(int(l["character_id"]) for s in shots for l in shot_lines(s, lang)
+                             if str(l.get("character_id")).isdigit()):
+        ch = db.get(Character, cid)
+        if ch is None or ch.archived:
+            continue
+        has = db.query(VoiceProfile.id).filter(VoiceProfile.character_id == cid, VoiceProfile.voice_id != "",
+                                               (VoiceProfile.language == lang)
+                                               | VoiceProfile.provider.in_(("gemini", "elevenlabs"))).first()
+        if not has:
+            out.append(voice_design_spec(db, project.id, ch, lang, provider))
     return out
 
 
@@ -344,11 +365,17 @@ def extensions_needed(db: Session, shot: Shot) -> int:
 
 
 def produce_plan(db: Session, project: Project, episode: Episode, shots: list[Shot], steps: list[str],
-                 quality: str | None = None, lang: str | None = None) -> tuple[float, list[dict]]:
-    """Cost of Produce all, step by step (only what is still missing). Returns (total, items for the cost dialog)."""
+                 quality: str | None = None, lang: str | None = None, link_scenes: str = "never") -> tuple[float, list[dict]]:
+    """Cost of Produce all, step by step (only what is still missing). Returns (total, items for the cost dialog).
+    link_scenes "auto": a scene that picks up straight from the one before will start from its last frame (made in the
+    run, see workers/handlers_room.produce), so that first shot's keyframe is counted with its video, not twice."""
+    from . import scene_chain
     lang = lang or project.primary_language
     est = Estimator(db)
     items: list[dict] = []
+    planned = scene_chain.planned_links(db, shots, link_scenes)
+    # (only when this run also makes the videos: keyframes alone, for a storyboard, are all made)
+    waiting = {s.id for s in shots if "videos" in steps and scene_chain.waits_for_clip(db, s, planned)}
 
     def add(step: str, n: int, usd: float) -> None:
         if n:
@@ -357,13 +384,13 @@ def produce_plan(db: Session, project: Project, episode: Episode, shots: list[Sh
     if "cast" in steps:
         cs = cast_specs(db, project, shots)
         add("cast", len(cs), sum(s["estimate"] for s in cs))
-    if "keyframes" in steps:
-        ks = keyframe_specs(db, project, shots, only_missing=True)
+    if "keyframes" in steps:  # (a shot that starts from a clip not made yet gets its keyframe with its video)
+        ks = keyframe_specs(db, project, [s for s in shots if s.id not in waiting], only_missing=True)
         add("keyframes", len(ks), sum(s["estimate"] for s in ks))
     if "videos" in steps:
         vs = video_specs(db, project, shots, quality, only_missing=True)
         if "keyframes" in steps:  # the missing keyframe is already counted above
-            no_kf = {s.id for s in shots if not current(db, s.id, "keyframe")}
+            no_kf = {s.id for s in shots if not current(db, s.id, "keyframe") and s.id not in waiting}
             vs = [{**s, "estimate": max(0.0, s["estimate"] - (est.image(1) if s["shot_id"] in no_kf else 0))} for s in vs]
         add("videos", len(vs), sum(s["estimate"] for s in vs))
     if "extend" in steps:

@@ -278,7 +278,8 @@ export function ImportWizard({ open, onClose, eid, projectId, hasShots, onDone }
                           <p className="truncate text-sm font-semibold uppercase tracking-wide">{c.name}</p>
                           <p className="truncate text-2xs text-dim">
                             {!!c.lines && <span className="mono @2xl:hidden">{c.lines === 1 ? t("1 line") : t("{n} lines", { n: c.lines })}{c.match ? " · " : ""}</span>}
-                            {[!c.lines ? t("on screen, no lines") : "", c.match ? t("matched {name}", { name: c.match.name }) : ""].filter(Boolean).join(" · ")}
+                            {[!c.lines ? t("on screen, no lines") : "", c.match ? t("matched {name}", { name: c.match.name }) : "",
+                              c.gender ? t(c.gender) : "", c.age ? t("age {age}", { age: c.age }) : ""].filter(Boolean).join(" · ")}
                           </p>
                           {c.description && p.kind !== "vo" && (
                             <p className="line-clamp-2 text-2xs leading-snug text-mute" title={c.description}>

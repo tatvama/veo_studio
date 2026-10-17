@@ -342,20 +342,50 @@ def _carry_continuity(ctx: JobContext, shot_ids: list[int] | None) -> list[int]:
         return []
 
 
+def _link_scenes(ctx: JobContext, shot_ids: list[int] | None, rule: str) -> list[str]:
+    """Before the first picture: a scene that picks up straight from the one before (same place and time, someone in
+    common: core/scene_chain.scene_link_candidate) starts from its last frame, so the cut doesn't jump between them."""
+    from ..models import Scene
+    with SessionLocal() as db:
+        episode = db.get(Episode, ctx.episode_id)
+        ids = {s.scene_id for s in generation.episode_shots(db, episode, shot_ids) if s.scene_id}
+        scenes = db.query(Scene).filter(Scene.id.in_(ids)).order_by(Scene.order, Scene.id).all() if ids else []
+        return [x for x in (scene_chain.link_to_previous_scene(db, sc, rule) for sc in scenes) if x]
+
+
+def _set_paused(episode_id: int, after: str | None) -> None:
+    """Episode.settings["produce_paused"]: the shot list shows a "check them, then continue" note while it is set."""
+    with SessionLocal() as db:
+        ep = db.get(Episode, episode_id)
+        settings = dict(ep.settings or {})
+        if after:
+            settings["produce_paused"] = {"after": after, "at": utcnow().isoformat() + "Z"}
+        elif "produce_paused" not in settings:
+            return
+        else:
+            settings.pop("produce_paused")
+        ep.settings = settings
+        db.commit()
+
+
 @handler("produce")
 def produce(ctx: JobContext) -> dict:
-    """Produce all: the shot list as written, step by step (character & place looks → keyframes → videos →
-    extensions → voices & lip-sync → sound effects → music → export). No writing or re-planning: only what is missing
-    is made. One budget approval covers the run. Before the first picture every scene gets the end state of the one
-    before it, so the scenes carry on from each other."""
+    """Produce all: the shot list as written, step by step (cast looks & voices → keyframes → videos → extensions →
+    voices & lip-sync → sound effects → music → export). No writing or re-planning: only what is missing is made. One
+    budget approval covers the run. Before the first picture every scene gets the end state of the one before it, and
+    (link_scenes) a scene that picks up straight from the one before starts from its last frame. review_looks: when
+    the run made new looks or voices, it stops after them so they can be checked before every shot uses them; running
+    it again carries on (nothing is made twice)."""
     from ..pipeline.selection import current, has_fresh, is_real
 
     p = ctx.payload
     steps = [s for s in generation.PRODUCE_STEPS if s in (p.get("steps") or generation.PRODUCE_STEPS)]
     shot_ids = p.get("shot_ids") or None
     quality = p.get("quality")
+    link_rule = p.get("link_scenes") if p.get("link_scenes") in ("auto", "always") else "never"
     done: dict[str, int] = {}
     carried = False
+    _set_paused(ctx.episode_id, None)
 
     def guard() -> None:
         ctx.check_cancel()
@@ -379,6 +409,8 @@ def produce(ctx: JobContext) -> dict:
             carried = True
             ctx.progress(i / len(steps), "Continuity: what carries from scene to scene")
             done["continuity"] = len(_carry_continuity(ctx, shot_ids))
+            if link_rule != "never":
+                done["scene_links"] = len(_link_scenes(ctx, shot_ids, link_rule))
         if step == "extend":  # rounds: each extension adds ~7 s; stop a shot if its clip didn't grow
             last_len: dict[int, float] = {}
             for rnd in range(4):
@@ -408,8 +440,9 @@ def produce(ctx: JobContext) -> dict:
             specs: list[dict] = []
             if step == "cast":
                 specs = generation.cast_specs(db, project, shots)
-            elif step == "keyframes":
-                specs = generation.keyframe_specs(db, project, shots, only_missing=True)
+            elif step == "keyframes":  # a shot that starts from a clip not made yet gets its keyframe with its video
+                specs = generation.keyframe_specs(db, project, [s for s in shots if "videos" not in steps
+                                                                or not scene_chain.waits_for_clip(db, s)], only_missing=True)
             elif step == "videos":  # in link order: a shot that continues another starts from its finished clip
                 # remake: the Director was asked for these shots by name, so they are made again even with a video
                 need = [s.id for s in shots if p.get("remake") or not is_real(current(db, s.id, "video"))]
@@ -430,4 +463,11 @@ def produce(ctx: JobContext) -> dict:
                 specs = [generation.render_spec(project, episode, lang, "final", preset, {"captions": True})]
             db.commit()
         done[step] = run_children(specs, label)
+        if step == "cast" and done[step] and p.get("review_looks") and step != steps[-1]:
+            _set_paused(ctx.episode_id, "cast")
+            emit(None, ctx.project_id, "produce.paused", {"episode_id": ctx.episode_id, "after": "cast",
+                                                         "message": "New looks and voices are ready: check them in Cast, "
+                                                                    "then press Produce all to carry on."})
+            emit(None, ctx.project_id, "episode.updated", {"episode_id": ctx.episode_id, "what": "shots"})
+            return {"steps": steps, "jobs": done, "paused_after": "cast"}
     return {"steps": steps, "jobs": done}

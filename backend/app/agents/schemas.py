@@ -150,6 +150,7 @@ class ImportScene(BaseModel):
 class ImportCast(BaseModel):
     name: str = Field(description="Character name exactly as the script spells it")
     description: str = Field(default="", description="How the script describes them (age, looks, clothes), copied; empty if it doesn't")
+    gender: str = Field(default="", description="female or male when the script makes it clear (pronouns, wife, mother…), else empty")
 
 
 class ImportOut(BaseModel):

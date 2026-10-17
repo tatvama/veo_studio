@@ -223,6 +223,31 @@ def ensure_end_states(db: Session, user: User | None, project: Project, episode:
     return done
 
 
+def planned_links(db: Session, shots: list[Shot], rule: str = "auto") -> dict[int, int]:
+    """{first shot of a scene: last shot of the scene before} for the scenes of these shots that would be linked by
+    `rule` (scene_link_candidate; nothing is changed)."""
+    if rule not in ("auto", "always"):
+        return {}
+    out: dict[int, int] = {}
+    for sid in dict.fromkeys(s.scene_id for s in shots if s.scene_id):
+        sc = db.get(Scene, sid)
+        cand = scene_link_candidate(db, sc, rule) if sc else None
+        if cand:
+            out[cand[0].id] = cand[1].id
+    return out
+
+
+def waits_for_clip(db: Session, shot: Shot, planned: dict[int, int] | None = None) -> bool:
+    """The shot starts from the last frame of a clip that isn't made yet (its own link, or one `planned`): its keyframe
+    is made from that clip once it exists (make_videos_in_order), so making one now would be paid for twice."""
+    src = source(db, shot)
+    if src is None and planned and shot.id in planned:
+        src = db.get(Shot, planned[shot.id])
+    if src is None or extends(shot) or frames.synced(shot):
+        return False
+    return not is_real(current(db, src.id, "video"))
+
+
 def link_to_previous_scene(db: Session, scene: Scene, rule: str) -> str | None:
     cand = scene_link_candidate(db, scene, rule)
     if not cand:

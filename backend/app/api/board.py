@@ -105,8 +105,8 @@ def import_apply(eid: int, body: ImportApplyIn, user: User = Depends(require("cr
     e, p = _ctx(db, eid)
     draft = body.draft or {}
     scenes = draft.get("scenes") or []
-    described = {str(c.get("name") or "").strip(): str(c.get("description") or "").strip()
-                 for c in draft.get("cast") or [] if isinstance(c, dict)}
+    info = {str(c.get("name") or "").strip(): c for c in draft.get("cast") or [] if isinstance(c, dict)}
+    described = {k: str(v.get("description") or "").strip() for k, v in info.items()}
     names: list[str] = []
     for sc in scenes:
         for sh in sc.get("shots") or []:
@@ -136,6 +136,14 @@ def import_apply(eid: int, body: ImportApplyIn, user: User = Depends(require("cr
         desc = script_import.description_for(described, n)[:1500]
         if desc and _dna_empty(ch) and not ch.locked:
             ch.dna_text = desc if desc.lower().startswith(ch.name.lower()) else f"{ch.name}: {desc}"
+        # the voice follows who they are: without a gender every new character got a male default voice
+        said = info.get(n) or {}
+        gender = said.get("gender") if said.get("gender") in ("female", "male") else script_import.guess_gender(n, desc)
+        if gender and not (ch.gender or "").strip() and not ch.locked:
+            ch.gender = gender
+        age = str(said.get("age") or script_import.guess_age(desc))[:40]
+        if age and not (ch.age or "").strip() and not ch.locked:
+            ch.age = age
         studio.link_character(db, p, ch)
         ids[n] = ch.id
     board = B.Board(scenes=[B.BoardScene(
@@ -146,6 +154,7 @@ def import_apply(eid: int, body: ImportApplyIn, user: User = Depends(require("cr
                            lines=[B.BoardLine(speaker="VO" if l.get("speaker") in ("VO", None, "") else ids[l["speaker"]],
                                               text=l.get("text", ""), emotion=l.get("emotion", "")) for l in (sh.get("lines") or [])],
                            duration_s=sh.get("duration_s") if sh.get("duration_s") in (4, 6, 8) else 8,
+                           extend_to=sh.get("extend_to") if sh.get("extend_to") in script_import.EXTEND_STEPS else 0,
                            framing=sh.get("framing", ""), camera=sh.get("camera", ""), sfx=sh.get("sfx") or "")
                for sh in (sc.get("shots") or [])]) for sc in scenes])
     out = B.save_board(db, user, p, e, board)
