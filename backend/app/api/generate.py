@@ -38,6 +38,8 @@ class BatchIn(BaseModel):
     auto_reframe: bool | None = None
     sfx: bool | None = None
     steps: list[str] | None = None  # produce: which of generation.PRODUCE_STEPS to run (default all)
+    review_looks: bool = False  # produce: stop after new cast looks & voices so they can be checked
+    link_scenes: Literal["auto", "never"] = "never"  # produce: a scene that picks up straight from the last starts on its last frame
     pause_after: list[str] | None = None  # autopilot: milestones to stop at for approval
     resume: bool = False  # autopilot: continue the paused run (same target, the stops still ahead)
 
@@ -119,11 +121,12 @@ def _specs(db: Session, project: Project, episode: Episode, body: BatchIn) -> li
             raise HTTPException(400, "bad quality")
         if not shots:
             raise HTTPException(400, "The shot list is empty: add or import shots first")
-        total, items = generation.produce_plan(db, project, episode, shots, steps, body.quality, lang)
+        total, items = generation.produce_plan(db, project, episode, shots, steps, body.quality, lang, body.link_scenes)
         if not items:
             return []
         return [jobs.spec("produce", payload={"steps": steps, "shot_ids": body.shot_ids, "quality": body.quality,
-                                              "language": body.language, "items": items},
+                                              "language": body.language, "items": items,
+                                              "review_looks": body.review_looks, "link_scenes": body.link_scenes},
                           project_id=project.id, episode_id=episode.id, estimate=total,
                           label=f"Produce all E{episode.number:02} ({len(shots)} shots)")]
     raise HTTPException(400, f"unknown action {a}")

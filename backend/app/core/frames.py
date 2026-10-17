@@ -21,15 +21,11 @@ from sqlalchemy.orm import Session
 from ..models import AIModel, Job, Project, Shot, Take
 from ..pipeline.selection import current, is_real
 from ..storage import get_storage
+from .links import SYNC, synced  # (the link rules live there: core/links.py imports nothing of core)
 
 END = "endframe"  # the take kind
-SYNC = "end_frame"  # the link mode: this shot starts on its source's end frame
 MAX_CHAIN = 50  # synced links followed up a chain at most (a cycle stops earlier)
 FRAME_WORK = ("keyframe", "endframe", "video")  # jobs that may make a shot's start or end frame
-
-
-def synced(shot: Shot) -> bool:
-    return bool(shot.continuity_from_shot_id) and shot.continuity_mode == SYNC
 
 
 def sync_source(db: Session, shot: Shot) -> Shot | None:

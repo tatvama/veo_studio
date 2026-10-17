@@ -255,9 +255,10 @@ def generate_videos(c: AgentCtx, shot_codes: list[str] | None = None, quality: s
             "note": "Linked shots are made one wave after another, so each starts from the finished clip it continues."}
 
 
-def produce_all(c: AgentCtx, steps: list[str] | None = None, quality: str = "") -> dict:
+def produce_all(c: AgentCtx, steps: list[str] | None = None, quality: str = "", review_looks: bool = False) -> dict:
     """Produce all, as the Shot list's button does: the steps given (default all), only what is still missing, one
-    cost approval for the run. After the videos, steps voices + sound + music + export finish the film."""
+    cost approval for the run, scenes that pick up straight from the one before linked. After the videos, steps
+    voices + sound + music + export finish the film. review_looks stops after new cast looks and voices."""
     want = [s for s in generation.PRODUCE_STEPS if s in (steps or generation.PRODUCE_STEPS)]
     if not want:
         return {"error": f"steps must be some of {generation.PRODUCE_STEPS}"}
@@ -266,10 +267,11 @@ def produce_all(c: AgentCtx, steps: list[str] | None = None, quality: str = "") 
     shots = generation.episode_shots(c.db, ep)
     if not shots:
         return {"error": "The shot list is empty: import the script or plan the shots first."}
-    total, items = generation.produce_plan(c.db, c.project, ep, shots, want, q, c.project.primary_language)
+    total, items = generation.produce_plan(c.db, c.project, ep, shots, want, q, c.project.primary_language, "auto")
     if not items:
         return {"status": "nothing_to_do", "message": "Everything in those steps is already made."}
-    spec = jobs.spec("produce", payload={"steps": want, "shot_ids": None, "quality": q, "language": None, "items": items},
+    spec = jobs.spec("produce", payload={"steps": want, "shot_ids": None, "quality": q, "language": None, "items": items,
+                                         "review_looks": bool(review_looks), "link_scenes": "auto"},
                      project_id=c.project.id, episode_id=ep.id, estimate=total,
                      label=f"Produce all E{ep.number:02} ({len(shots)} shots)")
     out = c.submit([spec], "produce all (" + ", ".join(generation.PRODUCE_LABELS[s].lower() for s in want) + ")")
@@ -1257,13 +1259,15 @@ TOOL_DECLS = [
        "each from the finished clip before it. For whole scenes prefer generate_scenes.", {"shot_codes": _codes,
         "quality": {"type": "string", "enum": list(catalog.QUALITY_MODES)}}),
     _t("voice_and_lipsync", "Voice the dialogue/narration and lip-sync it (paid).", {"language": _lang, "shot_codes": _codes}),
-    _t("produce_all", "Produce all (paid, one approval, only what is missing): character & place looks for cast and "
-       "places with no picture, keyframes, videos in link order (each scene carrying the one before), extensions, "
+    _t("produce_all", "Produce all (paid, one approval, only what is missing): looks for cast and places with no "
+       "picture and voices for speakers with none (review_looks=true stops there for the user to check them), "
+       "keyframes, videos in link order (each scene carrying the one before), extensions, "
        "voices (voice-over and dialogue, lip-synced), sound effects, music and the final export. After generate_scenes, "
        "steps voices + sound + music + export finish the film.",
        {"steps": {"type": "array", "items": {"type": "string", "enum": list(generation.PRODUCE_STEPS)},
                   "description": "Empty = every step"},
-        "quality": {"type": "string", "enum": list(catalog.QUALITY_MODES)}}),
+        "quality": {"type": "string", "enum": list(catalog.QUALITY_MODES)},
+        "review_looks": {"type": "boolean", "description": "Stop after new looks and voices so the user checks them"}}),
     _t("generate_music", "Compose background music for the episode.", {"prompt": {"type": "string"}}),
     _t("make_animatic", "Render a cheap preview from keyframes + voices + music.", {"language": _lang}),
     _t("dub_episode", "Dub the whole episode into another language (adapt script, voices, lip-sync).", {"language": _lang}, ["language"]),

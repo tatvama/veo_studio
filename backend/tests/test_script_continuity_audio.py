@@ -148,8 +148,9 @@ def test_produce_carries_scenes_and_makes_sound(client: TestClient):
         loc_ids = {s.location_id for s in shots if s.location_id}
         bare_chars = sum(1 for i in char_ids if not db.query(CharacterAsset).filter(CharacterAsset.character_id == i).count())
         bare = sum(1 for lid in loc_ids if not db.query(LocationAsset).filter(LocationAsset.location_id == lid).count())
+        voices = len(generation.cast_voice_specs(db, db.get(Project, pid), shots))
     assert len(char_ids) == 3 and bare_chars + bare > 0
-    assert labels == [f"Character & place looks · {bare_chars + bare}", "Keyframes · 3", "Sound effects · 3"]
+    assert labels == [f"Cast looks & voices · {bare_chars + bare + voices}", "Keyframes · 3", "Sound effects · 3"]
     ok(c.post(f"/api/episodes/{eid}/generate", headers=H, json={"action": "produce", "steps": steps}))
     jobs = wait_jobs(c, pid, timeout=600)
     prod = next(j for j in jobs if j["type"] == "produce")

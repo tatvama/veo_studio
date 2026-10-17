@@ -158,7 +158,9 @@ def _is_label(name: str) -> bool:
     return any(w[:1].isascii() and w[:1].isalpha() and w[:1].islower() for w in words[1:])
 
 
-DUR_RE = re.compile(r"(\d+(?:\.\d+)?)\s*(?:s|sec|secs|seconds)\b", re.I)
+# a length in seconds ("6s", "8 sec"); a few digits at most and never from inside a longer number, so a long run of
+# digits can't make the search slow
+DUR_RE = re.compile(r"(?<![\d.])(\d{1,3}(?:\.\d{1,2})?) ?(?:s|sec|secs|seconds)\b", re.I)
 
 
 def _dur(text: str) -> int:
@@ -437,8 +439,8 @@ def parse_marked(text: str) -> dict | None:
             scene["_explicit"] = True
             rest = m.group(3).strip()
             if DUR_RE.search(rest):
-                cur["duration_s"] = _dur(rest)
-                rest = re.sub(r"[(\[]?\s*" + DUR_RE.pattern + r"\s*[)\]]?", "", rest, flags=re.I).strip(" -–—:")
+                cur["duration_s"], cur["_timed"] = _dur(rest), True  # the script's own length: kept as written
+                rest = re.sub(r"[(\[]? ?" + DUR_RE.pattern + r" ?[)\]]?", "", rest, flags=re.I).strip(" -–—:")
             if rest:
                 cur["prompt"] = rest
             markers["shot"] += 1
@@ -460,12 +462,14 @@ def parse_marked(text: str) -> dict | None:
             elif key in ("framing",) or key.startswith("shot"):
                 ensure_shot()["framing"] = val
             elif key in ("duration", "length"):
-                ensure_shot()["duration_s"] = _dur(val) if DUR_RE.search(val) else _dur(val + "s")
+                cur = ensure_shot()
+                cur["duration_s"], cur["_timed"] = (_dur(val) if DUR_RE.search(val) else _dur(val + "s")), True
             elif key in ("location", "setting"):
                 ensure_scene()["location"] = val
             elif key.startswith("time"):
                 if DUR_RE.fullmatch(val.strip()):  # "Time: 10s" is a length, not a time of day
-                    ensure_shot()["duration_s"] = _dur(val)
+                    cur = ensure_shot()
+                    cur["duration_s"], cur["_timed"] = _dur(val), True
                 else:
                     ensure_scene()["time_of_day"] = val
             continue
@@ -566,7 +570,8 @@ def ai_arrange(db: Session, user: User, project: Project, text: str) -> dict:
               f"SCRIPT:\n<<<\n{text[:MAX_CHARS]}\n>>>")
     out = _llm(db, user, project, "import_script", ARRANGE_SYSTEM, prompt, S.ImportOut, {"text": text[:MAX_CHARS]},
                pro=len(text) > 20_000)
-    return {"title": out.title, "cast": [{"name": c.name.strip(), "description": c.description.strip()} for c in out.cast
+    return {"title": out.title, "cast": [{"name": c.name.strip(), "description": c.description.strip(),
+                                          "gender": c.gender.strip().lower()} for c in out.cast
                                          if c.name.strip() and c.name.strip().upper() not in VO_NAMES],
             "scenes": [
         {"title": sc.title, "location": sc.location, "time_of_day": sc.time_of_day, "summary": sc.summary,
@@ -603,6 +608,91 @@ def mark_changed(draft: dict, source: str) -> int:
     return n
 
 
+# ── who sounds like whom, and how long the words take ───────────────────────
+
+# words that say who someone is: a noun says it outright, a pronoun only hints (weights 2 and 1); Indian kinship
+# words and names of address too ("Ajji", "Amma", "Appa")
+_FEMALE = {**dict.fromkeys(("woman", "women", "girl", "lady", "wife", "mother", "mom", "mum", "grandmother", "granny",
+                            "grandma", "daughter", "sister", "aunt", "aunty", "auntie", "niece", "queen", "princess",
+                            "bride", "actress", "heroine", "mrs", "ms", "miss", "madam", "female", "widow", "girlfriend",
+                            "saree", "sari", "pregnant", "amma", "ajji", "dadi", "nani", "maa", "didi", "bhabhi", "beti",
+                            "akka", "paati", "ammamma", "mausi", "chachi", "bua", "ammi", "maasi", "atte", "chikkamma"), 2),
+           **dict.fromkeys(("she", "her", "hers", "herself"), 1)}
+_MALE = {**dict.fromkeys(("man", "men", "boy", "guy", "husband", "father", "dad", "grandfather", "grandpa", "son",
+                          "brother", "uncle", "nephew", "king", "prince", "groom", "actor", "hero", "mr", "sir", "male",
+                          "widower", "boyfriend", "beard", "bearded", "moustache", "mustache", "appa", "ajja", "dada",
+                          "bhaiya", "bhai", "beta", "thatha", "chacha", "abba", "chikkappa",
+                          "dodappa", "babuji"), 2),
+         **dict.fromkeys(("he", "him", "his", "himself"), 1)}
+
+
+def guess_gender(name: str, description: str = "") -> str:
+    """'female' / 'male' from how the script describes someone ("30, his wife, green saree" → female: the first word
+    that names who they are decides; pronouns only when no such word), else from a kinship name ("Ajji"); '' when the
+    script doesn't say. Without it every new character would get a male default voice."""
+    for w in re.findall(r"[a-zऀ-෿]+", (description or "").lower()):
+        if _FEMALE.get(w) == 2 and _MALE.get(w) != 2:
+            return "female"
+        if _MALE.get(w) == 2:
+            return "male"
+    words = re.findall(r"[a-z]+", (description or "").lower())
+    f = sum(_FEMALE.get(w, 0) for w in words if _FEMALE.get(w) == 1)
+    m = sum(_MALE.get(w, 0) for w in words if _MALE.get(w) == 1)
+    if f != m:
+        return "female" if f > m else "male"
+    first = (name or "").strip().lower().split()[:1]
+    if first and _FEMALE.get(first[0]) == 2:
+        return "female"
+    if first and _MALE.get(first[0]) == 2:
+        return "male"
+    return ""
+
+
+_AGE_FIRST = re.compile(r"^((?:early |mid |mid-|late )?\d0s|\d{1,2})\b", re.I)  # "35, farmer", "70s, silver bun"
+_AGE_SAID = re.compile(r"\b(\d{1,2})[ -]?(?:years?|yrs?)[ -]?old\b|\bage[ds]? (\d{1,2})\b|\b((?:early |mid |mid-|late )?\d0s)\b",
+                       re.I)  # "a 35-year-old farmer", "aged 60", "in her late 40s"
+
+
+def guess_age(description: str) -> str:
+    """'35', '70s' or 'late 40s' when the description starts with an age or says one; a number elsewhere ("ten cows",
+    "2 children") is not an age."""
+    text = (description or "").strip()
+    m = _AGE_FIRST.match(text) or _AGE_SAID.search(text)
+    age = next((g for g in m.groups() if g), "") if m else ""
+    return age if not age.isdigit() or 3 <= int(age) <= 99 else ""
+
+
+WORDS_PER_SECOND = 2.5  # unhurried narration (about 150 words a minute)
+EXTEND_STEPS = (15, 22, 29)  # the shot list's "Extend to" lengths (core/board.py: 8 s plus ~7 s per extension)
+
+
+def fit_lengths(draft: dict) -> list[str]:
+    """Give every shot enough time for its words. A shot the script didn't time gets at least the 4/6/8 s its lines
+    need; a voice-over longer than one 8 s clip (no on-screen dialogue) gets extensions ("Extend to"), so the picture
+    keeps moving under the narrator instead of freezing on its last frame. Returns warnings for the review screen."""
+    longer, too_long = 0, []
+    for sc in draft["scenes"]:
+        for sh in sc["shots"]:
+            timed = sh.pop("_timed", False)
+            vo = sum(len(l["text"].split()) for l in sh["lines"] if l["speaker"] == "VO")
+            said = sum(len(l["text"].split()) for l in sh["lines"] if l["speaker"] != "VO")
+            need = max(vo, said) / WORDS_PER_SECOND + 0.8 if (vo or said) else 0
+            if need and not timed and sh.get("duration_s", 8) < need:
+                sh["duration_s"] = next((d for d in (4, 6, 8) if d >= need), 8)
+            if vo and not said and need > max(sh.get("duration_s", 8), sh.get("extend_to") or 0) + 0.3:
+                sh["extend_to"] = next((x for x in EXTEND_STEPS if x >= need), EXTEND_STEPS[-1])
+                longer += 1
+                if need > EXTEND_STEPS[-1]:
+                    too_long.append(f"{sc['title'] or 'a scene'} ({int(need)}s)")
+    out = []
+    if longer:
+        out.append(f"{longer} voice-over line(s) run longer than one 8-second clip: those shots get extensions "
+                   "(\"Extend to\"), so the picture keeps moving until the words end.")
+    if too_long:
+        out.append("Very long voice-over (over 29 s) in " + ", ".join(too_long[:5]) + ": split it over more shots.")
+    return out
+
+
 def build_draft(db: Session, user: User, project: Project, text: str, method: str = "auto") -> dict:
     """method: auto (markers if the layout is recognisable, else AI) | markers | ai."""
     text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
@@ -618,6 +708,7 @@ def build_draft(db: Session, user: User, project: Project, text: str, method: st
             raise HTTPException(400, "No scene headings found (SCENE 1 / INT. / EXT.). Use the template layout, or let the AI arrange it.")
         draft = ai_arrange(db, user, project, text)
         used = "ai"
+    warnings += fit_lengths(draft)
     changed = mark_changed(draft, text)
     if changed:
         warnings.append(f"{changed} dialogue line(s) don't match your script word-for-word — they're highlighted; please check them.")
@@ -629,9 +720,18 @@ def build_draft(db: Session, user: User, project: Project, text: str, method: st
             for l in sh["lines"]:
                 if l["speaker"] != "VO":
                     names[l["speaker"]] = names.get(l["speaker"], 0) + 1
-    described = {c["name"]: c.get("description", "") for c in draft.get("cast") or []}
+    # who each person is: the script's description, and the gender and age it gives (for the voice and the look)
+    cast = {c["name"]: c for c in draft.get("cast") or []}
+    for n in names:
+        if n not in cast:
+            cast[n] = {"name": n, "description": description_for({k: v.get("description", "") for k, v in cast.items()}, n)}
+    for c in cast.values():
+        c["gender"] = c.get("gender") if c.get("gender") in ("female", "male") else guess_gender(c["name"], c.get("description", ""))
+        c["age"] = c.get("age") or guess_age(c.get("description", ""))
+    draft["cast"] = list(cast.values())
     shots = sum(len(sc["shots"]) for sc in draft["scenes"])
     return {"draft": draft, "method": used, "warnings": warnings,
-            "characters": [{"name": k, "lines": v, "description": description_for(described, k)} for k, v in names.items()],
+            "characters": [{"name": k, "lines": v, "description": cast[k].get("description", ""), "gender": cast[k]["gender"],
+                            "age": cast[k]["age"]} for k, v in names.items()],
             "stats": {"scenes": len(draft["scenes"]), "shots": shots,
                       "lines": sum(len(sh["lines"]) for sc in draft["scenes"] for sh in sc["shots"])}}
