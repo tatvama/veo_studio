@@ -1,7 +1,8 @@
 """Which shot a shot continues from, and which scene picks up straight from the one before.
 
-The plain rules, without any generation: core/scene_chain.py (which makes the videos in link order) and
-core/generation.py (which prices Produce all) both read them, and neither has to import the other for it.
+The plain rules, without any generation: core/scene_chain.py (which makes the videos in link order),
+core/generation.py (which prices Produce all) and core/frames.py read them. It imports none of them, so it is in no
+import cycle.
 """
 from __future__ import annotations
 
@@ -9,7 +10,12 @@ from sqlalchemy.orm import Session
 
 from ..models import Scene, Shot
 from ..pipeline.selection import current, is_real
-from . import frames
+
+SYNC = "end_frame"  # the link mode: this shot starts on its source's end frame (core/frames.py)
+
+
+def synced(shot: Shot) -> bool:
+    return bool(shot.continuity_from_shot_id) and shot.continuity_mode == SYNC
 
 
 def _prev_shot(db: Session, shot: Shot) -> Shot | None:
@@ -83,6 +89,6 @@ def waits_for_clip(db: Session, shot: Shot, planned: dict[int, int] | None = Non
     src = source(db, shot)
     if src is None and planned and shot.id in planned:
         src = db.get(Shot, planned[shot.id])
-    if src is None or extends(shot) or frames.synced(shot):
+    if src is None or extends(shot) or synced(shot):
         return False
     return not is_real(current(db, src.id, "video"))
