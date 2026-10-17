@@ -131,6 +131,8 @@ def get_board(db: Session, project: Project, episode: Episode) -> dict:
         out.append({"id": None, "title": "Unsorted shots", "location": "", "time_of_day": "", "summary": "", "mood": "",
                     "look": "", "sound": "", "music": "", "shots": [shot_out(s) for s in by_scene[None]]})
     return {"episode_id": episode.id, "language": lang, "scenes": out, "version": board_version(db, episode),
+            # a Produce all run that stopped for the new looks and voices to be checked (workers/handlers_room.produce)
+            "produce_paused": (episode.settings or {}).get("produce_paused"),
             "limits": {"durations": [4, 6, 8], "extend_step_s": EXTEND_STEP_S, "max_extend_s": MAX_EXTEND_S}}
 
 

@@ -1269,6 +1269,15 @@ def location_images(ctx: JobContext) -> dict:
     return {"assets": made}
 
 
+def voice_brief(ch: Character) -> str:
+    """The voice to design for a character with no voice description: who they are (age, gender, look), so a farmer
+    of 35 and a grandmother of 70 don't get the same stock voice."""
+    age = (f"{ch.age}-year-old" if ch.age.isdigit() else ch.age) if ch.age else ""
+    who = " ".join(x for x in (age, ch.gender) if x) or "natural"
+    look = (ch.dna_text or "").split(":", 1)[-1].strip()[:240]
+    return f"A {who} voice for {ch.name}" + (f", who is {look}" if look else "") + ". Clear, natural and believable."
+
+
 @handler("voice_design")
 def voice_design(ctx: JobContext) -> dict:
     p = ctx.payload
@@ -1276,7 +1285,7 @@ def voice_design(ctx: JobContext) -> dict:
     with SessionLocal() as db:
         ch = db.get(Character, p["character_id"])
         lname = catalog.LANGUAGES.get(lang, {}).get("name", lang)
-        desc = (p.get("description") or ch.voice_description or f"{ch.age} year old {ch.gender} voice").strip()
+        desc = (p.get("description") or ch.voice_description or voice_brief(ch)).strip()
         if lname.lower() not in desc.lower():
             desc += f" Speaks {lname} naturally with a native {lname} accent."
         name, gender = ch.name, ch.gender

@@ -22,27 +22,9 @@ from ..models import Episode, Project, Scene, Shot, Take, User
 from ..pipeline.selection import current, is_real
 from . import continuity, frames, generation
 from .budget import Estimator
+from .links import extends, scene_link_candidate, scene_shots, source  # (also read from here by others)
 
 LINK_SCENES = ("auto", "always", "never")
-
-
-def _prev_shot(db: Session, shot: Shot) -> Shot | None:
-    return (db.query(Shot).filter(Shot.episode_id == shot.episode_id, Shot.include.is_(True), Shot.order < shot.order)
-            .order_by(Shot.order.desc()).first())
-
-
-def source(db: Session, shot: Shot) -> Shot | None:
-    """The shot this one continues from (same rule as the keyframe job: an explicit link first, else the previous
-    shot when "continue from previous" is on)."""
-    if shot.continuity_from_shot_id:
-        src = db.get(Shot, shot.continuity_from_shot_id)
-        if src and src.episode_id == shot.episode_id:
-            return src
-    return _prev_shot(db, shot) if shot.continuity_from_prev else None
-
-
-def extends(shot: Shot) -> bool:
-    return bool(shot.continuity_from_shot_id) and shot.continuity_mode == "extend"
 
 
 def follows(kf: Take, src_video: Take) -> bool:
@@ -137,38 +119,6 @@ def waves(db: Session, shots: list[Shot]) -> list[list[Shot]]:
     for s in shots:
         out[depth[s.id]].append(s)
     return [w for w in out if w]
-
-
-def scene_shots(db: Session, scene: Scene) -> list[Shot]:
-    return (db.query(Shot).filter(Shot.scene_id == scene.id, Shot.include.is_(True)).order_by(Shot.order, Shot.id).all())
-
-
-def previous_scene(db: Session, scene: Scene) -> Scene | None:
-    return (db.query(Scene).filter(Scene.episode_id == scene.episode_id, Scene.order < scene.order)
-            .order_by(Scene.order.desc()).first())
-
-
-def scene_link_candidate(db: Session, scene: Scene, rule: str = "auto") -> tuple[Shot, Shot] | None:
-    """(first shot of this scene, last shot of the previous scene) when this scene picks up straight from the previous
-    one: same place, same time of day and someone in common ("auto"), or always ("always"). None when the first shot
-    already has a link of its own or a finished video."""
-    if rule not in ("auto", "always"):
-        return None
-    prev = previous_scene(db, scene)
-    mine = scene_shots(db, scene)
-    theirs = scene_shots(db, prev) if prev else []
-    if not prev or not mine or not theirs:
-        return None
-    first, last = mine[0], theirs[-1]
-    if first.continuity_from_shot_id or first.continuity_from_prev or is_real(current(db, first.id, "video")):
-        return None  # it has its own link, or its clip is already made (linking now would only report it as broken)
-    if rule == "auto":
-        same_place = bool(scene.location_id) and scene.location_id == prev.location_id
-        same_time = (scene.time_of_day or "").strip().lower() == (prev.time_of_day or "").strip().lower()
-        shared = {str(c) for c in (first.characters or [])} & {str(c) for c in (last.characters or [])}
-        if not (same_place and same_time and shared):
-            return None
-    return first, last
 
 
 def plan(db: Session, project: Project, episode: Episode, scenes: list[Scene], quality: str | None = None,
