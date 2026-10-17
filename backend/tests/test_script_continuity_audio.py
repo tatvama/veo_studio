@@ -140,14 +140,22 @@ def test_produce_carries_scenes_and_makes_sound(client: TestClient):
     steps = ["cast", "keyframes", "sound"]
     est = ok(c.post(f"/api/episodes/{eid}/estimate", headers=H, json={"action": "produce", "steps": steps}))
     labels = [i["label"] for i in est["items"]]
-    # Ravi, Meera, Ajji and the two places have no pictures yet
-    assert labels == ["Character & place looks · 5", "Keyframes · 3", "Sound effects · 3"]
+    # whoever and wherever has no picture yet (other tests may already have pictured a library "Ravi" or a "Hut")
+    with SessionLocal() as db:
+        from app.models import CharacterAsset, LocationAsset
+        shots = db.query(Shot).filter(Shot.episode_id == eid).all()
+        char_ids = {int(x) for s in shots for x in (s.characters or [])}
+        loc_ids = {s.location_id for s in shots if s.location_id}
+        bare_chars = sum(1 for i in char_ids if not db.query(CharacterAsset).filter(CharacterAsset.character_id == i).count())
+        bare = sum(1 for lid in loc_ids if not db.query(LocationAsset).filter(LocationAsset.location_id == lid).count())
+    assert len(char_ids) == 3 and bare_chars + bare > 0
+    assert labels == [f"Character & place looks · {bare_chars + bare}", "Keyframes · 3", "Sound effects · 3"]
     ok(c.post(f"/api/episodes/{eid}/generate", headers=H, json={"action": "produce", "steps": steps}))
     jobs = wait_jobs(c, pid, timeout=600)
     prod = next(j for j in jobs if j["type"] == "produce")
     assert prod["status"] == "succeeded", prod["error"]
     kinds = [j["type"] for j in jobs if j["status"] == "succeeded"]
-    assert kinds.count("character_sheet") == 3 and kinds.count("location_images") == 2 and "sfx" in kinds
+    assert kinds.count("character_sheet") == bare_chars and kinds.count("location_images") == bare and "sfx" in kinds
     with SessionLocal() as db:
         scenes = db.query(Scene).filter(Scene.episode_id == eid).order_by(Scene.order).all()
         assert scenes[0].end_state  # written before the first picture, so scene 2 carries on from scene 1
