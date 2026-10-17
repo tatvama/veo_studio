@@ -102,14 +102,19 @@ def _pdf_text(data: bytes) -> str:
 
 # ── 2. recognisable layouts ──────────────────────────────────────────────────
 
+# Lines are read with their whitespace collapsed to single spaces (parse_marked), so these patterns take at most one
+# space where one may be, and never two space-eating parts in a row; each is anchored with ^ (and used with .match):
+# they run in linear time on any line.
 # a heading word on its own, followed by a number and/or a separator (so "Scarlett: hi", "Screaming…" and
 # "Shots ring out." stay text)
-SCENE_RE = re.compile(r"^\s*(?:#+\s*)?(?:scene\b|sc\.)\s*(\d+)?\s*([:.\-–—)]*)\s*(.*)$", re.I)
-SLUG_RE = re.compile(r"^\s*(INT\.?/EXT\.?|EXT\.?/INT\.?|INT\.|EXT\.|I/E\.?)\s+(.+?)(?:\s*[-–—]\s*(.+))?\s*$", re.I)
-SHOT_RE = re.compile(r"^\s*(?:#+\s*)?shot\b\s*(\d+)?\s*([:.\-–—)]*)\s*(.*)$", re.I)
-FIELD_RE = re.compile(r"^\s*(visual(?:\s+prompt)?|prompt|action|description|camera|framing|shot\s*type|duration|length|location|time(?:\s+of\s+day)?|setting)\s*[:\-–—]\s*(.*)$", re.I)
+SCENE_RE = re.compile(r"^(?:#+ ?)?(?:scene\b|sc\.) ?(\d+)? ?([:.\-–—)]*) ?(.*)", re.I)
+SLUG_RE = re.compile(r"^(INT\.?/EXT\.?|EXT\.?/INT\.?|INT\.|EXT\.|I/E\.?) (.+)", re.I)
+SHOT_RE = re.compile(r"^(?:#+ ?)?shot\b ?(\d+)? ?([:.\-–—)]*) ?(.*)", re.I)
+FIELD_RE = re.compile(r"^(visual(?: prompt)?|prompt|action|description|camera|framing|shot ?type|duration|length|location|"
+                      r"time(?: of day)?|setting) ?[:\-–—](.*)", re.I)
 SPEAK_RE = re.compile(r"^\s*([A-Zऀ-෿][\wऀ-෿ .'’-]{0,38}?)\s*(\((?:v\.?o\.?|o\.?s\.?|voice[ -]?over|off[ -]?screen)\))?\s*(\([^)]{1,60}\))?\s*[:：]\s*(.+)$", re.U)
-CUE_RE = re.compile(r"^\s*([A-Z][A-Z0-9 .'’-]{1,30}?)\s*(\((?:V\.?O\.?|O\.?S\.?|CONT'?D)\))?\s*$")
+# a NAME line on its own (screenplay cue), words separated by single spaces; its length is checked by _cue
+CUE_RE = re.compile(r"^([A-Z][A-Z0-9.'’-]*(?: [A-Z0-9.'’-]+)*)(?: ?(\((?:V\.?O\.?|O\.?S\.?|CONT'?D)\)))?$")
 PAREN_RE = re.compile(r"^\s*\(([^)]{1,80})\)\s*$")
 # "LABEL: text" lines that are notes for the shot, not someone speaking
 NOT_SPEAKERS = {"note", "notes", "music", "bgm", "score", "song", "sfx", "fx", "vfx", "sound", "sounds", "sound effect",
@@ -129,16 +134,16 @@ HEADER_ONLY = {"title", "episode", "series", "season", "written by", "writer", "
                "directed by", "producer", "story", "concept", "duration", "length", "audience"}
 # notes for the scene or the shot: "SFX: thunder", "MOOD: tense", "LIGHTING: one oil lamp" (a dash needs a space before
 # it, so "Style-conscious Meera …" stays text)
-META_RE = re.compile(r"^\s*(sfx|fx|sound\s*effects?|sounds?|foley|audio|ambien(?:ce|t)|music|bgm|background\s+music|score|"
-                     r"song|mood|tone|atmosphere|emotion|feel(?:ing)?|lighting|light|look|colou?r(?:\s+palette)?|palette|"
-                     r"grade|weather|style|visual\s+style)(?:\s*:|\s+[-–—])\s*(.+)$", re.I)
-META_KIND = [(r"^(sfx|fx|sound\s*effects?|sounds?|foley|audio)$", "sfx"), (r"^ambien", "sound"),
-             (r"^(music|bgm|background\s+music|score|song)$", "music"), (r"^(mood|tone|atmosphere|emotion|feel)", "mood")]
-CAST_HEAD_RE = re.compile(r"^\s*(?:#+\s*)?(?:main\s+)?(?:characters?|cast)(?:\s+(?:list|descriptions?|details|bible|sheet|"
-                          r"looks?))?\s*(?::|\s+[-–—]|$)\s*(.*)$", re.I)
+META_RE = re.compile(r"^(sfx|fx|sound ?effects?|sounds?|foley|audio|ambien(?:ce|t)|music|bgm|background music|score|"
+                     r"song|mood|tone|atmosphere|emotion|feel(?:ing)?|lighting|light|look|colou?r(?: palette)?|palette|"
+                     r"grade|weather|style|visual style)(?: ?:| [-–—])(.+)", re.I)
+META_KIND = [(r"^(sfx|fx|sound ?effects?|sounds?|foley|audio)$", "sfx"), (r"^ambien", "sound"),
+             (r"^(music|bgm|background music|score|song)$", "music"), (r"^(mood|tone|atmosphere|emotion|feel)", "mood")]
+CAST_HEAD_RE = re.compile(r"^(?:#+ ?)?(?:main )?(?:characters?|cast)(?: (?:list|descriptions?|details|bible|sheet|looks?))?",
+                          re.I)
 _NAME = r"([A-Zऀ-෿][\wऀ-෿ .'’-]{0,38}?)"
-CAST_ENTRY_RE = re.compile(r"^\s*(?:[-•*·]|\d+[.)])?\s*" + _NAME + r"\s*(?:\(([^)]{1,160})\))?\s*(?::|\s[-–—])\s*(.+)$")
-CAST_PAREN_RE = re.compile(r"^\s*(?:[-•*·]|\d+[.)])?\s*" + _NAME + r"\s*\(([^)]{3,200})\)\s*\.?$")
+CAST_ENTRY_RE = re.compile(r"^(?:[-•*·] ?|\d+[.)] ?)?" + _NAME + r" ?(?:\(([^)]{1,160})\))?(?: ?:| [-–—])(.+)")
+CAST_PAREN_RE = re.compile(r"^(?:[-•*·] ?|\d+[.)] ?)?" + _NAME + r" ?\(([^)]{3,200})\)\.?$")
 # a character's first appearance in screenplay style: "RAVI (35, weathered, grey beard) steps in"
 INTRO_RE = re.compile(r"\b([A-Z][A-Z'’.-]+(?:\s+[A-Z][A-Z'’.-]+){0,2})\s*\(([^)]{3,160})\)")
 NOT_INTRO = re.compile(r"^(v\.?o\.?|o\.?s\.?|o\.?c\.?|cont'?d|voice[ -]?over|off[ -]?screen)$", re.I)
@@ -173,6 +178,46 @@ def _speaker(name: str, vo_tag: str | None) -> str:
     if n.upper() in VO_NAMES or vo_tag:
         return "VO"
     return n.title() if n.isupper() else n  # screenplay CAPS → the name as the cast spells it
+
+
+def _cue(line: str) -> re.Match | None:
+    """A screenplay cue: a NAME (2-31 characters) on its own line, maybe with (V.O.) / (O.S.) / (CONT'D)."""
+    m = CUE_RE.match(line)
+    return m if m and 2 <= len(m.group(1)) <= 31 else None
+
+
+def _slug(text: str) -> tuple[str, str] | None:
+    """'INT. KITCHEN - MORNING' → ('KITCHEN', 'MORNING'); ('KITCHEN', '') without a time; None when not a slug line.
+    The time follows the first spaced dash ("MOTHER-IN-LAW'S HOUSE - NIGHT"), else the first dash."""
+    m = SLUG_RE.match(text)
+    if not m:
+        return None
+    rest = m.group(2).strip()
+    cuts = [i for i in (rest.find(f" {d} ") for d in "-–—") if i > 0]
+    if cuts:
+        i = min(cuts)
+        place, when = rest[:i], rest[i + 3:]
+    else:
+        i = next((k for k, ch in enumerate(rest) if ch in "-–—" and k > 0), -1)
+        place, when = (rest[:i], rest[i + 1:]) if i > 0 else (rest, "")
+    place, when = place.strip(" -–—"), when.strip()
+    return (place, when) if place else None
+
+
+def _cast_head(line: str) -> str | None:
+    """'CHARACTERS', 'Cast list:', 'CAST – Ravi (35), Meera (30)' → the text after the heading ('' when none);
+    None when the line isn't a cast heading ("Characters gather in the hall", "Castle gates")."""
+    m = CAST_HEAD_RE.match(line)
+    if not m:
+        return None
+    rest = line[m.end():]
+    if not rest.strip():
+        return ""
+    if rest.lstrip().startswith(":"):
+        return rest.lstrip()[1:].strip()
+    if rest[:1] == " " and rest[1:2] in ("-", "–", "—"):
+        return rest[2:].strip()
+    return None
 
 
 def _meta_kind(label: str) -> str:
@@ -297,12 +342,12 @@ def parse_marked(text: str) -> dict | None:
     def read_cast(line: str) -> bool:
         """A line of the CHARACTERS list (True), or the end of the list (False)."""
         nonlocal cast_gap, cast_last
-        if SLUG_RE.match(line) or SCENE_RE.match(line) or SHOT_RE.match(line) or META_RE.match(line) or FIELD_RE.match(line):
+        if _slug(line) or SCENE_RE.match(line) or SHOT_RE.match(line) or META_RE.match(line) or FIELD_RE.match(line):
             return False
         if cast_item(line):
             cast_gap = False
             return True
-        m = CUE_RE.match(line)  # a NAME line on its own, the description below it
+        m = _cue(line)  # a NAME line on its own, the description below it
         if (m and line.upper() == line and len(line.split()) <= 4 and not line.endswith((".", "!", "?", ","))
                 and not _is_label(m.group(1)) and m.group(1).strip().lower() not in NOT_SPEAKERS | HEADER_ONLY):
             who = _speaker(m.group(1), m.group(2))
@@ -324,7 +369,7 @@ def parse_marked(text: str) -> dict | None:
                 intros.setdefault(_speaker(name, None), desc)
 
     def is_marker(line: str) -> bool:
-        if SLUG_RE.match(line) or FIELD_RE.match(line) or PAREN_RE.match(line) or META_RE.match(line):
+        if _slug(line) or FIELD_RE.match(line) or PAREN_RE.match(line) or META_RE.match(line):
             return True
         m = SCENE_RE.match(line) or SHOT_RE.match(line)
         if m and (m.group(1) or m.group(2) or not m.group(3)):
@@ -332,11 +377,11 @@ def parse_marked(text: str) -> dict | None:
         m = SPEAK_RE.match(line)
         if m and len(m.group(1).split()) <= 4 and not _is_label(m.group(1)):
             return True
-        m = CUE_RE.match(line)
+        m = _cue(line)
         return bool(m and line.upper() == line and len(line.split()) <= 4 and not line.endswith((".", "!", "?", ",")))
 
     for raw in text.splitlines():
-        line = raw.strip().strip("*_").strip()
+        line = " ".join(raw.strip().strip("*_").split())  # one space between words (the patterns above rely on it)
         if not line:
             pending_cue, cue_line, pending_emotion = None, None, ""
             cast_gap = cast_mode
@@ -357,22 +402,20 @@ def parse_marked(text: str) -> dict | None:
             else:
                 cue_line["text"] = (cue_line["text"] + " " + line).strip()
             continue
-        m = CAST_HEAD_RE.match(line)
-        if m:  # CHARACTERS / CAST: a list of who is who, one per line (or "Ravi (35, farmer), Meera (30)" inline)
+        rest = _cast_head(line)
+        if rest is not None:  # CHARACTERS / CAST: a list of who is who, one per line (or "Ravi (35, farmer), Meera (30)")
             cast_mode, cast_gap, cast_last = True, False, ""
-            rest = m.group(1).strip()
             items = _split_top(rest) if "(" in rest or not re.search(r":|\s[-–—]\s", rest) else [rest]
             for x in items:
                 if not cast_item(x) and x[:1].isupper() and len(x.split()) <= 4 and not _is_label(x):
                     if _speaker(x, None) != "VO":
                         add_cast(_speaker(x, None), "")  # just a name
             continue
-        m = SLUG_RE.match(line)
-        if m:
+        sl = _slug(line)
+        if sl:
             scene, shot = None, None
             sc = ensure_scene()
-            sc["location"] = m.group(2).strip().title()
-            sc["time_of_day"] = (m.group(3) or "").strip().lower()
+            sc["location"], sc["time_of_day"] = sl[0].title(), sl[1].lower()
             sc["title"] = sc["location"] or sc["title"]
             markers["scene"] += 1
             continue
@@ -382,9 +425,9 @@ def parse_marked(text: str) -> dict | None:
             sc = ensure_scene()
             rest = m.group(3).strip()
             if rest:
-                sl = SLUG_RE.match(rest)
+                sl = _slug(rest)
                 if sl:
-                    sc["location"], sc["time_of_day"] = sl.group(2).strip().title(), (sl.group(3) or "").strip().lower()
+                    sc["location"], sc["time_of_day"] = sl[0].title(), sl[1].lower()
                 sc["title"] = rest
             markers["scene"] += 1
             continue
@@ -428,7 +471,7 @@ def parse_marked(text: str) -> dict | None:
             continue
         m = META_RE.match(line)
         if m:
-            add_meta(m.group(1), m.group(2))
+            add_meta(m.group(1), m.group(2).strip())
             continue
         m = SPEAK_RE.match(line)
         if m and scene is None and m.group(1).strip().rstrip(".").lower() in NOT_SPEAKERS | HEADER_ONLY:
@@ -440,7 +483,7 @@ def parse_marked(text: str) -> dict | None:
             emotion = (m.group(3) or "").strip("() ")
             add_line(who, m.group(4), emotion)
             continue
-        m = CUE_RE.match(line)
+        m = _cue(line)
         if (m and line.upper() == line and len(line.split()) <= 4 and not line.endswith((".", "!", "?", ","))
                 and not _is_label(m.group(1))):
             pending_cue, cue_line, pending_emotion = (m.group(1), m.group(2)), None, ""
