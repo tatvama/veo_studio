@@ -187,13 +187,15 @@ def test_recipes_built_in_and_saved_per_team(client: TestClient):
     assert same["id"] == mine["id"] and same["steps"] == ["videos"]  # the same name is replaced, not doubled
     assert c.post("/api/recipes", headers=H, json={"name": "Reels draft", "steps": ["videos"]}).status_code == 400
     assert c.post("/api/recipes", headers=H, json={"name": "Empty", "steps": []}).status_code == 400
-    assert c.post("/api/recipes", headers=H, json={"name": "Odd", "steps": ["videos"], "quality": "ultra"}).status_code == 400
+    odd = c.post("/api/recipes", headers=H, json={"name": "Odd", "steps": ["videos"], "quality": "ultra"})
+    assert odd.status_code == 400
     team = [r for r in ok(c.get("/api/recipes"))["recipes"] if not r["builtin"]]
     assert [r["name"] for r in team] == ["ad CUT"]
     with SessionLocal() as db:
         assert [r["id"] for r in recipes.team(db)] == [mine["id"]]  # kept in the team setting, no table of its own
     ok(c.delete(f"/api/recipes/{mine['id']}", headers=H))
-    assert c.delete("/api/recipes/builtin:reels-draft", headers=H).status_code == 404
+    builtin = c.delete("/api/recipes/builtin:reels-draft", headers=H)
+    assert builtin.status_code == 404  # a built-in recipe can't be deleted
     assert not [r for r in ok(c.get("/api/recipes"))["recipes"] if not r["builtin"]]
 
 

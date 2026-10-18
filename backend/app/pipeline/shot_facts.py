@@ -1,7 +1,7 @@
 """Plain facts read off a shot: its quality mode and its spoken lines.
 
-pipeline/prompting.py re-exports them. core/budget.py, core/generation.py and core/recovery.py read them from here,
-which keeps those modules out of the import cycles that prompting is in.
+pipeline/prompting.py re-exports them. core/recovery.py reads them from here, which keeps it (and core/generation.py,
+which imports it) out of the import cycles that prompting is in.
 """
 from __future__ import annotations
 

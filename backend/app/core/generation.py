@@ -8,8 +8,7 @@ from sqlalchemy.orm import Session
 
 from .. import catalog
 from ..models import AIModel, Character, Episode, Location, Project, Shot, Take
-from ..pipeline.prompting import effective_voice_mode, shot_lines
-from ..pipeline.shot_facts import offscreen_only
+from ..pipeline.prompting import effective_voice_mode, offscreen_only, shot_lines
 from ..pipeline.selection import current, has_fresh, is_real
 from . import frames
 from . import links
