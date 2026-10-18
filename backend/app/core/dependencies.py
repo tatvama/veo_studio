@@ -16,8 +16,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ..events import emit
-from ..models import Character, Episode, Project, ProjectCast, Shot, Take
-from ..pipeline.prompting import outfit_for
+from ..models import Character, Costume, Episode, Project, ProjectCast, Scene, Shot, Take
 from .generation import endframe_spec, keyframe_specs, lipsync_specs, video_specs, voice_specs
 
 KEYFRAME_FIELDS = {"framing", "camera", "action", "characters", "outfits", "location_id", "prop_ids", "ref_images",
@@ -140,6 +139,19 @@ def character_shots(db: Session, character_id: int, project_id: int | None = Non
     return [s for s in rows if str(character_id) in {str(x) for x in s.characters or []}]
 
 
+def _outfit_in(db: Session, shot: Shot, ch: Character) -> str:
+    """The outfit a character wears in this shot: the shot's own pick, else the scene's wardrobe, else the default
+    costume (the same rule as pipeline/prompting.outfit_for, kept here so this module needs no prompting import)."""
+    o = (shot.outfits or {}).get(str(ch.id))
+    if o:
+        return o
+    scene = db.get(Scene, shot.scene_id) if shot.scene_id else None
+    if scene and (scene.wardrobe or {}).get(str(ch.id)):
+        return scene.wardrobe[str(ch.id)]
+    c = db.query(Costume).filter(Costume.character_id == ch.id, Costume.is_default.is_(True), Costume.archived.is_(False)).first()
+    return c.name if c else ""
+
+
 def character_changed(db: Session, ch: Character, what: str = "look", outfit: str | None = None) -> list[Take]:
     """The character's approved pictures were added, approved or taken away, its lock changed, or (outfit) one of its
     outfits was edited: the keyframes, end frames and clips (and their lip-syncs) of the shots that show them (wearing
@@ -148,7 +160,7 @@ def character_changed(db: Session, ch: Character, what: str = "look", outfit: st
     reason = f"{ch.name}'s {what} changed"
     out: list[Take] = []
     for s in character_shots(db, ch.id):
-        if outfit is not None and outfit_for(db, s, ch) != outfit:
+        if outfit is not None and _outfit_in(db, s, ch) != outfit:
             continue
         out += mark_stale(db, s, {"characters"}, reason=reason)
     return out
