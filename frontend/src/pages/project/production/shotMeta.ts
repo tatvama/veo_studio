@@ -76,3 +76,10 @@ export function ratioOf(aspect: string): { w: number; h: number; css: string } {
   const H = w > 0 && h > 0 ? h : 9;
   return { w: W, h: H, css: `${W} / ${H}` };
 }
+
+const STATUS_WORDS: Record<string, string> = { draft: "Draft", keyframe_ready: "Picture ready", video_ready: "Video ready", approved: "Approved" };
+
+/** A shot's status in plain words ("keyframe_ready" reads "Picture ready"). */
+export function shotStatusLabel(t: (s: string) => string, status: string): string {
+  return t(STATUS_WORDS[status] ?? status.replaceAll("_", " "));
+}

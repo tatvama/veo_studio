@@ -313,7 +313,7 @@ function EmptyState({ canEdit, suggestions, onPick, name }: { canEdit: boolean; 
       {first && <p className="anim-rise mb-0.5 text-xs font-medium text-mute" style={rise(1).style}>{t("Hi {name}", { name: first })}</p>}
       <h3 className="anim-rise text-lg font-semibold tracking-tight" style={rise(2).style}>{t("Tell me what you want.")}</h3>
       <p className="anim-rise mt-1.5 max-w-[34ch] text-sm leading-relaxed text-mute" style={rise(3).style}>
-        {t("I can write hooks and scripts, build characters and voices, plan shots, generate keyframes and videos, lip-sync, dub into Hindi / Kannada / Telugu / Tamil, and export. Paid steps show the cost first, and anything that would replace your work asks before it happens.")}
+        {t("I can write hooks and scripts, build characters and voices, plan shots, generate pictures and videos, mouth sync, dub into Hindi / Kannada / Telugu / Tamil, and export. Paid steps show the cost first, and anything that would replace your work asks before it happens.")}
       </p>
       {canEdit && (
         <>

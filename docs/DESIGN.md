@@ -1,6 +1,6 @@
 # Tatvam AI Studio: "Command" design system
 
-A professional production cockpit. The app is a fixed viewport: a top command bar, a slim rail, the work area, a status strip (and a bottom tab bar on phones). Panels scroll; the page does not. Everything is data-dense but calm: hairlines instead of fills, one electric accent, mono type for numbers.
+A professional production cockpit. The app is a fixed viewport: a top command bar, a slim rail, the work area, a status strip (and a bottom tab bar on phones). Inside a project all of that gives way to two bars: one 48 px project header on top and the 44 px Next bar at the bottom. Panels scroll; the page does not. Everything is data-dense but calm: hairlines instead of fills, one electric accent, mono type for numbers.
 
 ## 1. Look
 
@@ -51,7 +51,10 @@ A professional production cockpit. The app is a fixed viewport: a top command ba
 - **Bento grids**: `grid gap-4` with `@container` queries, 12 columns on wide, 2 on medium, 1 on narrow. A row mixes one big panel with small ones; avoid a wall of equal cards.
 - **Density**: rows 36 px, panels `p-4`, gaps 12/16. Tables use mono figures, right-aligned numbers, a hairline between rows, and a sticky header.
 - **Hierarchy per page**: header (icon chip + title + one-line purpose + actions) → a KPI/status strip → the main work → secondary panels. Status is shown with an icon and a word, never colour alone.
-- **Navigation**: the global rail (icons) and the project pipeline rail (stages with progress) are the only persistent nav. Pages never add their own top tab row; use `Tabs` for in-page views only.
+- **Navigation**: the global rail (icons) outside projects; inside a project, the project header (back, title, the steps as a compact stepper, the open step's views with writers' and specialists' tools under **Advanced**, spend, the Director, the ⋯ menu) is the only nav. Pages never add their own top tab row; use `Tabs` for in-page views only.
+- **Next bar** (projects): left, what is being made (opens the job list); right, the next step in plain words, its price when it costs money, and one primary button. Every project screen has it, so there is always a way forward.
+- **Money before work**: every button that spends shows its price first (the cost dialog from `useGenerate().generate` / `priced`, or a price on the button from a backend quote). No single-key shortcut spends money.
+- **Plain words** in labels: Picture (not keyframe), Mouth sync, Out of date, Quality check, Cast, Text view, Advanced layout, Pro finishing.
 - Empty, loading (skeleton) and error (retry) states on every view. Dialogs trap focus. Hit targets are at least 28 px (40 px on phones).
 
 ## 5. Motion

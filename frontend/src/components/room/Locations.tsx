@@ -15,6 +15,7 @@ import { DetailBar, LoadError, RField, RoomEmpty } from "./kit";
 import { useActiveJobs } from "./util";
 import { Gallery, type GalleryItem } from "./Lightbox";
 import { IdChip, WorkPanel, code, pad, scrollToSection } from "./workspace";
+import { quote } from "../../lib/estimates";
 
 const GRID = "grid gap-3.5 [grid-template-columns:repeat(auto-fill,minmax(min(100%,16rem),1fr))]";
 const cover = (l: Location) => l.thumb_url || l.assets?.find((a) => a.approved)?.url || l.assets?.[0]?.url || "";
@@ -88,7 +89,7 @@ export function LocationsTab({ locId, onOpen, onBack, onPropose, proposing }: {
   return (
     <div className="space-y-4">
       {!list.length && (
-        <RoomEmpty icon={<MapPin />} title={t("No locations yet")} sub={t("Build the bible from the script, or add one here.")}
+        <RoomEmpty icon={<MapPin />} title={t("No locations yet")} sub={t("Build the cast from the script, or add one here.")}
           action={canEdit ? <Button variant="primary" loading={proposing} icon={<Sparkles className="size-4" />} onClick={onPropose}>{t("Build from script")}</Button> : undefined} />
       )}
       {(list.length > 0 || canEdit) && (
@@ -167,7 +168,7 @@ function LocationDetail({ loc, onBack, pos }: {
   const t = useT();
   const { project, canEdit, canProduce } = useProjectCtx();
   const qc = useQueryClient();
-  const { submit } = useGenerate();
+  const { priced } = useGenerate();
   const [desc, setDesc] = useState(loc.description_text);
   const [locking, setLocking] = useState(false);
   const [tod, setTod] = useState("");
@@ -179,7 +180,9 @@ function LocationDetail({ loc, onBack, pos }: {
     try { await api.patch(`/api/location-assets/${id}`, body); refresh(); } catch { /* api toasts */ }
   };
   const generate = (kinds: string[]) =>
-    submit(() => api.post<SubmitResult>(`/api/locations/${loc.id}/images`, { kinds, time_of_day: tod || "", project_id: project.id }), tr("{name} images", { name: loc.name }));
+    priced({ quote: () => quote({ action: "location_images", location_id: loc.id, kinds, time_of_day: tod || "", project_id: project.id }),
+      run: () => api.post<SubmitResult>(`/api/locations/${loc.id}/images`, { kinds, time_of_day: tod || "", project_id: project.id }),
+      what: tr("{name} images", { name: loc.name }) });
   const editable = canEdit && (!loc.locked || canProduce);
   const toggleLock = async () => {
     setLocking(true);
@@ -266,7 +269,7 @@ function LocationDetail({ loc, onBack, pos }: {
           <div className="@container min-w-0 @4xl:col-start-1 @4xl:row-start-1">
             <WorkPanel id="sec-loc-images" n={2} kicker={t("Reference")} icon={<Images />} title={t("Images")}
               badge={items.length > 0 ? <span className="mono rounded bg-raised px-1.5 text-2xs font-medium text-dim">{items.length}</span> : undefined}
-              description={t("Approved images become the look of this place in keyframes. Click an image to view it large.")}
+              description={t("Approved images become the look of this place in pictures. Click an image to view it large.")}
               actions={canEdit && (
                 <>
                   <div className="relative">

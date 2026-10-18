@@ -16,6 +16,7 @@ import { OUTFIT_VIEWS, VIEW_LABEL, coversEpisode, episodeNumber, episodeRange } 
 import { useCharScope } from "./scope";
 import { useActiveJobs } from "./util";
 import { IdChip, WorkPanel, code } from "./workspace";
+import { quote } from "../../lib/estimates";
 
 interface CostumeForm { name: string; description: string; episode_from: string; episode_to: string; is_default: boolean; generate: boolean }
 const emptyForm = (): CostumeForm => ({ name: "", description: "", episode_from: "", episode_to: "", is_default: false, generate: true });
@@ -29,7 +30,7 @@ export function Costumes({ character, editable, index, n }: { character: Charact
   const t = useT();
   const qc = useQueryClient();
   const { project, projectId, episodeNumber: curEp } = useCharScope();
-  const { submit } = useGenerate();
+  const { priced } = useGenerate();
   const cid = character.id;
   const { data: costumes, isLoading, isError, refetch } = useCostumes(cid);
   const jobs = useActiveJobs(projectId, (j) => j.type === "character_outfit" && Number(j.payload?.character_id) === cid);
@@ -45,11 +46,14 @@ export function Costumes({ character, editable, index, n }: { character: Charact
   const assetPatch = async (aid: number, body: Record<string, unknown>) => {
     try { await api.patch(`/api/character-assets/${aid}`, body); refresh(); } catch { /* api toasts */ }
   };
-  const generateViews = (c: Costume) => submit(async () => {
+  /** An outfit's views: the price first, then the job. */
+  const outfitPrice = (name: string, description: string) => () =>
+    quote({ action: "outfit", character_id: cid, name, description, views: [...OUTFIT_VIEWS], project_id: projectId ?? null });
+  const generateViews = (c: Costume) => priced({ quote: outfitPrice(c.name, c.description), run: async () => {
     const r = await createCostume(cid, { name: c.name, description: c.description, episode_from: c.episode_from, episode_to: c.episode_to,
       is_default: c.is_default, generate: true, views: [...OUTFIT_VIEWS], project_id: projectId ?? null });
     return (r.jobs as SubmitResult | undefined) ?? { batch_id: "", status: "nothing_to_do", total_usd: 0, jobs: [] };
-  }, tr("Outfit {outfit} for {name}", { outfit: c.name, name: character.name }));
+  }, what: tr("Outfit {outfit} for {name}", { outfit: c.name, name: character.name }) });
 
   const f = modal?.form;
   const fromN = f ? episodeNumber(f.episode_from) : null;
@@ -66,11 +70,11 @@ export function Costumes({ character, editable, index, n }: { character: Charact
         await patchCostume(modal.costume.id, body);
         toast.success(tr("Outfit updated"));
       } else if (f.generate) {
-        // money: goes through submit() so the outcome (queued / approval / proposed) is announced the standard way
-        const r = await submit(async () => {
+        // money: the price first, then the outcome (queued / approval / proposed) is announced the standard way
+        const r = await priced({ quote: outfitPrice(body.name, body.description), run: async () => {
           const res = await createCostume(cid, { ...body, generate: true, views: [...OUTFIT_VIEWS], project_id: projectId ?? null });
           return (res.jobs as SubmitResult | undefined) ?? { batch_id: "", status: "nothing_to_do", total_usd: 0, jobs: [] };
-        }, tr("Outfit {outfit} for {name}", { outfit: body.name, name: character.name }));
+        }, what: tr("Outfit {outfit} for {name}", { outfit: body.name, name: character.name }) });
         if (!r) return;
       } else {
         await createCostume(cid, { ...body, generate: false, project_id: projectId ?? null });

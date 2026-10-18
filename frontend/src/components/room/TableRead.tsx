@@ -13,6 +13,7 @@ import { useGenerate } from "../Generate";
 import { Button, IconButton, Progress, Segmented } from "../ui";
 import { PanelHead, RoomEmpty } from "./kit";
 import { useActiveJobs, useCastTones } from "./util";
+import { quote } from "../../lib/estimates";
 
 const clock = (s: number) => {
   const v = Math.max(0, s || 0);
@@ -24,7 +25,7 @@ export function TableReadPanel({ ep }: { ep: Episode }) {
   const t = useT();
   const qc = useQueryClient();
   const { project, lang, canEdit } = useProjectCtx();
-  const { submit } = useGenerate();
+  const { priced } = useGenerate();
   const { data: reads } = useTableRead(ep.id);
   const { data: cast } = useCharacters(project.id);
   const [view, setView] = useState<string | null>(null);
@@ -47,8 +48,9 @@ export function TableReadPanel({ ep }: { ep: Episode }) {
   const start = async () => {
     setBusy(true);
     try {
-      await submit(() => api.post<SubmitResult>(`/api/episodes/${ep.id}/table-read`, { language: lang }),
-        tr("Table read · {lang}", { lang: LANG_NAMES[lang] ?? lang }));
+      await priced({ quote: () => quote({ action: "table_read", episode_id: ep.id, language: lang }),
+        run: () => api.post<SubmitResult>(`/api/episodes/${ep.id}/table-read`, { language: lang }),
+        what: tr("Table read · {lang}", { lang: LANG_NAMES[lang] ?? lang }) });
       setView(lang);
     } finally { setBusy(false); }
   };

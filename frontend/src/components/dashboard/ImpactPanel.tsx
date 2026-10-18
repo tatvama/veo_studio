@@ -9,11 +9,12 @@ import { tr, useT } from "../../lib/i18n";
 import { useUI } from "../../lib/store";
 import type { SubmitResult } from "../../lib/types";
 import { markFresh, regenerateStale, useImpact, type Impact, type StaleTake } from "../../lib/v3";
+import { shotStatusLabel } from "../../pages/project/production/shotMeta";
 import { useGenerate } from "../Generate";
 import { LoadError } from "../room/kit";
 import { Badge, Button, Modal, Panel, Skeleton } from "../ui";
 
-const KIND_LABELS: Record<string, string> = { keyframe: "Keyframe", video: "Video", voice: "Voice", narration: "Narration", lipsync: "Lip-sync", voicelock: "Voice lock" };
+const KIND_LABELS: Record<string, string> = { keyframe: "Picture", video: "Video", voice: "Voice", narration: "Narration", lipsync: "Mouth sync", voicelock: "Voice lock" };
 
 type Target = { shot_ids?: number[]; code?: string };
 
@@ -40,7 +41,7 @@ export function ImpactPanel({ eid, pid, canEdit, canReview, index, className }: 
     if (!confirm) return;
     setRunning(true);
     try {
-      const what = confirm.code ? tr("Regenerate {code}", { code: confirm.code }) : tr("Regenerate stale takes");
+      const what = confirm.code ? tr("Regenerate {code}", { code: confirm.code }) : tr("Regenerate out-of-date takes");
       const r = await submit(() => regenerateStale(eid, confirm.shot_ids) as Promise<SubmitResult>, what);
       if (r) { setConfirm(null); refresh(); }
     } finally { setRunning(false); }
@@ -60,14 +61,14 @@ export function ImpactPanel({ eid, pid, canEdit, canReview, index, className }: 
     <Panel {...head} tone={stale ? "warn" : undefined}
       actions={canEdit && stale && (
         <Button variant="primary" size="sm" icon={<RefreshCw className="size-3.5" />} onClick={() => setConfirm({})}>
-          {t("Regenerate all stale")} <span className="mono font-normal opacity-80">· {usd(data.estimate_usd)}</span>
+          {t("Regenerate all out of date")} <span className="mono font-normal opacity-80">· {usd(data.estimate_usd)}</span>
         </Button>
       )}>
       {!stale ? (
         <div className="flex items-start gap-3">
           <span className="grid size-9 shrink-0 place-items-center rounded-lg border border-ok/40 bg-ok/10 text-ok"><CheckCircle2 className="size-4" /></span>
           <div className="min-w-0">
-            <p className="text-sm font-medium">{t("Nothing is stale")}</p>
+            <p className="text-sm font-medium">{t("Nothing is out of date")}</p>
             <p className="mt-0.5 text-xs text-mute">{t("Every take matches its shot. When a shot changes after its takes were made, they are listed here.")}</p>
           </div>
         </div>
@@ -75,11 +76,11 @@ export function ImpactPanel({ eid, pid, canEdit, canReview, index, className }: 
         <>
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             <p className="mono flex items-baseline gap-1.5 text-[1.65rem] font-medium leading-none tracking-tight text-warn">
-              {total}<span className="text-sm font-normal text-mute">{total === 1 ? t("stale take") : t("stale takes")} {data.shots.length === 1 ? t("in 1 shot") : t("in {s} shots", { s: data.shots.length })}</span>
+              {total}<span className="text-sm font-normal text-mute">{total === 1 ? t("out-of-date take") : t("out-of-date takes")} {data.shots.length === 1 ? t("in 1 shot") : t("in {s} shots", { s: data.shots.length })}</span>
             </p>
             <span className="flex flex-wrap items-center gap-1.5">{Object.entries(data.counts).map(([k, n]) => <Badge key={k} tone="warn">{t(KIND_LABELS[k] ?? k)} <span className="mono">{n}</span></Badge>)}</span>
           </div>
-          <p className="mt-2 text-xs leading-relaxed text-mute">{t("Takes made before their shot changed. Nothing is deleted: a stale take keeps playing until a new one replaces it.")}</p>
+          <p className="mt-2 text-xs leading-relaxed text-mute">{t("Takes made before their shot changed. Nothing is deleted: an out-of-date take keeps playing until a new one replaces it.")}</p>
           <ul className="mt-3 max-h-[26rem] divide-y divide-line overflow-y-auto rounded-lg border border-line">
             {data.shots.map((s) => <ShotGroup key={s.shot_id} s={s} pid={pid} canEdit={canEdit} canReview={canReview} freshing={freshing}
               estimate={data.plan.filter((l) => l.label.includes(s.code)).reduce((a, l) => a + l.usd, 0)}
@@ -89,13 +90,13 @@ export function ImpactPanel({ eid, pid, canEdit, canReview, index, className }: 
       )}
 
       <Modal open={!!confirm} onClose={() => setConfirm(null)} size="md"
-        title={<span className="flex items-center gap-2"><Coins className="size-4 text-money" />{confirm?.code ? t("Regenerate {code}", { code: confirm.code }) : t("Regenerate all stale takes")}</span>}
+        title={<span className="flex items-center gap-2"><Coins className="size-4 text-money" />{confirm?.code ? t("Regenerate {code}", { code: confirm.code }) : t("Regenerate all out-of-date takes")}</span>}
         footer={<>
           <Button variant="ghost" onClick={() => setConfirm(null)} disabled={running}>{t("Cancel")}</Button>
           <Button variant="primary" data-autofocus loading={running} icon={<Sparkles className="size-4" />} onClick={run}>{t("Regenerate · {usd}", { usd: usd(planTotal) })}</Button>
         </>}>
         <div className="space-y-3">
-          <p className="text-sm text-mute">{t("Keyframes first; a shot whose keyframe and video are both stale gets one video job (it remakes the keyframe itself). Voices and lip-syncs follow per language.")}</p>
+          <p className="text-sm text-mute">{t("Pictures first; a shot whose picture and video are both out of date gets one video job (it remakes the picture itself). Voices and mouth syncs follow per language.")}</p>
           <div className="max-h-[40vh] overflow-y-auto rounded-xl border border-line">
             <table className="w-full border-collapse text-sm">
               <thead className="sticky top-0 bg-raised text-2xs uppercase tracking-wide text-dim">
@@ -131,7 +132,7 @@ function ShotGroup({ s, pid, canEdit, canReview, freshing, estimate, onFresh, on
     <li className="px-3 py-2.5">
       <div className="mb-1.5 flex flex-wrap items-center gap-2">
         <button type="button" onClick={open} title={t("Open in the storyboard")} className="mono rounded text-xs font-semibold text-ink hover:text-accent-ink hover:underline">{s.code}</button>
-        <Badge>{t(s.status.replaceAll("_", " "))}</Badge>
+        <Badge>{shotStatusLabel(t, s.status)}</Badge>
         <span className="flex-1" />
         {estimate > 0 && <span className="mono text-2xs text-money">{usd(estimate)}</span>}
         {canEdit && <Button size="sm" variant="outline" icon={<RefreshCw className="size-3.5" />} onClick={onRegen}>{t("Regenerate")}</Button>}
@@ -144,7 +145,7 @@ function ShotGroup({ s, pid, canEdit, canReview, freshing, estimate, onFresh, on
             {x.selected && <Badge tone="accent">{t("in use")}</Badge>}
             <span className="min-w-0 flex-1 truncate text-mute" title={x.reason}><span className="mono text-dim">#{x.id}</span> · {x.reason || t("the shot changed")}</span>
             {canReview && (
-              <Button size="sm" variant="ghost" loading={freshing === x.id} onClick={() => onFresh(x)} title={t("Keep this take: clear the stale flag")}>{t("Mark fresh")}</Button>
+              <Button size="sm" variant="ghost" loading={freshing === x.id} onClick={() => onFresh(x)} title={t("Keep this take: clear the out-of-date flag")}>{t("Mark fresh")}</Button>
             )}
           </li>
         ))}

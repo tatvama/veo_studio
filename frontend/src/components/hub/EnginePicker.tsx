@@ -132,7 +132,7 @@ export default function EnginePicker({ shot, purpose: purposeProp, canEdit, valu
                 <div className="flex flex-wrap items-center gap-2 px-1">
                   <Segmented value={listPurpose} onChange={setListPurpose} options={[
                     { value: "dialogue", label: t("Talking clip"), title: t("Engines that animate the voice track (audio → video)") },
-                    { value: "video", label: t("Visual only"), title: t("Regular video engines; voice and lip-sync run afterwards") },
+                    { value: "video", label: t("Visual only"), title: t("Regular video engines; voice and mouth sync run afterwards") },
                   ]} />
                   {listPurpose === "video" && <span className="text-2xs text-dim">{t("A visual-only engine turns off audio-driven acting for this shot.")}</span>}
                 </div>

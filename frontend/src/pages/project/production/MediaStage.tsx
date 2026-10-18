@@ -198,7 +198,7 @@ export function MediaStage({ id, kind, src, poster, aspect, label, emptyLabel, a
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center text-white/60">
             <ImageIcon className="size-8" />
-            <span className="eyebrow !text-white/60">{emptyLabel ?? t("No keyframe yet")}</span>
+            <span className="eyebrow !text-white/60">{emptyLabel ?? t("No picture yet")}</span>
           </div>
         )}
       </motion.div>

@@ -17,6 +17,7 @@ import { Fact } from "./kit";
 import { Gallery, type GalleryItem } from "./Lightbox";
 import { consentNeeds, IDENTITY_STATUS, useActiveJobs, useConsentRows } from "./util";
 import { WorkPanel, scrollToSection } from "./workspace";
+import { quote } from "../../lib/estimates";
 
 type IdStatus = NonNullable<Character["identity"]["status"]>;
 const STATUS = IDENTITY_STATUS;
@@ -25,7 +26,7 @@ const STATUS = IDENTITY_STATUS;
 export function IdentityBadge({ identity }: { identity: Character["identity"] | undefined }) {
   const t = useT();
   const s = identity?.status;
-  if (s === "ready") return <Badge tone="ok" title={t("Identity trained — the face is locked in every keyframe")}><ScanFace className="size-3" />ID</Badge>;
+  if (s === "ready") return <Badge tone="ok" title={t("Identity trained — the face is locked in every picture")}><ScanFace className="size-3" />ID</Badge>;
   if (s === "training" || s === "preparing") return <Badge tone="info" title={t("Identity training")}><Loader2 className="size-3 animate-spin" />ID</Badge>;
   if (s === "failed") return <Badge tone="bad" title={identity?.error || t("Identity training failed")}><ScanFace className="size-3" />ID</Badge>;
   return null;
@@ -74,7 +75,7 @@ export function IdentityPanel({ character: c, index, n }: { character: Character
   const qc = useQueryClient();
   const { projectId, canEdit, canProduce } = useCharScope();
   const editable = canEdit && (!c.locked || canProduce);  // locked: only a producer may train or change the set
-  const { submit } = useGenerate();
+  const { priced, submit } = useGenerate();
   const { data: settings } = useSettings();
   const [confirm, setConfirm] = useState<"train" | "reset" | null>(null);
   const [busy, setBusy] = useState(false);
@@ -99,8 +100,9 @@ export function IdentityPanel({ character: c, index, n }: { character: Character
   const ownPhotos = assets.filter((a) => a.kind === "source");
   const setMeter = scaleMeter(Math.min(ts.count, ts.good), ts.good, 10);
 
-  const makeVariations = () => submit(() => api.post<SubmitResult>(`/api/characters/${c.id}/training/variations`, { count: 6, project_id: projectId ?? null }),
-    tr("Variations of {name}'s photo", { name: c.name }));
+  const makeVariations = () => priced({ quote: () => quote({ action: "variations", character_id: c.id, count: 6, project_id: projectId ?? null }),
+    run: () => api.post<SubmitResult>(`/api/characters/${c.id}/training/variations`, { count: 6, project_id: projectId ?? null }),
+    what: tr("Variations of {name}'s photo", { name: c.name }) });
   const patchAsset = async (aid: number, body: Record<string, unknown>) => {
     try { await api.patch(`/api/character-assets/${aid}`, body); await refresh(); } catch { /* api toasts */ }
   };
@@ -147,7 +149,7 @@ export function IdentityPanel({ character: c, index, n }: { character: Character
   return (
     <WorkPanel id="sec-identity" index={index} n={n} kicker={t("Face model")} icon={<ScanFace />} title={t("Identity")}
       badge={<Badge tone={st.tone} dot>{t(st.label)}</Badge>}
-      description={t("Trains a face model on this character so every keyframe keeps the exact same face.")}
+      description={t("Trains a face model on this character so every picture keeps the exact same face.")}
       actions={<>
         {editable && (
           <Button size="sm" variant={status === "ready" ? "secondary" : "primary"} disabled={inFlight || !enough} icon={<ScanFace className="size-3.5" />} className="max-sm:h-10"
@@ -270,7 +272,7 @@ export function IdentityPanel({ character: c, index, n }: { character: Character
                 ? t("Trains on {n} images: {own} of your photos + {v} variations you approved. Nothing else is added.", { n: ts.count, own: ts.own, v: ts.variations_approved })
                 : t("Trains on its {n} sheet image(s), filled up with variations of the sheet (AI-designed character).", { n: ts.count }),
               t("Training takes 10–30 minutes and runs in the background."),
-              t("When it's ready, keyframes with this character use the trained face automatically."),
+              t("When it's ready, pictures with this character use the trained face automatically."),
             ].map((line) => (
               <li key={line} className="flex gap-2.5"><span className="mt-0.5 grid size-4 shrink-0 place-items-center rounded-full bg-ok/12 text-ok"><Check className="size-2.5" strokeWidth={3.5} /></span>{line}</li>
             ))}
@@ -285,7 +287,7 @@ export function IdentityPanel({ character: c, index, n }: { character: Character
           <Button variant="ghost" onClick={() => setConfirm(null)}>{t("Cancel")}</Button>
           <Button variant="danger" loading={busy} onClick={reset}>{t("Reset identity")}</Button>
         </>}>
-        <p className="text-sm text-mute">{t("Keyframes will stop using the trained face for {name}. Images stay in the reference sheet; you can retrain at any time.", { name: c.name })}</p>
+        <p className="text-sm text-mute">{t("Pictures will stop using the trained face for {name}. Images stay in the reference sheet; you can retrain at any time.", { name: c.name })}</p>
       </Modal>
     </WorkPanel>
   );

@@ -8,7 +8,6 @@ import {
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
 import { StoryboardFramesModal } from "../../components/board/StoryboardFrames";
 import { useGenerate } from "../../components/Generate";
 import { engineShort, isAutoEngine, useModelList } from "../../components/hub/util";
@@ -25,6 +24,9 @@ import { LoadError } from "./production/LoadError";
 import { QualityMenu } from "./production/QualityMenu";
 import { ShotCard } from "./production/ShotCard";
 import { displayMedia, qcFailed, ratioOf, thumbRatio } from "./production/shotMeta";
+import { isOwnMaterial } from "./flow";
+import { MakeItForMe } from "./MakeItForMe";
+import { openImport } from "./importEvent";
 import ShotDrawer from "./ShotDrawer";
 
 export { displayMedia };
@@ -40,7 +42,7 @@ export default function Storyboard() {
   const t = useT();
   const { project, eid, lang, canEdit } = useProjectCtx();
   const qc = useQueryClient();
-  const navigate = useNavigate();
+  const [makeOpen, setMakeOpen] = useState(false);
   const { generate } = useGenerate();
   const { data: ep, isLoading, isError, refetch } = useEpisode(eid, lang);
   const { data: settings } = useSettings();
@@ -134,7 +136,7 @@ export default function Storyboard() {
     return best ? Number(best.dataset.shotCard) : null;
   }, []);
 
-  // keyboard: ←/→ previous / next shot, ↑/↓ row above / below, Esc closes (K, V, A live in the drawer)
+  // keyboard: ←/→ previous / next shot, ↑/↓ row above / below, Esc closes (A, approve, lives in the drawer; nothing that costs money is on one key)
   useEffect(() => {
     const h = (e: KeyboardEvent) => {
       if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -201,16 +203,16 @@ export default function Storyboard() {
     </span>
   );
   const moreItems = [
-    { icon: <Mic className="size-4" />, label: two(t("Voice + lip-sync {lang}", { lang: langShort }), t("Speak every line, then sync the mouths")),
-      onClick: () => void run("lip", () => generate(eid, { action: "lipsync", language: lang, shot_ids: ids }, tr("Voices & lip-sync [{lang}]", { lang: langShort }))) },
+    { icon: <Mic className="size-4" />, label: two(t("Voice + mouth sync {lang}", { lang: langShort }), t("Speak every line, then match the lips")),
+      onClick: () => void run("lip", () => generate(eid, { action: "lipsync", language: lang, shot_ids: ids }, tr("Voices & mouth sync [{lang}]", { lang: langShort }))) },
     { icon: <Music className="size-4" />, label: two(t("Music"), t("Compose a score for this episode")), onClick: () => void run("music", () => generate(eid, { action: "music" }, tr("Music"))) },
     { icon: <WandSparkles className="size-4" />, label: two(t("Animatic"), t("A quick rough cut with sound, to check pacing")),
       onClick: () => void run("animatic", () => generate(eid, { action: "animatic", language: lang }, tr("Animatic [{lang}]", { lang: langShort }))) },
   ];
 
   const filters: { id: Filter; label: string }[] = [
-    { id: "all", label: t("All") }, { id: "kf", label: t("Need keyframe") }, { id: "video", label: t("Need video") },
-    { id: "qc", label: t("QC issues") }, { id: "approved", label: t("Approved") },
+    { id: "all", label: t("All") }, { id: "kf", label: t("Need picture") }, { id: "video", label: t("Need video") },
+    { id: "qc", label: t("Quality issues") }, { id: "approved", label: t("Approved") },
   ];
 
   return (
@@ -229,10 +231,10 @@ export default function Storyboard() {
               </div>
             </div>
             <div className="flex min-w-0 flex-wrap items-stretch divide-x divide-line/70 border-l border-line/70">
-              <Cell label={t("Keyframes")} bar={{ frac: shots.length ? done.kf / shots.length : 0 }} className="min-w-[5.5rem]" title={t("{kf}/{n} keyframes", { kf: done.kf, n: shots.length })}>
+              <Cell label={t("Pictures")} bar={{ frac: shots.length ? done.kf / shots.length : 0 }} className="min-w-[5.5rem]" title={t("{kf}/{n} pictures", { kf: done.kf, n: shots.length })}>
                 <span>{done.kf}</span><span className="text-dim">/{shots.length}</span>
               </Cell>
-              <Cell label={t("QC issues")} tone={counts.qc ? "bad" : "ok"} className="min-w-[4.5rem]">
+              <Cell label={t("Quality issues")} tone={counts.qc ? "bad" : "ok"} className="min-w-[4.5rem]">
                 <span>{counts.qc}</span>
               </Cell>
               <Cell label={t("Approved")} tone={counts.approved && counts.approved === shots.length ? "ok" : "neutral"} className="min-w-[5rem] max-sm:hidden">
@@ -259,8 +261,8 @@ export default function Storyboard() {
                 <span aria-hidden className="tick-v hidden h-5 sm:block" />
                 <div className="flex items-center gap-2">
                   <Button size="sm" icon={<ImageIcon className="size-3.5" />} loading={busyAct === "kf"}
-                    onClick={() => run("kf", () => generate(eid, { action: "keyframes", shot_ids: ids, only_missing: !ids }, ids ? tr("Keyframes (selected)") : tr("Keyframes for shots missing one")))}>
-                    {t("Keyframes")}{sel}
+                    onClick={() => run("kf", () => generate(eid, { action: "keyframes", shot_ids: ids, only_missing: !ids }, ids ? tr("Pictures (selected)") : tr("Pictures for shots missing one")))}>
+                    {t("Pictures")}{sel}
                   </Button>
                   <Button size="sm" icon={<Layers className="size-3.5" />} title={t("Start and end frames for every shot, made in order (each follows the one before); optionally synced so the clips join without a jump")}
                     onClick={() => setFramesFor(ids ? { shotIds: ids, scope: t("{n} selected shots", { n: ids.length }) } : { scope: t("Every scene") })}>
@@ -310,8 +312,15 @@ export default function Storyboard() {
           {!shots.length ? (
             <div className="p-5">
               <Empty icon={<LayoutGrid className="size-8" />} title={t("No shots yet")}
-                sub={t("Write the script, then press 'Plan shots' — or ask the Director to plan them.")}
-                action={<Button variant="primary" onClick={() => navigate(`/p/${project.id}/story`)}>{t("Go to Story")}</Button>} />
+                sub={isOwnMaterial(project) ? t("Bring your script and we turn it into shots: paste it or upload a Word, PDF or text file.")
+                  : t("Bring your script and we turn it into shots, or let the studio make the whole film from your idea.")}
+                action={canEdit ? (
+                  <div className="flex flex-wrap justify-center gap-2">
+                    <Button variant="primary" onClick={() => openImport()}>{t("Import script")}</Button>
+                    {!isOwnMaterial(project) && <Button onClick={() => setMakeOpen(true)}>{t("Make it for me")}</Button>}
+                  </div>
+                ) : undefined} />
+              <MakeItForMe open={makeOpen} onClose={() => setMakeOpen(false)} hasShots={false} />
             </div>
           ) : !visible.length ? (
             <div className="p-5">
@@ -350,7 +359,7 @@ export default function Storyboard() {
           )}
           {shots.length > 0 && (
             <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 px-3 pb-6 pt-2 text-2xs text-dim sm:px-4">
-              {t("Drag to reorder")} · <Kbd>←</Kbd><Kbd>→</Kbd><Kbd>↑</Kbd><Kbd>↓</Kbd> {t("move between shots")} · <Kbd>A</Kbd> {t("approve")} · <Kbd>K</Kbd> {t("keyframe")} · <Kbd>V</Kbd> {t("video")} · <Kbd>Esc</Kbd> {t("close")}
+              {t("Drag to reorder")} · <Kbd>←</Kbd><Kbd>→</Kbd><Kbd>↑</Kbd><Kbd>↓</Kbd> {t("move between shots")} · <Kbd>A</Kbd> {t("approve")} · <Kbd>Esc</Kbd> {t("close")}
             </p>
           )}
         </div>

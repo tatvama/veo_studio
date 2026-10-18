@@ -25,7 +25,7 @@ export function ProjectStrip({ pid, currentEid, onOpenEpisode, index, className 
         <Pair label={t("Approved")} value={secs(data.footage.approved_s)} />
         <Pair label={t("Spent")} money value={cap ? `${usd(data.spend.total_usd)} / ${usd(cap)}` : usd(data.spend.total_usd)} />
         {data.spend.per_approved_second !== null && <Pair label={t("Per second")} money value={usd(data.spend.per_approved_second)} />}
-        {data.footage.stale_takes > 0 && <Pair label={t("Stale")} value={String(data.footage.stale_takes)} warn />}
+        {data.footage.stale_takes > 0 && <Pair label={t("Out of date")} value={String(data.footage.stale_takes)} warn />}
         {data.queue.active_jobs > 0 && <Pair label={t("Jobs")} value={String(data.queue.active_jobs)} accent />}
       </dl></div>
 
@@ -46,7 +46,7 @@ export function ProjectStrip({ pid, currentEid, onOpenEpisode, index, className 
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium" title={e.title}><span className="mono text-accent-ink">E{String(e.number).padStart(2, "0")}</span> {e.title || t("Untitled")}</span>
                     <span className="mono block truncate text-2xs text-dim">
-                      {secs(e.footage.approved_s)} {t("approved")}{e.footage.stale_takes ? <span className="text-warn"> · {t("{n} stale", { n: e.footage.stale_takes })}</span> : null}
+                      {secs(e.footage.approved_s)} {t("approved")}{e.footage.stale_takes ? <span className="text-warn"> · {t("{n} out of date", { n: e.footage.stale_takes })}</span> : null}
                     </span>
                   </span>
                   <span className="mono shrink-0 text-xs text-money">{usd(e.spend.total_usd)}</span>

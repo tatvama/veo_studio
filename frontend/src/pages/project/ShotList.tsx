@@ -1,25 +1,21 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowRight, Clapperboard, Eye, FileText, ListVideo, Lock, PauseCircle, PenLine, Rocket, Save, Users } from "lucide-react";
+import { AlertTriangle, ArrowRight, Clapperboard, Eye, FileText, ListVideo, Lock, PauseCircle, PenLine, Save, Users, Wand2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { ImportWizard } from "../../components/board/ImportWizard";
 import { newScene, sceneAnchor, ShotListEditor, withKeys, type ShotPickerProps } from "../../components/board/ShotListEditor";
-import { useGenerate } from "../../components/Generate";
 import { uploadCharacterImage } from "../../components/room/AiMade";
 import { Fact, LoadError, RoomHeader, RoomPage, SaveStatus, type SaveState } from "../../components/room/kit";
 import { Outline, StatStrip, Workspace, pad, sceneCode, type OutlineItem } from "../../components/room/workspace";
-import { Alert, Badge, Button, Meter, Modal, Select, Skeleton, Toggle } from "../../components/ui";
+import { Alert, Badge, Button, Meter, Skeleton } from "../../components/ui";
 import { api } from "../../lib/api";
-import { cn } from "../../lib/cn";
-import { QUALITY_INFO } from "../../lib/format";
 import { tr, useT } from "../../lib/i18n";
 import { useEditLock, useLockHolder } from "../../lib/collab";
 import { useBoard, useCharacters, useLocations, useVideoEngines } from "../../lib/queries";
 import type { Board, BoardScene, Character } from "../../lib/types";
 import { useProjectCtx } from "./context";
-
-const STEPS = ["cast", "keyframes", "videos", "extend", "voices", "sound", "music", "export"] as const;
+import { MakeItForMe, PRODUCE_STEPS, produceStepLabels } from "./MakeItForMe";
 
 /** Clean copy for the API: no client keys, no read-only fields. */
 function payload(scenes: BoardScene[], version?: string) {
@@ -51,7 +47,6 @@ export default function ShotListPage() {
   const { data: engines } = useVideoEngines();
   const { data: projectLocs } = useLocations(project.id);
   const { data: allLocs } = useLocations();
-  const { generate } = useGenerate();
   const [scenes, setScenes] = useState<BoardScene[]>([]);
   const [saving, setSaving] = useState(false);
   const [importing, setImporting] = useState(params.get("import") === "1");
@@ -180,8 +175,10 @@ export default function ShotListPage() {
             <Button variant={dirty ? "primary" : "secondary"} icon={<Save className="size-4" />} loading={saving} disabled={!dirty} onClick={() => void save()}>
               {t("Save")}
             </Button>
-            <Button variant={dirty ? "secondary" : "primary"} icon={<Rocket className="size-4" />} disabled={!stats.shots} onClick={() => setProduce(true)}>
-              {t("Produce all")}
+            <Button variant={dirty ? "secondary" : "primary"} icon={<Wand2 className="size-4" />} disabled={!stats.shots}
+              title={t("Let the studio make everything the shots still need (you see the price first)")}
+              onClick={async () => { if (!dirty || (await save())) setProduce(true); }}>
+              {t("Make it for me")}
             </Button>
           </div>
         )} />
@@ -203,10 +200,10 @@ export default function ShotListPage() {
           {board.produce_paused && !dirty && (
             <Alert tone="info" icon={<PauseCircle className="size-4" />}>
               <span className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                <span className="min-w-0 flex-1">{t("Produce all stopped after the new character looks and voices. Check the faces and voices in Cast, then carry on: nothing is made twice.")}</span>
+                <span className="min-w-0 flex-1">{t("Stopped after the new cast pictures and voices. Check the faces and voices in Cast, then carry on: nothing is made twice.")}</span>
                 <span className="flex gap-2">
                   <Button size="sm" variant="ghost" icon={<Users className="size-3.5" />} onClick={() => nav(`/p/${project.id}/bible`)}>{t("Open Cast")}</Button>
-                  {canEdit && <Button size="sm" variant="primary" icon={<Rocket className="size-3.5" />} onClick={() => setProduce(true)}>{t("Carry on")}</Button>}
+                  {canEdit && <Button size="sm" variant="primary" icon={<Wand2 className="size-3.5" />} onClick={() => setProduce(true)}>{t("Carry on")}</Button>}
                 </span>
               </span>
             </Alert>
@@ -264,13 +261,10 @@ export default function ShotListPage() {
           versionRef.current = b.version;
           setDirty(false);
           qc.invalidateQueries({ queryKey: ["characters"] });  // saving linked the script's characters to this project
+          nav(`/p/${project.id}/bible`, { state: { fromImport: true } });  // next: make the cast (priced there)
         }} />
-      <ProduceModal open={produce} onClose={() => setProduce(false)} dirty={dirty}
-        onGo={async (steps, quality, opts) => {
-          if (dirty && !(await save())) return;
-          setProduce(false);
-          await generate(eid, { action: "produce", steps, quality: quality || null, ...opts }, tr("Produce all"));
-        }} />
+      <MakeItForMe open={produce} onClose={() => setProduce(false)} hasShots={stats.shots > 0}
+        beforeRun={async () => !dirtyRef.current || !!(await save())} />
     </RoomPage>
   );
 }
@@ -281,34 +275,20 @@ function bucket(done: number, total: number, cells: number) {
   return Math.max(1, Math.min(cells, Math.round((done / total) * Math.min(total, cells))));
 }
 
-/** The production steps, with what each does. Shared by the "Produce all" dialog and the empty state. */
-function stepLabels(t: (s: string) => string): Record<(typeof STEPS)[number], [string, string]> {
-  return {
-    cast: [t("Cast looks & voices"), t("Pictures for characters and places that have none, and a voice for each speaker, so they look and sound the same in every scene")],
-    keyframes: [t("Keyframes"), t("A still image per shot, using your characters' reference photos")],
-    videos: [t("Videos"), t("Each shot animated from its keyframe")],
-    extend: [t("Extensions"), t("Longer clips for shots with “Extend to”")],
-    voices: [t("Voices & lip-sync"), t("Dialogue in each character's voice, lips matched; voice-over by the narrator")],
-    sound: [t("Sound effects"), t("Each scene's ambience and each shot's effects, from your script's sound notes")],
-    music: [t("Music"), t("Background music from each scene's mood and music notes, on one theme")],
-    export: [t("Final export"), t("The finished video with captions")],
-  };
-}
-
-/** A hairline strip of what "Produce all" will do once the list exists. */
+/** A hairline strip of what "Make it for me" will do once the list exists. */
 function PipelineStrip() {
   const t = useT();
-  const label = stepLabels(t);
+  const label = produceStepLabels(t);
   return (
     <section className="hud relative min-w-0 rounded-xl border border-line bg-panel px-4 py-3.5">
-      <p className="eyebrow mb-3">{t("Produce all")}</p>
+      <p className="eyebrow mb-3">{t("Make it for me")}</p>
       <ol className="flex flex-wrap items-center gap-x-1 gap-y-2">
-        {STEPS.map((s, i) => (
+        {PRODUCE_STEPS.map((s, i) => (
           <li key={s} className="flex items-center gap-1">
             <span className="inline-flex h-7 items-center gap-1.5 rounded-lg border border-line bg-raised/50 px-2 text-xs text-mute">
               <span className="mono text-2xs text-dim">{pad(i + 1)}</span>{label[s][0]}
             </span>
-            {i < STEPS.length - 1 && <ArrowRight aria-hidden className="size-3 text-dim" />}
+            {i < PRODUCE_STEPS.length - 1 && <ArrowRight aria-hidden className="size-3 text-dim" />}
           </li>
         ))}
       </ol>
@@ -329,72 +309,5 @@ function StartCard({ icon, title, text, onClick, disabled, tag, kicker, index }:
       <span className="text-sm leading-relaxed text-mute">{text}</span>
       <ArrowRight aria-hidden className="mt-1 size-4 text-dim transition-[transform,color] group-hover/start:translate-x-1 group-hover/start:text-accent-ink" />
     </button>
-  );
-}
-
-type ProduceOpts = { review_looks: boolean; link_scenes: "auto" | "never"; music_per_scene: boolean };
-
-function ProduceModal({ open, onClose, onGo, dirty }: {
-  open: boolean; onClose: () => void; dirty: boolean; onGo: (steps: string[], quality: string, opts: ProduceOpts) => Promise<void>;
-}) {
-  const t = useT();
-  const { project } = useProjectCtx();
-  const [on, setOn] = useState<Record<string, boolean>>(() => Object.fromEntries(STEPS.map((s) => [s, true])));
-  const [quality, setQuality] = useState("");
-  const [review, setReview] = useState(true);
-  const [link, setLink] = useState(true);
-  const [perScene, setPerScene] = useState(true);  // music: one piece per scene (off: one score for the episode)
-  const [busy, setBusy] = useState(false);
-  const label = stepLabels(t);
-  const steps = STEPS.filter((s) => on[s]);
-  return (
-    <Modal open={open} onClose={() => !busy && onClose()} size="md"
-      title={<span className="flex items-center gap-2"><Rocket className="size-4 text-accent-ink" />{t("Produce all")}</span>}
-      footer={<>
-        <Button variant="ghost" onClick={onClose} disabled={busy}>{t("Cancel")}</Button>
-        <Button variant="primary" loading={busy} disabled={!steps.length}
-          onClick={async () => { setBusy(true); try { await onGo(steps, quality, { review_looks: review, link_scenes: link ? "auto" : "never", music_per_scene: perScene }); } finally { setBusy(false); } }}>
-          {dirty ? t("Save & see the cost") : t("See the cost")}
-        </Button>
-      </>}>
-      <div className="space-y-4">
-        <p className="text-sm text-mute">{t("Runs the steps in order and only makes what's missing. You'll see the full cost before anything starts; the queue follows your API rate limits.")}</p>
-        <div>
-          <p className="eyebrow mb-2 flex items-center justify-between"><span>{t("Steps")}</span><span className="mono">{steps.length} / {STEPS.length}</span></p>
-          <ol className="overflow-hidden rounded-xl border border-line">
-            {STEPS.map((s, i) => (
-              <li key={s} className={cn("flex items-start gap-3 border-b border-line px-3 py-2.5 transition-colors last:border-b-0", on[s] ? "bg-accent/5" : "")}>
-                <span className={cn("mono mt-0.5 grid size-6 shrink-0 place-items-center rounded-md border text-2xs font-semibold transition-colors",
-                  on[s] ? "border-accent/40 bg-accent/10 text-accent-ink" : "border-line text-dim")}>{pad(i + 1)}</span>
-                <div className="min-w-0 flex-1">
-                  <p className={cn("text-sm font-medium", !on[s] && "text-mute")}>{label[s][0]}</p>
-                  <p className="text-2xs leading-snug text-dim">{label[s][1]}</p>
-                  {s === "music" && on[s] && (
-                    <div className="mt-2">
-                      <Toggle checked={perScene} onChange={setPerScene}
-                        label={<span className="text-xs text-mute">{t("One piece per scene (follows each scene's mood)")}</span>} />
-                    </div>
-                  )}
-                </div>
-                <Toggle checked={!!on[s]} onChange={(v) => setOn({ ...on, [s]: v })} label={<span className="sr-only">{label[s][0]}</span>} />
-              </li>
-            ))}
-          </ol>
-        </div>
-        <div className="flex flex-col items-start gap-2.5 rounded-xl border border-line px-3 py-2.5">
-          <Toggle checked={review} onChange={setReview} disabled={!on.cast}
-            label={<span className="text-sm">{t("Stop after new looks & voices so I can check them first")}</span>} />
-          <Toggle checked={link} onChange={setLink} disabled={!on.videos}
-            label={<span className="text-sm">{t("A scene that picks up straight from the last starts on its last frame")}</span>} />
-        </div>
-        <label className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 text-sm">
-          <span className="font-medium">{t("Video quality")}</span>
-          <Select value={quality} onChange={(e) => setQuality(e.target.value)} className="w-full sm:w-64" aria-label={t("Video quality")}>
-            <option value="">{t("Project default ({q})", { q: QUALITY_INFO[project.quality_mode]?.label ?? project.quality_mode })}</option>
-            {Object.entries(QUALITY_INFO).map(([k, v]) => <option key={k} value={k}>{t(v.label)} · {v.price}</option>)}
-          </Select>
-        </label>
-      </div>
-    </Modal>
   );
 }

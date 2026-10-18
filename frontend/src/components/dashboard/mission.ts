@@ -1,7 +1,7 @@
 import { tr } from "../../lib/i18n";
 import type { Episode, Project } from "../../lib/types";
 import type { EpisodeDashboard } from "../../lib/v3";
-import type { NextStep } from "../../pages/project/nextStep";
+import type { Make, NextStep } from "../../pages/project/nextStep";
 import type { Stage } from "../../pages/project/pipeline";
 import { isQcFailedShot } from "./shotState";
 import type { Tone } from "./tone";
@@ -45,7 +45,9 @@ export interface MissionAction {
   text: string;
   label: string;
   go: ActionGo;
-  secondary?: { label: string; go: ActionGo };
+  /** The primary button starts this (with its price first) instead of `go`. */
+  make?: Make;
+  secondary?: { label: string; go: ActionGo; make?: Make };
 }
 
 /**
@@ -62,8 +64,8 @@ export function missionAction(a: {
   // Autopilot is working or waiting: that is the headline.
   if (step && (step.tone === "info" || step.tone === "warn")) {
     return {
-      tone: step.tone === "info" ? "ai" : "warn", kicker: tr("Autopilot"), text: step.text, label: step.action, go: tab(step.tab),
-      secondary: step.secondary ? { label: step.secondary.label, go: tab(step.secondary.tab) } : undefined,
+      tone: step.tone === "info" ? "ai" : "warn", kicker: tr("Make it for me"), text: step.text, label: step.action, go: tab(step.tab), make: step.make,
+      secondary: step.secondary ? { label: step.secondary.label, go: tab(step.secondary.tab), make: step.secondary.make } : undefined,
     };
   }
   if (a.canProduce && d && d.queue.pending_approvals > 0) {
@@ -83,15 +85,16 @@ export function missionAction(a: {
   if (d && d.footage.stale_takes > 0) {
     const n = d.footage.stale_takes;
     return {
-      tone: "warn", kicker: tr("Change impact"), go: { kind: "anchor", id: "mission-impact" }, label: tr("Review change impact"),
+      tone: "warn", kicker: tr("Out of date"), go: { kind: "anchor", id: "mission-impact" }, label: tr("See what changed"),
       text: n === 1 ? tr("1 take is out of date because its shot changed") : tr("{n} takes are out of date because their shots changed", { n }),
     };
   }
   if (!step) return null;
   const waiting = d?.shots.in_review ?? 0;
-  const secondary = step.secondary ? { label: step.secondary.label, go: tab(step.secondary.tab) }
+  const secondary = step.secondary ? { label: step.secondary.label, go: tab(step.secondary.tab), make: step.secondary.make }
     : waiting > 0 && a.canReview ? { label: waiting === 1 ? tr("Review 1 shot") : tr("Review {n} shots", { n: waiting }), go: tab("storyboard") } : undefined;
   return {
-    tone: step.tone === "ok" ? "ok" : "accent", kicker: step.tone === "ok" ? tr("Ready") : tr("Next step"), text: step.text, label: step.action, go: tab(step.tab), secondary,
+    tone: step.tone === "ok" ? "ok" : "accent", kicker: step.tone === "ok" ? tr("Ready") : "", text: step.text, label: step.action, go: tab(step.tab),
+    make: step.make, secondary,
   };
 }

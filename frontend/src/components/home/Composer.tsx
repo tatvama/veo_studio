@@ -1,14 +1,15 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { FileText, LayoutTemplate, Lightbulb, PenLine, Shuffle, Sparkles, Star, Wand2, X } from "lucide-react";
+import { FileCheck2, FileText, LayoutTemplate, Lightbulb, PenLine, Shuffle, Sparkles, Star, Wand2, X } from "lucide-react";
 import { AnimatePresence, motion, useAnimate } from "motion/react";
-import { forwardRef, useId, useImperativeHandle, useRef, useState, type ReactNode } from "react";
+import { forwardRef, useId, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { api } from "../../lib/api";
 import { LANG_NAMES, LANG_SHORT, QUALITY_INFO } from "../../lib/format";
 import { tr, useT } from "../../lib/i18n";
 import { useSettings } from "../../lib/queries";
+import { detectScript, scriptTitle, withoutTitle } from "../../lib/scriptDetect";
 import type { Project } from "../../lib/types";
 import { MOD } from "../shell/keys";
 import type { ProjectTemplate } from "../shell/templates";
@@ -147,26 +148,38 @@ export const Composer = forwardRef<ComposerHandle, { onTemplateChange?: (tpl: Pr
     if (!next.includes(primary)) setPrimary(next[0]);
   };
 
-  /** idea: the Director writes it · import: bring your own script · manual: build the shot list yourself. */
-  const create = async (mode: "idea" | "import" | "manual" = "idea") => {
+  // One box for both: a pasted script is used as written (imported, then checked); a short idea is written up for you.
+  const guess = useMemo(() => detectScript(concept), [concept]);
+
+  /**
+   * idea: the Director writes it · script: the text in the box is a script, imported with your words (the import opens on
+   * the story check) · import: upload a script file · manual: build the shot list yourself.
+   */
+  const create = async (mode: "idea" | "script" | "import" | "manual" = guess.script ? "script" : "idea") => {
     const own = mode !== "idea";
     if (!own && concept.trim().length < 3) {
-      toast.error(tr("Describe your idea first"));
+      toast.error(tr("Paste your script or describe your idea first"));
       area.current?.focus();
       if (scope.current) void animate(scope.current, { x: [0, -7, 7, -4, 4, 0] }, { duration: 0.35 });
       return;
     }
-    setBusy(mode);
+    setBusy(mode === "script" ? "idea" : mode);
     try {
-      const fallback = mode === "import" ? tr("Imported script") : tr("Shot-by-shot project");
+      const pasted = mode === "script" ? concept.trim() : "";
+      const fallback = mode === "manual" ? tr("Shot-by-shot project") : tr("My script");
+      // a pasted script is not a concept: the project keeps a short excerpt, and its title from the script's first line
+      const excerpt = pasted ? pasted.split("\n").map((l) => l.trim()).filter(Boolean).slice(0, 3).join(" · ").slice(0, 240) : "";
       const p = await api.post<Project>("/api/projects", {
-        concept: concept.trim().length >= 3 ? concept : fallback, title: own && concept.trim().length < 3 ? fallback : "",
+        concept: pasted ? excerpt : concept.trim().length >= 3 ? concept : fallback,
+        title: pasted ? scriptTitle(pasted) || fallback : own && concept.trim().length < 3 ? fallback : "",
         type, aspect, languages: langs, primary_language: primary, style_preset: style || null, quality_mode: quality || null,
-        agent_mode: "copilot", auto_brief: !own, workflow: mode === "manual" ? "shots" : mode === "import" ? "script" : "director",
+        agent_mode: "copilot", auto_brief: !own, workflow: mode === "manual" ? "shots" : mode === "idea" ? "director" : "script",
       });
       qc.invalidateQueries({ queryKey: ["projects"] });
       toast.success(tr("Project \"{title}\" created", { title: p.title }));
-      nav(own ? `/p/${p.id}/shots${mode === "import" ? "?import=1" : ""}` : `/p/${p.id}/${autopilot ? `brief?autopilot=${autopilot}` : "story"}`);
+      // the title line became the project's title: it is not part of the story to read
+      if (mode === "script" || mode === "import") nav(`/p/${p.id}/shots`, { state: { importScript: withoutTitle(pasted) } });
+      else nav(mode === "manual" ? `/p/${p.id}/shots` : `/p/${p.id}/${autopilot ? `brief?autopilot=${autopilot}` : "story"}`);
     } catch {
       /* the api helper already showed the error */
     } finally {
@@ -215,13 +228,23 @@ export const Composer = forwardRef<ComposerHandle, { onTemplateChange?: (tpl: Pr
               value={concept}
               onChange={(e) => setConcept(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); void create(); } }}
-              aria-label={t("Your concept")}
-              placeholder={t("e.g. A young temple priest discovers the brass lamp moves by itself at night…")}
-              rows={2}
+              aria-label={t("Paste your script, or describe your idea")}
+              placeholder={t("Paste your script, or describe your idea: “A young temple priest discovers the brass lamp moves by itself at night…”")}
+              rows={3}
               className="block max-h-72 min-h-[4.5rem] w-full resize-none bg-transparent text-base leading-relaxed text-ink [field-sizing:content] placeholder:text-dim focus:outline-none @xl:text-lg"
             />
-            <div className="flex items-center justify-between gap-3 pb-3 pt-1 text-2xs text-dim">
-              <span className="mono">{chars > 0 ? t("{n} chars", { n: chars }) : t("One or two sentences is enough.")}</span>
+            <div className="flex items-center justify-between gap-3 pb-3 pt-1 text-2xs text-dim" aria-live="polite">
+              {guess.script ? (
+                <span className="inline-flex items-center gap-1.5 rounded-md border border-ok/30 bg-ok/10 px-2 py-1 text-xs font-medium text-ok">
+                  <FileCheck2 className="size-3.5" />
+                  {t("Script found: {s}, {l} — we'll use your words", {
+                    s: guess.scenes === 1 ? t("1 scene") : t("{n} scenes", { n: guess.scenes }),
+                    l: guess.lines === 1 ? t("1 line") : t("{n} lines", { n: guess.lines }),
+                  })}
+                </span>
+              ) : (
+                <span>{chars > 0 ? <span className="mono">{t("{n} chars", { n: chars })}</span> : t("An idea in a sentence or two, or a whole script (scenes, NAME: lines).")}</span>
+              )}
             </div>
           </div>
 
@@ -335,28 +358,32 @@ export const Composer = forwardRef<ComposerHandle, { onTemplateChange?: (tpl: Pr
 
           {/* ── footer: autopilot + start ───────────────────────────────── */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-3 border-t border-line bg-raised/50 px-4 py-3">
-            <div className="flex min-w-0 flex-1 basis-72 flex-wrap items-center gap-x-3 gap-y-1">
-              <label htmlFor="ai-reach" className="text-sm font-medium">{t("How far should AI take it?")}</label>
-              <Select id="ai-reach" value={autopilot} onChange={(e) => setAutopilot(e.target.value as typeof autopilot)} className="!w-auto min-w-[13rem] max-w-full">
-                <option value="">{t("Step by step — I guide each step")}</option>
-                <option value="script">{t("Write the script for me")}</option>
-                <option value="storyboard">{t("Up to the storyboard (keyframes)")}</option>
-                <option value="final">{t("The whole video")}</option>
-              </Select>
-              {autopilot && <span className="min-w-0 text-xs text-dim">{t("Autopilot · asks once for budget, stops for your approval at each milestone")}</span>}
-            </div>
-            <Button variant="primary" size="lg" loading={busy === "idea"} disabled={!!busy && busy !== "idea"} onClick={() => void create()} icon={<Wand2 className="size-4" />} className="w-full sm:w-auto sm:min-w-32">
-              {t("Start")}
+            {guess.script ? (
+              <p className="min-w-0 flex-1 basis-72 text-xs text-mute">{t("Next you check the story we read from it (scenes, shots, the people in it), then make the cast. Nothing is spent without a price.")}</p>
+            ) : (
+              <div className="flex min-w-0 flex-1 basis-72 flex-wrap items-center gap-x-3 gap-y-1">
+                <label htmlFor="ai-reach" className="text-sm font-medium">{t("How far should AI take it?")}</label>
+                <Select id="ai-reach" value={autopilot} onChange={(e) => setAutopilot(e.target.value as typeof autopilot)} className="!w-auto min-w-[13rem] max-w-full">
+                  <option value="">{t("Step by step — I guide each step")}</option>
+                  <option value="script">{t("Write the script for me")}</option>
+                  <option value="storyboard">{t("Up to the storyboard (pictures)")}</option>
+                  <option value="final">{t("The whole video")}</option>
+                </Select>
+                {autopilot && <span className="min-w-0 text-xs text-dim">{t("Asks once for the budget, and stops for you to check at each step")}</span>}
+              </div>
+            )}
+            <Button variant="primary" size="lg" loading={busy === "idea"} disabled={!!busy && busy !== "idea"} onClick={() => void create()} icon={guess.script ? <FileCheck2 className="size-4" /> : <Wand2 className="size-4" />} className="w-full sm:w-auto sm:min-w-32">
+              {guess.script ? t("Start with my script") : t("Start")}
             </Button>
           </div>
 
-          {/* ── bring your own script / full manual control ─────────────── */}
-          <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-3">
-            <span className="min-w-0 flex-1 basis-52 text-xs text-mute">{t("Already have a script, or want to direct every shot yourself? No AI writing, no co-pilot.")}</span>
-            <Button variant="outline" loading={busy === "import"} disabled={!!busy && busy !== "import"} icon={<FileText className="size-4" />} onClick={() => void create("import")}>
-              {t("Import my script")}
+          {/* ── a script file, or full manual control ───────────────────── */}
+          <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-2.5">
+            <span className="min-w-0 flex-1 basis-52 text-xs text-dim">{t("Script in a Word, PDF or text file? Or want to direct every shot yourself?")}</span>
+            <Button size="sm" variant="ghost" loading={busy === "import"} disabled={!!busy && busy !== "import"} icon={<FileText className="size-3.5" />} onClick={() => void create("import")}>
+              {t("Upload a script file")}
             </Button>
-            <Button variant="outline" loading={busy === "manual"} disabled={!!busy && busy !== "manual"} icon={<PenLine className="size-4" />} onClick={() => void create("manual")}>
+            <Button size="sm" variant="ghost" loading={busy === "manual"} disabled={!!busy && busy !== "manual"} icon={<PenLine className="size-3.5" />} onClick={() => void create("manual")}>
               {t("Build shot by shot")}
             </Button>
           </div>

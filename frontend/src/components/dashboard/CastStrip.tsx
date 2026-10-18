@@ -13,13 +13,13 @@ export function CastStrip({ pid, cast, index, className }: { pid: number; cast: 
   const t = useT();
   const locked = cast.filter((c) => c.locked).length;
   const shown = cast.slice(0, MAX);
-  const link = <Link to={`/p/${pid}/bible`} className="inline-flex items-center gap-1 text-xs font-medium text-accent-ink hover:underline">{t("Bible")}<ArrowRight className="size-3.5" /></Link>;
+  const link = <Link to={`/p/${pid}/bible`} className="inline-flex items-center gap-1 text-xs font-medium text-accent-ink hover:underline">{t("Cast")}<ArrowRight className="size-3.5" /></Link>;
 
   return (
     <Panel index={index} className={className} eyebrow={t("Cast")} icon={<Users />} actions={link}>
       {!cast.length ? (
         <RoomEmpty icon={<Users />} title={t("No characters yet")} sub={t("Create the people of the story once; every shot keeps them looking the same.")}
-          action={<Link to={`/p/${pid}/bible`} className="btn-primary inline-flex h-7 items-center rounded-lg px-2.5 text-xs font-medium">{t("Open the bible")}</Link>} />
+          action={<Link to={`/p/${pid}/bible`} className="btn-primary inline-flex h-7 items-center rounded-lg px-2.5 text-xs font-medium">{t("Open Cast")}</Link>} />
       ) : (
         <div className="@container"><div className="flex flex-col gap-4 @2xl:flex-row @2xl:items-center">
           <div className="shrink-0 @2xl:w-44">
