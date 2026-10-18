@@ -76,20 +76,56 @@ def cast_status(db: Session, shot: Shot) -> dict[str, list[str]]:
     return out
 
 
-def blocked_info(db: Session, shot: Shot) -> dict[str, Any] | None:
-    """The shot's latest video attempt, when a safety filter blocked it and nothing newer replaced it."""
-    j = (db.query(Job).filter(Job.shot_id == shot.id, Job.type == "video").order_by(Job.id.desc()).limit(8).all())
-    j = next((x for x in j if not (x.payload or {}).get("shootout")), None)
-    if not j or j.status != "failed" or not (j.error or "").startswith(BLOCK_PREFIX):
+def last_failure(db: Session, shot: Shot) -> dict[str, Any] | None:
+    """The shot's latest video attempt (shootouts left out), when it failed and nothing newer replaced it:
+    {job_id, error, engines, engine_labels, blocked, at}. `engines`: the ones a safety filter blocked (blocked), else
+    the ones that were tried and failed; "Try another engine" offers the others (options "recover")."""
+    rows = (db.query(Job).filter(Job.shot_id == shot.id, Job.type == "video").order_by(Job.id.desc()).limit(8).all())
+    j = next((x for x in rows if not (x.payload or {}).get("shootout")), None)
+    if not j or j.status != "failed":
         return None
+    err = j.error or ""
+    blocked = err.startswith(BLOCK_PREFIX)
     res = j.result or {}
-    engines = list(res.get("blocked_engines") or [])
-    if not engines:  # older jobs: read the engine names out of the attempts
-        engines = [a["engine"] for a in res.get("attempts") or [] if "block" in str(a.get("error", "")).lower()]
-    rows = {m.id: m for m in db.query(AIModel).filter(AIModel.id.in_(engines)).all()} if engines else {}
-    return {"job_id": j.id, "error": (j.error or "")[len(BLOCK_PREFIX) + 2:][:400], "engines": engines,
-            "engine_labels": [rows[e].display_name if e in rows else e.split(":", 1)[-1] for e in engines],
-            "at": j.finished_at.isoformat() + "Z" if j.finished_at else None}
+    attempts = [a for a in res.get("attempts") or [] if isinstance(a, dict) and a.get("engine")]
+    if blocked:
+        engines = list(res.get("blocked_engines") or [])
+        if not engines:  # older jobs: read the engine names out of the attempts
+            engines = [a["engine"] for a in attempts if "block" in str(a.get("error", "")).lower()]
+    else:  # (an engine held back by a rate limit or a price cap didn't fail: it isn't left out)
+        engines = list(dict.fromkeys(a["engine"] for a in attempts
+                                     if not str(a.get("error", "")).startswith(("rate limited", "costs $"))))
+    models = {m.id: m for m in db.query(AIModel).filter(AIModel.id.in_(engines)).all()} if engines else {}
+    return {"job_id": j.id, "error": (err[len(BLOCK_PREFIX) + 2:] if blocked else err)[:400], "engines": engines,
+            "engine_labels": [models[e].display_name if e in models else e.split(":", 1)[-1] for e in engines],
+            "blocked": blocked, "at": j.finished_at.isoformat() + "Z" if j.finished_at else None}
+
+
+def blocked_info(db: Session, shot: Shot, failure: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """The shot's latest video attempt, when a safety filter blocked it and nothing newer replaced it (`failure`: its
+    last_failure, when the caller has it already)."""
+    f = failure if failure is not None else last_failure(db, shot)
+    if not f or not f["blocked"]:
+        return None
+    return {k: f[k] for k in ("job_id", "error", "engines", "engine_labels", "at")}
+
+
+def pick(db: Session, opts: list[dict[str, Any]], engine: str | None, what: str) -> dict[str, Any]:
+    """The named engine among the options (any route of a listed model counts: that route is run, the router still
+    falls back to the model's other routes), else the first option. ValueError in plain words when there is none."""
+    if not opts:
+        raise ValueError(f"No other engine can {what} this shot. Switch one on in Model Hub, or add a key.")
+    if not engine:
+        return opts[0]
+    hit = next((o for o in opts if o["id"] == engine), None)
+    if hit is None:
+        key = model_hub.route_key(db.get(AIModel, engine), engine)
+        hit = next((o for o in opts if key and model_hub.route_key(db.get(AIModel, o["id"])) == key), None)
+        if hit is not None:
+            hit = {**hit, "id": engine}
+    if hit is None:
+        raise ValueError(f"{engine} can't {what} this shot")
+    return hit
 
 
 def prefer_registered(db: Session, shot_id: int | None, cands: list[tuple[AIModel, str]]) -> list[tuple[AIModel, str]]:

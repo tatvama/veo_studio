@@ -14,7 +14,7 @@ export const estimateBatch = (eid: number, body: Record<string, unknown>, silent
   api.post<Estimate>(`/api/episodes/${eid}/estimate`, body, { silent });
 
 export type QuoteAction =
-  | "extend" | "endframe" | "edit" | "enhance" | "sheet" | "expressions" | "lighting" | "outfit" | "variations"
+  | "extend" | "endframe" | "recover" | "draft" | "edit" | "enhance" | "sheet" | "expressions" | "lighting" | "outfit" | "variations"
   | "voice_design" | "voice_preview" | "location_images" | "sfx" | "table_read";
 
 /** One single-item action, named by the item it acts on (`shot_id`, `take_id`, `character_id`, …) plus its options. */
@@ -24,6 +24,7 @@ export const quote = (body: { action: QuoteAction } & Record<string, unknown>, s
 /** Backend words in price lines and job names, and the plain words the UI uses for them. Longest first. */
 const PLAIN: [string, string][] = [
   ["Cast looks & voices", "Cast pictures & voices"], ["Voices & lip-sync", "Voices & mouth sync"], ["Final export", "Final film"],
+  ["Draft videos 480p", "Quick drafts (480p videos)"],
   ["Extensions", "Longer clips"], ["Keyframes", "Pictures"], ["Keyframe", "Picture"], ["Lip-sync", "Mouth sync"], ["lip-sync", "mouth sync"],
 ];
 

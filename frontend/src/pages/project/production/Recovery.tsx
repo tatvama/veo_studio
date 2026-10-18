@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { useGenerate } from "../../../components/Generate";
 import { Alert, Badge, Button, Menu, Skeleton, Tooltip } from "../../../components/ui";
 import { api } from "../../../lib/api";
+import { quote } from "../../../lib/estimates";
 import { usd } from "../../../lib/format";
 import { tr, useT } from "../../../lib/i18n";
 import { useCharacters, useShotAlternatives } from "../../../lib/queries";
@@ -41,15 +42,18 @@ function useAlternatives(shot: Shot, purpose: "recover" | "draft", enabled: bool
   return q;
 }
 
-/** Starts a recover / draft job on one engine through the shared submit flow (approval and budget rules apply). */
+/** Starts a recover / draft job on one engine, its price first (the cost dialog; approval and budget rules apply). */
 function useShotJob(shot: Shot) {
   const qc = useQueryClient();
-  const { submit } = useGenerate();
+  const { priced } = useGenerate();
   const [busy, setBusy] = useState<string | null>(null);
   const start = async (path: "recover" | "draft", o: ShotOption, what: string) => {
     setBusy(o.id);
     try {
-      const r = await submit(() => api.post<SubmitResult>(`/api/shots/${shot.id}/${path}`, { engine: o.id }), what);
+      const r = await priced({
+        quote: () => quote({ action: path, shot_id: shot.id, engine: o.id }),
+        run: () => api.post<SubmitResult>(`/api/shots/${shot.id}/${path}`, { engine: o.id }), what,
+      });
       if (!r) return;
       qc.invalidateQueries({ queryKey: ["shot", shot.id] });
       qc.invalidateQueries({ queryKey: ["episode"] });
@@ -80,19 +84,21 @@ function OptionTags({ o }: { o: ShotOption }) {
 }
 
 /**
- * A safety filter blocked the shot's latest video and nothing replaced it: who blocked it and why, then a retry on
- * the best other engine (options come best first) or any other one, each priced for this shot.
+ * The shot's latest video failed and nothing replaced it: a safety filter blocked it (who and why), or it failed for
+ * another reason (what it said). Then "Try another engine": the best other engine (options come best first) or any
+ * other one, each priced for this shot, its price shown again in the cost dialog before it runs.
  */
 export function Recovery({ shot, canEdit }: { shot: Shot; canEdit: boolean }) {
   const t = useT();
   const { project } = useProjectCtx();
-  const b = shot.blocked;
+  const b = shot.blocked ?? shot.failed ?? null;
+  const blocked = !!shot.blocked || !!shot.failed?.blocked;
   const { data, isLoading } = useAlternatives(shot, "recover", !!b);
   const { data: chars } = useCharacters(project.id);
   const { busy, start } = useShotJob(shot);
   if (!b) return null;
 
-  const who = joinNames(b.engine_labels ?? []) || t("A safety filter");
+  const who = joinNames(b.engine_labels ?? []) || (blocked ? t("A safety filter") : "");
   const opts = data?.options ?? [];
   const [top, ...rest] = opts;
   const missing = data?.cast.missing ?? [];
@@ -108,14 +114,16 @@ export function Recovery({ shot, canEdit }: { shot: Shot; canEdit: boolean }) {
   });
 
   return (
-    <Alert tone="bad" icon={<ShieldAlert className="size-4" />} title={t("{engine} blocked this shot", { engine: who })}>
+    <Alert tone="bad" icon={<ShieldAlert className="size-4" />}
+      title={blocked ? t("{engine} blocked this shot", { engine: who }) : who ? t("The last video failed on {engine}", { engine: who }) : t("The last video failed")}>
       {b.error && <p className="line-clamp-2 break-words text-xs leading-snug" title={b.error}>{b.error}</p>}
+      {!blocked && canEdit && <p className="mt-1 text-2xs leading-snug text-dim">{t("Retake tries the same engine again; or try another engine for this shot only.")}</p>}
 
       {canEdit && (isLoading ? <Skeleton className="mt-2.5 h-7 w-56" /> : top ? (
         <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
           <Button size="sm" variant="primary" className="min-w-0 max-w-full" icon={<RotateCcw className="size-3.5" />}
             loading={busy === top.id} disabled={!!busy} onClick={() => retry(top)}>
-            <span className="truncate">{t("Retry with {engine} · {price}", { engine: top.display_name, price: usd(top.est_usd) })}</span>
+            <span className="truncate">{t("Try {engine} · {price}", { engine: top.display_name, price: usd(top.est_usd) })}</span>
           </Button>
           <OptionTags o={top} />
           {rest.length > 0 && (
@@ -147,7 +155,7 @@ export function Recovery({ shot, canEdit }: { shot: Shot; canEdit: boolean }) {
           <span>{fill(t("Register {names} with BytePlus so Seedance keeps their look."), { names })}</span>
         </p>
       )}
-      {canEdit && data && !data.safety_fallback && (
+      {canEdit && blocked && data && !data.safety_fallback && (
         <p className="mt-1.5 flex items-start gap-1.5 text-2xs leading-snug text-dim">
           <Settings2 className="mt-px size-3 shrink-0" />
           <span>{fill(t("Turn on “On a safety block, try another model” in {settings} and this happens by itself."), {

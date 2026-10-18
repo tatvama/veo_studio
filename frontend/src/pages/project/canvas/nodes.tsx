@@ -15,6 +15,7 @@ import { secs as fmtSecs } from "../../../lib/format";
 import { useT } from "../../../lib/i18n";
 import type { Character, ExportRow, Location, Shot } from "../../../lib/types";
 import { qcState } from "../studio/continuity";
+import { TryEngineButton } from "../TryEngine";
 import { sceneKey, useActions, usePlaces } from "./actions";
 import type { SceneX } from "./data";
 import {
@@ -90,6 +91,7 @@ export const ShotNode = memo(function ShotNode({ id, data, selected }: NodeProps
   const clip = shot.lipsync?.url || shot.video?.url || "";
   const poster = shot.video?.thumb_url || shot.keyframe?.thumb_url || "";
   const failed = flags.failed[0];
+  const note = info?.notes?.[0];  // something the last run says about this shot (e.g. a line too long for one clip)
   const running = flags.running || shot.generating;
 
   return (
@@ -128,17 +130,36 @@ export const ShotNode = memo(function ShotNode({ id, data, selected }: NodeProps
           </span>
           {lock && <LockMark name={lock.name} className="absolute bottom-2 left-2 z-[5]" />}
           {failed && !running && (
-            <div className="nodrag absolute inset-x-1 bottom-1 z-[6] flex items-start gap-1.5 rounded-md border border-bad/50 bg-black/85 p-1.5 text-white">
-              <TriangleAlert className="mt-px size-3.5 shrink-0 text-bad" />
-              <p className="line-clamp-2 min-w-0 flex-1 text-2xs leading-tight" title={failed.error}>
-                <span className="font-semibold">{t("{step} failed", { step: t(STEP_LABEL[failed.step]) })}:</span> {failed.error}
-              </p>
+            <div className="nodrag absolute inset-x-1 bottom-1 z-[6] rounded-md border border-bad/50 bg-black/85 p-1.5 text-white">
+              <div className="flex items-start gap-1.5">
+                <TriangleAlert className="mt-px size-3.5 shrink-0 text-bad" />
+                <p className="line-clamp-2 min-w-0 flex-1 text-2xs leading-tight" title={[failed.error, failed.next].filter(Boolean).join(" · ")}>
+                  <span className="font-semibold">{t("{step} failed", { step: t(STEP_LABEL[failed.step]) })}:</span> {failed.reason || failed.error}
+                </p>
+              </div>
               {editable && (
-                <button type="button" onClick={(e) => { e.stopPropagation(); void a.runStep(shot.id, failed.step); }}
-                  className="inline-flex h-6 shrink-0 items-center gap-1 rounded border border-white/25 px-1.5 text-2xs font-medium hover:bg-white/10">
-                  <RotateCcw className="size-3" />{t("Retry")}
-                </button>
+                <div className="mt-1 flex justify-end gap-1">
+                  {/* a blocked video: another engine is the fix, so it comes first */}
+                  {failed.step === "video" && <TryEngineButton compact shotId={shot.id} code={shot.code} />}
+                  {!(failed.step === "video" && failed.blocked) && (
+                    <button type="button" onClick={(e) => { e.stopPropagation(); void a.runStep(shot.id, failed.step); }}
+                      title={t("Make it again (you see the price first)")}
+                      className="inline-flex h-6 shrink-0 items-center gap-1 rounded border border-white/25 px-1.5 text-2xs font-medium hover:bg-white/10">
+                      <RotateCcw className="size-3" />{t("Retry")}
+                    </button>
+                  )}
+                </div>
               )}
+            </div>
+          )}
+          {!failed && !running && note && (
+            <div className="nodrag absolute inset-x-1 bottom-1 z-[6] flex items-start gap-1.5 rounded-md border border-warn/50 bg-black/85 p-1.5 text-white">
+              <TriangleAlert className="mt-px size-3.5 shrink-0 text-warn" />
+              <p className="line-clamp-2 min-w-0 flex-1 text-2xs leading-tight" title={[note.reason, note.next].filter(Boolean).join(" · ")}>{note.reason}</p>
+              <button type="button" onClick={(e) => { e.stopPropagation(); a.openShot(shot.id); }}
+                className="inline-flex h-6 shrink-0 items-center gap-1 rounded border border-white/25 px-1.5 text-2xs font-medium hover:bg-white/10">
+                {t("Open")}
+              </button>
             </div>
           )}
         </div>
@@ -311,13 +332,15 @@ export type FilmNodeData = {
   secs: number; scenes: number; shots: number; withVideo: number;
   /** the newest render, and the newest that finished (to download) */
   latest: ExportRow | null; ready: ExportRow | null;
+  /** the newest finished draft cut (a quick draft run's 480p clips), shown while there is no finished film */
+  draftCut?: ExportRow | null;
 };
 export type FilmFlowNode = FlowNode<FilmNodeData, "film">;
 
 export const FilmNode = memo(function FilmNode({ data }: NodeProps<FilmFlowNode>) {
   const t = useT();
   const a = useActions();
-  const { secs, scenes, shots, withVideo, latest, ready } = data;
+  const { secs, scenes, shots, withVideo, latest, ready, draftCut } = data;
   const rendering = latest && (latest.status === "queued" || latest.status === "running");
   return (
     <div className="hud relative w-[320px] rounded-2xl border border-accent/40 bg-panel p-3.5 shadow-lift">
@@ -340,6 +363,12 @@ export const FilmNode = memo(function FilmNode({ data }: NodeProps<FilmFlowNode>
         {ready && (
           <a href={ready.url} download className="nodrag inline-flex h-7 items-center gap-1.5 rounded-lg border border-line bg-raised px-2.5 text-xs font-medium hover:bg-hover">
             <Download className="size-3.5" />{t("Download")}{ready.version ? <span className="mono text-2xs text-dim">v{ready.version}</span> : null}
+          </a>
+        )}
+        {!ready && draftCut && (
+          <a href={draftCut.url} download title={t("The quick draft's cut (480p clips): make the final film from the bar at the bottom")}
+            className="nodrag inline-flex h-7 items-center gap-1.5 rounded-lg border border-line bg-raised px-2.5 text-xs font-medium hover:bg-hover">
+            <Download className="size-3.5" />{t("Draft cut")}<span className="mono text-2xs text-ai">480p</span>
           </a>
         )}
       </div>

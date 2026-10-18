@@ -19,6 +19,7 @@ import type { SceneX } from "./data";
 import { LINK_LABEL, LINK_MODES, lengthLabel, makeBody, shotDots, type LinkMode, type ShotInfo } from "./model";
 import { ModeIcon } from "./nodes";
 import { Faces, PriceButton, StepDots } from "./parts";
+import { ShotFailures, TakeHistory } from "./Takes";
 
 type ShotX = Shot & ShotV3Fields;
 
@@ -171,6 +172,8 @@ export function ShotInspector({ shot, episode, cast, places, info, lang, onClose
           </div>
           <StepDots dots={dots} size="lg" canEdit={a.canEdit} onRun={(s) => void a.runStep(shot.id, s)} className="justify-between" />
           {lockedBy && <p className="rounded-lg border border-warn/40 bg-warn/10 px-2.5 py-1.5 text-2xs text-warn">{t("{name} is editing this shot: you can look, not change.", { name: lockedBy })}</p>}
+          <ShotFailures shotId={shot.id} code={shot.code} dots={dots} notes={info?.notes} canEdit={a.canEdit} />
+          <TakeHistory shot={shot} lang={lang} />
         </div>
 
         <Section icon={<MessageSquareText />} title={t("Words")}>

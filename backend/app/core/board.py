@@ -126,6 +126,7 @@ def get_board(db: Session, project: Project, episode: Episode) -> dict:
                 "ref_images": [{"label": r.get("label", ""), "url": st.url(r.get("path", ""))} for r in (s.ref_images or [])],
                 "video_s": round(vid.duration_s, 1) if vid else 0, "has_video": bool(vid)}
 
+    from . import problems
     out = []
     for sc in scenes:
         loc = db.get(Location, sc.location_id) if sc.location_id else None
@@ -138,8 +139,9 @@ def get_board(db: Session, project: Project, episode: Episode) -> dict:
     return {"episode_id": episode.id, "language": lang, "scenes": out, "version": board_version(db, episode),
             # a Produce all run that stopped for the new looks and voices to be checked (workers/handlers_room.produce)
             "produce_paused": (episode.settings or {}).get("produce_paused"),
-            # what the last run (Produce all, Autopilot, Scenes in order) couldn't make, and what to do (core/problems.py)
-            "run_problems": (episode.settings or {}).get("run_problems") or [],
+            # what the last run (Produce all, Autopilot, Scenes in order) couldn't make and still stands, and what to do
+            # (core/problems.py: a step made since, or a shot taken out of the cut, drops off the list)
+            "run_problems": problems.live(db, episode),
             "limits": {"durations": [4, 6, 8], "extend_step_s": EXTEND_STEP_S, "max_extend_s": MAX_EXTEND_S}}
 
 

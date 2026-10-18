@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
-import { plainLabel } from "../lib/estimates";
+import { plainLabel, quote } from "../lib/estimates";
 import { ago, secs, usd } from "../lib/format";
 import { tr, useT } from "../lib/i18n";
 import { useAuthStatus, useJobs, useShotAlternatives } from "../lib/queries";
@@ -418,22 +418,29 @@ function JobRow({ j, now, pending, onAct, canAct, canApprove, nested }: {
   );
 }
 
-/** "Another engine": retry a shot's blocked video on the best other engine, with its price on the button before it is spent. */
+/**
+ * "Another engine": retry a shot's failed or blocked video on the best other engine, with its price on the button and
+ * again in the cost dialog before anything is spent.
+ */
 function RecoverButton({ j }: { j: Job }) {
   const t = useT();
   const qc = useQueryClient();
-  const { submit } = useGenerate();
+  const { priced } = useGenerate();
   const [busy, setBusy] = useState(false);
   const sid = j.shot_id as number;
   const { data } = useShotAlternatives(sid, "recover");
   const o = data?.options[0];
-  // only while this job is still what blocks the shot (not once it was retried or replaced)
-  if (!o || data?.blocked?.job_id !== j.id) return null;
+  // only while this job is still the shot's last failed video (not once it was retried or replaced)
+  if (!o || (data?.failed?.job_id ?? data?.blocked?.job_id) !== j.id) return null;
   const price = usd(o.est_usd);
   const go = async () => {
     setBusy(true);
     try {
-      const r = await submit(() => api.post<SubmitResult>(`/api/shots/${sid}/recover`, { engine: o.id }), tr("Retry on {engine}", { engine: o.display_name }));
+      const r = await priced({
+        quote: () => quote({ action: "recover", shot_id: sid, engine: o.id }),
+        run: () => api.post<SubmitResult>(`/api/shots/${sid}/recover`, { engine: o.id }),
+        what: tr("Retry on {engine}", { engine: o.display_name }),
+      });
       if (!r) return;
       qc.invalidateQueries({ queryKey: ["shot-alternatives", sid] });
       qc.invalidateQueries({ queryKey: ["shot", sid] });

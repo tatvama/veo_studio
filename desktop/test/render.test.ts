@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  atempoChain, concatList, draftDims, escPath, finalArgs, finalEncoder, fitFilter, gpuFinalArgs, hwDecodeArgs, intermediateEncoder, mixArgs, musicBedArgs, overlayArgs, presetDims, presetList, PRESETS, segmentArgs, STAB_TRANSFORM, stabilizeDetectArgs, stepWeights, stillArgs, substituteLuts, type PlanSegment, type RenderPlan, uhdVf, xfadeArgs,
+  atempoChain, concatList, draftDims, escPath, finalArgs, finalEncoder, fitFilter, gpuFinalArgs, hwDecodeArgs, intermediateEncoder, mixArgs, mixAudioArgs, musicBedArgs, overlayArgs, presetDims, presetList, PRESETS, segmentArgs, STAB_TRANSFORM, stabilizeDetectArgs, stepWeights, stillArgs, substituteLuts, type PlanSegment, type RenderPlan, uhdVf, xfadeArgs,
 } from "../src/main/render-args.ts";
 import { proxyArgs } from "../src/main/proxies.ts";
 import { frameBytes, gpuJob, isTenBitEncoder, planKeys } from "../src/main/render.ts";
@@ -126,6 +126,28 @@ test("join, sound layers, music bed and picture layers match the server", () => 
   assert.deepEqual(o.slice(0, 10), ["-i", "body.mp4", "-loop", "1", "-framerate", "24", "-t", "3.000", "-i", "logo.png"]);
   assert.equal(fc(o), SERVER_OVERLAY_GRAPH);
   assert.deepEqual(o.slice(-6), ["-map", "[b1]", "-an", "-c:v", "libx264", "out.mp4"]);
+});
+
+// captured from backend ffmpeg.music_bed(..., sidechain=voices.wav) and assembler._mix_audio(..., base_gain_db=2.5)
+const SERVER_MUSIC_VOICES = ["-stream_loop", "-1", "-i", "m.mp3", "-i", "voice.wav", "-i", "voices.wav", "-filter_complex", "[0:a]aresample=48000,aformat=channel_layouts=stereo,volume=-16.0dB,atrim=0:30.000,afade=t=out:st=28.000:d=2[m];[1:a]aresample=48000,aformat=channel_layouts=stereo[vo];[2:a]aresample=48000,aformat=channel_layouts=stereo[sc];[m][sc]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=350[md];[md][vo]amix=inputs=2:normalize=0:duration=first[out]", "-map", "[out]", "-t", "30.000", "-ar", "48000", "mixed.wav"];
+const SERVER_STILL_MIX = ["-i", "v.wav", "-i", "n.wav", "-filter_complex", "[0:a]aresample=48000,volume=2.5dB,apad[a0];[1:a]aresample=48000,volume=-3.0dB,adelay=500|500,apad[a1];[a0][a1]amix=inputs=2:normalize=0:duration=longest[o]", "-map", "[o]", "-t", "3.000", "o.wav"];
+
+test("sound parity: the music ducks under the voices alone, and every level the plan carries is applied", () => {
+  // a plan with music.sidechain: the server's mix (the voices-only track drives the ducking)
+  assert.deepEqual(musicBedArgs("m.mp3", "voice.wav", "mixed.wav", 30, -16, true, "voices.wav").map(norm), SERVER_MUSIC_VOICES.map(norm));
+  // an older plan without it: as before (ducked under the whole mix); no ducking: the music alone
+  assert.deepEqual(musicBedArgs("m.mp3", "voice.wav", "mixed.wav", 30, -16, true, null).map(norm), SERVER_MUSIC.map(norm));
+  assert.ok(!musicBedArgs("m.mp3", "voice.wav", "mixed.wav", 30, -16, false, "voices.wav").includes("voices.wav"));
+  // the voice that replaces a clip's sound is levelled like the server's normalize_clip(override_gain_db=…)
+  const ctx = { w: 1920, h: 1080, fps: 24, src: "src.mp4", out: "seg.mp4", enc: [], override: "voice.wav", extra: [], hasAudio: true, luts: {} };
+  assert.match(fc(segmentArgs(seg({ override_gain_db: 4.5, extra_audio: [], af_fx: "", speed: 1 }), ctx)),
+    /^\[1:a\]aresample=48000,aformat=channel_layouts=stereo,volume=4\.5dB,apad\[a1\];/);
+  assert.match(fc(segmentArgs(seg({ extra_audio: [], af_fx: "", speed: 1 }), ctx)), /^\[1:a\]aresample=48000,aformat=channel_layouts=stereo,apad\[a1\];/);
+  // a still's levelled voice mixed with its extras (backend assembler._mix_audio)
+  assert.deepEqual(mixAudioArgs("v.wav", [{ path: "n.wav", offset: 0.5, gain_db: -3 }], 3, "o.wav", 2.5).map(norm), SERVER_STILL_MIX.map(norm));
+  // the voices-only track is fetched with the rest of the plan's media
+  const plan = { episode_id: 1, lang: "en", w: 1920, h: 1080, fps: 24, segments: [seg()], music: { key: "m.m4a", sidechain: "projects/1/desktop/voices_1_ab.m4a" } } as RenderPlan;
+  assert.ok(planKeys(plan).includes("projects/1/desktop/voices_1_ab.m4a"));
 });
 
 test("encoders: intermediates and per-preset finals follow NVENC → QSV → AMF → software", () => {

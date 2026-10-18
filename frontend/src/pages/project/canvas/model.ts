@@ -32,13 +32,25 @@ export const makeBody = (shotIds: number[]) => ({ action: "produce", steps: [...
 
 /** "need": the film needs it · "optional": not needed (e.g. the video engine already speaks the lines) · "none": nothing to make. */
 export type Need = "need" | "optional" | "none";
-export interface Problem { job_id: number; error: string; at: string | null }
-/** Per shot, from GET /api/episodes/{eid}/canvas. */
-export interface ShotInfo { voice: Need; mouth: Need; sound: Need; voice_mode?: string; problems: Partial<Record<StepId, Problem>> }
+/** A failed step: the job's error, and in plain words why and what to do (`blocked`: a safety filter stopped it). */
+export interface Problem { job_id: number; error: string; at: string | null; reason?: string; next?: string; blocked?: boolean }
+/** Something the last run says about a shot that isn't one of its steps failing (e.g. a line too long for one clip). */
+export interface ShotNote { reason: string; next: string; action?: string }
+/** Per shot, from GET /api/episodes/{eid}/canvas (with the last run's problems merged in: problems.withRunProblems). */
+export interface ShotInfo {
+  voice: Need; mouth: Need; sound: Need; voice_mode?: string; problems: Partial<Record<StepId, Problem>>; notes?: ShotNote[];
+}
 export interface SceneMusic { id: number; url: string; duration_s: number; prompt: string; selected: boolean }
+/** A problem of the last run (backend core/problems.py; pages/project/problems.ts RunProblem). */
+export interface RunProblemRow {
+  shot: string; shot_id: number | null; step: string; reason: string; next: string; action?: "retry" | "engine" | "voice" | "open" | "continue" | "";
+  kind?: StepId | ""; job_id?: number | null;
+}
 export interface CanvasInfo {
   episode_id: number; language: string; shots: Record<string, ShotInfo>; scene_music: Record<string, SceneMusic>;
   sound_engine: boolean; lipsync_engine: boolean;
+  /** What the last run couldn't make and still stands (older servers: none). */
+  run_problems?: RunProblemRow[];
 }
 
 interface TakeLike { id?: number; stale?: boolean; stale_reason?: string }
@@ -54,7 +66,11 @@ export interface ShotLike {
  * empty (not made yet) · none (nothing to make for this shot, e.g. no lines to voice).
  */
 export type DotState = "done" | "running" | "failed" | "stale" | "empty" | "none";
-export interface Dot { step: StepId; state: DotState; need: Need; error?: string; jobId?: number; staleReason?: string }
+export interface Dot {
+  step: StepId; state: DotState; need: Need; error?: string; jobId?: number; staleReason?: string;
+  /** a failed step in plain words, what to do next, and whether a safety filter stopped it (another engine is the fix) */
+  reason?: string; next?: string; blocked?: boolean;
+}
 
 /** Job types (Shot.active_jobs) that are making each step right now. */
 const RUNNING: Record<StepId, readonly string[]> = {
@@ -79,8 +95,11 @@ export function shotDots(shot: ShotLike, info?: ShotInfo | null): Dot[] {
     const take = takeOf(shot, step);
     const problem = info?.problems?.[step];
     if (RUNNING[step].some((t) => active.includes(t))) return { step, state: "running", need };
-    if (problem) return { step, state: "failed", need, error: problem.error, jobId: problem.job_id };
-    if (step === "video" && shot.blocked?.error) return { step, state: "failed", need, error: shot.blocked.error };
+    if (problem) {
+      return { step, state: "failed", need, error: problem.error, jobId: problem.job_id, reason: problem.reason, next: problem.next,
+        blocked: !!problem.blocked };
+    }
+    if (step === "video" && shot.blocked?.error) return { step, state: "failed", need, error: shot.blocked.error, blocked: true };
     if (take?.stale) return { step, state: "stale", need, staleReason: take.stale_reason || "" };
     if (take) return { step, state: "done", need };
     return { step, state: need === "none" ? "none" : "empty", need };

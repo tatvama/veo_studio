@@ -1,12 +1,14 @@
 import { tr } from "../../lib/i18n";
 import type { AutopilotCatalog, AutopilotState, Episode, Project } from "../../lib/types";
+import { draftState, FINAL_BODY, finalIsNext } from "./drafts";
 
 /**
  * Work a step can start right here, with its price shown first:
  * cast — pictures and voices for the cast (Make it for me with only the cast step) · all — Make it for me ·
- * watch — the running or paused Make it for me run (continue it) · import — read your own script.
+ * watch — the running or paused Make it for me run (continue it) · import — read your own script ·
+ * final — the final film after a quick draft run (the 480p drafts remade as finished clips).
  */
-export type Make = "cast" | "all" | "watch" | "import";
+export type Make = "cast" | "all" | "watch" | "import" | "final";
 
 export interface NextStep {
   tab: string;
@@ -21,9 +23,7 @@ export interface NextStep {
 /** The produce body a `make` runs (what its price on the button is for). */
 export function makeBody(make: Make | undefined): Record<string, unknown> | null {
   if (make === "cast") return { action: "produce", steps: ["cast"] };
-  if (make === "all") {
-    return { action: "produce", steps: ["cast", "keyframes", "videos", "extend", "voices", "sound", "music", "export"], link_scenes: "auto", music_per_scene: true };
-  }
+  if (make === "all" || make === "final") return { ...FINAL_BODY, steps: [...FINAL_BODY.steps] };
   return null;
 }
 
@@ -65,6 +65,13 @@ export function nextStep(project: Project, ep: Episode | undefined, ap: Autopilo
       text: faceless === 1 ? tr("Next: make the cast, so 1 person looks and sounds the same in every shot")
         : tr("Next: make the cast, so {n} people look and sound the same in every shot", { n: faceless }),
       action: tr("Make the cast"), secondary: { tab: "bible", label: tr("Add my own photos") } };
+  }
+  if (finalIsNext(shots)) {  // a quick draft run is done: the final film is next
+    const { drafts } = draftState(shots);
+    return { tab: "canvas", tone: "info", make: "final",
+      text: drafts === 1 ? tr("The draft is ready (1 shot at 480p). Next: make the final film")
+        : tr("The draft is ready ({n} shots at 480p). Next: make the final film", { n: drafts }),
+      action: tr("Make the final film"), secondary: { tab: "export", label: tr("Watch the draft") } };
   }
   if (videos < shots.length) {
     return { tab: "shots", tone: "accent", make: "all",

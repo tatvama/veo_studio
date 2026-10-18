@@ -477,7 +477,7 @@ class Export(Base, Serializable):
     episode_id: Mapped[int] = mapped_column(ForeignKey("episodes.id"), index=True)
     language: Mapped[str] = mapped_column(String(8), default="en")
     preset: Mapped[str] = mapped_column(String(40), default="shorts")  # desktop renders: "desktop:<preset>"
-    kind: Mapped[str] = mapped_column(String(20), default="final")  # final | animatic
+    kind: Mapped[str] = mapped_column(String(20), default="final")  # final | animatic | draft (a quick draft run's cut)
     version: Mapped[int | None] = mapped_column(Integer, nullable=True)  # render number per episode (1..n)
     options: Mapped[Any] = mapped_column(JSON, default=dict)
     status: Mapped[str] = mapped_column(String(20), default="queued")

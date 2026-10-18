@@ -11,7 +11,7 @@ from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from .. import catalog, settings_store
-from ..core import jobs, model_hub
+from ..core import generation, jobs, model_hub
 from ..core.audit import audit
 from ..core.budget import Estimator
 from ..core.generation import shootout_specs
@@ -355,65 +355,50 @@ def _shot_project(db: Session, sid: int) -> tuple[Shot, Project]:
 
 @router.get("/shots/{sid}/alternatives")
 def shot_alternatives(sid: int, purpose: str = "recover", user: User = Depends(current_user), db: Session = Depends(get_db)):
-    """Other engines for this shot with the price of this shot on each. purpose=recover (after a safety block: not the
-    engines that blocked it, engines that keep registered characters first) or draft (480p, cheapest first)."""
+    """Other engines for this shot with the price of this shot on each. purpose=recover ("Try another engine", after
+    the last video failed or a safety filter blocked it: not the engines that failed or blocked it, engines that keep
+    registered characters first) or draft (480p, cheapest first). `failed` is that last failure (blocked or not),
+    `blocked` the same when a safety filter did it."""
     from ..core import recovery
     if purpose not in ("recover", "draft"):
         raise HTTPException(400, "purpose must be recover or draft")
     s, p = _shot_project(db, sid)
-    blocked = recovery.blocked_info(db, s)
-    opts = recovery.options(db, s, p, purpose, (blocked or {}).get("engines") if purpose == "recover" else None)
-    return {"blocked": blocked, "options": opts, "cast": recovery.cast_status(db, s),
-            "safety_fallback": bool(settings_store.get_setting(db, "safety_fallback"))}
+    failed = recovery.last_failure(db, s)
+    opts = recovery.options(db, s, p, purpose, (failed or {}).get("engines") if purpose == "recover" else None)
+    return {"blocked": recovery.blocked_info(db, s, failed or {}), "failed": failed, "options": opts,
+            "cast": recovery.cast_status(db, s), "safety_fallback": bool(settings_store.get_setting(db, "safety_fallback"))}
 
 
 class EngineIn(BaseModel):
     engine: str | None = None
 
 
-def _pick_option(db: Session, opts: list[dict], engine: str | None, what: str) -> dict:
-    """The named engine among the options (any route of a listed model counts), else the first option."""
-    if not opts:
-        raise HTTPException(400, f"No other engine can {what} this shot. Switch one on in Model Hub, or add a key.")
-    if not engine:
-        return opts[0]
-    hit = next((o for o in opts if o["id"] == engine), None)
-    if hit is None:
-        key = model_hub.route_key(db.get(AIModel, engine), engine)
-        hit = next((o for o in opts if key and model_hub.route_key(db.get(AIModel, o["id"])) == key), None)
-        if hit is not None:
-            hit = {**hit, "id": engine}  # run the route that was named; the router still falls back to the others
-    if hit is None:
-        raise HTTPException(400, f"{engine} can't {what} this shot")
-    return hit
+def _spec_or_400(make, *args) -> dict:
+    try:
+        return make(*args)
+    except ValueError as e:  # no other engine can make (or draft) this shot, in plain words
+        raise HTTPException(400, str(e)) from e
 
 
 @router.post("/shots/{sid}/recover")
 def recover_shot(sid: int, body: EngineIn, request: Request, user: User = Depends(require("creator")),
                  db: Session = Depends(get_db)):
-    """Retry a shot a safety filter blocked, on another engine (the first option unless one is named)."""
-    from ..core import recovery
+    """Try another engine for a shot whose last video failed or was blocked by a safety filter: the named engine (the
+    first option unless one is named), for this shot only. A hand-picked engine is explicit: "Google first" doesn't
+    move it, and the engines that failed are skipped. Price it first with POST /api/estimate {action: "recover"}."""
     s, p = _shot_project(db, sid)
-    blocked = recovery.blocked_info(db, s)
-    skip = (blocked or {}).get("engines") or []
-    pick = _pick_option(db, recovery.options(db, s, p, "recover", skip), body.engine, "make")
-    audit(db, user, "shot.recover", s.code, {"engine": pick["id"], "blocked": skip}, request=request, commit=False)
-    spec = jobs.spec("video", payload={"engine": pick["id"], "recovery": True, "skip_engines": skip},
-                     project_id=p.id, episode_id=s.episode_id, shot_id=s.id, estimate=pick["est_usd"],
-                     label=f"Retry {s.code} on {pick['display_name']}")
+    spec = _spec_or_400(generation.recover_spec, db, p, s, body.engine)
+    audit(db, user, "shot.recover", s.code, {"engine": spec["payload"]["engine"], "skipped": spec["payload"]["skip_engines"]},
+          request=request, commit=False)
     return jobs.submit(db, user, p, [spec])
 
 
 @router.post("/shots/{sid}/draft")
 def draft_shot(sid: int, body: EngineIn, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
     """A cheap 480p preview of the shot (Seedance and other engines that render 480p). It doesn't replace a finished
-    clip, gets no QC, and Produce all still makes the final clip."""
-    from ..core import recovery
+    clip, gets no QC, and Produce all still makes the final clip. Price: POST /api/estimate {action: "draft"}."""
     s, p = _shot_project(db, sid)
-    pick = _pick_option(db, recovery.options(db, s, p, "draft"), body.engine, "draft")
-    spec = jobs.spec("video", payload={"engine": pick["id"], "draft": True}, project_id=p.id, episode_id=s.episode_id,
-                     shot_id=s.id, estimate=pick["est_usd"], label=f"Draft {s.code} 480p ({pick['display_name']})")
-    return jobs.submit(db, user, p, [spec])
+    return jobs.submit(db, user, p, [_spec_or_400(generation.draft_spec, db, p, s, body.engine)])
 
 
 # ── provider balances ────────────────────────────────────────────────────────

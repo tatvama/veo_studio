@@ -91,7 +91,8 @@ export default function DashboardPage() {
           </>
         ) : (
           <>
-            <ProblemsCard className="@2xl:col-span-2 @5xl:col-span-7" index={1} d={d} episode={episode} pid={project.id} canProduce={canProduce} onImpact={showImpact} />
+            <ProblemsCard className="@2xl:col-span-2 @5xl:col-span-7" index={1} d={d} episode={episode} pid={project.id} canProduce={canProduce} onImpact={showImpact}
+              onMake={runner.openMake} />
             <SpendCard className="@2xl:col-span-2 @5xl:col-span-5" index={2} d={d} project={project} />
 
             <div className="col-span-full">

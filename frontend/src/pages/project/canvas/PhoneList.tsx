@@ -26,7 +26,7 @@ export function PhoneList({ episode, cast, places, info, onOpen, onOpenScene }: 
   const byId = useMemo(() => new Map(cast.map((c) => [c.id, c])), [cast]);
   const shots = groups.flatMap((g) => g.shots);
   const total = shots.reduce((s, x) => s + shotSeconds(x.duration_s, x.extend_to), 0);
-  const ready = (episode.exports ?? []).find((x) => x.kind !== "animatic" && x.status === "ready" && x.url) ?? null;
+  const ready = (episode.exports ?? []).find((x) => x.kind === "final" && x.status === "ready" && x.url) ?? null;
   return (
     <div className="flex h-full flex-col">
       <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-3 pb-24 pt-3">
