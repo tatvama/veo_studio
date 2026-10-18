@@ -12,7 +12,8 @@ from ..db import utcnow
 from ..events import emit
 from ..models import Approval, CostEntry, Job, Project, Shot, User, role_rank
 from .job_types import ORCHESTRATORS
-from ..pipeline.prompting import effective_quality, effective_voice_mode, offscreen_only, shot_lines
+from ..pipeline.prompting import effective_quality, effective_voice_mode, shot_lines
+from ..pipeline.shot_facts import offscreen_only
 from ..providers.base import Usage
 from ..providers.services import provider_mode
 
