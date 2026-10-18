@@ -28,6 +28,7 @@ from ..pipeline.ffmpeg import FFmpegError
 from ..providers.base import (NeedsApproval, ProviderBlocked, ProviderError, ProviderNotConfigured,
                               RetryableProviderError, Usage)
 from ..providers.services import Services
+from .runlog import STUCK_S, BudgetStop, Cancelled, wait_note as _wait_note  # (also read from here)
 
 HANDLERS: dict[str, Callable[["JobContext"], dict | None]] = {}
 # ORCHESTRATORS: core/job_types.py (shared with the budget, which must not import this package)
@@ -46,10 +47,6 @@ MAX_RATE_LIMIT_WAITS = 100
 # died or was taken down) is put back in the queue by any worker.
 HEARTBEAT_S = 30.0
 STALE_RUNNING_S = 10 * 60
-# A run gives up on its children only after this long with nothing moving at all: no child finished, progressed or
-# went back to wait for a quota (each quota retry counts as movement, so a day-long wait for Veo's daily quota is fine).
-# A child waiting for someone's approval never times out: the run says what it waits for.
-STUCK_S = 6 * 3600
 
 
 def handler(name: str):
@@ -57,29 +54,6 @@ def handler(name: str):
         HANDLERS[name] = fn
         return fn
     return deco
-
-
-class Cancelled(Exception):
-    pass
-
-
-class BudgetStop(Exception):
-    """A run's spend guard tripped: queued work is cancelled, running work (already paid) finishes, and the run ends
-    with the problem "Stopped at your budget" instead of failing."""
-
-
-def _wait_note(rows: list[Job]) -> str:
-    """What the children are waiting for, for the run's progress: a provider's quota (and until when), or an approval."""
-    for j in rows:
-        if j.status == "awaiting_approval":
-            return f"waiting for your approval of {j.label or j.type}"
-    now = utcnow()
-    for j in rows:
-        err = j.error or ""
-        if j.status == "queued" and j.run_after and j.run_after > now and err.startswith("Waiting for the "):
-            provider = err[len("Waiting for the "):].split(" rate limit", 1)[0][:40]
-            return f"waiting for {provider} quota until {j.run_after:%H:%M} UTC"
-    return ""
 
 
 def _counts_note(st: dict[int, str]) -> str:

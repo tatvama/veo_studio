@@ -17,7 +17,8 @@ from ..pipeline.voice import voice_for
 from ..providers.base import ProviderError, RetryableProviderError
 from ..storage import get_storage
 from .handlers import _user
-from .worker import STUCK_S, BudgetStop, Cancelled, JobContext, _wait_note, handler
+from .runlog import BudgetStop, RunLog
+from .worker import Cancelled, JobContext, handler
 
 
 @handler("critic_loop")
@@ -116,86 +117,6 @@ def table_read(ctx: JobContext) -> dict:
 
 
 AUTOPILOT_STAGES = autopilot_def.STAGES
-
-
-def _run_spend(ctx: JobContext) -> tuple[float, float]:
-    """(spent so far by this run — itself and every job it started, incl. QC and retakes — , the 1.5× guard)."""
-    from sqlalchemy import func
-    with SessionLocal() as db:
-        j = db.get(Job, ctx.job_id)
-        spent = float(db.query(func.coalesce(func.sum(Job.cost_actual), 0.0)).filter(Job.batch_id == j.batch_id).scalar() or 0)
-        return spent, max(j.cost_estimate * 1.5, 1.0)
-
-
-def _wait_batch_idle(ctx: JobContext, guard=None, timeout_s: float = STUCK_S) -> None:
-    """Wait for follow-up work of this run (QC, retakes) before the next step. It may wait on a provider quota (the
-    progress says until when); it gives up only when nothing has moved for `timeout_s` (worker.STUCK_S)."""
-    moved, last_guard, seen = time.time(), 0.0, None
-    while True:
-        with SessionLocal() as db:
-            me = db.get(Job, ctx.job_id)
-            rows = db.query(Job).filter(Job.batch_id == me.batch_id, Job.id != ctx.job_id,
-                                        Job.status.in_(("queued", "running"))).all()
-            mark = [(j.id, j.status, round(j.progress or 0, 2), j.message, j.error, j.attempts, j.run_after) for j in rows]
-            note = _wait_note(rows)
-        if not rows:
-            return
-        if mark != seen:
-            seen, moved = mark, time.time()
-        if note:
-            ctx.progress(ctx._p, f"Checks and retakes · {note}")
-        ctx._watch(guard, last_guard, moved, timeout_s, False)
-        if guard and time.time() - last_guard > 10:
-            last_guard = time.time()
-        time.sleep(2)
-
-
-class RunLog:
-    """One long run's children: queue them, wait for them (and for their QC and retakes), and keep what went wrong
-    as problems (core/problems.py), filed under `step`."""
-
-    def __init__(self, ctx: JobContext, name: str):
-        self.ctx, self.name = ctx, name
-        self.problems = problems.RunProblems()
-        self.step = ""
-        self.done: dict[str, int] = {}
-
-    def guard(self) -> None:
-        self.ctx.check_cancel()
-        spent, cap = _run_spend(self.ctx)
-        if spent > cap and spent > 0:
-            raise BudgetStop(f"{self.name}: spent ${spent:.2f}, above the approved ${cap:.2f} guard")
-
-    def run(self, specs: list[dict], label: str) -> dict[int, str]:
-        """Queue these child jobs and wait for them; returns {job id: status}. Failures become problems."""
-        ids = [self.ctx.enqueue_child(s["type"], s["payload"], shot_id=s.get("shot_id"), episode_id=s.get("episode_id"),
-                                      estimate=s["estimate"], label=s["label"]) for s in specs]
-        ids = [i for i in ids if i]
-        if not ids:
-            return {}
-        st = self.ctx.wait_children(ids, label, guard=self.guard)
-        _wait_batch_idle(self.ctx, self.guard)
-        self.problems.children(st, self.step or label)
-        return st
-
-    def stopped_at_budget(self, again: str) -> None:
-        """The spend guard tripped: work already running (and paid) finishes, queued work is cancelled, and the run
-        ends with that as a problem instead of failing."""
-        self.ctx.stop_at_budget()
-        if self.ctx.cancelled():
-            from ..core.jobs import cancel_tree
-            with SessionLocal() as db:
-                cancel_tree(db, [self.ctx.job_id])
-                db.commit()
-            raise Cancelled()
-        reason = problems.BUDGET_STOP.replace("Produce all", again)
-        self.problems.add(None, "budget", reason, "What is made is kept and nothing is made twice; raise the budget "
-                                                  "first if the run should go further")
-
-    def save(self, announce: bool) -> list[dict]:
-        problems.save(self.ctx.project_id, self.ctx.episode_id, self.problems.items, self.ctx.type, self.ctx.job_id,
-                      announce)
-        return self.problems.items
 
 
 @handler("autopilot")
