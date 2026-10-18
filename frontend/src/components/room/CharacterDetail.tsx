@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "../../lib/api";
 import { cn } from "../../lib/cn";
+import { quote, type QuoteAction } from "../../lib/estimates";
 import { tr, useT } from "../../lib/i18n";
 import { useCharacter } from "../../lib/queries";
 import type { Character, SubmitResult } from "../../lib/types";
@@ -45,7 +46,10 @@ export function CharacterDetail({ cid, chars, onBack, onOpen, backLabel }: {
   const { canEdit, canProduce, projectId } = scope;
   const back = backLabel ?? t("Cast");
   const qc = useQueryClient();
-  const { submit } = useGenerate();
+  const { priced } = useGenerate();
+  /** A reference-pack job with its price first (it runs on the engine picked for this character). */
+  const packJob = (action: QuoteAction, run: () => Promise<SubmitResult>, what: string) =>
+    void priced({ quote: () => quote({ action, character_id: cid, project_id: projectId ?? null }), run, what });
   const { data: raw, isLoading, isError } = useCharacter(cid);
   const c = raw as CharacterV3 | undefined;
   const { data: consents } = useConsentRows(canProduce);
@@ -163,7 +167,7 @@ export function CharacterDetail({ cid, chars, onBack, onOpen, backLabel }: {
     ...newOutfitJobs.map((j) => ({ key: `outfit-job-${j.id}`, title: t("Outfit: {name}", { name: String(j.payload?.outfit ?? "") }), pending: (j.payload?.views as string[] | undefined)?.length ?? 3, items: [] })),
     { key: "lighting", title: t("Lighting"), hint: t("The same face in day, dusk and night-interior light"), pending: pendLight,
       items: lighting.map((a) => toItem(a, t(LIGHT_LABEL[a.lighting ?? ""] ?? a.label))) },
-    { key: "stills", title: t("Approved stills"), hint: t("Faces from keyframes you picked. New keyframes use them right after the approved views."), pending: 0,
+    { key: "stills", title: t("Approved stills"), hint: t("Faces from pictures you picked. New pictures use them right after the approved views."), pending: 0,
       items: stills.map((a) => toItem(a, a.label || t("approved still"), a.outfit || undefined)) },
     { key: "other", title: t("Other"), pending: 0, items: others.map((a) => toItem(a, a.label || a.kind.replace(/_/g, " "), a.outfit || undefined)) },
   ].filter((g) => g.items.length || g.pending) : [{
@@ -360,13 +364,13 @@ export function CharacterDetail({ cid, chars, onBack, onOpen, backLabel }: {
           actions={canEdit && (
             <>
               <Button size="sm" variant={ownPhotos.length ? "secondary" : "primary"} icon={<Wand2 className="size-3.5" />} className="max-sm:h-10"
-                onClick={() => submit(() => api.post<SubmitResult>(`/api/characters/${cid}/sheet`, { project_id: projectId ?? null }), tr("Sheet for {name}", { name: c.name }))}>
+                onClick={() => packJob("sheet", () => api.post<SubmitResult>(`/api/characters/${cid}/sheet`, { project_id: projectId ?? null }), tr("Sheet for {name}", { name: c.name }))}>
                 {ownPhotos.length ? t("Generate angles from photo") : t("Generate sheet")}
               </Button>
               <Button size="sm" icon={<Smile className="size-3.5" />} className="max-sm:h-10"
-                onClick={() => submit(() => api.post<SubmitResult>(`/api/characters/${cid}/expressions`, { project_id: projectId ?? null }), tr("Expressions"))}>{t("Expressions")}</Button>
+                onClick={() => packJob("expressions", () => api.post<SubmitResult>(`/api/characters/${cid}/expressions`, { project_id: projectId ?? null }), tr("Expressions for {name}", { name: c.name }))}>{t("Expressions")}</Button>
               <Button size="sm" icon={<SunMedium className="size-3.5" />} className="max-sm:h-10"
-                onClick={() => submit(() => generateLighting(cid, projectId ?? null) as Promise<SubmitResult>, tr("Lighting variants for {name}", { name: c.name }))}>{t("Lighting variants")}</Button>
+                onClick={() => packJob("lighting", () => generateLighting(cid, projectId ?? null) as Promise<SubmitResult>, tr("Lighting variants for {name}", { name: c.name }))}>{t("Lighting variants")}</Button>
               <OneCallBoardButton character={c} projectId={projectId} editable={editable} />
             </>
           )}>
@@ -377,7 +381,7 @@ export function CharacterDetail({ cid, chars, onBack, onOpen, backLabel }: {
                 <span className={cn("grid size-9 shrink-0 place-items-center rounded-lg border", ownPhotos.length ? "border-ok/30 bg-ok/15 text-ok" : "border-accent/30 bg-accent/15 text-accent-ink")}><ImagePlus className="size-4" /></span>
                 <div className="min-w-0 flex-1 basis-60">
                   <p className="text-sm font-medium">{ownPhotos.length ? t("Your images ({n}) set the look", { n: ownPhotos.length }) : t("Use your own images")}</p>
-                  <p className="text-xs text-mute">{t("Upload clear images of the face (front, side) and full body. Your approved uploads are used first for every keyframe and video; generated angles and outfits are made from them.")}</p>
+                  <p className="text-xs text-mute">{t("Upload clear images of the face (front, side) and full body. Your approved uploads are used first for every picture and video; generated angles and outfits are made from them.")}</p>
                 </div>
                 <Button size="sm" variant={ownPhotos.length ? "secondary" : "primary"} loading={busy === "upload"} icon={<Upload className="size-3.5" />} className="max-sm:h-10"
                   onClick={() => fileRef.current?.click()}>{ownPhotos.length ? t("Add more images") : t("Upload images")}</Button>

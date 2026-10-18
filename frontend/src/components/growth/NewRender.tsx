@@ -117,7 +117,7 @@ export default function NewRender({ project, episode, lang, canEdit, presets, we
     <Panel index={1} eyebrow={t("Compose")} icon={<Clapperboard />} title={t("New render")} tone="accent">
       <div className="@container">
         <p className="mb-4 text-xs leading-relaxed text-mute">
-          {t("Rendering runs on your server (FFmpeg) — free. Shots without video use their keyframe; warnings list anything missing.")}
+          {t("Rendering runs on your server (FFmpeg) — free. Shots without video use their picture; warnings list anything missing.")}
         </p>
 
         {/* format presets */}

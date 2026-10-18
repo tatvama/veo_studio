@@ -584,11 +584,7 @@ class PreviewIn(BaseModel):
 @router.post("/voices/{vid}/preview")
 def preview_voice(vid: int, body: PreviewIn, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
     vp = get_or_404(db, VoiceProfile, vid)
-    from ..core.budget import Estimator
-    est = Estimator(db)
-    cost = float(est.prices["tts_per_1k_chars"].get(vp.provider, 0.05)) * max(len(body.text), 80) / 1000 if est._live(vp.provider) else 0
-    return jobs.submit(db, user, None, [jobs.spec("voice_preview", payload={"voice_profile_id": vid, "text": body.text},
-                                                  estimate=cost, label="Voice preview")])
+    return jobs.submit(db, user, None, [generation.voice_preview_spec(db, vp, body.text)])
 
 
 @router.get("/voices/library")

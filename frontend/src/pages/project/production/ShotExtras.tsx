@@ -50,10 +50,10 @@ export function PromptView({ shotId, lang }: { shotId: number; lang: string }) {
     <div className="space-y-3">
       <p className="flex items-start gap-2 rounded-lg border border-accent/20 bg-accent/8 px-3 py-2 text-xs leading-relaxed text-mute">
         <Sparkles className="mt-0.5 size-3.5 shrink-0 text-accent-ink" />
-        {t("Compiled automatically from the Bible + this shot. Character DNA is pasted word for word so faces don't drift.")}
+        {t("Compiled automatically from Cast + this shot. Character DNA is pasted word for word so faces don't drift.")}
       </p>
       <PromptBlock title={t("Video prompt")} text={data.video_prompt} refsLabel={t("Reference images (Balanced/Hero)")} refs={data.video_refs} empty={t("none yet — generate the character sheet")} />
-      <PromptBlock title={t("Keyframe prompt")} text={data.keyframe_prompt} refsLabel={t("References")} refs={data.keyframe_refs} empty={t("none")} />
+      <PromptBlock title={t("Picture prompt")} text={data.keyframe_prompt} refsLabel={t("References")} refs={data.keyframe_refs} empty={t("none")} />
     </div>
   );
 }
@@ -119,7 +119,7 @@ export function Comments({ projectId, shotId, targetType = "shot" }: { projectId
       </ul>
       {canReview && (
         <div className="flex items-end gap-2">
-          <Textarea value={body} rows={2} onChange={(e) => setBody(e.target.value)} placeholder={t("Comment… (@Priya please check lip-sync)")} aria-label={t("Comment")}
+          <Textarea value={body} rows={2} onChange={(e) => setBody(e.target.value)} placeholder={t("Comment… (@Priya please check mouth sync)")} aria-label={t("Comment")}
             className="!min-h-[44px] flex-1 resize-none"
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void send(); } }} />
           <Button variant="primary" onClick={send} loading={sending} disabled={!body.trim()} icon={<Send className="size-4" />} aria-label={t("Send comment")} className="!h-[44px] !w-11 !px-0" />

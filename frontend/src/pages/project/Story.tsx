@@ -1,12 +1,13 @@
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowRight, AtSign, BookOpen, Brain, Gauge, Headphones, History, Languages, LayoutGrid, ListChecks, MessagesSquare, Save, ScanSearch, ScrollText,
-  Sparkles, SquareKanban, Users, X,
+  ArrowRight, AtSign, BookOpen, Brain, FileText, Gauge, Headphones, History, Languages, LayoutGrid, ListChecks, MessagesSquare, Save, ScanSearch, ScrollText,
+  Sparkles, Users, X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { AdvancedSection } from "../../components/room/Advanced";
 import { ContinuityPanel } from "../../components/room/Continuity";
 import { CriticPanel } from "../../components/room/Critic";
 import { HookSection } from "../../components/room/Hooks";
@@ -16,7 +17,7 @@ import { scoreTone, spokenSeconds, useSaveShortcut } from "../../components/room
 import { ScriptEditor } from "../../components/room/ScriptEditor";
 import { SOURCE, ScriptVersionsDrawer } from "../../components/room/ScriptVersions";
 import { TableReadPanel } from "../../components/room/TableRead";
-import { StatStrip, ViewSwitch, WorkPanel, Workspace, pad } from "../../components/room/workspace";
+import { StatStrip, ViewSwitch, WorkPanel, pad } from "../../components/room/workspace";
 import { Badge, Button, Empty, IconButton, Modal, Skeleton, Tooltip, rise } from "../../components/ui";
 import { api } from "../../lib/api";
 import { cn } from "../../lib/cn";
@@ -26,6 +27,7 @@ import { useEpisode, useScriptVersions, useSettings } from "../../lib/queries";
 import type { Episode, Script } from "../../lib/types";
 import { resolveMentions } from "../../lib/v3";
 import { useProjectCtx } from "./context";
+import { openImport } from "./importEvent";
 
 type RoomTab = "critic" | "table" | "continuity" | "languages";
 /** Script intelligence: a changed dialogue line updated the shot that speaks it (PATCH /episodes response). */
@@ -131,7 +133,6 @@ export default function StoryPage() {
   const hooks = ep.hooks || [];
   const critic = ep.critic;
   const issues = ep.continuity?.issues?.length ?? 0;
-  const checked = !!ep.continuity?.at || ep.continuity?.ok !== undefined;
   const reads = Object.keys(ep.table_read ?? {}).length;
   const hasScript = !!script.scenes?.length;
   const selected = optSel ?? ep.selected_hook;
@@ -139,7 +140,6 @@ export default function StoryPage() {
   const bar = Number(settings?.settings.critic_min_score ?? 7.5);
   const lineCount = (script.scenes ?? []).reduce((n, s) => n + (s.lines?.length ?? 0), 0);
   const spoken = spokenSeconds(script);
-  const hookScore = selected !== null && selected !== undefined ? hooks[selected]?.total : undefined;
   const criticScore = typeof critic?.overall === "number" ? critic.overall : undefined;
 
   const onScript = (next: Script) => { setScript(next); setDirty(true); setJustSaved(false); };
@@ -199,7 +199,7 @@ export default function StoryPage() {
 
   return (
     <RoomPage width="wide" footer={actionBar}>
-      <RoomHeader icon={<BookOpen />} title={t("Hooks & script")} description={t("Pick a hook, write the script, then let the writers' room tighten it.")}
+      <RoomHeader icon={<BookOpen />} title={t("Script")} description={t("Write the script with AI from your brief, or edit your own. Then plan the shots.")}
         status={canEdit ? <SaveStatus state={state} /> : undefined}
         actions={canEdit && hasScript ? (
           <Tooltip content={t("Link every @Name in the script to the cast, locations and props. Unknown names become new characters.")}>
@@ -211,25 +211,59 @@ export default function StoryPage() {
         <StatStrip index={1} cells={[
           { key: "scenes", label: t("Scenes"), value: script.scenes?.length ?? 0, sub: t("{n} lines", { n: lineCount }) },
           { key: "spoken", label: t("Spoken"), value: spoken || "—", unit: spoken ? "s" : undefined, sub: t("≈ of dialogue") },
-          { key: "hook", label: t("Hook"), value: hookScore ? hookScore.toFixed(1) : "—", unit: hookScore ? "/10" : undefined,
-            tone: hookScore ? scoreTone(hookScore) : "neutral", sub: hookScore ? t("selected opening") : t("none picked yet") },
           { key: "critic", label: t("Critic"), value: criticScore !== undefined ? criticScore.toFixed(1) : "—", unit: criticScore !== undefined ? "/10" : undefined,
             tone: criticScore !== undefined ? scoreTone(criticScore, bar) : "neutral", sub: criticScore === undefined ? t("not run yet") : criticScore >= bar ? t("clears the bar") : t("below the bar") },
-          { key: "issues", label: t("Continuity"), value: checked ? issues : "—", tone: !checked ? "neutral" : issues ? "warn" : "ok", sub: !checked ? t("not checked") : issues ? t("issues to review") : t("no issues") },
-          { key: "reads", label: t("Table read"), value: reads || "—", sub: reads ? t("languages") : t("not recorded") },
         ]} />
 
-        <HookSection index={2} n={1} eid={eid} hooks={hooks} selected={selected} canEdit={canEdit} busy={busy}
-          angle={angle} onAngle={setAngle} custom={custom} onCustom={setCustom}
-          onWrite={() => run("hooks", () => api.post(`/api/episodes/${eid}/hooks/generate`, { n: 6, angle }), tr("Hooks written"))}
-          onSelect={selectHook}
-          onUseCustom={() => run("custom", () => api.post(`/api/episodes/${eid}/hooks/select`, { text: custom }).then(() => setCustom("")), tr("Hook added"))}
-          onInsight={(h) => { setAngle(tr("Similar to: “{hook}”", { hook: h.hook })); toast.message(tr("Angle set — write hooks to use it")); }} />
+        <WorkPanel id="script" index={2} n={1} kicker={t("Screenplay")} icon={<ScrollText />} flush
+          title={project.type === "series" ? t("Script — Episode {n}", { n: ep.number }) : t("Script")}
+          description={t("Dialogue in {lang}. Other languages are created later by dubbing.", { lang: LANG_NAMES[project.primary_language] ?? project.primary_language })}
+          actions={
+            <Button size="sm" variant="ghost" icon={<History className="size-3.5" />} onClick={() => openVersions()}>
+              {t("Versions")}{!!versions?.length && <span className="mono ml-0.5 rounded bg-raised px-1.5 py-px text-2xs font-semibold text-mute">{versions.length}</span>}
+            </Button>
+          }>
+          {!hasScript ? (
+            <div className="p-4 @md:p-5">
+              <Empty icon={<ScrollText className="size-7" />} title={t("No script yet")} sub={t("Write it with AI from your brief, or bring your own script.")}
+                action={canEdit ? (
+                  <div className="flex flex-wrap justify-center gap-2">
+                    <Button variant="primary" loading={busy === "script"} icon={<Sparkles className="size-4" />} onClick={writeScript}>{t("Write script")}</Button>
+                    <Button icon={<FileText className="size-4" />} onClick={() => openImport()}>{t("Import my script")}</Button>
+                  </div>
+                ) : undefined} />
+            </div>
+          ) : (
+            <div className="mt-4 border-t border-line">
+              <ScriptEditor script={script} onChange={onScript} canEdit={canEdit} pid={project.id} eid={eid} />
+            </div>
+          )}
+        </WorkPanel>
 
-        <Workspace railKind="wide" rail={
-          <>
-            {/* writers' room: critic, table read, continuity, localization behind one switch */}
-            <WorkPanel id="room" index={3} n={3} kicker={t("Writers' room")} tone="ai" icon={<MessagesSquare />} flush
+        {hasScript && canEdit && (
+          <WorkPanel index={3} n={2} kicker={t("Hand-off")} icon={<ListChecks />} title={t("What's next")} description={t("Next: plan the shots, then make the cast from this script.")}>
+            <ol className="grid gap-3 @2xl:grid-cols-2">
+              <Step n={1} icon={<LayoutGrid />} title={t("Shots")} text={t("Break the script into a shot list.")}>
+                <Button variant="primary" loading={busy === "shots"} icon={<LayoutGrid className="size-4" />} iconRight={<ArrowRight className="size-4" />} onClick={planShots}>{t("Plan the shots")}</Button>
+              </Step>
+              <Step n={2} icon={<Users />} title={t("Cast")} text={t("Create the characters, places and look this script needs.")} last>
+                <Button loading={busy === "bible"} icon={<Users className="size-4" />} onClick={buildBible}>{t("Build the cast")}</Button>
+              </Step>
+            </ol>
+          </WorkPanel>
+        )}
+
+        {/* writers' tools: hooks, the writers' room (critic, table read, continuity, localize), versions, series memory */}
+        <AdvancedSection storageKey="story" summary={t("Hooks, writers' room (critic, table read, continuity, localize), versions{series}", { series: project.type === "series" ? `, ${tr("series memory")}` : "" })}>
+          <HookSection index={4} n={3} eid={eid} hooks={hooks} selected={selected} canEdit={canEdit} busy={busy}
+            angle={angle} onAngle={setAngle} custom={custom} onCustom={setCustom}
+            onWrite={() => run("hooks", () => api.post(`/api/episodes/${eid}/hooks/generate`, { n: 6, angle }), tr("Hooks written"))}
+            onSelect={selectHook}
+            onUseCustom={() => run("custom", () => api.post(`/api/episodes/${eid}/hooks/select`, { text: custom }).then(() => setCustom("")), tr("Hook added"))}
+            onInsight={(h) => { setAngle(tr("Similar to: “{hook}”", { hook: h.hook })); toast.message(tr("Angle set — write hooks to use it")); }} />
+
+          <div className="grid gap-6 @5xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+            <WorkPanel id="room" index={5} n={4} kicker={t("Writers' room")} tone="ai" icon={<MessagesSquare />} flush
               description={undefined} bodyClassName="pb-1">
               <div className="px-4 pb-3 pt-3.5 @md:px-5">
                 <ViewSwitch size="sm" value={room} onChange={setRoom} label={t("Writers' room")} className="w-full" items={[
@@ -255,7 +289,7 @@ export default function StoryPage() {
             </WorkPanel>
 
             {/* script history */}
-            <WorkPanel index={4} n={4} kicker={t("History")} icon={<History />} title={t("Versions")}
+            <WorkPanel index={6} n={5} kicker={t("History")} icon={<History />} title={t("Versions")}
               badge={!!versions?.length ? <span className="mono rounded bg-raised px-1.5 text-2xs font-medium leading-4 text-dim">{versions.length}</span> : undefined}
               actions={<Button size="sm" variant="ghost" icon={<History className="size-3.5" />} onClick={() => openVersions()}>{t("Open history")}</Button>}>
               {!recent.length ? (
@@ -282,43 +316,7 @@ export default function StoryPage() {
                 </ol>
               )}
             </WorkPanel>
-          </>
-        }>
-          <WorkPanel id="script" index={5} n={2} kicker={t("Screenplay")} icon={<ScrollText />} flush
-            title={project.type === "series" ? t("Script — Episode {n}", { n: ep.number }) : t("Script")}
-            description={t("Dialogue in {lang}. Other languages are created later by dubbing.", { lang: LANG_NAMES[project.primary_language] ?? project.primary_language })}
-            actions={
-              <Button size="sm" variant="ghost" icon={<History className="size-3.5" />} onClick={() => openVersions()}>
-                {t("Versions")}{!!versions?.length && <span className="mono ml-0.5 rounded bg-raised px-1.5 py-px text-2xs font-semibold text-mute">{versions.length}</span>}
-              </Button>
-            }>
-            {!hasScript ? (
-              <div className="p-4 @md:p-5">
-                <Empty icon={<ScrollText className="size-7" />} title={t("No script yet")} sub={t("Pick a hook, then write the script.")}
-                  action={canEdit ? <Button variant="primary" loading={busy === "script"} icon={<Sparkles className="size-4" />} onClick={writeScript}>{t("Write script")}</Button> : undefined} />
-              </div>
-            ) : (
-              <div className="mt-4 border-t border-line">
-                <ScriptEditor script={script} onChange={onScript} canEdit={canEdit} pid={project.id} eid={eid} />
-              </div>
-            )}
-          </WorkPanel>
-
-          {hasScript && canEdit && (
-            <WorkPanel index={6} n={5} kicker={t("Hand-off")} icon={<ListChecks />} title={t("What's next")} description={t("Next: create the cast & look from this script, plan scene cards, then break it into shots.")}>
-              <ol className="grid gap-3 @2xl:grid-cols-3">
-                <Step n={1} icon={<Users />} title={t("Cast & look")} text={t("Create the characters, locations and style this script needs.")}>
-                  <Button loading={busy === "bible"} icon={<Users className="size-4" />} onClick={buildBible}>{t("Build bible")}</Button>
-                </Step>
-                <Step n={2} icon={<SquareKanban />} title={t("Scene cards")} text={t("Plan the goal, conflict and coverage of every scene.")}>
-                  <Button icon={<SquareKanban className="size-4" />} onClick={() => nav(`/p/${project.id}/scenes`)}>{t("Scene cards")}</Button>
-                </Step>
-                <Step n={3} icon={<LayoutGrid />} title={t("Shots")} text={t("Break the script into a shot list for the storyboard.")} last>
-                  <Button loading={busy === "shots"} icon={<LayoutGrid className="size-4" />} iconRight={<ArrowRight className="size-4" />} onClick={planShots}>{t("Plan shots")}</Button>
-                </Step>
-              </ol>
-            </WorkPanel>
-          )}
+          </div>
 
           {project.type === "series" && (
             <WorkPanel index={7} n={6} kicker={t("Continuity")} tone="ai" icon={<Brain />} title={t("Series memory")} description={t("The next episode's writer reads this summary to stay consistent.")}
@@ -328,7 +326,7 @@ export default function StoryPage() {
                 : <p className="rounded-lg border border-dashed border-line px-4 py-5 text-center text-sm text-mute">{t("Not summarised yet. The next episode's writer reads this to stay consistent.")}</p>}
             </WorkPanel>
           )}
-        </Workspace>
+        </AdvancedSection>
       </div>
 
       <ScriptVersionsDrawer open={versionsOpen} onClose={() => setVersionsOpen(false)} eid={eid} current={ep.script} canEdit={canEdit} hasUnsaved={dirty} focusId={versionFocus} />

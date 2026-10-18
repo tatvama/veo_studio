@@ -17,6 +17,7 @@ import { RField } from "./kit";
 import { useCharScope } from "./scope";
 import { useActiveJobs } from "./util";
 import { WorkPanel } from "./workspace";
+import { quote } from "../../lib/estimates";
 
 /** One voice per project language: pick a prebuilt voice or design one from the description, then audition it. */
 export function Voices({ character, index, n }: { character: Character; index?: number; n?: number }) {
@@ -25,7 +26,7 @@ export function Voices({ character, index, n }: { character: Character; index?: 
   const { canEdit, canProduce, projectId } = scope;
   // a locked character's voice can only be changed by a producer (the server refuses everyone else)
   const editable = canEdit && (!character.locked || canProduce);
-  const { submit } = useGenerate();
+  const { priced } = useGenerate();
   const { data: settings } = useSettings();
   const qc = useQueryClient();
   const voices = (character.voices || []) as VoiceProfile[];
@@ -130,11 +131,14 @@ export function Voices({ character, index, n }: { character: Character; index?: 
                           if (desc !== character.voice_description) {
                             try { await api.patch(`/api/characters/${character.id}`, { voice_description: desc }); } catch { return; }
                           }
-                          submit(() => api.post<SubmitResult>(`/api/characters/${character.id}/voices/design`, { language: lang, provider: prov, description: desc, project_id: projectId ?? null }),
-                            tr("{name} {lang} voice", { name: character.name, lang: LANG_SHORT[lang] }));
+                          const body = { language: lang, provider: prov, description: desc, project_id: projectId ?? null };
+                          void priced({ quote: () => quote({ action: "voice_design", character_id: character.id, ...body }),
+                            run: () => api.post<SubmitResult>(`/api/characters/${character.id}/voices/design`, body),
+                            what: tr("{name} {lang} voice", { name: character.name, lang: LANG_SHORT[lang] }) });
                         }}>{prov === "sarvam" ? t("Pick") : t("Design")}</Button>
                         {vp && <Button size="sm" variant="ghost" className="max-sm:h-10" title={t("Speak a sample line")} aria-label={t("Speak a sample line")} icon={<Play className="size-3.5" />}
-                          onClick={() => submit(() => api.post<SubmitResult>(`/api/voices/${vp.id}/preview`, {}), tr("Voice preview"))}>{t("Sample")}</Button>}
+                          onClick={() => void priced({ quote: () => quote({ action: "voice_preview", voice_id: vp.id }),
+                            run: () => api.post<SubmitResult>(`/api/voices/${vp.id}/preview`, {}), what: tr("Voice preview") })}>{t("Sample")}</Button>}
                       </div>
                     </div>
                   )}

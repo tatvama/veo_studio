@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle, ArrowRight, Check, Clapperboard, Eye, FileText, Layers, Mic, Rocket, Sparkles, Speech, Star, Target, Tv, Users, Wallet, Wand2,
+  AlertTriangle, ArrowRight, Check, Clapperboard, Eye, FileText, Layers, Mic, Sparkles, Speech, Star, Target, Tv, Users, Wallet, Wand2,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -19,9 +19,10 @@ import { api } from "../../lib/api";
 import { cn } from "../../lib/cn";
 import { LANG_NAMES, LANG_SHORT, QUALITY_INFO, usd } from "../../lib/format";
 import { tr, useT } from "../../lib/i18n";
-import { useSettings } from "../../lib/queries";
+import { useEpisode, useSettings } from "../../lib/queries";
 import type { Project, Trends } from "../../lib/types";
 import { useProjectCtx } from "./context";
+import { MakeItForMe } from "./MakeItForMe";
 
 const FIELD_LABEL: Record<BriefField, string> = { tone: "Tone", notes: "Notes", key_message: "Key message" };
 
@@ -36,7 +37,7 @@ type ProjectV3 = Project & { pronunciations?: Record<string, string> | null };
 
 export default function BriefPage() {
   const t = useT();
-  const { project, eid, canEdit, canProduce, setEpisode } = useProjectCtx();
+  const { project, eid, lang, canEdit, canProduce, setEpisode } = useProjectCtx();
   const qc = useQueryClient();
   const { generate } = useGenerate();
   const { data: settings } = useSettings();
@@ -51,6 +52,9 @@ export default function BriefPage() {
   const dirtyRef = useRef(false);
   const lastId = useRef(project.id);
   const autopilotStarted = useRef(false);
+  const [makeOpen, setMakeOpen] = useState(false);
+  const { data: episode } = useEpisode(eid, lang);
+  const hasShots = (episode?.shots ?? []).some((s) => s.include);
 
   // Pull server changes in, but never throw away unsaved local edits (e.g. when Trend scout updates the project).
   useEffect(() => {
@@ -194,7 +198,7 @@ export default function BriefPage() {
     { id: "sec-narrator", label: t("Narrator voice"), state: "none" },
     { id: "sec-pron", label: t("Pronunciation"), state: "none", meta: pron.length || undefined },
     ...(project.type === "series" ? [{ id: "sec-season", label: t("Season plan"), state: (arc.length ? "done" : "todo") as OutlineItem["state"], meta: arc.length || undefined }] : []),
-    { id: "autopilot", label: t("Autopilot"), state: "none", meta: ap.status === "running" ? "RUN" : ap.status === "paused" ? "WAIT" : undefined },
+    { id: "autopilot", label: t("Make it for me"), state: "none", meta: ap.status === "running" ? "RUN" : ap.status === "paused" ? "WAIT" : undefined },
   ];
 
   return (
@@ -203,7 +207,7 @@ export default function BriefPage() {
         description={t("The goal, audience and limits every writer and agent works from.")}
         status={canEdit ? <SaveStatus state={state} /> : <Fact icon={<Eye />}>{t("View only")}</Fact>}
         actions={canEdit && (
-          <Button size="sm" variant="outline" icon={<Rocket className="size-3.5" />} onClick={() => scrollToSection("autopilot")}>{t("Autopilot")}</Button>
+          <Button size="sm" variant="outline" icon={<Wand2 className="size-3.5 text-ai" />} onClick={() => setMakeOpen(true)}>{t("Make it for me")}</Button>
         )} />
 
       <StatStrip index={1} className="mb-6" cells={[
@@ -496,7 +500,7 @@ export default function BriefPage() {
         )}
 
         {/* ── launch ─────────────────────────────────────────────────────────── */}
-        <MissionLaunch project={project} eid={eid} canEdit={canEdit} index={11} />
+        <MissionLaunch project={project} eid={eid} canEdit={canEdit} index={11} onStart={() => setMakeOpen(true)} />
 
         <WorkPanel index={12} n={11} kicker={t("Cost guardrails")} tone="money" icon={<Layers />} title={t("How costs stay low")}>
           <ul className="grid gap-x-6 gap-y-3 text-xs leading-relaxed text-mute @2xl:grid-cols-2">
@@ -517,6 +521,8 @@ export default function BriefPage() {
       </Workspace>
 
       <FloatingSaveBar show={canEdit && (dirty || busy === "save")} state={state} saving={busy === "save"} disabled={writing} onSave={save} onDiscard={discard} />
+      <MakeItForMe open={makeOpen} onClose={() => setMakeOpen(false)} hasShots={hasShots}
+        beforeRun={async () => { if (dirtyRef.current) await save(); return true; }} />
     </RoomPage>
   );
 }

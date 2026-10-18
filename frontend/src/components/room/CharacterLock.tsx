@@ -17,7 +17,7 @@ const TRAITS: { key: TraitKey; label: string; hint: string }[] = [
   { key: "body", label: "Body", hint: "Same build and body proportions." },
   { key: "skin_hair", label: "Skin & hair", hint: "Same skin tone and hairstyle." },
   { key: "voice", label: "Voice", hint: "The voice description goes into every dialogue prompt." },
-  { key: "costume_continuity", label: "Costume continuity", hint: "Must wear the scene's outfit, nothing added or removed. QC fails a wrong outfit." },
+  { key: "costume_continuity", label: "Costume continuity", hint: "Must wear the scene's outfit, nothing added or removed. The quality check fails a wrong outfit." },
 ];
 
 const signed = (d: number) => `${d < 0 ? "−" : "+"}${Math.abs(d).toFixed(2)}`;
@@ -64,7 +64,7 @@ export function CharacterLockPanel({ character, editable, index, n }: { characte
   return (
     <WorkPanel id="sec-lock" index={index} n={n} kicker={t("Continuity")} icon={<ShieldCheck />} title={t("Character Lock")}
       badge={form ? <Badge tone={level === "strict" ? "ok" : level === "lenient" ? "warn" : "neutral"} dot>{t(LEVEL_LABEL[level])}</Badge> : undefined}
-      description={t("What every prompt must keep about {name}, and how strictly QC checks it.", { name: character.name })}
+      description={t("What every prompt must keep about {name}, and how strict the quality check is.", { name: character.name })}
       actions={editable && data && (
         <>
           <Button size="sm" variant="ghost" icon={<RotateCcw className="size-3.5" />} disabled={busy || JSON.stringify(form) === JSON.stringify(data.defaults)}
@@ -124,7 +124,7 @@ export function CharacterLockPanel({ character, editable, index, n }: { characte
                   {[
                     { k: t("References"), v: String(refs), hint: t("per character in every video") },
                     { k: t("Face match"), v: signed((s - 0.5) * 0.2), hint: t("threshold") },
-                    { k: t("QC pass mark"), v: signed((s - 0.5) * 0.3), hint: t("vs team defaults") },
+                    { k: t("Quality check pass mark"), v: signed((s - 0.5) * 0.3), hint: t("vs team defaults") },
                   ].map((x) => (
                     <div key={x.k} className="min-w-0">
                       <dt className="eyebrow truncate">{x.k}</dt>
@@ -164,7 +164,7 @@ export function CharacterLockPanel({ character, editable, index, n }: { characte
 
           <p className="flex items-start gap-2 text-xs leading-relaxed text-mute">
             <Info className="mt-px size-3.5 shrink-0 text-info" />
-            {t("The lock steers prompts, picks more references and tightens QC — it checks the result, it cannot guarantee identity. Approved references and a trained identity do the heavy lifting.")}
+            {t("The lock steers prompts, picks more references and tightens the quality check — it checks the result, it cannot guarantee identity. Approved references and a trained identity do the heavy lifting.")}
           </p>
         </div>
       )}

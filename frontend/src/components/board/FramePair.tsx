@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { useGenerate } from "../Generate";
 import { Button, Menu, Tooltip } from "../ui";
+import { quote } from "../../lib/estimates";
 import { clearEndFrame, makeEndFrame, uploadEndFrame } from "../../lib/frames";
 import { tr, useT } from "../../lib/i18n";
 import type { Shot, Take } from "../../lib/types";
@@ -15,14 +16,19 @@ export function EndFrameControls({ shot, onDone, busy, onBusy }: {
   shot: Shot; onDone: () => void; busy?: boolean; onBusy?: (b: boolean) => void;
 }) {
   const t = useT();
-  const { submit } = useGenerate();
+  const { priced } = useGenerate();
   const input = useRef<HTMLInputElement>(null);
   const [working, setWorking] = useState(false);
   const run = async (fn: () => Promise<unknown>) => {
     setWorking(true); onBusy?.(true);
     try { await fn(); } catch { /* api() showed the error */ } finally { setWorking(false); onBusy?.(false); }
   };
-  const make = () => run(async () => { await submit(() => makeEndFrame(shot.id), tr("End frame {code}", { code: shot.code })); onDone(); });
+  // the price first (a start frame is made too when the shot has none)
+  const make = () => run(async () => {
+    const r = await priced({ quote: () => quote({ action: "endframe", shot_id: shot.id }), run: () => makeEndFrame(shot.id),
+      what: tr("End frame {code}", { code: shot.code }) });
+    if (r) onDone();
+  });
   const upload = (f: File | undefined) => f && run(async () => {
     await uploadEndFrame(shot.id, f);
     toast.success(tr("Your end frame is set — the clip will run from the start frame to it"));

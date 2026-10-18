@@ -199,7 +199,7 @@ export function FxEditor({ shotId }: { shotId: number }) {
                 ))}
               </div>
             </div>
-            {(fx.speed ?? 1) !== 1 && <p className="pl-[5.5rem] text-2xs text-dim">{t("The shot's sound (and lip-sync) follows the speed. The clip becomes {s}s.", { s: (shot.duration_s / (fx.speed ?? 1)).toFixed(1) })}</p>}
+            {(fx.speed ?? 1) !== 1 && <p className="pl-[5.5rem] text-2xs text-dim">{t("The shot's sound (and mouth sync) follows the speed. The clip becomes {s}s.", { s: (shot.duration_s / (fx.speed ?? 1)).toFixed(1) })}</p>}
             <div className="flex flex-wrap items-center gap-2">
               <span className="flex w-20 shrink-0 items-center gap-1 text-xs text-mute"><Clapperboard className="size-3.5" />{t("Camera")}</span>
               <Segmented size="sm" value={fx.move?.kind ?? "none"} aria-label={t("Camera move")}

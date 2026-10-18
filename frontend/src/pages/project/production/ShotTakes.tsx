@@ -14,9 +14,10 @@ import { tr, useT } from "../../../lib/i18n";
 import type { Shot, SubmitResult, Take } from "../../../lib/types";
 import { markFresh, type TakeV3 } from "../../../lib/v3";
 import { ratioOf, thumbRatio } from "./shotMeta";
+import { quote } from "../../../lib/estimates";
 
 const KIND_LABELS: Record<string, string> = {
-  lipsync: "Lip-sync", voicelock: "Voice lock", video: "Video", keyframe: "Keyframe", endframe: "End frame", voice: "Voice",
+  lipsync: "Mouth sync", voicelock: "Voice lock", video: "Video", keyframe: "Picture", endframe: "End frame", voice: "Voice",
   narration: "Narration",
 };
 const KIND_ORDER = ["lipsync", "voicelock", "video", "keyframe", "endframe", "voice", "narration"];
@@ -39,7 +40,7 @@ export function Takes({ shot, canEdit, canReview, refresh, aspect, onShootout, o
   const [freshing, setFreshing] = useState<number | null>(null);
   const [enhancing, setEnhancing] = useState<number | null>(null);
   const { pick, busy } = usePickWinner(shot.id);
-  const { submit } = useGenerate();
+  const { priced } = useGenerate();
   const takes = shot.takes ?? [];
   const staleCount = useMemo(() => takes.filter((x) => (x as TakeV3).stale).length, [takes]);
   const groups = useMemo(() => KIND_ORDER.map((k) => ({ kind: k, items: takes.filter((x) => x.kind === k) })).filter((g) => g.items.length), [takes]);
@@ -87,14 +88,15 @@ export function Takes({ shot, canEdit, canReview, refresh, aspect, onShootout, o
   const enhance = async (x: Take) => {
     setEnhancing(x.id);
     try {
-      await submit(() => api.post<SubmitResult>(`/api/takes/${x.id}/enhance`), tr("Enhance keyframe #{id}", { id: x.id }));
+      await priced({ quote: () => quote({ action: "enhance", take_id: x.id }), run: () => api.post<SubmitResult>(`/api/takes/${x.id}/enhance`),
+        what: tr("Enhance picture #{id}", { id: x.id }) });
       refresh();
     } finally { setEnhancing(null); }
   };
   const pair = takes.filter((x) => compare.includes(x.id));
 
   if (!takes.length) {
-    return <Empty icon={<Film className="size-7" />} title={t("No takes yet. Generate a keyframe or video.")} sub={t("Every generation is kept here as a take, so you can compare them and go back.")} />;
+    return <Empty icon={<Film className="size-7" />} title={t("No takes yet. Generate a picture or video.")} sub={t("Every generation is kept here as a take, so you can compare them and go back.")} />;
   }
 
   return (
@@ -103,7 +105,7 @@ export function Takes({ shot, canEdit, canReview, refresh, aspect, onShootout, o
         <div role="status" className="flex flex-wrap items-center gap-2 rounded-lg border border-warn/30 bg-warn/8 px-3 py-2 text-xs text-warn">
           <History className="size-4 shrink-0" />
           <span className="min-w-0 flex-1">
-            {staleCount === 1 ? t("1 take is stale: the shot changed after it was made.") : t("{n} takes are stale: the shot changed after they were made.", { n: staleCount })}
+            {staleCount === 1 ? t("1 take is out of date: the shot changed after it was made.") : t("{n} takes are out of date: the shot changed after they were made.", { n: staleCount })}
             {" "}{t("Regenerate from the Dashboard, or mark a take fresh if it still fits.")}
           </span>
         </div>
@@ -238,7 +240,7 @@ function TakeCard({ x, aspect, row, showing, canEdit, canReview, comparing, qcOp
         <div className="flex flex-wrap items-center gap-1">
           {/* wide cards carry "in use" on the poster; rows and audio takes say it in words */}
           {x.selected && (row || !visual) && <Badge tone="accent"><Crown className="size-3" />{t("in use")}</Badge>}
-          {stale && <Badge tone="warn" title={staleReason || t("The shot changed after this take was made")}><History className="size-3" />{t("Stale")}</Badge>}
+          {stale && <Badge tone="warn" title={staleReason || t("The shot changed after this take was made")}><History className="size-3" />{t("Out of date")}</Badge>}
           {isShoot && <Badge tone="info" title={t("Made in a shootout")}><Swords className="size-3" />{t("shootout")}</Badge>}
           {isDraft && (
             <Badge tone="ai" title={t("A cheap low-resolution preview. It doesn't replace a finished clip; Produce all still makes the final clip.")}>
@@ -258,7 +260,7 @@ function TakeCard({ x, aspect, row, showing, canEdit, canReview, comparing, qcOp
             <Badge tone="info" title={t("Enhanced from take #{id} with the Pro image model", { id: x.params.enhanced_from })}><WandSparkles className="size-3" />{t("enhanced")}</Badge>
           )}
           {x.kind === "keyframe" && x.params?.anchor && (
-            <Badge title={t("Made with the scene's anchor keyframe as a reference for set, light and wardrobe")}><Anchor className="size-3" />{t("scene look")}</Badge>
+            <Badge title={t("Made with the scene's anchor picture as a reference for set, light and wardrobe")}><Anchor className="size-3" />{t("scene look")}</Badge>
           )}
           {x.params?.warning && <Badge tone="warn">{t(x.params.warning)}</Badge>}
         </div>
@@ -267,7 +269,7 @@ function TakeCard({ x, aspect, row, showing, canEdit, canReview, comparing, qcOp
         {stale && (
           <p className="flex items-start gap-1 text-warn" title={staleReason || undefined}>
             <History className="mt-px size-3 shrink-0" />
-            <span className="line-clamp-2">{staleReason ? t("Stale: {reason}", { reason: staleReason }) : t("Stale: the shot changed after this take was made")}</span>
+            <span className="line-clamp-2">{staleReason ? t("Out of date: {reason}", { reason: staleReason }) : t("Out of date: the shot changed after this take was made")}</span>
           </p>
         )}
         {x.params?.edit_instruction && <p className="truncate text-mute">✎ {x.params.edit_instruction}</p>}
@@ -280,7 +282,7 @@ function TakeCard({ x, aspect, row, showing, canEdit, canReview, comparing, qcOp
           ))}
           {stale && canReview && (
             <Button size="sm" variant="outline" icon={<Sparkles className="size-3.5" />} loading={freshing} onClick={onFresh}
-              title={t("Keep this take: clear the stale flag")}>{t("Mark fresh")}</Button>
+              title={t("Keep this take: clear the out-of-date flag")}>{t("Mark fresh")}</Button>
           )}
           {x.kind === "keyframe" && canEdit && (
             <Button size="sm" variant="outline" icon={<WandSparkles className="size-3.5" />} loading={enhancing} onClick={onEnhance}

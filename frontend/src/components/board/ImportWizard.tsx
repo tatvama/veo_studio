@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Check, ClipboardCopy, FileText, ImagePlus, Mic, Sparkles, UploadCloud, Users, Wand2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { DropZone } from "../../pages/brand/DropZone";
 import { api } from "../../lib/api";
@@ -77,9 +77,15 @@ function prepare(res: ImportResult, picks: Record<string, CastPick>) {
   return { draft, mapping };
 }
 
-/** Import a prepared script: read it, map its names to characters, preview every scene, then apply (shot list + Story script). */
-export function ImportWizard({ open, onClose, eid, projectId, hasShots, onDone }: {
+/**
+ * Import a prepared script: read it, map its names to characters, check the story (counts, the people found, warnings,
+ * every scene), then apply (shot list + Story script). With `initialText` (a script pasted on Home) it reads it straight
+ * away and opens on "Check story".
+ */
+export function ImportWizard({ open, onClose, eid, projectId, hasShots, onDone, initialText }: {
   open: boolean; onClose: () => void; eid: number; projectId: number; hasShots: boolean; onDone: (b: Board) => void;
+  /** Script text to read as soon as the wizard opens (it then opens on the story check). */
+  initialText?: string;
 }) {
   const t = useT();
   const qc = useQueryClient();
@@ -109,22 +115,33 @@ export function ImportWizard({ open, onClose, eid, projectId, hasShots, onDone }
   const reset = () => { setStep("source"); setFile(null); setText(""); setRes(null); setPicks({}); setPhotos({}); setAiPhotos({}); setWriteScript(true); };
   const close = () => { if (!busy) { reset(); onClose(); } };
 
-  const read = async () => {
-    if (!file && !text.trim()) return toast.error(tr("Upload a file or paste your script"));
+  /** `given`: text handed over from Home, read at once; the wizard then goes straight to the story check. */
+  const read = async (given?: string) => {
+    const body = given ?? text;
+    if (!file && !body.trim()) return toast.error(tr("Upload a file or paste your script"));
     setBusy(true);
     try {
       const fd = new FormData();
-      if (file) fd.append("file", file);
-      else fd.append("text", text);
+      if (file && given === undefined) fd.append("file", file);
+      else fd.append("text", body);
       fd.append("method", method);
       const r = await api.post<ImportResult>(`/api/episodes/${eid}/import/parse`, fd);
       setRes(r);
       const p: Record<string, CastPick> = {};
       r.characters.forEach((c) => { p[c.name] = c.match ? { kind: "existing", id: c.match.id } : NEW_PICK; });
       setPicks(p);
-      setStep(r.characters.length ? "cast" : "preview");
+      setStep(given !== undefined || !r.characters.length ? "preview" : "cast");
     } catch { /* api toasts */ } finally { setBusy(false); }
   };
+  // a script pasted on Home: read it as soon as the wizard opens (once per opening)
+  const autoRead = useRef(false);
+  useEffect(() => {
+    if (!open) { autoRead.current = false; return; }
+    if (!initialText?.trim() || autoRead.current) return;
+    autoRead.current = true;
+    setText(initialText);
+    void read(initialText);
+  }, [open, initialText]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const apply = async () => {
     if (!res) return;
@@ -148,7 +165,7 @@ export function ImportWizard({ open, onClose, eid, projectId, hasShots, onDone }
   };
 
   const steps: { id: Step; label: string }[] = [
-    { id: "source", label: t("Script") }, { id: "cast", label: t("Characters") }, { id: "preview", label: t("Preview") },
+    { id: "source", label: t("Script") }, { id: "cast", label: t("Who is who") }, { id: "preview", label: t("Check story") },
   ];
   const stepIdx = steps.findIndex((s) => s.id === step);
   const shots = res?.draft.scenes.reduce((a, s) => a + s.shots.length, 0) ?? 0;
@@ -159,11 +176,11 @@ export function ImportWizard({ open, onClose, eid, projectId, hasShots, onDone }
         <Button variant="ghost" icon={<ArrowLeft className="size-4" />} disabled={busy} onClick={() => setStep(step === "preview" && res?.characters.length ? "cast" : "source")}>{t("Back")}</Button>
       )}
       <div className="flex-1" />
-      {step === "source" && <Button variant="primary" loading={busy} icon={<Wand2 className="size-4" />} onClick={read}>{t("Read script")}</Button>}
-      {step === "cast" && <Button variant="primary" iconRight={<ArrowRight className="size-4" />} onClick={() => setStep("preview")}>{t("Next: preview")}</Button>}
+      {step === "source" && <Button variant="primary" loading={busy} icon={<Wand2 className="size-4" />} onClick={() => void read()}>{t("Read script")}</Button>}
+      {step === "cast" && <Button variant="primary" iconRight={<ArrowRight className="size-4" />} onClick={() => setStep("preview")}>{t("Next: check story")}</Button>}
       {step === "preview" && (
         <Button variant="primary" loading={busy} icon={<Check className="size-4" />} onClick={apply} disabled={!shots}>
-          {t("Import {n} shots", { n: shots })}
+          {t("Looks right: import {n} shots", { n: shots })}
         </Button>
       )}
     </>
@@ -200,6 +217,11 @@ export function ImportWizard({ open, onClose, eid, projectId, hasShots, onDone }
           })}
         </ol>
 
+        {step === "source" && busy && !!initialText && (
+          <p role="status" className="mb-4 flex items-center gap-2 rounded-xl border border-ai/30 bg-ai/8 px-3.5 py-3 text-sm">
+            <Sparkles className="size-4 animate-pulse text-ai" />{t("Reading your script: scenes, shots and the people in it…")}
+          </p>
+        )}
         {step === "source" && (
           <div className="grid gap-5 @3xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
             <div className="min-w-0 space-y-3">
@@ -323,7 +345,8 @@ export function ImportWizard({ open, onClose, eid, projectId, hasShots, onDone }
         )}
 
         {step === "preview" && res && (
-          <ImportPreview res={res} picks={picks} pool={pool} hasShots={hasShots} writeScript={writeScript} onWriteScript={setWriteScript} />
+          <ImportPreview res={res} picks={picks} pool={pool} hasShots={hasShots} writeScript={writeScript} onWriteScript={setWriteScript}
+            onPeople={res.characters.length ? () => setStep("cast") : undefined} />
         )}
       </div>
     </Modal>

@@ -1,18 +1,21 @@
 import { AlertTriangle, CheckCircle2, Info, Loader2, XCircle } from "lucide-react";
+import { useMatch } from "react-router-dom";
 import { Toaster } from "sonner";
 import { useResolvedTheme } from "./theme";
 
 /** Sonner toaster that follows the app theme: neutral raised surface, status shown by icon + a tinted edge. */
 export function ThemedToaster() {
   const theme = useResolvedTheme();
+  // inside a project the Next bar (44 px) holds the main button at the bottom right: toasts sit above it
+  const inProject = !!useMatch("/p/:pid/*");
   return (
     <Toaster
       theme={theme}
       position="bottom-right"
       closeButton
       gap={10}
-      offset={{ bottom: 20, right: 20 }}
-      mobileOffset={{ bottom: 12, left: 12, right: 12 }}
+      offset={{ bottom: inProject ? 60 : 20, right: 20 }}
+      mobileOffset={{ bottom: inProject ? 56 : 12, left: 12, right: 12 }}
       icons={{
         success: <CheckCircle2 className="size-[18px] text-ok" />,
         error: <XCircle className="size-[18px] text-bad" />,

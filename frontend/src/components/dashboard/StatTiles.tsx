@@ -69,7 +69,7 @@ export function StatTiles({ d, pid, canProduce, index }: { d: EpisodeDashboard; 
             sub={t("extra video takes per shot with video")} />
         </Cell>
         <Cell>
-          <Metric label={t("Stale takes")} size="sm" value={stale} tone={stale ? "warn" : "ok"}
+          <Metric label={t("Out-of-date takes")} size="sm" value={stale} tone={stale ? "warn" : "ok"}
             sub={stale ? (
               <button type="button" onClick={() => document.getElementById("mission-impact")?.scrollIntoView({ behavior: "smooth", block: "start" })}
                 className="inline-flex items-center gap-1 rounded text-warn underline-offset-2 hover:underline">{t("Review impact")}<ArrowRight className="size-3" /></button>

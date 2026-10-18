@@ -122,7 +122,7 @@ export function StyleEditor() {
           </WorkPanel>
         )}
 
-        <WorkPanel index={2} n={2} kicker={t("Look")} icon={<Palette />} title={t("Visual style")} description={t("Added to every keyframe and video prompt.")} bodyClassName="space-y-4">
+        <WorkPanel index={2} n={2} kicker={t("Look")} icon={<Palette />} title={t("Visual style")} description={t("Added to every picture and video prompt.")} bodyClassName="space-y-4">
           <RField label={t("Name")} htmlFor="st-name"><Input id="st-name" value={s.name || ""} disabled={!editable} onChange={(e) => setS({ ...s, name: e.target.value })} /></RField>
           <RField label={t("Look & lighting")} htmlFor="st-look"><Textarea id="st-look" rows={2} value={s.look || ""} disabled={!editable} onChange={(e) => setS({ ...s, look: e.target.value })} /></RField>
           <div className="grid gap-4 @xl:grid-cols-3">

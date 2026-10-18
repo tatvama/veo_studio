@@ -46,7 +46,7 @@ function useGroups(): Group[] {
       items: [
         { keys: [["←"], ["→"]], label: t("Previous / next shot (while a shot is open)") },
         { keys: [["A"]], label: t("Approve the open shot") },
-        { keys: [["K"]], label: t("Generate a keyframe for the open shot") },
+        { keys: [["K"]], label: t("Generate a picture for the open shot") },
         { keys: [["V"]], label: t("Generate a video for the open shot") },
         { keys: [["Esc"]], label: t("Close the open shot") },
       ],

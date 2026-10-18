@@ -20,9 +20,9 @@ export function getNav(t: T, role: Role): NavEntry[] {
   const canApprove = ROLE_RANK[role] >= ROLE_RANK.producer;
   const isAdmin = role === "admin";
   const items: (NavEntry | false)[] = [
-    { to: "/", group: "create", label: t("Command center"), icon: Home, tour: "nav-projects", keywords: "home projects dashboard start overview" },
+    { to: "/", group: "create", label: t("Home"), icon: Home, tour: "nav-projects", keywords: "home projects dashboard start overview command center" },
     { to: "/search", group: "create", label: t("Search everything"), icon: Search, tour: "nav-search", keywords: "find" },
-    { to: "/library", group: "library", label: t("Characters & places"), icon: BookUser, keywords: "characters locations cast library photos voice clone avatar" },
+    { to: "/library", group: "library", label: t("Library"), icon: BookUser, keywords: "characters places locations cast library photos voice clone avatar" },
     { to: "/posters", group: "library", label: t("Posters"), icon: LayoutTemplate, keywords: "poster studio design thumbnail youtube instagram story social post flyer banner festival greeting key art canva" },
     { to: "/models", group: "library", label: t("Model Hub"), icon: Boxes, tour: "nav-models", keywords: "ai engines veo kling models", more: true },
     { to: "/brand-kits", group: "library", label: t("Brand kits"), icon: Palette, keywords: "logo colours fonts brand", more: true },
@@ -52,14 +52,14 @@ export interface ProjectStep {
   sequential: boolean;
 }
 
-/** The steps of the project rail, the step bar and the overview's flight path. */
+/** The five steps, as the project header's stepper and the Overview show them. */
 export function getProjectSteps(t: T): ProjectStep[] {
   return [
-    { id: "story", n: 1, label: t("Story"), icon: BookOpen, sequential: true, blurb: t("Set the brief, write the script, plan the scenes.") },
-    { id: "cast", n: 2, label: t("Cast"), icon: Users, sequential: true, blurb: t("Lock the look of every character, place and prop.") },
-    { id: "shots", n: 3, label: t("Shots"), icon: Clapperboard, sequential: false, blurb: t("Make keyframes and videos, and pick the best takes.") },
+    { id: "story", n: 1, label: t("Story"), icon: BookOpen, sequential: true, blurb: t("Write the script, or bring your own.") },
+    { id: "cast", n: 2, label: t("Cast"), icon: Users, sequential: true, blurb: t("Pictures and voices for every character and place.") },
+    { id: "shots", n: 3, label: t("Shots"), icon: Clapperboard, sequential: false, blurb: t("Make the pictures and videos, and pick the best takes.") },
     { id: "edit", n: 4, label: t("Edit"), icon: Film, sequential: true, blurb: t("Cut it together with music, voice and titles.") },
-    { id: "deliver", n: 5, label: t("Deliver"), icon: Send, sequential: true, blurb: t("Render, get feedback, make ads, reels and posters.") },
+    { id: "deliver", n: 5, label: t("Deliver"), icon: Send, sequential: true, blurb: t("Render it, share it, get feedback.") },
   ];
 }
 
@@ -68,7 +68,8 @@ export interface ProjectTab {
   to: string; label: string; icon: LucideIcon; keywords?: string; area: ProjectArea;
   /** Projects made from the user's own material hide this page until it has something in it (it is about writing from a concept). */
   ownHidden?: boolean;
-  /** Not listed among the step's views (only while it is open): reached from its page's button and the command palette. */
+  /** Off the main path (Script → Cast → Shots → Edit → Deliver): listed under the step's "Advanced" menu, and among the
+   *  step's views only while it is open. */
   advanced?: boolean;
 }
 
@@ -80,17 +81,17 @@ export function getProjectTabs(t: T): ProjectTab[] {
   return [
     { to: "dashboard", area: "home", label: t("Overview"), icon: Gauge, keywords: "home mission control dashboard progress cost per second spend stale impact seasons" },
     { to: "brief", area: "story", label: t("Brief"), icon: FileText, keywords: "story goal audience autopilot" },
-    { to: "story", area: "story", label: t("Hooks & script"), icon: BookOpen, ownHidden: true, keywords: "story hooks script writers room" },
-    { to: "scenes", area: "story", label: t("Scenes"), icon: SquareKanban, ownHidden: true, keywords: "story scene cards beats" },
-    { to: "bible", area: "cast", label: t("Characters & places"), icon: Users, keywords: "cast bible characters locations style voices photos lock versions costumes" },
-    { to: "world", area: "cast", label: t("Props & wardrobe"), icon: Globe, ownHidden: true, keywords: "cast world props costumes wardrobe continuity bible timeline end state" },
+    { to: "story", area: "story", label: t("Script"), icon: BookOpen, ownHidden: true, keywords: "story hooks script writers room critic table read" },
+    { to: "scenes", area: "story", label: t("Scene cards"), icon: SquareKanban, ownHidden: true, advanced: true, keywords: "story scenes scene cards beats" },
+    { to: "bible", area: "cast", label: t("Cast"), icon: Users, keywords: "cast bible characters places locations style voices photos lock versions costumes" },
+    { to: "world", area: "cast", label: t("Props & wardrobe"), icon: Globe, ownHidden: true, advanced: true, keywords: "cast world props costumes wardrobe continuity bible timeline end state" },
     { to: "canvas", area: "shots", label: t("Canvas"), icon: Workflow, keywords: "shots canvas nodes drag drop scenes cast film map make price" },
-    { to: "storyboard", area: "shots", label: t("Grid"), icon: LayoutGrid, keywords: "shots storyboard grid keyframes videos takes" },
-    { to: "shots", area: "shots", label: t("Text"), icon: ListVideo, keywords: "shots shot list text import script word pdf manual builder dialogue voice-over produce" },
-    { to: "studio", area: "shots", label: t("Advanced layout"), icon: PanelsTopLeft, advanced: true, keywords: "shots studio one screen workspace panels dock timeline viewer multi monitor drag drop" },
+    { to: "storyboard", area: "shots", label: t("Grid"), icon: LayoutGrid, keywords: "shots storyboard grid pictures keyframes videos takes" },
+    { to: "shots", area: "shots", label: t("Text"), icon: ListVideo, keywords: "shots shot list text import script word pdf manual builder dialogue voice-over produce make it for me" },
+    { to: "studio", area: "shots", label: t("Advanced layout"), icon: PanelsTopLeft, advanced: true, keywords: "shots studio one screen workspace panels dock timeline viewer multi monitor drag drop film map" },
     { to: "timeline", area: "edit", label: t("Timeline"), icon: Film, keywords: "edit cut music audio sound titles" },
-    { to: "finish", area: "edit", label: t("Finishing room"), icon: MonitorPlay,
-      keywords: "edit desktop checkout check in lock versions rollback 4k upscale local render folder sync windows screens scopes multi monitor" },
+    { to: "finish", area: "edit", label: t("Pro finishing"), icon: MonitorPlay,
+      keywords: "edit finishing room desktop checkout check in lock versions rollback 4k upscale local render folder sync windows screens scopes multi monitor" },
     { to: "export", area: "deliver", label: t("Export"), icon: Clapperboard, keywords: "deliver render publish download" },
     { to: "review", area: "deliver", label: t("Review"), icon: MessageSquareText, keywords: "deliver comments feedback client" },
     { to: "campaign", area: "deliver", label: t("Ads & Reels"), icon: Megaphone, keywords: "deliver advert campaign variants languages aspect reels shorts highlights" },
@@ -106,8 +107,8 @@ export function areaOf(tab: string): ProjectArea | undefined {
   return AREA[tab];
 }
 
-/** "Cast › Characters & places" for a step's sub-page; just the label for the Overview and the log. */
+/** "Shots › Storyboard" for a step's sub-page; just the label for the Overview and the log. */
 export function tabTitle(t: T, tab: ProjectTab, steps: ProjectStep[] = getProjectSteps(t)): string {
   const step = steps.find((s) => s.id === tab.area);
-  return step ? `${step.label} › ${tab.label}` : tab.label;
+  return step && step.label !== tab.label ? `${step.label} › ${tab.label}` : tab.label;
 }

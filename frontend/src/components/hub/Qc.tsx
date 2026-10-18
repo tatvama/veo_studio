@@ -41,7 +41,7 @@ export function qcSummary(take: Take | null | undefined): QcSummary {
   if (anchorChecked && qc.set_ok === false) issues.push("Set doesn't match the scene");
   if (anchorChecked && qc.lighting_ok === false) issues.push("Light doesn't match the scene");
   if (lipRep?.artifacts) issues.push("Mouth artifacts");
-  if (lipRep && lipRep.face_visible === false) issues.push("Face not visible for lip-sync");
+  if (lipRep && lipRep.face_visible === false) issues.push("Face not visible for mouth sync");
   const ident = qc.identity_match != null ? Number(qc.identity_match) : null;
   const identThr = Number(qc.threshold ?? 0.7);
   const faceThr = Number(qc.face_threshold ?? 0.36);
@@ -52,7 +52,7 @@ export function qcSummary(take: Take | null | undefined): QcSummary {
   const checks: QcCheck[] = [];
   if (face != null) checks.push({ key: "face", label: "Face match", ok: face >= faceThr, score: face, thr: faceThr });
   if (ident != null) checks.push({ key: "ident", label: "Identity", ok: ident >= identThr, score: ident, thr: identThr });
-  if (lip != null) checks.push({ key: "lip", label: "Lip-sync", ok: lip >= lipThr, score: lip, thr: lipThr });
+  if (lip != null) checks.push({ key: "lip", label: "Mouth sync", ok: lip >= lipThr, score: lip, thr: lipThr });
   if (qc.outfit_match !== undefined) {
     const wardrobe = qc.kind === "keyframe" && qc.wardrobe_match != null ? { score: Number(qc.wardrobe_match), thr: sceneThr } : {};
     checks.push({ key: "outfit", label: "Outfit", ok: qc.outfit_match !== false, ...wardrobe });
@@ -100,7 +100,7 @@ export function QcBadges({ take, lipTake, overall = true, className }: {
     <span className={clsx("inline-flex flex-wrap items-center gap-1", className)}>
       {overall && q.checked && passed !== undefined && (
         <Badge tone={passed ? "ok" : "bad"} className="mono" title={[q.notes, ...q.issues.map((i) => t(i))].filter(Boolean).join(" · ") || t("Quality check")}>
-          {passed ? <CheckCircle2 className="size-3" /> : <XCircle className="size-3" />}{t("QC")}
+          {passed ? <CheckCircle2 className="size-3" /> : <XCircle className="size-3" />}{t("Quality check")}
         </Badge>
       )}
       {q.face != null ? (
@@ -113,12 +113,12 @@ export function QcBadges({ take, lipTake, overall = true, className }: {
         </Badge>
       ) : null}
       {lip != null && (
-        <Badge tone={lip >= lipThr ? "ok" : "bad"} className="mono" title={t("Lip-sync score {v} (pass ≥ {thr})", { v: lip.toFixed(2), thr: lipThr.toFixed(2) })}>
+        <Badge tone={lip >= lipThr ? "ok" : "bad"} className="mono" title={t("Mouth sync score {v} (pass ≥ {thr})", { v: lip.toFixed(2), thr: lipThr.toFixed(2) })}>
           <Speech className="size-3" />{lip.toFixed(2)}
         </Badge>
       )}
       {retakes > 0 && (
-        <Badge tone="warn" className="mono" title={t("{n} automatic retake(s) after failed QC", { n: retakes })}>
+        <Badge tone="warn" className="mono" title={t("{n} automatic retake(s) after a failed quality check", { n: retakes })}>
           <RotateCcw className="size-3" />{retakes}
         </Badge>
       )}
@@ -144,8 +144,8 @@ export function QcMini({ take, lipTake, threshold = 0.7, className }: {
     || (q.passed === undefined && score != null && score < (q.face != null ? q.faceThr : threshold));
   const tip = [
     score != null ? (q.face != null ? t("Face match {v} (pass ≥ {thr})", { v: score.toFixed(2), thr: q.faceThr.toFixed(2) }) : t("Identity match {v} (pass ≥ {thr})", { v: score.toFixed(2), thr: q.identThr.toFixed(2) })) : "",
-    lip != null ? t("Lip-sync score {v} (pass ≥ {thr})", { v: lip.toFixed(2), thr: (lq?.lip != null ? lq.lipThr : q.lipThr).toFixed(2) }) : "",
-    retakes > 0 ? t("{n} automatic retake(s) after failed QC", { n: retakes }) : "",
+    lip != null ? t("Mouth sync score {v} (pass ≥ {thr})", { v: lip.toFixed(2), thr: (lq?.lip != null ? lq.lipThr : q.lipThr).toFixed(2) }) : "",
+    retakes > 0 ? t("{n} automatic retake(s) after a failed quality check", { n: retakes }) : "",
     q.notes,
     ...q.issues.map((i) => t(i)),
   ].filter(Boolean).join(" · ") || t("Quality check");
@@ -154,7 +154,7 @@ export function QcMini({ take, lipTake, threshold = 0.7, className }: {
       "mono inline-flex h-[18px] items-center gap-0.5 rounded-md border px-1 text-2xs font-medium",
       failed ? "border-bad/30 bg-bad/12 text-bad" : "border-ok/30 bg-ok/12 text-ok", className)}>
       {failed ? <XCircle className="size-3" /> : <ShieldCheck className="size-3" />}
-      {score != null ? score.toFixed(2) : t("QC")}
+      {score != null ? score.toFixed(2) : t("Check")}
       {retakes > 0 && <span className="inline-flex items-center gap-0.5 text-warn"><RotateCcw className="size-3" />{retakes}</span>}
     </span>
   );
@@ -188,7 +188,7 @@ export function QcChecklist({ take, lipTake, className, compact }: { take: Take 
   if (!take && !lipTake) return null;
   // the lip-sync score lives on the lip-sync take: fold it into the same list
   const checks = [...q.checks];
-  if (lq?.lip != null && q.lip == null) checks.push({ key: "lip", label: "Lip-sync", ok: lq.lip >= lq.lipThr, score: lq.lip, thr: lq.lipThr });
+  if (lq?.lip != null && q.lip == null) checks.push({ key: "lip", label: "Mouth sync", ok: lq.lip >= lq.lipThr, score: lq.lip, thr: lq.lipThr });
   if (!q.checked && !checks.length) {
     return (
       <p className={clsx("flex items-center gap-1.5 text-2xs text-dim", className)}>
@@ -203,9 +203,9 @@ export function QcChecklist({ take, lipTake, className, compact }: { take: Take 
     <div className={clsx("cx-block", className)} data-tone={passed === false || fails ? "bad" : undefined}>
       <div className="flex items-center gap-1.5 border-b border-line px-2.5 py-1.5">
         {passed === false || fails ? <XCircle className="size-3.5 text-bad" /> : <ShieldCheck className="size-3.5 text-ok" />}
-        <p className="text-xs font-medium">{passed === false || fails ? t("QC needs attention") : t("QC passed")}</p>
+        <p className="text-xs font-medium">{passed === false || fails ? t("Quality check needs attention") : t("Passed quality check")}</p>
         {retakes > 0 && (
-          <span className="mono ml-auto inline-flex items-center gap-0.5 text-2xs text-warn" title={t("{n} automatic retake(s) after failed QC", { n: retakes })}>
+          <span className="mono ml-auto inline-flex items-center gap-0.5 text-2xs text-warn" title={t("{n} automatic retake(s) after a failed quality check", { n: retakes })}>
             <RotateCcw className="size-3" />{retakes}
           </span>
         )}
@@ -240,7 +240,7 @@ export function QcDetails({ take }: { take: Take }) {
         <div className="grid gap-2 sm:grid-cols-2">
           {q.face != null && <ScoreBar label={t("Face match")} value={q.face} thr={q.faceThr} />}
           {q.ident != null && <ScoreBar label={t("Identity (vision check)")} value={q.ident} thr={q.identThr} />}
-          {q.lip != null && <ScoreBar label={t("Lip-sync")} value={q.lip} thr={q.lipThr} />}
+          {q.lip != null && <ScoreBar label={t("Mouth sync")} value={q.lip} thr={q.lipThr} />}
           {q.checks.filter((c) => (c.key === "set" || c.key === "light") && c.score != null && c.thr != null)
             .map((c) => <ScoreBar key={c.key} label={t(c.label)} value={c.score!} thr={c.thr!} />)}
         </div>
@@ -252,9 +252,9 @@ export function QcDetails({ take }: { take: Take }) {
         </ul>
       )}
       {q.notes && <p className="text-mute">{q.notes}</p>}
-      {q.lipNotes && <p className="text-mute">{t("Lip-sync")}: {q.lipNotes}</p>}
+      {q.lipNotes && <p className="text-mute">{t("Mouth sync")}: {q.lipNotes}</p>}
       {q.moments.length > 0 && <p className="text-mute">{t("Off moments")}: {q.moments.join(" · ")}</p>}
-      {q.retakes > 0 && <p className="flex items-center gap-1.5 text-warn"><RotateCcw className="size-3" />{t("Auto-retake #{n} — an earlier take failed QC", { n: q.retakes })}</p>}
+      {q.retakes > 0 && <p className="flex items-center gap-1.5 text-warn"><RotateCcw className="size-3" />{t("Auto-retake #{n} — an earlier take failed the quality check", { n: q.retakes })}</p>}
       {attempts.length > 0 && (
         <div className="space-y-0.5 border-t border-line pt-1.5">
           <p className="text-dim">{t("Engines that failed before this one")}:</p>
