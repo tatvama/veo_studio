@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from .. import catalog, settings_store
 from ..models import Character, Project, ProjectCast, Shot, VoiceProfile
 from . import ffmpeg as ff
-from .prompting import shot_lines
+from .shot_facts import shot_lines
 
 MALE_DEFAULTS = ["Charon", "Orus", "Puck", "Fenrir", "Iapetus", "Algenib", "Alnilam", "Sadaltager"]
 FEMALE_DEFAULTS = ["Kore", "Aoede", "Leda", "Despina", "Sulafat", "Achernar", "Vindemiatrix", "Autonoe"]
