@@ -13,12 +13,12 @@ from sqlalchemy.orm import Session
 
 from .. import catalog
 from ..config import get_settings
-from ..models import AudioAsset, Episode, Project, Shot
+from ..models import AudioAsset, Episode, Project, Shot, Take
 from ..providers import mock
 from ..storage import get_storage
 from . import ffmpeg as ff
-from .captions import Cue, cues_for, write_ass, write_srt
-from .prompting import effective_voice_mode, shot_lines
+from .captions import Cue, cues_for, speech_seconds, write_ass, write_srt
+from .prompting import effective_voice_mode, offscreen_only, shot_lines
 from . import fx as fxlib
 from . import layers as layerlib
 from .selection import current, is_stale
@@ -39,6 +39,11 @@ class Segment:
     source_key: str = ""  # storage keys of source / audio_override ("" = a placeholder made for this render)
     audio_key: str = ""
     needs_bed: bool = False  # a dialogue clip whose own sound (and the scene's background with it) was swapped for the voice
+    # the clip's own sound plays here, with the effects its prompt asked for (so a separate effects track would double them)
+    own_sound: bool = False
+    # where speech plays in this segment, (file, offset s, in-point in the file s): levelled as voices, and what the
+    # music ducks under (voice_track)
+    voices: list[tuple] = field(default_factory=list)
 
 
 @dataclass
@@ -74,17 +79,27 @@ def export_dims(project: Project, preset: str) -> tuple[int, int]:
     return ff.dims_for(project.aspect, 1080)
 
 
-def _spans_cues(spans: list[dict], offset: float = 0.0) -> list[Cue]:
+def _spans_cues(spans: list[dict], offset: float = 0.0, scale: float = 1.0) -> list[Cue]:
+    """Caption cues from a voice take's spans, `scale` for a voice that was sped up to fit its clip (lip-sync)."""
     out: list[Cue] = []
     for sp in spans or []:
-        out += cues_for(offset + float(sp.get("start", 0)), offset + float(sp.get("end", 0)), sp.get("text", ""))
+        out += cues_for(offset + float(sp.get("start", 0)) * scale, offset + float(sp.get("end", 0)) * scale, sp.get("text", ""))
     return out
+
+
+NARRATION_AFTER = 0.1  # the narration starts this long after the dialogue's last word (its file adds 0.2 s of lead-in)
 
 
 def plan(db: Session, episode: Episode, lang: str, kind: str, tmp: Path,
          ro: dict[str, Any] | None = None) -> tuple[list[Segment], list[str]]:
     """The cut as segments (one per included shot) and what to warn about. `ro`: the render options (render_options);
-    with `ambience` on (default) a dialogue clip whose own sound was replaced gets its scene's background back."""
+    with `ambience` on (default) a dialogue clip whose own sound was replaced gets its scene's background back.
+
+    No speech is ever cut: a voice or the narration that runs past its clip holds the clip's last frame until the words
+    end. A clip longer than its shot was planned (Veo makes 8 s in some modes) is trimmed to the plan, unless words
+    need more. The narrator never talks over a character: in a shot that has both, the narration starts after the
+    dialogue's last word. A dialogue clip with no voice yet never plays its own sound (made-up speech, the clip was
+    asked for mouths moving, not words): the scene's background, else silence, until the voice is made."""
     st = get_storage()
     project = db.get(Project, episode.project_id)
     shots = (db.query(Shot).filter(Shot.episode_id == episode.id, Shot.include.is_(True))
@@ -93,6 +108,7 @@ def plan(db: Session, episode: Episode, lang: str, kind: str, tmp: Path,
     warnings: list[str] = []
     for shot in shots:
         lines = shot_lines(shot, lang)
+        off = bool(lines) and offscreen_only(shot, project)  # heard from off-screen: voiced over the clip, no lips
         vm = effective_voice_mode(shot, project, lang)
         video = current(db, shot.id, "video")
         lips = current(db, shot.id, "lipsync", lang)
@@ -104,21 +120,40 @@ def plan(db: Session, episode: Episode, lang: str, kind: str, tmp: Path,
             if is_stale(db, vlock, video):
                 warnings.append(f"{shot.code}: voice lock for {lang} is from an older video — redo it for the current clip")
                 vlock = None
+        still = kind == "animatic" or not video
+        if off or still:  # (nobody's lips to sync; a still plays the voice itself)
+            lips = vlock = None
+        lips = lips if lips and lips.path and lines else None
+        vlock = vlock if vlock and vlock.path and lines else None
         voice = current(db, shot.id, "voice", lang)
         narr = current(db, shot.id, "narration", lang)
         voice_path = st.abs(voice.path) if voice and voice.path else None
         voice_key = voice.path if voice_path else ""
-        cues: list[Cue] = _spans_cues((voice.params or {}).get("spans", [])) if voice else []
+        # the words as the clip has them: a lip-synced voice was sped up to fit (its speed factor), and its take says
+        # which voice it was made from
+        factor = max(float((lips.params or {}).get("speed_factor") or 1.0), 0.5) if lips else 1.0
+        said_take = (db.get(Take, (lips.params or {}).get("voice_take_id")) if lips and (lips.params or {}).get("voice_take_id")
+                     else None) or voice
+        spans = list((said_take.params or {}).get("spans") or []) if said_take else []
+        said_cues = _spans_cues(spans, scale=1 / factor)
+        said_end = 0.0
+        if lines:  # where the dialogue's last word ends (estimated from the words while no voice says it)
+            said_end = (max(float(sp.get("end", 0)) for sp in spans) / factor if spans
+                        else 0.3 + speech_seconds(" ".join(l.get("line", "") for l in lines), lang))
         extra: list[tuple] = []
-        narr_s = 0.0  # how long the voice-over runs (with a short tail), so it is never cut off mid-sentence
+        voices: list[tuple] = []
+        narr_cues: list[Cue] = []
+        narr_s = 0.0  # where the voice-over ends (with a short tail), so it is never cut off mid-sentence
         if narr and narr.path:
-            extra.append((st.abs(narr.path), 0.0, 0.0, narr.path))
-            cues += _spans_cues((narr.params or {}).get("spans", []))
-            narr_s = float(narr.duration_s or 0) + 0.3 if narr.duration_s else 0.0
+            at = round(said_end + NARRATION_AFTER, 3) if lines else 0.0  # never over a character's line
+            extra.append((st.abs(narr.path), at, 0.0, narr.path))
+            voices.append((st.abs(narr.path), at, 0.0))
+            narr_cues = _spans_cues((narr.params or {}).get("spans", []), offset=at)
+            narr_s = at + float(narr.duration_s) + 0.3 if narr.duration_s else 0.0
         elif (shot.narration or {}).get(lang):
             warnings.append(f"{shot.code}: narration in {lang} not voiced yet")
 
-        if kind == "animatic" or not video:
+        if still:
             kf = current(db, shot.id, "keyframe")
             img_key = ""
             if kf and kf.path and st.exists(kf.path):
@@ -132,54 +167,82 @@ def plan(db: Session, episode: Episode, lang: str, kind: str, tmp: Path,
                 dur = max(dur, voice.duration_s + 0.2)
             if kind != "animatic" and not video:
                 warnings.append(f"{shot.code}: no video yet — still image used")
-            if lines and not voice:
-                cues += _even_cues(lines, dur)
-            segs.append(Segment(shot, img, "still", dur, audio_override=voice_path, extra_audio=extra, cues=cues,
-                                source_key=img_key, audio_key=voice_key))
+            cues = said_cues if voice else (_even_cues(lines, min(dur, said_end + 0.3) if narr_cues else dur) if lines else [])
+            segs.append(Segment(shot, img, "still", dur, audio_override=voice_path, extra_audio=extra, cues=cues + narr_cues,
+                                source_key=img_key, audio_key=voice_key,
+                                voices=([(voice_path, 0.0, 0.0)] if voice_path else []) + voices))
             continue
 
         if (video.params or {}).get("mock"):
             warnings.append(f"{shot.code}: placeholder clip (made without an API key) — generate it for real")
         vdur = max(video.duration_s or ff.duration(st.abs(video.path)), 0.5)
         trim_in = max(shot.trim_in or 0.0, 0.0)
-        dur = max(vdur - trim_in - max(shot.trim_out or 0.0, 0.0), 0.5)
-        # words laid over the clip (the voice-over, or a voice that isn't lip-synced yet) that run longer than it:
-        # the clip holds its last frame until they end (normalize_clip pads with it) instead of cutting them off
-        laid = (voice.duration_s + 0.2 if voice and voice.duration_s and lines and not (lips and lips.path)
-                and not (vlock and vlock.path) and not (vm == "native" and lang == project.primary_language) else 0.0)
-        if max(narr_s, laid) > dur + 0.05:
-            warnings.append(f"{shot.code}: the {'voice-over' if narr_s >= laid else 'voice'} runs {max(narr_s, laid):.1f}s "
-                            f"and the clip {dur:.1f}s; its last frame is held until the words end (longer shot or an "
-                            "extension fixes it)")
-            dur = max(narr_s, laid)
-        if lines and lips and lips.path and float(lips.duration_s or 0) - trim_in > dur + 0.05:
-            dur = float(lips.duration_s) - trim_in  # the lip-sync held the clip's last frame until the line ended
+        avail = max(vdur - trim_in - max(shot.trim_out or 0.0, 0.0), 0.5)  # the clip as trimmed
+        if lines and lips and lips.path and float(lips.duration_s or 0) - trim_in > avail + 0.05:
+            avail = float(lips.duration_s) - trim_in  # the lip-sync held the clip's last frame until the line ended
+        # the shot's planned length (the extension's, when the clip was extended): a longer clip is trimmed to it
+        planned = float(shot.extend_to) if shot.extend_to and vdur > shot.duration_s + 1 else float(shot.duration_s or 0)
+        dur = min(avail, planned) if planned > 0 else avail
+        native = bool(lines) and vm == "native" and lang == project.primary_language
         vid = {"source": st.abs(video.path), "source_key": video.path}
-        if lines and lips and lips.path:
-            segs.append(Segment(shot, st.abs(lips.path), "lipsync", dur, trim_in, extra_audio=extra, cues=cues or _even_cues(lines, dur),
-                                source_key=lips.path, needs_bed=True))
-        elif lines and vlock and vlock.path:  # Demucs keeps the background under the new voice; voice isolation drops it
-            segs.append(Segment(shot, st.abs(vlock.path), "voicelock", dur, trim_in, extra_audio=extra,
-                                cues=cues or _even_cues(lines, dur), source_key=vlock.path,
-                                needs_bed=(vlock.params or {}).get("separation") != "demucs"))
-        elif lines and vm == "native" and lang == project.primary_language:
-            segs.append(Segment(shot, source_kind="video", duration=dur, trim_in=trim_in, extra_audio=extra,
-                                cues=cues or _even_cues(lines, dur), **vid))
-        elif lines:
-            if voice_path:
-                warnings.append(f"{shot.code}: lip-sync for {lang} not done yet — voice laid over video (lips won't match)")
-                segs.append(Segment(shot, source_kind="video", duration=dur, trim_in=trim_in, audio_override=voice_path,
-                                    extra_audio=extra, cues=cues, audio_key=voice_key, needs_bed=True, **vid))
-            else:
-                warnings.append(f"{shot.code}: no {lang} voice yet — original audio used")
-                segs.append(Segment(shot, source_kind="video", duration=dur, trim_in=trim_in, extra_audio=extra,
-                                    cues=_even_cues(lines, dur), **vid))
+        even = _even_cues(lines, min(avail, said_end + 0.3) if narr_cues else dur) if lines else []
+        words = 0.0  # where the words in the clip end: it never stops before them
+        if lips:
+            words = min(said_end + 0.2, avail)  # the voice is in the clip: it can't run past it
+            sg = Segment(shot, st.abs(lips.path), "lipsync", dur, trim_in, extra_audio=extra, cues=said_cues or even,
+                         source_key=lips.path, needs_bed=True, voices=[(st.abs(lips.path), 0.0, trim_in)])
+        elif vlock:  # Demucs keeps the background under the new voice; voice isolation drops it
+            demucs = (vlock.params or {}).get("separation") == "demucs"
+            words = min(said_end + 0.2, avail)
+            sg = Segment(shot, st.abs(vlock.path), "voicelock", dur, trim_in, extra_audio=extra, cues=said_cues or even,
+                         source_key=vlock.path, needs_bed=not demucs, own_sound=demucs,
+                         voices=[(st.abs(vlock.path), 0.0, trim_in)])
+        elif native:  # Veo speaks the line somewhere in its clip: all of it plays, so no word is cut
+            words = avail
+            sg = Segment(shot, source_kind="video", duration=dur, trim_in=trim_in, extra_audio=extra, cues=said_cues or even,
+                         own_sound=True, voices=[(vid["source"], 0.0, trim_in)], **vid)
+        elif lines and voice_path:
+            words = float(voice.duration_s or 0) + 0.2 if voice.duration_s else 0.0
+            if off and vm != "native":  # nobody on screen says it: the voice over the clip's own sound, no lips to match
+                sg = Segment(shot, source_kind="video", duration=dur, trim_in=trim_in, cues=said_cues,
+                             extra_audio=[(voice_path, 0.0, 0.0, voice_key), *extra], own_sound=True, **vid)
+            else:  # (a dub of a clip where Veo speaks: its own words go, the background comes back)
+                if not off:
+                    warnings.append(f"{shot.code}: lip-sync for {lang} not done yet — voice laid over video (lips won't match)")
+                sg = Segment(shot, source_kind="video", duration=dur, trim_in=trim_in, audio_override=voice_path,
+                             extra_audio=extra, cues=said_cues, audio_key=voice_key, needs_bed=True, **vid)
+            sg.voices = [(voice_path, 0.0, 0.0)]
+        elif lines and (off or vm in ("audio_first", "audio_driven")):
+            warnings.append(f"{shot.code}: no {lang} voice yet: the clip's own sound is left out (it could speak made-up "
+                            "words) and the scene's background plays under the captions; make the voice to hear the line")
+            sg = Segment(shot, source_kind="video", duration=dur, trim_in=trim_in, extra_audio=extra, cues=even,
+                         keep_src_audio=False, needs_bed=True, **vid)
+        elif lines:  # voice lock not done yet: the clip speaks the scripted line itself
+            warnings.append(f"{shot.code}: no {lang} voice yet — original audio used")
+            sg = Segment(shot, source_kind="video", duration=dur, trim_in=trim_in, extra_audio=extra, cues=even,
+                         own_sound=True, voices=[(vid["source"], 0.0, trim_in)], **vid)
         else:
-            gain = -6.0 if vm == "narration" else 0.0
-            segs.append(Segment(shot, source_kind="video", duration=dur, trim_in=trim_in, src_gain_db=gain, extra_audio=extra,
-                                cues=cues, **vid))
+            sg = Segment(shot, source_kind="video", duration=dur, trim_in=trim_in, src_gain_db=-6.0 if vm == "narration" else 0.0,
+                         extra_audio=extra, own_sound=True, **vid)
+        sg.cues = sg.cues + narr_cues
+        sg.voices = sg.voices + voices
+        need = max(narr_s, words)
+        if need > sg.duration + 0.05:
+            if need > avail + 0.05:  # past the clip: it holds its last frame (normalize_clip pads with it)
+                warnings.append(f"{shot.code}: the {'voice-over' if narr_s >= words else 'voice'} runs {need:.1f}s and "
+                                f"the clip {avail:.1f}s; its last frame is held until the words end (a longer shot or an "
+                                "extension fixes it)")
+            sg.duration = need
+        segs.append(sg)
     if (ro or {}).get("ambience", True):
         warnings += ambience_beds(db, project, segs, lang, bool((ro or {}).get("sfx", True)), tmp)
+    if (ro or {}).get("sfx", True):
+        doubled = [sg.shot.code for sg in segs if (sg.shot.sfx_track or {}).get("path")
+                   and st.exists(sg.shot.sfx_track["path"]) and not _sfx_fits(sg)]
+        if doubled:
+            warnings.append(f"{', '.join(doubled[:8])}{' …' if len(doubled) > 8 else ''}: their sound effects stay out of the "
+                            "mix: the clip's own sound already has them (they would play twice). Make the shot's sound "
+                            "effects again to lay them over it anyway.")
     return segs, warnings
 
 
@@ -190,10 +253,18 @@ AMBIENCE_LUFS = -14.0
 AMBIENCE_SILENT_LUFS = -55.0  # a clip quieter than this has no background worth carrying
 
 
+def _sfx_fits(sg: Segment) -> bool:
+    """A shot's sound-effects track belongs over this segment: the clip's own sound is replaced (a lip-synced or laid
+    voice) or there is none (a still, a clip without sound), or the track was made to go over it (Sound design on the
+    shot, sfx_track.over_clip). Over a clip that keeps its own sound, which has the effects its prompt asked for, it
+    would play them twice (core/generation.keeps_clip_sound decides the same before they are made)."""
+    return not sg.own_sound or bool((sg.shot.sfx_track or {}).get("over_clip")) or not ff.has_audio_kept(sg.source)
+
+
 def _keeps_sfx(sg: Segment, use_sfx: bool) -> bool:
     """The shot's own sound-effects track goes into this render (timeline() adds it): it carries the scene's sound."""
     sfx = sg.shot.sfx_track or {}
-    return bool(use_sfx and sfx.get("path") and get_storage().exists(sfx["path"]))
+    return bool(use_sfx and sfx.get("path") and get_storage().exists(sfx["path"]) and _sfx_fits(sg))
 
 
 def ambience_beds(db: Session, project: Project, segs: list[Segment], lang: str, use_sfx: bool, tmp: Path) -> list[str]:
@@ -284,16 +355,17 @@ def render_options(db: Session, episode: Episode, options: dict[str, Any]) -> di
 def timeline(segs: list[Segment], effects: bool, use_sfx: bool) -> tuple[list[Timed], list[Cue], list[dict]]:
     """The cut's timing, shared by the server render and the desktop render plan: each segment's speed and length,
     its transition (never longer than half of either clip, so it starts that much earlier) and its start on the
-    finished cut; the caption cues and titles moved onto that timeline. Adds each shot's sound effect to its audio."""
-    st = get_storage()
+    finished cut; the caption cues and titles moved onto that timeline. Adds each shot's sound effect to its audio
+    where it belongs (_sfx_fits)."""
     out: list[Timed] = []
     cues: list[Cue] = []
     overlays: list[dict] = []
     t = 0.0
     for i, sg in enumerate(segs):
         sfx = sg.shot.sfx_track or {}
-        if sfx.get("path") and st.exists(sfx["path"]) and use_sfx:
-            sg.extra_audio.append((st.abs(sfx["path"]), float(sfx.get("start", 0)), float(sfx.get("volume_db", -8)), sfx["path"]))
+        if _keeps_sfx(sg, use_sfx) and not any(e[3:4] == (sfx["path"],) for e in sg.extra_audio):
+            sg.extra_audio.append((get_storage().abs(sfx["path"]), float(sfx.get("start", 0)), float(sfx.get("volume_db", -8)),
+                                   sfx["path"]))
         fx = dict(sg.shot.fx or {}) if effects else {}
         speed = float(fx.get("speed") or 1.0) if sg.source_kind != "still" else 1.0
         seg_len = sg.duration / speed
@@ -495,6 +567,37 @@ def render_segments(items: list, make) -> list[Path]:
     return out
 
 
+def segment_levels(sg: Segment) -> tuple[float, float, list[tuple]]:
+    """(the clip's own sound gain, the replacing audio's gain, the extra audio with its voices levelled): every clip's
+    sound brought to ff.CLIP_LUFS and every voice to ff.VOICE_LUFS before they are mixed, so a loud engine never buries
+    a quiet voice (the finished mix is then brought to -14 LUFS as a whole). The scene's bed and the sound effects keep
+    the levels they were made at."""
+    speech = {str(v[0]) for v in sg.voices}
+    src = 0.0
+    if sg.source_kind != "still" and sg.keep_src_audio and not sg.audio_override:
+        src = ff.level_db(sg.source, ff.VOICE_LUFS if str(sg.source) in speech else ff.CLIP_LUFS)
+    over = ff.level_db(sg.audio_override, ff.VOICE_LUFS) if sg.audio_override else 0.0
+    extra = [(e[0], e[1], round((e[2] if len(e) > 2 else 0.0) + ff.level_db(e[0], ff.VOICE_LUFS), 2), *e[3:])
+             if str(e[0]) in speech else e for e in sg.extra_audio]
+    return round(sg.src_gain_db + src, 2), over, extra
+
+
+def voice_track(timed: list[Timed], total: float, out: Path) -> Path | None:
+    """The voices alone (dialogue and narration) where they play on the cut: what the music ducks under. Keyed on the
+    whole mix it also dipped under every rain bed and sound effect, pumping in and out. None: no voices."""
+    parts = []
+    for tm in timed:
+        for path, offset, at in tm.sg.voices:
+            start = offset / tm.speed
+            if start < tm.seg_len - 0.05:
+                parts.append((path, tm.start + start, at, tm.seg_len - start))
+    try:
+        return ff.place_audio(parts, total, out) if parts else None
+    except (ff.FFmpegError, OSError) as e:  # ducking is a nicety: the mix goes on without it (OSError: a huge command)
+        print(f"[music] voice track skipped: {e}")
+        return None
+
+
 def render(db: Session, episode: Episode, lang: str, preset: str, kind: str, options: dict[str, Any],
            out_rel_base: str) -> dict[str, Any]:
     """Render to storage. Returns {path, srt_path, thumbnail_path, duration, warnings, peaks}."""
@@ -519,17 +622,18 @@ def render(db: Session, episode: Episode, lang: str, preset: str, kind: str, opt
         def make_segment(i: int, tm) -> Path:  # one clip per segment; every file name carries i, so they run side by side
             out = tmp / f"seg_{i:03}.mp4"
             sg, fx, seg_len = tm.sg, tm.fx, tm.seg_len
+            src_gain, over_gain, extra = segment_levels(sg)
             if sg.source_kind == "still":
                 audio = sg.audio_override
-                if sg.extra_audio:
-                    audio = _mix_audio(tmp / f"segaud_{i}.wav", sg.audio_override, sg.extra_audio, sg.duration)
+                if extra or over_gain:
+                    audio = _mix_audio(tmp / f"segaud_{i}.wav", sg.audio_override, extra, sg.duration, over_gain)
                 ff.still_to_video(sg.source, out, sg.duration, w, h, audio=audio, fx=fx, luts=luts)
             else:
                 center = _reframe_center(sg.source, w, h, tmp, i) if auto_reframe else None
                 ff.normalize_clip(sg.source, out, w, h, seconds=seg_len, trim_in=sg.trim_in,
-                                  audio_override=sg.audio_override, mix_extra=sg.extra_audio,
-                                  keep_src_audio=sg.keep_src_audio, src_audio_gain_db=sg.src_gain_db, center=center,
-                                  fx=fx, luts=luts)
+                                  audio_override=sg.audio_override, mix_extra=extra,
+                                  keep_src_audio=sg.keep_src_audio, src_audio_gain_db=src_gain, center=center,
+                                  fx=fx, luts=luts, override_gain_db=over_gain)
             return out
 
         clips: list[Path] = render_segments(timed, make_segment)
@@ -560,8 +664,9 @@ def render(db: Session, episode: Episode, lang: str, preset: str, kind: str, opt
             elif music and music.path and st.exists(music.path):
                 bed = st.abs(music.path)
         if bed:
-            final_audio = ff.music_bed(bed, voice_mix, tmp / "mixed.wav", total,
-                                       volume_db=float(settings.get("music_volume_db", -16)), duck=settings.get("duck", True))
+            duck = bool(settings.get("duck", True))
+            final_audio = ff.music_bed(bed, voice_mix, tmp / "mixed.wav", total, volume_db=float(settings.get("music_volume_db", -16)),
+                                       duck=duck, sidechain=voice_track(timed, total, tmp / "voices.wav") if duck else None)
         elif options.get("music", True) and kind == "final":
             warnings.append("No music track yet")
 
@@ -582,13 +687,13 @@ def render(db: Session, episode: Episode, lang: str, preset: str, kind: str, opt
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def _mix_audio(out: Path, base: Path | None, extra: list[tuple], seconds: float) -> Path:
+def _mix_audio(out: Path, base: Path | None, extra: list[tuple], seconds: float, base_gain_db: float = 0.0) -> Path:
     args: list = []
     filters, labels = [], []
     idx = 0
     if base:
         args += ["-i", base]
-        filters.append(f"[{idx}:a]aresample=48000,apad[a{idx}]")
+        filters.append(f"[{idx}:a]aresample=48000{f',volume={base_gain_db}dB' if base_gain_db else ''},apad[a{idx}]")
         labels.append(f"[a{idx}]")
         idx += 1
     for item in extra:

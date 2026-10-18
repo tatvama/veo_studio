@@ -259,8 +259,8 @@ def _autopilot_run(ctx: JobContext, stop_at: int, pause_after: list[str], mark, 
                 lang = project.primary_language
                 shots = generation.episode_shots(db, episode)
                 need = [s for s in shots if budget.Estimator.needs_lipsync(s, project, lang) and not has_fresh(db, s.id, "lipsync", lang)]
-                narr = [s for s in shots if (s.narration or {}).get(lang) and s not in need
-                        and not current(db, s.id, "narration", lang)]
+                narr = [s for s in shots if budget.Estimator.voice_only(s, project, lang) and s not in need
+                        and not current(db, s.id, "narration" if (s.narration or {}).get(lang) else "voice", lang)]
                 specs = generation.lipsync_specs(db, project, need, lang) + generation.voice_specs(db, project, narr, lang)
                 db.commit()
                 r.run(specs, "Voices & lip-sync")
@@ -490,7 +490,8 @@ def _produce(ctx: JobContext, r: RunLog, steps: list[str]) -> dict:
                 continue
             elif step == "voices":  # the lip-syncs (their voices were made first) and any narration still missing
                 need = [s for s in shots if budget.Estimator.needs_lipsync(s, project, lang) and not has_fresh(db, s.id, "lipsync", lang)]
-                narr = [s for s in shots if (s.narration or {}).get(lang) and s not in need and not current(db, s.id, "narration", lang)]
+                narr = [s for s in shots if budget.Estimator.voice_only(s, project, lang) and s not in need
+                        and not current(db, s.id, "narration" if (s.narration or {}).get(lang) else "voice", lang)]
                 specs = generation.lipsync_specs(db, project, need, lang) + generation.voice_specs(db, project, narr, lang)
             elif step == "sound" and (snd := generation.sound_step(db, project, episode, shots)):
                 specs = [snd[0]]  # ElevenLabs, or the free library without its key

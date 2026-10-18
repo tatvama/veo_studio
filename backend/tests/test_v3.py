@@ -221,7 +221,8 @@ def test_pronunciation_dictionary(client: TestClient):
     c = client
     pid, eid = _project(c)
     ok(c.patch(f"/api/projects/{pid}", headers=H, json={"pronunciations": {"Sri Rama": "Shree Raa-ma", "Rama": "Raa-ma"}}))
-    ch = ok(c.post("/api/characters", headers=H, json={"name": "Lakshmana", "name_pronunciation": "LUKSH-mun-uh"}))
+    ch = ok(c.post("/api/characters", headers=H, json={"name": "Lakshmana", "name_pronunciation": "LUKSH-mun-uh",
+                                                       "project_id": pid}))  # (the project's cast: core/studio.cast)
     with SessionLocal() as db:
         p = db.get(Project, pid)
         assert voice_mod.say(db, p, "Sri Rama calls Rama and Lakshmana home") == "Shree Raa-ma calls Raa-ma and LUKSH-mun-uh home"

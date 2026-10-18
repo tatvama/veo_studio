@@ -576,7 +576,8 @@ def video(ctx: JobContext) -> dict:
             modes_ok = ["i2v", "ref2v"] if refs else ["i2v"]  # keyframe first: the frame you approved is the first frame
         else:
             modes_ok = ["i2v", "t2v"]
-        aspect = project.aspect if project.aspect in ("16:9", "9:16") else "9:16"
+        # Veo makes 16:9 or 9:16 only: a square film gets wide clips, and the export crops the square around the face
+        aspect = project.aspect if project.aspect in ("16:9", "9:16") else "16:9"
         duration = shot.duration_s
         src_info = _veo_source(extend_src) if extend_src is not None else None
         db.commit()
@@ -1205,14 +1206,28 @@ def _music_per_scene(ctx: JobContext) -> dict:
         todo = [(sc.id, sc.title or f"Scene {i}", secs, prompts_by.get(i) or " · ".join(x for x in (sc.emotion, sc.music) if x))
                 for i, (sc, secs) in enumerate(scenes, 1)]
         db.commit()
-    made: list[int] = []
+    # pieces this job made before a retry (a rate limit puts it back in the queue): made once, never paid twice
+    done: dict[str, int] = {str(k): int(v) for k, v in (ctx.result.get("music_scene_assets") or {}).items()}
+    made: list[int] = list(done.values())
+    failed: list[str] = []
+    error: Exception | None = None
     for i, (sid, title, secs, prompt) in enumerate(todo):
         ctx.check_cancel()
+        if str(sid) in done:
+            continue
         ctx.progress(0.1 + 0.9 * i / len(todo), f"Composing music: {title}")
         full = ". ".join(x for x in (theme, prompt) if x)
         if "instrumental" not in full.lower():
             full += " Instrumental only, no vocals."
-        res = ctx.services.music(full, secs)
+        try:
+            res = ctx.services.music(full, secs)
+        except (RetryableProviderError, NeedsApproval):
+            raise  # waits and comes back (a rate limit), or waits for a producer: the pieces made so far are kept
+        except ProviderError as e:  # one scene's piece failed (blocked, a bad answer): the others still play
+            print(f"[music] {title}: {e}")
+            failed.append(title)
+            error = e
+            continue
         with SessionLocal() as db:
             rel = st.save_bytes(st.new_path(f"projects/{ctx.project_id}/music", res.ext), res.data)
             for a in db.query(AudioAsset).filter(AudioAsset.episode_id == ctx.episode_id, AudioAsset.kind == "music_scene").all():
@@ -1225,11 +1240,23 @@ def _music_per_scene(ctx: JobContext) -> dict:
             ctx.cost(res.usage, db)
             db.commit()
             made.append(a.id)
-    with SessionLocal() as db:  # the export switches to the scenes' pieces once every one asked for is made
+            done[str(sid)] = a.id
+        ctx.save_result(music_scene_assets=done)
+    if not made and error is not None:
+        raise error  # not one piece: the job fails as it did, and the film keeps the music it had
+    with SessionLocal() as db:  # the export plays the scenes' pieces; a scene without one gets the score, else silence
         _music_mode(db, ctx.episode_id, "scenes")
         db.commit()
         emit(db, ctx.project_id, "audio.created", {"episode_id": ctx.episode_id, "audio_ids": made})
-    return {"cues": len(made), "audio_ids": made, "theme": theme}
+        score = assembler.music_track(db, db.get(Episode, ctx.episode_id))
+    out: dict[str, Any] = {"cues": len(made), "audio_ids": made, "theme": theme}
+    if failed:
+        there = ("the score plays there instead" if score and score.path else
+                 "those scenes are silent: make their music again, or make a score")
+        out["failed"] = failed
+        out["warnings"] = [f"No music for {', '.join(failed)} ({str(error)[:160]}): {there}."]
+        ctx.progress(1.0, out["warnings"][0][:480])
+    return out
 
 
 # ── bible media ──────────────────────────────────────────────────────────────

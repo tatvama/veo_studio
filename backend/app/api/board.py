@@ -76,9 +76,17 @@ async def import_parse(eid: int, file: UploadFile | None = File(None), text: str
             raise HTTPException(400, f"File is too large (max {MAX_SCRIPT_MB} MB)")
         text = script_import.extract_text(file.filename, data)
         source_name = file.filename
-    out = script_import.build_draft(db, user, p, text, method)
+    matches: dict[str, dict | None] = {}
+
+    def match(name: str) -> dict | None:
+        if name not in matches:
+            matches[name] = _match(db, p, name)
+        return matches[name]
+
+    # a name the script doesn't describe is fine when it is someone who already has a look (a photo or a description)
+    out = script_import.build_draft(db, user, p, text, method, has_look=lambda n: _has_look(match(n)))
     for c in out["characters"]:
-        c["match"] = _match(db, p, c["name"])
+        c["match"] = match(c["name"])
     out["source"] = source_name
     out["text"] = text[: script_import.MAX_CHARS]
     return out
@@ -88,6 +96,14 @@ def _dna_empty(ch: Character) -> bool:
     """No look written yet: empty, just "Name:", or the Bible's placeholder."""
     dna = (ch.dna_text or "").strip()
     return dna in ("", f"{ch.name}:", f"{ch.name.strip()}:") or dna.endswith("(describe this character in the Bible)")
+
+
+def _has_look(m: dict | None) -> bool:
+    """A matched character (character_out) that already has a photo or a written look."""
+    if not m:
+        return False
+    dna, name = (m.get("dna_text") or "").strip(), (m.get("name") or "").strip()
+    return bool(m.get("avatar_url")) or not (dna in ("", f"{name}:") or dna.endswith("(describe this character in the Bible)"))
 
 
 class ImportApplyIn(BaseModel):
@@ -146,15 +162,33 @@ def import_apply(eid: int, body: ImportApplyIn, user: User = Depends(require("cr
         age = str(said.get("age") or script_import.guess_age(desc))[:40]
         if age and not (ch.age or "").strip() and not ch.locked:
             ch.age = age
+        if not desc and _dna_empty(ch) and not ch.locked:
+            # the script doesn't describe them: a first look from their name, age and gender (else every keyframe
+            # makes up a new face)
+            ch.dna_text = script_import.starting_look(ch.name, ch.age, ch.gender) or ch.dna_text
         studio.link_character(db, p, ch)
         ids[n] = ch.id
+
+    def wardrobe(sc: dict) -> dict | None:
+        """The scene's outfits by character id ({} = none written); a name nobody in the film has is left out."""
+        if not isinstance(sc.get("wardrobe"), dict):
+            return None
+        out: dict[str, str] = {}
+        for name, outfit in sc["wardrobe"].items():
+            who = ids.get(name) or ids.get(script_import.known_name(str(name), list(ids)))
+            if who and str(outfit or "").strip():
+                out[str(who)] = str(outfit).strip()
+        return out
+
     board = B.Board(scenes=[B.BoardScene(
         title=sc.get("title", ""), location=sc.get("location", ""), time_of_day=sc.get("time_of_day", ""),
         summary=sc.get("summary", ""), mood=sc.get("mood") or "", look=sc.get("look") or "", sound=sc.get("sound") or "",
-        music=sc.get("music") or "",
+        music=sc.get("music") or "", wardrobe=wardrobe(sc),
         shots=[B.BoardShot(prompt=sh.get("prompt", ""), characters=[ids[n] for n in (sh.get("characters") or []) if n in ids],
                            lines=[B.BoardLine(speaker="VO" if l.get("speaker") in ("VO", None, "") else ids[l["speaker"]],
-                                              text=l.get("text", ""), emotion=l.get("emotion", "")) for l in (sh.get("lines") or [])],
+                                              text=l.get("text", ""), emotion=l.get("emotion", ""),
+                                              off_screen=bool(l.get("off_screen")) and l.get("speaker") not in ("VO", None, ""))
+                                  for l in (sh.get("lines") or [])],
                            duration_s=sh.get("duration_s") if sh.get("duration_s") in (4, 6, 8) else 8,
                            extend_to=sh.get("extend_to") if sh.get("extend_to") in script_import.EXTEND_STEPS else 0,
                            framing=sh.get("framing", ""), camera=sh.get("camera", ""), sfx=sh.get("sfx") or "")

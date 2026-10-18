@@ -51,14 +51,21 @@ def marketing(ctx: JobContext) -> dict:
     return {"copies": len(pack.get("copies", [])), "thumbnails": len(files)}
 
 
-def _sfx_shots(db, ctx: JobContext) -> list[Shot]:
-    """The shots this sound-design run is for (shot_ids, only_missing: the ones with no effects yet)."""
+def _sfx_shots(db, ctx: JobContext) -> list[tuple[Shot, bool]]:
+    """The shots this sound-design run is for (shot_ids, only_missing: the ones with no effects yet), each with whether
+    its track goes over the clip's own sound. The clip's own sound already has the effects its prompt asked for, so a
+    run for the episode (or Produce all's, only_missing) makes effects only where the cut replaces that sound or has
+    none (core/generation.keeps_clip_sound); shots picked by name get them anyway, marked so the export lays them over."""
+    from ..core.generation import keeps_clip_sound
     shots = db.query(Shot).filter(Shot.episode_id == ctx.episode_id, Shot.include.is_(True)).order_by(Shot.order).all()
     if ctx.payload.get("shot_ids"):
         shots = [s for s in shots if s.id in ctx.payload["shot_ids"]]
     if ctx.payload.get("only_missing"):
         shots = [s for s in shots if not (s.sfx_track or {}).get("path")]
-    return shots
+    project = db.get(Project, db.get(Episode, ctx.episode_id).project_id)
+    picked = bool(ctx.payload.get("shot_ids")) and not ctx.payload.get("only_missing")
+    out = [(s, keeps_clip_sound(db, project, s)) for s in shots]
+    return [(s, own) for s, own in out if picked or not own]
 
 
 @handler("sfx")
@@ -74,7 +81,9 @@ def sfx(ctx: JobContext) -> dict:
     with SessionLocal() as db:
         ep = db.get(Episode, ctx.episode_id)
         project = db.get(Project, ep.project_id)
-        shots = _sfx_shots(db, ctx)
+        picked = _sfx_shots(db, ctx)
+        over = {s.id for s, own in picked if own}
+        shots = [s for s, _ in picked]
         if not shots:
             return {"cues": 0}
         scenes = {sc.id: sc for sc in db.query(Scene).filter(Scene.episode_id == ep.id).all()}
@@ -100,7 +109,8 @@ def sfx(ctx: JobContext) -> dict:
         rel = st.save_bytes(st.new_path(f"projects/{ctx.project_id}/sfx", res.ext), res.data)
         with SessionLocal() as db:
             s = db.get(Shot, shot.id)
-            s.sfx_track = {"path": rel, "prompt": cue.prompt, "start": cue.start, "volume_db": cue.volume_db}
+            s.sfx_track = {"path": rel, "prompt": cue.prompt, "start": cue.start, "volume_db": cue.volume_db,
+                           **({"over_clip": True} if shot.id in over else {})}
             ctx.cost(res.usage, db)
             db.commit()
         made += 1
@@ -115,17 +125,19 @@ def _free_sfx(ctx: JobContext) -> dict:
     from ..pipeline.selection import current
     st = get_storage()
     with SessionLocal() as db:
-        shots = _sfx_shots(db, ctx)
+        picked = _sfx_shots(db, ctx)
         sound = {sc.id: sc.sound or "" for sc in db.query(Scene).filter(Scene.episode_id == ctx.episode_id).all()}
         todo = []
-        for s in shots:
+        for s, own in picked:
             vid = current(db, s.id, "video")  # the clip may run longer than planned: the sound covers all of it
             secs = max(float(vid.duration_s or 0) if vid else 0.0, float(s.duration_s), float(s.extend_to or 0))
-            todo.append((s.id, s.code, sound.get(s.scene_id, ""), s.sfx or "", secs))
+            todo.append((s.id, s.code, sound.get(s.scene_id, ""), s.sfx or "", secs, own))
+    if not todo:
+        return {"cues": 0, "skipped": "Every clip keeps its own sound, which already has its effects"}
     tmp = st.tmp_dir()
     made = 0
     try:
-        for i, (sid, code, scene_sound, shot_sfx, secs) in enumerate(todo):
+        for i, (sid, code, scene_sound, shot_sfx, secs, own) in enumerate(todo):
             ctx.check_cancel()
             ctx.progress(i / max(len(todo), 1), f"Sound {code}")
             out = sfx_library.make_shot_sound(scene_sound, shot_sfx, secs, sid, tmp / f"sfx_{sid}.wav")
@@ -135,7 +147,7 @@ def _free_sfx(ctx: JobContext) -> dict:
             with SessionLocal() as db:
                 db.get(Shot, sid).sfx_track = {"path": rel, "prompt": sfx_library.plan_sound(scene_sound, shot_sfx).label,
                                                "start": 0.0, "volume_db": sfx_library.FREE_VOLUME_DB, "duration": round(secs, 3),
-                                               "free": True}
+                                               "free": True, **({"over_clip": True} if own else {})}
                 db.commit()
             made += 1
     finally:

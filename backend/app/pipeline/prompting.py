@@ -40,6 +40,13 @@ def shot_lines(shot: Shot, lang: str) -> list[dict]:
     return list((shot.dialogue or {}).get(lang) or [])
 
 
+def offscreen_only(shot: Shot, project: Project) -> bool:
+    """Every line of the shot is heard from off-screen (O.S.): voiced over the clip, nobody seen saying it, so never
+    lip-synced. The flag is on the primary language's lines (a translation keeps the staging)."""
+    lines = shot_lines(shot, project.primary_language)
+    return bool(lines) and all(l.get("off_screen") for l in lines)
+
+
 _settings_cache: dict[str, Any] = {"at": 0.0, "v": -1, "values": {}}
 _TEAM_KEYS = ("dialogue_method", "native_dialogue_languages")
 
@@ -231,8 +238,10 @@ def native_dialogue(db: Session, shot: Shot, lang: str, episode_no: int | None) 
     said = []
     for l in lines:
         emo = f", {l['emotion']}" if l.get("emotion") else ""
-        said.append(f'{speaker_label(db, l.get("character_id"), episode_no, True)} says in {lname}{emo}: "{l["line"]}"')
-    return " ".join(said) + " Clear, natural speech; the words exactly as written; lips match the words."
+        off = ", off-screen (heard, not seen talking)," if l.get("off_screen") else ""
+        said.append(f'{speaker_label(db, l.get("character_id"), episode_no, True)}{off} says in {lname}{emo}: "{l["line"]}"')
+    seen = any(not l.get("off_screen") for l in lines)
+    return " ".join(said) + " Clear, natural speech; the words exactly as written" + ("; lips match the words." if seen else ".")
 
 
 def dialogue_warnings(shot: Shot, lang: str) -> list[str]:
@@ -253,10 +262,15 @@ def audio_block(scene, shot: Shot, vm: str) -> str:
     """What the clip should sound like: the scene's ambience (the same under every shot of the scene) and this shot's
     sound effects, as the script writes them. Never music: one score runs under the whole cut (the music step, which
     reads the scenes' music notes), so a cue in every clip would change the music at every cut. Voices the studio adds
-    later (narration, dubbed or lip-synced dialogue) are kept out of the clip too."""
+    later (narration, dubbed or lip-synced dialogue) are kept out of the clip too: a dialogue clip made before its real
+    voice must not speak words of its own (they would be made up, and heard wherever the voice isn't laid yet)."""
     sounds = [x.strip().rstrip(".") for x in ((scene.sound if scene else ""), shot.sfx) if x and x.strip()]
     said = ("Sound effects and ambience: " + "; ".join(sounds)) if sounds else "Natural ambience and foley that match the action"
     keep_out = "no music" + (", no narration" if vm in ("audio_first", "narration", "audio_driven") else "")
+    lines = next((ls for ls in (shot.dialogue or {}).values() if ls), [])
+    if vm in ("audio_first", "audio_driven") and lines:
+        seen = any(not l.get("off_screen") for l in lines)
+        keep_out += "; no audible speech" + ("; mouths move naturally" if seen else "")
     return f"{said}; {keep_out}."
 
 
@@ -276,13 +290,18 @@ def compile_video_prompt(db: Session, shot: Shot, project: Project, lang: str | 
         if vm == "native":
             out.append(f"[DIALOGUE] {native_dialogue(db, shot, use_lang, episode_no)}")
         elif vm in ("audio_first", "voice_lock", "audio_driven"):
-            speakers = sorted({name_of(db, l.get("character_id")) for l in lines})
+            speakers = sorted({name_of(db, l.get("character_id")) for l in lines if not l.get("off_screen")})
+            away = sorted({name_of(db, l.get("character_id")) for l in lines if l.get("off_screen")})  # heard, not seen
             if vm == "voice_lock" and use_lang == "en":
-                said = " ".join(f'{name_of(db, l.get("character_id"))} says, "{l["line"]}"' for l in lines)
+                said = " ".join(f'{name_of(db, l.get("character_id"))}{" (off-screen)" if l.get("off_screen") else ""} '
+                                f'says, "{l["line"]}"' for l in lines)
                 out.append(f"[DIALOGUE] {said}")
             else:
-                out.append(f"[DIALOGUE] {', '.join(speakers)} speaks naturally to camera-side, clear visible lip movement, "
-                           f"facing the camera, mouth unobstructed.")
+                talk = (f"{', '.join(speakers)} speaks naturally to camera-side, clear visible lip movement, facing the "
+                        "camera, mouth unobstructed." if speakers else "")
+                if away:
+                    talk += f" {', '.join(away)} speaks from off-screen: not in the picture, never seen talking."
+                out.append(f"[DIALOGUE] {talk.strip()}")
     cb = character_block(db, shot, episode)
     if cb:
         out.append(f"[CHARACTERS] {cb}")
@@ -557,7 +576,7 @@ def compile_keyframe_prompt(db: Session, shot: Shot, project: Project, ref_label
     loc = db.get(Location, shot.location_id) if shot.location_id else None
     scene = _scene(db, shot)
     chars = _chars(db, shot)
-    lines = shot_lines(shot, project.primary_language)
+    lines = [l for l in shot_lines(shot, project.primary_language) if not l.get("off_screen")]  # said on screen
     parts = [f"A single cinematic film still (keyframe) for an AI film, {project.aspect} frame."]
     if ref_labels:
         parts.append(image_list(ref_labels))
@@ -604,7 +623,7 @@ def compile_endframe_prompt(db: Session, shot: Shot, project: Project, ref_label
     style = _style(db, project)
     scene = _scene(db, shot)
     chars = _chars(db, shot)
-    lines = shot_lines(shot, project.primary_language)
+    lines = [l for l in shot_lines(shot, project.primary_language) if not l.get("off_screen")]  # said on screen
     secs = int(shot.duration_s or 8)
     parts = [f"The LAST frame of a {secs}-second shot of an AI film, {project.aspect} frame: the same shot as the start "
              f"frame (image 1), {secs} seconds later."]

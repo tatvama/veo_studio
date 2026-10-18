@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from .. import catalog
 from ..models import AIModel, Character, Episode, Location, Project, Shot, Take
-from ..pipeline.prompting import effective_voice_mode, shot_lines
+from ..pipeline.prompting import effective_voice_mode, offscreen_only, shot_lines
 from ..pipeline.selection import current, has_fresh, is_real
 from . import frames
 from . import links
@@ -484,6 +484,32 @@ def needs_sfx(shots: list[Shot]) -> list[Shot]:
     return [s for s in shots if not (s.sfx_track or {}).get("path")]
 
 
+def keeps_clip_sound(db: Session, project: Project, shot: Shot, lang: str | None = None) -> bool:
+    """The export plays this shot's clip with its own sound, which already has the effects its [AUDIO] line asked for:
+    a clip where nobody speaks on screen (or a voice-over, or someone off-screen, laid over it), one where Veo speaks
+    the line itself, or a voice-lock take that kept the background. Not a lip-synced or voiced-over line, an
+    audio-first line with no voice yet, a still (no clip yet) or a clip with no sound: those need effects of their own.
+    The same order of takes as pipeline/assembler.plan, which builds the cut."""
+    from ..pipeline import ffmpeg as ff
+    from ..pipeline.selection import is_stale
+    from ..storage import get_storage
+    lang = lang or project.primary_language
+    st = get_storage()
+    video = current(db, shot.id, "video")
+    if video is None or not video.path or not st.exists(video.path):
+        return False
+    if shot_lines(shot, lang) and not offscreen_only(shot, project):
+        lips, vlock = current(db, shot.id, "lipsync", lang), current(db, shot.id, "voicelock", lang)
+        if lips is not None and lips.path and not is_stale(db, lips, video):
+            return False
+        if vlock is not None and vlock.path and not is_stale(db, vlock, video):
+            if (vlock.params or {}).get("separation") != "demucs":
+                return False  # voice isolation dropped the background with the old voice
+        elif not (effective_voice_mode(shot, project, lang) == "native" and lang == project.primary_language):
+            return False
+    return ff.has_audio_kept(st.abs(video.path))
+
+
 def with_sound_notes(db: Session, shots: list[Shot]) -> list[Shot]:
     """The shots whose script names a sound: written effects of their own, or a sound note on their scene (what the
     free sound library, pipeline/sfx_library.py, makes its effects from)."""
@@ -494,9 +520,12 @@ def with_sound_notes(db: Session, shots: list[Shot]) -> list[Shot]:
 
 
 def sound_step(db: Session, project: Project, episode: Episode, shots: list[Shot]) -> tuple[dict, int] | None:
-    """Produce all's (and Autopilot's) sound step, only the shots with no effects yet: made with ElevenLabs when it is
-    connected, else free from the bundled library for the shots whose script names a sound. (job spec, shots) or None."""
-    quiet = needs_sfx(shots)
+    """Produce all's (and Autopilot's) sound step, only the shots with no effects yet and only where the cut needs
+    them: where the clip's own sound is replaced (a lip-synced or voiced-over line) or there is none (a still, a silent
+    clip). A clip that keeps its own sound already has its effects: laid over it they would play twice. Made with
+    ElevenLabs when it is connected, else free from the bundled library for the shots whose script names a sound.
+    (job spec, shots) or None."""
+    quiet = [s for s in needs_sfx(shots) if not keeps_clip_sound(db, project, s)]
     if not sound_effects_ready():
         quiet = with_sound_notes(db, quiet)
     if not quiet:
@@ -590,7 +619,8 @@ def produce_plan(db: Session, project: Project, episode: Episode, shots: list[Sh
         add("extend", n, usd)
     if "voices" in steps:
         need = [s for s in shots if Estimator.needs_lipsync(s, project, lang) and not has_fresh(db, s.id, "lipsync", lang)]
-        narr = [s for s in shots if (s.narration or {}).get(lang) and s not in need and not current(db, s.id, "narration", lang)]
+        narr = [s for s in shots if Estimator.voice_only(s, project, lang) and s not in need
+                and not current(db, s.id, "narration" if (s.narration or {}).get(lang) else "voice", lang)]
         cost = sum(est.lipsync(s) + est.voice(s, lang) for s in need) + sum(est.voice(s, lang) for s in narr)
         add("voices", len(need) + len(narr), cost)
     if "sound" in steps and (snd := sound_step(db, project, episode, shots)):

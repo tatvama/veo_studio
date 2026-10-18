@@ -12,7 +12,7 @@ from ..db import utcnow
 from ..events import emit
 from ..models import Approval, CostEntry, Job, Project, Shot, User, role_rank
 from .job_types import ORCHESTRATORS
-from ..pipeline.prompting import effective_quality, effective_voice_mode, shot_lines
+from ..pipeline.prompting import effective_quality, effective_voice_mode, offscreen_only, shot_lines
 from ..providers.base import Usage
 from ..providers.services import provider_mode
 
@@ -208,10 +208,22 @@ class Estimator:
 
     @staticmethod
     def needs_lipsync(shot: Shot, project: Project, lang: str) -> bool:
-        if not shot_lines(shot, lang):
+        """Lines said on screen that the studio voices: a shot whose lines are all heard from off-screen has nobody to
+        lip-sync (its voice is laid over the clip, see voice_only)."""
+        if not shot_lines(shot, lang) or offscreen_only(shot, project):
             return False
         vm = effective_voice_mode(shot, project, lang)
         return vm == "audio_first" or (vm in ("native", "voice_lock") and lang != project.primary_language)
+
+    @staticmethod
+    def voice_only(shot: Shot, project: Project, lang: str) -> bool:
+        """Words the studio voices and never lip-syncs: a voice-over, or lines heard from off-screen (unless Veo speaks
+        them in its own clip)."""
+        if (shot.narration or {}).get(lang):
+            return True
+        if not shot_lines(shot, lang) or not offscreen_only(shot, project):
+            return False
+        return not (effective_voice_mode(shot, project, lang) == "native" and lang == project.primary_language)
 
 
 # ── spend ────────────────────────────────────────────────────────────────────
