@@ -1,6 +1,7 @@
 """Builds job specs (with cost estimates) for every paid step. Shared by REST, agent and autopilot."""
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -89,7 +90,9 @@ def video_specs(db: Session, project: Project, shots: list[Shot], quality: str |
         if only_missing and is_real(current(db, s.id, "video")):
             continue
         q = quality or s.quality_mode or project.quality_mode
-        cost = est.video(s, project, q)
+        # (a clip that runs to an end frame is 8 s on Veo, whatever length was asked: Estimator.video)
+        ends = frames.wants_end(db, s) and (mode or s.mode or "auto") in ("auto", "keyframe_to_video", "interpolate")
+        cost = est.video(s, project, q, ends=ends)
         kf = current(db, s.id, "keyframe")
         payload: dict[str, Any] = {"quality": q, "mode": mode}
         src = frames.sync_source(db, s)
@@ -116,6 +119,69 @@ def voice_specs(db: Session, project: Project, shots: list[Shot], lang: str) -> 
     return [spec("voice", payload={"language": lang}, project_id=project.id, episode_id=s.episode_id, shot_id=s.id,
                  estimate=est.voice(s, lang), label=f"Voice {s.code} [{lang}]")
             for s in shots if shot_lines(s, lang) or (s.narration or {}).get(lang)]
+
+
+def voice_first_specs(db: Session, project: Project, shots: list[Shot], lang: str) -> list[dict]:
+    """The studio voices a run records before any picture (they cost cents): the TTS dialogue of shots that are
+    lip-synced or made from their voice, and narration. Only shots whose clip isn't made yet: fit_to_voices then makes
+    each of those clips as long as its real voice."""
+    need = []
+    for s in shots:
+        if is_real(current(db, s.id, "video")):
+            continue  # the clip exists: its voice comes with its lip-sync
+        tts = bool(shot_lines(s, lang)) and (Estimator.needs_lipsync(s, project, lang)
+                                            or effective_voice_mode(s, project, lang) == "audio_driven")
+        if (tts and not current(db, s.id, "voice", lang)) or \
+                ((s.narration or {}).get(lang) and not current(db, s.id, "narration", lang)):
+            need.append(s)
+    return voice_specs(db, project, need, lang)
+
+
+ONSCREEN_MAX_S = 8  # someone speaking on screen is one clip: lip-synced dialogue is never extended
+EXTEND_STEP_S, MAX_EXTEND_S = 7, 8 + 3 * 7  # (core/board.py: ~7 s per extension, at most three)
+
+
+def fit_to_voices(db: Session, project: Project, shots: list[Shot], lang: str) -> tuple[list[dict], int]:
+    """Time each shot whose clip isn't made yet to its real voice (recorded first: voice_first_specs): 4, 6 or 8 s, and
+    narration longer than 8 s extends the clip (extend_to, ~7 s an extension). A shot with someone speaking on screen
+    stays one clip of at most 8 s: a longer line is listed as a problem (the lip-sync holds the clip's last frame until
+    the voice ends, it never cuts the speech). Returns (problems, shots changed)."""
+    from .problems import problem
+
+    def choose_duration(seconds: float) -> int:  # the clip a voice fits in (pipeline/voice.choose_duration's rule)
+        return next((d for d in (4, 6, 8) if seconds + 0.6 <= d), 8)
+    notes: list[dict] = []
+    changed = 0
+    for s in shots:
+        if is_real(current(db, s.id, "video")):
+            continue
+        vm = effective_voice_mode(s, project, lang)
+        voice = current(db, s.id, "voice", lang) if shot_lines(s, lang) and vm in ("audio_first", "audio_driven") else None
+        narr = current(db, s.id, "narration", lang) if (s.narration or {}).get(lang) else None
+        spoken, said = float(voice.duration_s or 0) if voice else 0.0, float(narr.duration_s or 0) if narr else 0.0
+        if not spoken and not said:
+            continue
+        before = (s.duration_s, s.extend_to or 0)
+        longest = max(spoken, said)
+        if spoken or shot_lines(s, lang):  # someone speaks on screen: one clip
+            # (a line Veo speaks itself isn't recorded first: such a clip only grows for its narration)
+            s.duration_s = choose_duration(longest) if spoken else max(int(s.duration_s or 0), choose_duration(said))
+            if longest > ONSCREEN_MAX_S:
+                what = "lines run" if spoken >= said else "narration runs"
+                notes.append(problem(s, "Voices first", f"The {what} {longest:.1f} s; a shot with someone speaking on "
+                                     f"screen is one clip of at most {ONSCREEN_MAX_S} s",
+                                     "Split the shot or shorten the line; until then the clip holds its last frame "
+                                     "until the voice ends"))
+        elif longest + 0.6 <= ONSCREEN_MAX_S:  # narration only, and it fits one clip
+            s.duration_s, s.extend_to = choose_duration(longest), 0
+        else:  # narration only, longer: an 8 s clip extended until the voice ends
+            steps = math.ceil((longest + 0.6 - ONSCREEN_MAX_S) / EXTEND_STEP_S)
+            s.duration_s, s.extend_to = ONSCREEN_MAX_S, min(ONSCREEN_MAX_S + EXTEND_STEP_S * steps, MAX_EXTEND_S)
+            if longest > MAX_EXTEND_S:
+                notes.append(problem(s, "Voices first", f"The narration runs {longest:.0f} s; one shot is at most "
+                                     f"{MAX_EXTEND_S} s with its extensions", "Split the narration over two shots"))
+        changed += (s.duration_s, s.extend_to or 0) != before
+    return notes, changed
 
 
 def lipsync_specs(db: Session, project: Project, shots: list[Shot], lang: str, model: str | None = None) -> list[dict]:
@@ -458,6 +524,19 @@ def lipsync_warnings(db: Session, syncing: list) -> list[str]:
     return [LIPSYNC_MISSING] if syncing and not lipsync_ready(db) else []
 
 
+def speaker_warnings(db: Session, project: Project, shots: list[Shot], lang: str) -> list[str]:
+    """Lip-sync with more than one person on screen. sync.so is told who speaks (a point on the speaker's face found
+    with their face reference, else its own active speaker detection: workers/handlers._speaker); the other lip-sync
+    engines (fal) take no such option and may move the wrong mouth. (Two speakers in one shot: dialogue_warnings.)"""
+    from . import model_hub
+    crowd = [s for s in shots if len(s.characters or []) > 1 and shot_lines(s, lang)]
+    first = model_hub.first_choice(db, "lipsync", ["lipsync"]) if crowd else None
+    if first is None or first[0].provider == "sync":
+        return []
+    return [f"{', '.join(s.code for s in crowd[:8])}: more than one person on screen, and {first[0].display_name} can't "
+            "be told who speaks, so it may move the wrong mouth. sync.so can (Model Hub → Lip-sync)."]
+
+
 def extensions_needed(db: Session, shot: Shot) -> int:
     """How many ~7 s extensions it takes to bring this shot up to its extend_to length."""
     if not shot.extend_to:
@@ -486,6 +565,9 @@ def produce_plan(db: Session, project: Project, episode: Episode, shots: list[Sh
         if n:
             items.append({"label": f"{PRODUCE_LABELS[step]} · {n}", "usd": round(usd, 4)})
 
+    ks: list[dict] = []
+    vs: list[dict] = []
+    need: list[Shot] = []
     if "cast" in steps:
         cs = cast_specs(db, project, shots)
         add("cast", len(cs), sum(s["estimate"] for s in cs))
@@ -517,20 +599,62 @@ def produce_plan(db: Session, project: Project, episode: Episode, shots: list[Sh
         add("music", mus[1], mus[0]["estimate"])
     if "export" in steps:
         add("export", 1, 0.0)
+    items += checks_allowance(db, est, {s.id: s for s in shots}, ks, vs, need)
     return round(sum(i["usd"] for i in items), 2), items
 
 
+# The budget leaves room for the automatic retakes QC may order: about one checked shot in three retaken once (each
+# can be retaken up to max_auto_retakes times). With the QC checks themselves it is a line of its own in the cost
+# dialog, so the run's 1.5× spend guard (workers/handlers_room) isn't eaten up by work the estimate left out.
+RETAKE_SHARE = 0.3
+
+
+def checks_allowance(db: Session, est: Estimator, by_id: dict[int, Shot], ks: list[dict], vs: list[dict],
+                     lips: list[Shot]) -> list[dict]:
+    """Cost-dialog lines for the QC checks of these keyframes, videos and lip-syncs and an allowance for the
+    automatic retakes they may order (nothing when checks and retakes are off, or cost nothing)."""
+    st = est.settings
+    qc = retakes = 0.0
+    n = 0
+    if ks and st.get("keyframe_qc", True):
+        qc += len(ks) * est.vision(4)
+        n += len(ks)
+        if st.get("keyframe_auto_retake", True):
+            retakes += RETAKE_SHARE * sum(k["estimate"] for k in ks)
+    checked = [v for v in vs if (s := by_id.get(v["shot_id"])) is not None and (s.characters or s.dialogue)]
+    if checked:
+        qc += len(checked) * est.vision(7)
+        n += len(checked)
+        if st.get("auto_retake", True):
+            retakes += RETAKE_SHARE * sum(v["estimate"] for v in checked)
+    if lips and st.get("lipsync_qc", True):
+        qc += sum(est.listen(est.spoken_seconds(s)) for s in lips)
+        n += len(lips)
+        if st.get("auto_retake", True):
+            retakes += RETAKE_SHARE * sum(est.lipsync(s) for s in lips)
+    out = []
+    if qc > 0:
+        out.append({"label": f"QC checks · {n}", "usd": round(qc, 4)})
+    if retakes > 0:
+        out.append({"label": "Automatic retakes (allowance)", "usd": round(retakes, 4)})
+    return out
+
+
 def autopilot_estimate(db: Session, project: Project, episode: Episode) -> float:
-    """Rough upper estimate used for the single Autopilot budget gate."""
+    """Rough upper estimate used for the single Autopilot budget gate: Veo clips at 8 s (what it makes with an end
+    frame, references or above 720p), the extensions of shots with an extend_to length, and room for QC's automatic
+    retakes (RETAKE_SHARE)."""
     est = Estimator(db)
     shots = episode_shots(db, episode)
     n_shots = max(len(shots), int(max((project.brief or {}).get("duration_s") or 45, 8) / 7))
     per_shot_video = est.prices["video_per_second"].get(est.models[catalog.QUALITY_MODES[project.quality_mode]["model_key"]], {})
     v = float(per_shot_video.get(catalog.QUALITY_MODES[project.quality_mode]["resolution"], 0.1)) if est._live("gemini") else 0.0
-    total = n_shots * (est.image(1) + v * 7 * 1.3)
+    retake = 1 + (RETAKE_SHARE if est.settings.get("auto_retake", True) else 0.0)
+    total = n_shots * (est.image(1) + v * 8 * retake)
+    total += sum(extensions_needed(db, s) * extend_spec(db, project, s, "")["estimate"] for s in shots)
     total += est.image(4) * 3 + est.music(n_shots * 7)
     if est._live("sync"):
-        total += n_shots * 0.5 * 7 * float(est.prices["lipsync_per_second"].get("lipsync-2", 0.05))
+        total += n_shots * 0.5 * 8 * float(est.prices["lipsync_per_second"].get("lipsync-2", 0.05)) * retake
     return round(total, 2)
 
 

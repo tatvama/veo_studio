@@ -63,8 +63,9 @@ def create_project(
 
 
 def get_project(project_id: ProjectId, episode: EpisodeNo = None) -> dict:
-    """The project and one episode at a glance: brief, cast, locations, scenes, shots (with keyframe / video status),
-    budget, money spent and anything waiting for approval."""
+    """The project and one episode at a glance: brief, cast, locations, scenes, shots (with keyframe / video status:
+    real takes only), budget, money spent, anything waiting for approval, the last run's problems and the latest failed
+    jobs (plain reasons and the next step)."""
     from ..agents.tools import get_project_state
 
     with call("read") as c:
@@ -189,10 +190,15 @@ def import_script(project_id: ProjectId,
                               "not deleted; the current script stays as a version.",
                     "next": "Ask the user; call again with confirm=true if they agree (or import into a new episode)."}
         draft = script_import.build_draft(c.db, c.user, p, text, method)
+        # exact names only (this cast first, then the library): never a first-name match, which merges two people
         mapping: dict[str, Any] = {}
         for ch in draft["characters"]:
-            hit = _match(c.db, p, ch["name"])
-            mapping[ch["name"]] = hit["id"] if hit else ("new" if create_missing_characters else "")
+            hit = _match(c.db, p, ch["name"], exact_only=True)
+            mapping[ch["name"]] = hit["id"] if hit else "new"
+        unknown = [n for n, v in mapping.items() if v == "new"]
+        if unknown and not create_missing_characters:
+            raise ToolError(f"No character named exactly {', '.join(unknown[:8])} in this project or the library: "
+                            "allow create_missing_characters, or rename them in the script to match the cast")
         out = import_apply(ep.id, ImportApplyIn(draft=draft["draft"], mapping=mapping, create_missing=create_missing_characters),
                            c.user, c.db)
         return {"scenes": draft["stats"].get("scenes"), "shots": draft["stats"].get("shots"), "method": draft.get("method"),

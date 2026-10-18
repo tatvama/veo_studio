@@ -51,6 +51,11 @@ export function useLiveEvents(projectId: number | null) {
         // a finished or blocked video changes the shot's recovery options too
         if (t.startsWith("job") || t === "jobs.created") touch("jobs", "episode", "costs", "shot", "shot-alternatives");
         if (t === "job.updated" && e.payload.status === "failed") toast.error(`Job failed: ${String(e.payload.error || e.payload.type).slice(0, 160)}`);
+        if (t === "run.finished") {  // Produce all / Autopilot / Scenes in order ended; what it couldn't make is on the board
+          touch("board", "episode", "project");
+          const n = Array.isArray(e.payload.problems) ? e.payload.problems.length : 0;
+          if (n) toast.warning(`Finished with ${n} problem${n === 1 ? "" : "s"} — see the shot list`, { duration: 15000 });
+        }
         if (t === "produce.paused") {  // Produce all stopped for the new looks and voices to be checked
           touch("board", "characters", "locations");
           toast.message(String(e.payload.message || "Produce all is waiting for you"), { duration: 15000 });

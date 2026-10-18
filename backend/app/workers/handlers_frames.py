@@ -14,7 +14,7 @@ from ..pipeline.selection import current, is_real
 from ..providers.base import ProviderError
 from ..storage import get_storage
 from .handlers import _project_of, gen_image, make_keyframe, save_take
-from .handlers_room import _run_spend, _wait_batch_idle
+from .runlog import _run_spend, _wait_batch_idle
 from .worker import JobContext, handler
 
 

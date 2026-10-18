@@ -13,6 +13,20 @@ from .base import ProviderBlocked, ProviderError, RetryableProviderError, raise_
 BASE = "https://api.sync.so"
 
 
+def speaker_option(active_speaker: dict | bool | None) -> dict | None:
+    """sync.so's active speaker detection (https://sync.so/docs/developer-guides/speaker-selection, checked 18 Oct
+    2026): options.active_speaker_detection = {"auto_detect": false, "frame_number": n, "coordinates": [x, y]} with a
+    point on the speaker's face in that frame, in the video's pixels, or {"auto_detect": true} to let sync.so find whoever
+    is speaking (it then lip-syncs only the active speaker in a multi-person clip)."""
+    if not active_speaker:
+        return None
+    sp = active_speaker if isinstance(active_speaker, dict) else {}
+    if sp.get("x") is not None and sp.get("y") is not None:
+        return {"auto_detect": False, "frame_number": int(sp.get("frame") or 0),
+                "coordinates": [int(sp["x"]), int(sp["y"])]}
+    return {"auto_detect": True}
+
+
 class SyncClient:
     def __init__(self, api_key: str):
         if not api_key:
@@ -21,12 +35,13 @@ class SyncClient:
                                  headers={"x-api-key": api_key}, follow_redirects=True)
 
     def create(self, video: Path, audio: Path, model: str, sync_mode: str = "cut_off",
-               temperature: float = 0.5, active_speaker: bool = False, occlusion: bool = False) -> str:
+               temperature: float = 0.5, active_speaker: dict | bool | None = None, occlusion: bool = False) -> str:
         options: dict = {"sync_mode": sync_mode, "temperature": temperature}
         if occlusion and model != "sync-3":
             options["occlusion_detection_enabled"] = True
-        if active_speaker:
-            options["active_speaker_detection"] = {"auto_detect": True}
+        asd = speaker_option(active_speaker)
+        if asd:
+            options["active_speaker_detection"] = asd
         with open(video, "rb") as fv, open(audio, "rb") as fa:
             try:
                 r = self.http.post("/v2/generate", files={

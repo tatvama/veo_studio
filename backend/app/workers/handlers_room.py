@@ -8,7 +8,7 @@ from typing import Any
 
 from .. import settings_store
 from ..core import autopilot as autopilot_def
-from ..core import budget, generation, links, scene_chain, studio
+from ..core import budget, generation, links, problems, scene_chain, studio
 from ..db import SessionLocal, utcnow
 from ..events import emit
 from ..models import AudioAsset, CharacterAsset, Episode, Job, LocationAsset, Project, VoiceProfile
@@ -17,6 +17,7 @@ from ..pipeline.voice import voice_for
 from ..providers.base import ProviderError, RetryableProviderError
 from ..storage import get_storage
 from .handlers import _user
+from .runlog import BudgetStop, RunLog
 from .worker import Cancelled, JobContext, handler
 
 
@@ -118,46 +119,11 @@ def table_read(ctx: JobContext) -> dict:
 AUTOPILOT_STAGES = autopilot_def.STAGES
 
 
-def _run_spend(ctx: JobContext) -> tuple[float, float]:
-    """(spent so far by this run — itself and every job it started, incl. QC and retakes — , the 1.5× guard)."""
-    from sqlalchemy import func
-    with SessionLocal() as db:
-        j = db.get(Job, ctx.job_id)
-        spent = float(db.query(func.coalesce(func.sum(Job.cost_actual), 0.0)).filter(Job.batch_id == j.batch_id).scalar() or 0)
-        return spent, max(j.cost_estimate * 1.5, 1.0)
-
-
-def _wait_batch_idle(ctx: JobContext, guard=None, timeout_s: float = 26 * 3600) -> None:
-    """Wait for follow-up work of this run (QC, retakes) before the next step; it may wait on a provider quota."""
-    start, last_guard = time.time(), 0.0
-    while True:
-        with SessionLocal() as db:
-            me = db.get(Job, ctx.job_id)
-            busy = db.query(Job).filter(Job.batch_id == me.batch_id, Job.id != ctx.job_id,
-                                        Job.status.in_(("queued", "running"))).count()
-        if not busy:
-            return
-        try:
-            if ctx.cancelled():
-                raise Cancelled()
-            if guard and time.time() - last_guard > 10:
-                last_guard = time.time()
-                guard()
-            if time.time() - start > timeout_s:
-                raise ProviderError("timed out waiting for this run's follow-up jobs")
-        except Exception:
-            from ..core.jobs import cancel_tree
-            with SessionLocal() as db:
-                cancel_tree(db, [ctx.job_id])
-                db.commit()
-            raise
-        time.sleep(2)
-
-
 @handler("autopilot")
 def autopilot(ctx: JobContext) -> dict:
     """Run the pipeline up to a milestone. Optional approval stops: after each milestone listed in pause_after the run
-    ends as "paused"; running it again continues (every stage skips work that is already done)."""
+    ends as "paused"; running it again continues (every stage skips work that is already done). What fails on the
+    way is listed as the run's problems; spending past the guard stops it ("stopped") with work in flight finished."""
     p = ctx.payload
     through = autopilot_def.resolve_through(p.get("through"))
     stop_at = AUTOPILOT_STAGES.index(through)
@@ -177,17 +143,30 @@ def autopilot(ctx: JobContext) -> dict:
             db.commit()
             emit(db, ctx.project_id, "autopilot.updated", pr.autopilot)
 
+    r = RunLog(ctx, "Autopilot")
+    problems.start(ctx.episode_id)
     try:
-        return _autopilot_run(ctx, stop_at, pause_after, mark)
+        try:
+            out = _autopilot_run(ctx, stop_at, pause_after, mark, r)
+        except BudgetStop:
+            r.stopped_at_budget("Autopilot")
+            mark(_last_stage(ctx), "stopped", "stopped at your budget", error="Stopped at your budget: press Autopilot "
+                 "to continue (what is made is kept)", problems=len(r.problems.items))
+            out = {"stopped": "budget", "stages": AUTOPILOT_STAGES[: stop_at + 1]}
     except Cancelled:
         mark(_last_stage(ctx), "cancelled", "Stopped by you")
+        r.save(announce=False)
         raise
     except RetryableProviderError as e:  # the worker puts the run back in the queue: it is waiting, not failed
         mark(_last_stage(ctx), "running", f"waiting to retry: {str(e)[:200]}")
+        r.save(announce=False)
         raise
     except Exception as e:
         mark(_last_stage(ctx), "failed", str(e)[:300], error=str(e)[:500])
+        r.save(announce=False)
         raise
+    out["problems"] = r.save(announce=True)
+    return out
 
 
 def _last_stage(ctx: JobContext) -> str:
@@ -195,22 +174,12 @@ def _last_stage(ctx: JobContext) -> str:
         return (db.get(Project, ctx.project_id).autopilot or {}).get("stage") or "brief"
 
 
-def _autopilot_run(ctx: JobContext, stop_at: int, pause_after: list[str], mark) -> dict:
-    def guard() -> None:
-        ctx.check_cancel()
-        spent, cap = _run_spend(ctx)
-        if spent > cap and spent > 0:
-            raise ProviderError(f"Autopilot stopped: spent ${spent:.2f}, above the approved ${cap:.2f} guard")
-
-    def run_children(specs: list[dict], label: str) -> dict[int, str]:
-        ids = [ctx.enqueue_child(s["type"], s["payload"], shot_id=s.get("shot_id"), episode_id=s.get("episode_id"),
-                                 estimate=s["estimate"], label=s["label"]) for s in specs]
-        res = ctx.wait_children(ids, label, guard=guard) if ids else {}
-        _wait_batch_idle(ctx, guard)
-        return res
-
-    for stage in AUTOPILOT_STAGES[: stop_at + 1]:
-        guard()
+def _autopilot_run(ctx: JobContext, stop_at: int, pause_after: list[str], mark, r: RunLog) -> dict:
+    from ..pipeline.selection import current, has_fresh, is_real
+    stages = AUTOPILOT_STAGES[: stop_at + 1]
+    for stage in stages:
+        r.guard()
+        r.step = autopilot_def.STAGE_LABELS.get(stage, stage)
         mark(stage, "running")
         with SessionLocal() as db:
             project = db.get(Project, ctx.project_id)
@@ -233,8 +202,8 @@ def _autopilot_run(ctx: JobContext, stop_at: int, pause_after: list[str], mark) 
                 if keep:  # the user's words: the editor scores them, the writer leaves them alone
                     mark(stage, "running", f"kept your script ({keep}); scoring only")
                 db.commit()
-                run_children([{"type": "critic_loop", "payload": {"keep_script": bool(keep)}, "episode_id": episode.id,
-                               "estimate": 0.0, "label": "Critic review" if keep else "Critic loop"}], "Script editor")
+                r.run([{"type": "critic_loop", "payload": {"keep_script": bool(keep)}, "episode_id": episode.id,
+                        "estimate": 0.0, "label": "Critic review" if keep else "Critic loop"}], "Script editor")
             elif stage == "scenes":
                 from ..models import Scene
                 if not db.query(Scene).filter(Scene.episode_id == episode.id, Scene.goal != "").count():
@@ -252,7 +221,7 @@ def _autopilot_run(ctx: JobContext, stop_at: int, pause_after: list[str], mark) 
                     if not db.query(LocationAsset).filter(LocationAsset.location_id == loc.id).count():
                         specs.append(generation.location_images_spec(db, project.id, loc, ["wide"]))
                 db.commit()
-                run_children(specs, "Character sheets & locations")
+                r.run(specs, "Character sheets & locations")
             elif stage == "voices":
                 specs = []
                 for ch in studio.cast(db, project):
@@ -261,7 +230,7 @@ def _autopilot_run(ctx: JobContext, stop_at: int, pause_after: list[str], mark) 
                             prov = (settings_store.get_setting(db, "tts_provider_by_language") or {}).get(lang, "gemini")
                             specs.append(generation.voice_design_spec(db, project.id, ch, lang, prov))
                 db.commit()
-                run_children(specs, "Designing voices")
+                r.run(specs, "Designing voices")
             elif stage == "shots" and not generation.episode_shots(db, episode):
                 studio.breakdown(db, user, episode)
             elif stage == "continuity":
@@ -273,56 +242,80 @@ def _autopilot_run(ctx: JobContext, stop_at: int, pause_after: list[str], mark) 
             elif stage == "keyframes":
                 specs = generation.keyframe_specs(db, project, generation.episode_shots(db, episode), only_missing=True)
                 db.commit()
-                run_children(specs, "Keyframes")
+                r.run(specs, "Keyframes")
             elif stage == "videos":  # in link order: a shot that continues another starts from its finished clip
-                from ..pipeline.selection import current, is_real
-                need =[s.id for s in generation.episode_shots(db, episode) if not is_real(current(db, s.id, "video"))]
                 db.commit()
-                scene_chain.make_videos_in_order(SessionLocal, run_children, project.id, need, None, "Videos")
+                if "dialogue" in stages:  # voices before pictures: each new clip is as long as its real voice
+                    _voices_first(ctx, r, None, None)
+                    r.step = autopilot_def.STAGE_LABELS["videos"]
+                with SessionLocal() as db2:
+                    need = [s.id for s in generation.episode_shots(db2, db2.get(Episode, ctx.episode_id))
+                            if not is_real(current(db2, s.id, "video"))]
+                # each wave is brought up to its extend_to length before the next wave starts from its last frame
+                res = scene_chain.make_videos_in_order(SessionLocal, r.run, project.id, need, None, "Videos", extend=True)
+                for w in res["warnings"]:
+                    r.problems.add(None, r.step, w, "Make the video it continues from, then remake this one")
             elif stage == "dialogue":
                 lang = project.primary_language
                 shots = generation.episode_shots(db, episode)
-                from ..pipeline.selection import current, has_fresh
                 need = [s for s in shots if budget.Estimator.needs_lipsync(s, project, lang) and not has_fresh(db, s.id, "lipsync", lang)]
-                narr = [s for s in shots if (s.narration or {}).get(lang) and s not in need]
+                narr = [s for s in shots if (s.narration or {}).get(lang) and s not in need
+                        and not current(db, s.id, "narration", lang)]
                 specs = generation.lipsync_specs(db, project, need, lang) + generation.voice_specs(db, project, narr, lang)
                 db.commit()
-                run_children(specs, "Voices & lip-sync")
+                r.run(specs, "Voices & lip-sync")
             elif stage == "music" and (mus := generation.music_step(db, project, episode)):
                 db.commit()  # a piece per scene with two or more scenes (or the one score), only what is missing
-                run_children([mus[0]], "Music")
+                r.run([mus[0]], "Music")
             elif stage == "sfx" and settings_store.get_setting(db, "sfx_auto") \
                     and (snd := generation.sound_step(db, project, episode, generation.episode_shots(db, episode))):
                 db.commit()
-                run_children([snd[0]], "Sound design")  # ElevenLabs, or the free library without its key
+                r.run([snd[0]], "Sound design")  # ElevenLabs, or the free library without its key
             elif stage == "dubs":
                 others = [l for l in (project.languages or []) if l != project.primary_language]
                 specs = [generation.dub_spec(db, project, episode, l) for l in others]
                 db.commit()
-                run_children(specs, "Dubbing")
+                for j in db.query(Job).filter(Job.id.in_(list(r.run(specs, "Dubbing")) or [0])).all():
+                    n = int((j.result or {}).get("failed") or 0)  # a dub finishes even when some of its voices didn't
+                    if n:
+                        r.problems.add(None, r.step, f"{j.label}: {n} voice or lip-sync job{'s' if n != 1 else ''} "
+                                       "didn't finish", "Open the dub's jobs to see why, then run the dub again")
             elif stage == "export":
-                preset = "youtube" if project.aspect == "16:9" else ("square" if project.aspect == "1:1" else "shorts")
-                specs = [generation.render_spec(project, episode, l, "final", preset, {"captions": True})
-                         for l in (project.languages or [project.primary_language])]
-                db.commit()
-                run_children(specs, "Exports")
+                # never an export with still pictures where clips should be: the gaps are listed instead
+                missing = problems.missing_videos(db, generation.episode_shots(db, episode))
+                if missing:
+                    r.problems.extend([problems.export_skipped(missing)])
+                    mark(stage, "running", r.problems.items[-1]["reason"])
+                else:
+                    preset = "youtube" if project.aspect == "16:9" else ("square" if project.aspect == "1:1" else "shorts")
+                    specs = [generation.render_spec(project, episode, l, "final", preset, {"captions": True})
+                             for l in (project.languages or [project.primary_language])]
+                    db.commit()
+                    r.run(specs, "Exports")
             elif stage == "marketing":
                 db.commit()
-                run_children([generation.marketing_spec(db, project, episode)], "Marketing pack")
+                r.run([generation.marketing_spec(db, project, episode)], "Marketing pack")
         mark(stage, "done")
         ms = autopilot_def.milestone_of(stage)
         if ms and ms["id"] in pause_after and AUTOPILOT_STAGES.index(stage) < stop_at:
             # an approval stop: hand back to the user; Continue runs again and skips what is done
-            mark(stage, "paused", f"{ms['label']} is ready — review it, then Continue", paused_after=ms["id"])
-            return {"paused_after": ms["id"], "stages": AUTOPILOT_STAGES[: stop_at + 1]}
-    mark(AUTOPILOT_STAGES[stop_at], "finished", "Autopilot finished")
-    return {"stages": AUTOPILOT_STAGES[: stop_at + 1]}
+            mark(stage, "paused", f"{ms['label']} is ready — review it, then Continue", paused_after=ms["id"],
+                 problems=len(r.problems.items))
+            return {"paused_after": ms["id"], "stages": stages}
+    with SessionLocal() as db:
+        r.problems.extend(problems.qc_problems(db, generation.episode_shots(db, db.get(Episode, ctx.episode_id))))
+    n = len(r.problems.items)
+    mark(AUTOPILOT_STAGES[stop_at], "finished",
+         f"Autopilot finished with {n} problem{'s' if n != 1 else ''}: see the shot list" if n else "Autopilot finished",
+         problems=n)
+    return {"stages": stages}
 
 
-def _carry_continuity(ctx: JobContext, shot_ids: list[int] | None) -> list[int]:
+def _carry_continuity(ctx: JobContext, shot_ids: list[int] | None, r: RunLog | None = None) -> list[int]:
     """Before the first picture: the Continuity Bible end state of every scene before the last one being made (written
     by AI from the script when missing, core/continuity.py), so each scene's prompts carry who wears what, what is in
-    hand, time of day and weather from the scene before. Never stops the run: without it the shots are still made."""
+    hand, time of day and weather from the scene before. Never stops the run, not even for an error worth retrying:
+    without it the shots are still made, and the hiccup is listed as a problem."""
     from ..models import Scene
     try:
         with SessionLocal() as db:
@@ -332,10 +325,14 @@ def _carry_continuity(ctx: JobContext, shot_ids: list[int] | None) -> list[int]:
             if not orders:
                 return []
             return scene_chain.ensure_end_states(db, _user(db, ctx), project, episode, max(orders))
-    except (Cancelled, RetryableProviderError):
+    except Cancelled:
         raise
     except Exception as e:  # a writing hiccup must not cost the user their videos
         print(f"[produce] continuity end states skipped: {e}")
+        if r is not None:
+            r.problems.add(None, "Continuity", f"The scenes' end states couldn't be written ({str(e)[:160]})",
+                           "The shots are made anyway; write the end states in the Continuity Bible and remake a shot "
+                           "if something doesn't carry over")
         return []
 
 
@@ -348,6 +345,51 @@ def _link_scenes(ctx: JobContext, shot_ids: list[int] | None, rule: str) -> list
         ids = {s.scene_id for s in generation.episode_shots(db, episode, shot_ids) if s.scene_id}
         scenes = db.query(Scene).filter(Scene.id.in_(ids)).order_by(Scene.order, Scene.id).all() if ids else []
         return [x for x in (scene_chain.link_to_previous_scene(db, sc, rule) for sc in scenes) if x]
+
+
+def _voices_first(ctx: JobContext, r: RunLog, shot_ids: list[int] | None, lang: str | None) -> int:
+    """Before the pictures: the studio voices (TTS dialogue and narration) of the shots whose clip isn't made yet, then
+    each of those shots is timed to its real voice (generation.fit_to_voices: 4/6/8 s, extended when narration runs
+    longer). The lip-sync comes after the videos. Returns the voice jobs queued."""
+    r.step = "Voices first"
+    with SessionLocal() as db:
+        project, episode = db.get(Project, ctx.project_id), db.get(Episode, ctx.episode_id)
+        lang = lang or project.primary_language
+        specs = generation.voice_first_specs(db, project, generation.episode_shots(db, episode, shot_ids), lang)
+        db.commit()
+    r.run(specs, "Voices first, to time the shots")
+    with SessionLocal() as db:
+        project, episode = db.get(Project, ctx.project_id), db.get(Episode, ctx.episode_id)
+        notes, changed = generation.fit_to_voices(db, project, generation.episode_shots(db, episode, shot_ids), lang)
+        db.commit()
+    r.problems.extend(notes)
+    if changed:
+        emit(None, ctx.project_id, "episode.updated", {"episode_id": ctx.episode_id, "what": "shots"})
+    return len(specs)
+
+
+def _registrations(db, project: Project, shots: list, quality: str | None) -> list[dict]:
+    """Seedance can refuse a realistic face it gets from a keyframe alone; a character registered in the BytePlus asset
+    library goes in as a trusted reference instead (providers/services._seedance). When a Seedance engine will make some
+    of these shots and the team turned on automatic registration, the cast step registers their on-screen characters
+    that may be registered: AI-made images only, a real person's photo never (handlers_hub.auto_register_reason)."""
+    from ..core import recovery
+    from ..models import Character
+    from .handlers_hub import auto_register_reason
+    if not settings_store.get_setting(db, "byteplus_auto_register"):
+        return []
+    out, seen = [], set()
+    for s in shots:
+        if recovery.seedance_engine(db, s, project, quality) is None:
+            continue
+        for cid in s.characters or []:
+            ch = db.get(Character, int(cid))
+            if ch is None or ch.id in seen or recovery.seedance_ready(ch):
+                continue
+            seen.add(ch.id)
+            if not auto_register_reason(db, ch):
+                out.append(generation.byteplus_register_spec(project.id, ch))
+    return out
 
 
 def _set_paused(episode_id: int, after: str | None) -> None:
@@ -367,67 +409,61 @@ def _set_paused(episode_id: int, after: str | None) -> None:
 
 @handler("produce")
 def produce(ctx: JobContext) -> dict:
-    """Produce all: the shot list as written, step by step (cast looks & voices → keyframes → videos → extensions →
-    voices & lip-sync → sound effects → music → export). No writing or re-planning: only what is missing is made. One
-    budget approval covers the run. Before the first picture every scene gets the end state of the one before it, and
-    (link_scenes) a scene that picks up straight from the one before starts from its last frame. review_looks: when
-    the run made new looks or voices, it stops after them so they can be checked before every shot uses them; running
-    it again carries on (nothing is made twice)."""
+    """Produce all: the shot list as written, step by step (cast looks & voices → the studio voices, so each new clip
+    is as long as its voice → keyframes → videos, each wave of linked shots extended before the next starts → the
+    remaining extensions → lip-sync → sound effects → music → export). No writing or re-planning: only what is missing
+    is made. One budget approval covers the run. Before the first picture every scene gets the end state of the one
+    before it, and (link_scenes) a scene that picks up straight from the one before starts from its last frame.
+    review_looks: when the run made new looks or voices, it stops after them so they can be checked before every shot
+    uses them; running it again carries on (nothing is made twice). What fails is listed as the run's problems (the
+    result's "problems", the episode's run_problems); the export is skipped while shots have no video."""
+    p = ctx.payload
+    steps = [s for s in generation.PRODUCE_STEPS if s in (p.get("steps") or generation.PRODUCE_STEPS)]
+    r = RunLog(ctx, "Produce all")
+    problems.start(ctx.episode_id)
+    _set_paused(ctx.episode_id, None)
+    try:
+        try:
+            out = _produce(ctx, r, steps)
+        except BudgetStop:
+            r.stopped_at_budget("Produce all")
+            out = {"steps": steps, "jobs": r.done, "stopped": "budget"}
+    except BaseException:
+        r.save(announce=False)
+        raise
+    out["problems"] = r.save(announce=True)
+    return out
+
+
+def _produce(ctx: JobContext, r: RunLog, steps: list[str]) -> dict:
     from ..pipeline.selection import current, has_fresh, is_real
 
     p = ctx.payload
-    steps = [s for s in generation.PRODUCE_STEPS if s in (p.get("steps") or generation.PRODUCE_STEPS)]
     shot_ids = p.get("shot_ids") or None
     quality = p.get("quality")
     link_rule = p.get("link_scenes") if p.get("link_scenes") in ("auto", "always") else "never"
-    done: dict[str, int] = {}
+    done = r.done
     carried = False
-    _set_paused(ctx.episode_id, None)
-
-    def guard() -> None:
-        ctx.check_cancel()
-        spent, cap = _run_spend(ctx)
-        if spent > cap and spent > 0:
-            raise ProviderError(f"Produce stopped: spent ${spent:.2f}, above the approved ${cap:.2f} guard")
-
-    def run_children(specs: list[dict], label: str) -> int:
-        ids = [ctx.enqueue_child(s["type"], s["payload"], shot_id=s.get("shot_id"), episode_id=s.get("episode_id"),
-                                 estimate=s["estimate"], label=s["label"]) for s in specs]
-        if ids:
-            ctx.wait_children(ids, label, guard=guard)
-            _wait_batch_idle(ctx, guard)
-        return len(ids)
+    in_waves = "extend" in steps and "videos" in steps  # each wave is extended before the next starts from it
 
     for i, step in enumerate(steps):
-        guard()
+        r.guard()
         label = generation.PRODUCE_LABELS[step]
         ctx.progress(i / len(steps), label)
         if step in ("keyframes", "videos") and not carried:
             carried = True
             ctx.progress(i / len(steps), "Continuity: what carries from scene to scene")
-            done["continuity"] = len(_carry_continuity(ctx, shot_ids))
+            done["continuity"] = len(_carry_continuity(ctx, shot_ids, r))
             if link_rule != "never":
                 done["scene_links"] = len(_link_scenes(ctx, shot_ids, link_rule))
-        if step == "extend":  # rounds: each extension adds ~7 s; stop a shot if its clip didn't grow
-            last_len: dict[int, float] = {}
-            for rnd in range(4):
-                guard()
-                with SessionLocal() as db:
-                    project = db.get(Project, ctx.project_id)
-                    episode = db.get(Episode, ctx.episode_id)
-                    specs = []
-                    for s in generation.episode_shots(db, episode, shot_ids):
-                        if not generation.extensions_needed(db, s):
-                            continue
-                        vid = current(db, s.id, "video")
-                        if not vid or last_len.get(s.id) == vid.duration_s:
-                            continue
-                        last_len[s.id] = vid.duration_s
-                        specs.append(generation.extend_spec(db, project, s, s.extend_prompt or f"The action continues naturally. {s.action}"))
-                    db.commit()
-                if not specs:
-                    break
-                done[step] = done.get(step, 0) + run_children(specs, f"{label} (round {rnd + 1})")
+            if "voices" in steps:  # voices before pictures: each new clip is as long as its real voice
+                ctx.progress(i / len(steps), "Voices first, to time the shots")
+                done["voices_first"] = _voices_first(ctx, r, shot_ids, p.get("language"))
+        r.step = label
+        if step == "extend":  # what the video step's waves didn't extend (clips made before this run)
+            with SessionLocal() as db:
+                ids = [s.id for s in generation.episode_shots(db, db.get(Episode, ctx.episode_id), shot_ids)]
+            done[step] = done.get(step, 0) + scene_chain.extend_shots(SessionLocal, r.run, ctx.project_id, ids, label)
             continue
         with SessionLocal() as db:
             project = db.get(Project, ctx.project_id)
@@ -436,7 +472,7 @@ def produce(ctx: JobContext) -> dict:
             lang = p.get("language") or project.primary_language
             specs: list[dict] = []
             if step == "cast":
-                specs = generation.cast_specs(db, project, shots)
+                specs = generation.cast_specs(db, project, shots) + _registrations(db, project, shots, quality)
             elif step == "keyframes":  # a shot that starts from a clip not made yet gets its keyframe with its video
                 specs = generation.keyframe_specs(db, project, [s for s in shots if "videos" not in steps
                                                                 or not links.waits_for_clip(db, s)], only_missing=True)
@@ -444,10 +480,15 @@ def produce(ctx: JobContext) -> dict:
                 # remake: the Director was asked for these shots by name, so they are made again even with a video
                 need = [s.id for s in shots if p.get("remake") or not is_real(current(db, s.id, "video"))]
                 db.commit()
-                res = scene_chain.make_videos_in_order(SessionLocal, run_children, project.id, need, quality, label)
+                res = scene_chain.make_videos_in_order(SessionLocal, r.run, project.id, need, quality, label,
+                                                       extend=in_waves)
                 done[step] = res["videos"]
+                if res["extensions"]:
+                    done["extend"] = done.get("extend", 0) + res["extensions"]
+                for w in res["warnings"]:
+                    r.problems.add(None, label, w, "Make the video it continues from, then remake this one")
                 continue
-            elif step == "voices":
+            elif step == "voices":  # the lip-syncs (their voices were made first) and any narration still missing
                 need = [s for s in shots if budget.Estimator.needs_lipsync(s, project, lang) and not has_fresh(db, s.id, "lipsync", lang)]
                 narr = [s for s in shots if (s.narration or {}).get(lang) and s not in need and not current(db, s.id, "narration", lang)]
                 specs = generation.lipsync_specs(db, project, need, lang) + generation.voice_specs(db, project, narr, lang)
@@ -456,15 +497,26 @@ def produce(ctx: JobContext) -> dict:
             elif step == "music" and (mus := generation.music_step(db, project, episode, p.get("music_per_scene"))):
                 specs = [mus[0]]  # the scenes' missing pieces, or the one score
             elif step == "export":
-                preset = "youtube" if project.aspect == "16:9" else ("square" if project.aspect == "1:1" else "shorts")
-                specs = [generation.render_spec(project, episode, lang, "final", preset, {"captions": True})]
+                # never an export with still pictures where clips should be: the gaps are listed instead
+                missing = problems.missing_videos(db, shots)
+                if missing:
+                    r.problems.extend([problems.export_skipped(missing)])
+                else:
+                    preset = "youtube" if project.aspect == "16:9" else ("square" if project.aspect == "1:1" else "shorts")
+                    specs = [generation.render_spec(project, episode, lang, "final", preset, {"captions": True})]
             db.commit()
-        done[step] = run_children(specs, label)
-        if step == "cast" and done[step] and p.get("review_looks") and step != steps[-1]:
-            _set_paused(ctx.episode_id, "cast")
-            emit(None, ctx.project_id, "produce.paused", {"episode_id": ctx.episode_id, "after": "cast",
-                                                         "message": "New looks and voices are ready: check them in Cast, "
-                                                                    "then press Produce all to carry on."})
-            emit(None, ctx.project_id, "episode.updated", {"episode_id": ctx.episode_id, "what": "shots"})
-            return {"steps": steps, "jobs": done, "paused_after": "cast"}
+        st = r.run(specs, label)
+        done[step] = len(st)
+        if step == "cast" and p.get("review_looks") and step != steps[-1]:
+            made = sum(1 for s in st.values() if s == "succeeded")
+            if made:  # something new to check (failures are listed as problems; nothing new: no stop)
+                failed = len(st) - made
+                _set_paused(ctx.episode_id, "cast")
+                msg = ("New looks and voices are ready: check them in Cast, then press Produce all to carry on."
+                       + (f" {failed} didn't finish: see the shot list." if failed else ""))
+                emit(None, ctx.project_id, "produce.paused", {"episode_id": ctx.episode_id, "after": "cast", "message": msg})
+                emit(None, ctx.project_id, "episode.updated", {"episode_id": ctx.episode_id, "what": "shots"})
+                return {"steps": steps, "jobs": done, "paused_after": "cast"}
+    with SessionLocal() as db:
+        r.problems.extend(problems.qc_problems(db, generation.episode_shots(db, db.get(Episode, ctx.episode_id), shot_ids)))
     return {"steps": steps, "jobs": done}
