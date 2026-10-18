@@ -28,6 +28,7 @@ from ..pipeline.ffmpeg import FFmpegError
 from ..providers.base import (NeedsApproval, ProviderBlocked, ProviderError, ProviderNotConfigured,
                               RetryableProviderError, Usage)
 from ..providers.services import Services
+from .runlog import STUCK_S, BudgetStop, Cancelled, wait_note as _wait_note  # (also read from here)
 
 HANDLERS: dict[str, Callable[["JobContext"], dict | None]] = {}
 # ORCHESTRATORS: core/job_types.py (shared with the budget, which must not import this package)
@@ -59,8 +60,10 @@ def handler(name: str):
     return deco
 
 
-class Cancelled(Exception):
-    pass
+def _counts_note(st: dict[int, str]) -> str:
+    ok = sum(1 for s in st.values() if s == "succeeded")
+    bad = sum(1 for s in st.values() if s in ("failed", "cancelled"))
+    return f"{ok}/{len(st)} done" + (f", {bad} failed" if bad else "")
 
 
 class BudgetStop(Exception):

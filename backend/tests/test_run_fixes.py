@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 
 from app.agents import tools as T
 from app.api.board import _match
-from app.core import dependencies, generation, jobs as jobs_core, problems, recovery
+from app.core import generation, jobs as jobs_core, problems, recovery
 from app.core import scene_chain
 from app.core.budget import Estimator
 from app.db import SessionLocal, utcnow
@@ -32,7 +32,7 @@ from app.providers.base import ProviderBlocked, ProviderError, RetryableProvider
 from app.providers.services import Services
 from app.providers.syncso import speaker_option
 from app.storage import get_storage
-from app.workers import handlers, handlers_room
+from app.workers import handlers, handlers_room, runlog
 from app.workers import worker as W
 from conftest import H, ok, wait_jobs
 
@@ -405,7 +405,7 @@ def test_budget_stop_lets_running_work_finish(client: TestClient, monkeypatch):
     c = client
     pid, eid = _project(c)
     _board(c, eid, [{"prompt": "The lamp glows.", "duration_s": 4}])
-    monkeypatch.setattr(handlers_room, "_run_spend", lambda ctx: (5.0, 1.0))
+    monkeypatch.setattr(runlog, "_run_spend", lambda ctx: (5.0, 1.0))
     ok(c.post(f"/api/episodes/{eid}/generate", headers=H, json={"action": "produce", "steps": ["keyframes", "videos"]}))
     jobs = wait_jobs(c, pid, timeout=600)
     prod = next(j for j in jobs if j["type"] == "produce")
