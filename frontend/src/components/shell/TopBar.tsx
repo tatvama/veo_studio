@@ -58,7 +58,7 @@ export function TopBar({ user }: { user: UserBrief }) {
         <button
           data-tour="palette"
           onClick={() => setPaletteOpen(true)}
-          className="group flex h-8 w-full max-w-md items-center gap-2 rounded-lg border border-line bg-raised/60 px-2.5 text-left text-sm text-dim outline-none transition-colors hover:border-accent/40 hover:bg-hover hover:text-mute focus-visible:ring-2 focus-visible:ring-accent/50"
+          className="group flex h-8 w-full max-w-md items-center max-sm:h-10 gap-2 rounded-lg border border-line bg-raised/60 px-2.5 text-left text-sm text-dim outline-none transition-colors hover:border-accent/40 hover:bg-hover hover:text-mute focus-visible:ring-2 focus-visible:ring-accent/50"
         >
           <Search className="size-4 shrink-0" />
           <span className="min-w-0 flex-1 truncate">{t("Search, jump to, or run a command…")}</span>

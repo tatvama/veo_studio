@@ -62,6 +62,7 @@ export function useLiveEvents(projectId: number | null) {
         }
         if (t.startsWith("take") || t === "shot.updated" || t === "episode.updated" || t === "audio.created") touch("episode", "shot", "board", "impact", "dashboard", "wardrobe", "continuity-bible", "dialogue-check");
         if (t === "bible.updated") touch("characters", "character", "locations", "location", "project", "costumes", "character-versions", "character-lock", "character-look", "props", "mentions");
+        if (t.startsWith("take") || t === "bible.updated") touch("character-impact");  // the Cast's "look out of date" and "Redo these shots"
         if (t.startsWith("project") || t === "autopilot.updated") touch("project", "projects", "seasons", "dashboard");
         if (t.startsWith("job")) touch("dashboard");
         if (t === "agent.message") touch("agent");

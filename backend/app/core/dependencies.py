@@ -155,12 +155,13 @@ def character_changed(db: Session, ch: Character, what: str = "look", outfit: st
 
 
 def character_impact(db: Session, project: Project, ch: Character) -> dict[str, Any]:
-    """The project's shots that show this character and have out-of-date pictures or clips, per episode, with what
-    redoing them costs (the same jobs as the episode's impact report)."""
+    """The project's shots that show this character and have pictures or clips out of date because of *this*
+    character's look (character_changed: "Ravi's look changed"), per episode, with what redoing them costs (the same
+    jobs as the episode's impact report). A shot out of date because of someone else in it is that person's to redo."""
     shown = character_shots(db, ch.id, project.id)
     stale = {sid for (sid,) in db.query(Take.shot_id).filter(
         Take.shot_id.in_([s.id for s in shown]), Take.stale.is_(True), Take.archived.is_(False),
-        Take.kind.in_(LOOK_KINDS)).distinct().all()} if shown else set()
+        Take.kind.in_(LOOK_KINDS), Take.stale_reason.startswith(f"{ch.name}'s ", autoescape=True)).distinct().all()} if shown else set()
     by_ep: dict[int, list[Shot]] = {}
     for s in shown:
         if s.id in stale:

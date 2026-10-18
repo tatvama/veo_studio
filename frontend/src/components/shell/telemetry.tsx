@@ -26,7 +26,7 @@ export function useWorkload() {
   }, [data]);
 }
 
-const chip = "flex h-8 items-center gap-2 rounded-lg border border-line bg-raised/60 px-2.5 text-xs outline-none transition-colors hover:border-accent/40 hover:bg-hover focus-visible:ring-2 focus-visible:ring-accent/50";
+const chip = "flex h-8 max-sm:h-10 items-center gap-2 rounded-lg border border-line bg-raised/60 px-2.5 text-xs outline-none transition-colors hover:border-accent/40 hover:bg-hover focus-visible:ring-2 focus-visible:ring-accent/50";
 
 /** Equalizer bars + counts. Opens a list of what is running right now. */
 export function JobsPill() {
@@ -146,7 +146,7 @@ export function NotificationsButton({ placement = "bottom-end" }: { placement?: 
     <>
       <Tooltip content={t("Notifications")} side="bottom" disabled={open}>
         <button ref={ref} aria-label={t("Notifications")} aria-expanded={open} onClick={() => setOpen((v) => !v)}
-          className={clsx("group relative grid size-8 place-items-center rounded-lg text-mute outline-none transition-colors hover:bg-hover hover:text-ink focus-visible:ring-2 focus-visible:ring-accent/50", open && "bg-hover text-ink")}>
+          className={clsx("group relative grid size-8 max-sm:size-10 place-items-center rounded-lg text-mute outline-none transition-colors hover:bg-hover hover:text-ink focus-visible:ring-2 focus-visible:ring-accent/50", open && "bg-hover text-ink")}>
           <Bell className={clsx("size-[18px]", !!count && "origin-top group-hover:animate-[wiggle_0.5s_ease-in-out]")} />
           {!!count && <span className="mono absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-accent px-1 text-[0.625rem] font-bold text-black ring-2 ring-panel">{count}</span>}
         </button>

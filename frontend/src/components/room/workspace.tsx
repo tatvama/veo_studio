@@ -1,6 +1,6 @@
 import { Check, Circle } from "lucide-react";
 import { motion } from "motion/react";
-import { useEffect, useId, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useId, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { cn } from "../../lib/cn";
 import { useT } from "../../lib/i18n";
 import { Metric, rise } from "../ui";
@@ -161,13 +161,40 @@ export function Workspace({ children, rail, railKind = "outline", className, rai
 // ── WorkPanel ─────────────────────────────────────────────────────────────────
 
 /**
+ * How WorkPanels inside draw themselves: "card" (the standard block), "flat" (no card, no eyebrow: a titled part of a
+ * side panel) or "bare" (no card and no title either: the panel already sits under a heading that names it).
+ */
+export type PanelChrome = "card" | "flat" | "bare";
+const ChromeCtx = createContext<PanelChrome>("card");
+export function PanelChromeProvider({ chrome, children }: { chrome: PanelChrome; children: ReactNode }) {
+  return <ChromeCtx.Provider value={chrome}>{children}</ChromeCtx.Provider>;
+}
+
+/**
  * The standard block. Header: a mono eyebrow (`icon · 01 · KICKER`), the title, a one-line purpose and the actions (which
  * wrap on narrow panels). `tone` colours the eyebrow and keeps the lit edge on. `flush` removes body padding (lists, tables).
+ * Inside a PanelChromeProvider the block can drop its card (see PanelChrome).
  */
 export function WorkPanel({ n, kicker, title, description, icon, actions, badge, children, className, bodyClassName, id, index, flush, tone, hideHead }: {
   n?: number | string; kicker?: ReactNode; title?: ReactNode; description?: ReactNode; icon?: ReactNode; actions?: ReactNode; badge?: ReactNode;
   children?: ReactNode; className?: string; bodyClassName?: string; id?: string; index?: number; flush?: boolean; tone?: Tone; hideHead?: boolean;
 }) {
+  const chrome = useContext(ChromeCtx);
+  if (chrome !== "card") {
+    const showTitle = chrome === "flat" && !!title;
+    return (
+      <section id={id} className={cn("min-w-0 scroll-mt-4", className)}>
+        {!hideHead && (showTitle || description || actions) && (
+          <header className="mb-3 space-y-2">
+            {showTitle && <h3 className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-semibold tracking-tight"><span className="min-w-0">{title}</span>{badge}</h3>}
+            {description && <p className="text-xs leading-relaxed text-mute">{description}</p>}
+            {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+          </header>
+        )}
+        {children !== undefined && <div className={bodyClassName}>{children}</div>}
+      </section>
+    );
+  }
   const r = index === undefined ? null : rise(index);
   const head = !hideHead && (title || actions || kicker || n !== undefined);
   const label = n !== undefined || kicker || icon;

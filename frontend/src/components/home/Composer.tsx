@@ -256,7 +256,7 @@ export const Composer = forwardRef<ComposerHandle, { onTemplateChange?: (tpl: Pr
                   <div className="mb-2 flex items-center justify-between gap-3">
                     <Eyebrow className="flex items-center gap-1.5"><Lightbulb className="size-3.5" />{t("Need a spark? Try one")}</Eyebrow>
                     <button type="button" onClick={() => setIdeaPage((n) => n + 1)}
-                      className="-my-1 inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-2xs font-medium text-mute transition-colors hover:bg-hover hover:text-ink active:scale-95">
+                      className="-my-1 inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-2xs font-medium text-mute transition-colors hover:bg-hover hover:text-ink active:scale-95 max-sm:h-10">
                       <Shuffle className="size-3" />{t("More ideas")}
                     </button>
                   </div>
@@ -317,11 +317,11 @@ export const Composer = forwardRef<ComposerHandle, { onTemplateChange?: (tpl: Pr
                     const isPrimary = on && primary === l;
                     const canPick = on && langs.length > 1 && !isPrimary;
                     return (
-                      <span key={l} className={clsx("mono inline-flex h-9 items-stretch overflow-hidden rounded-lg border text-xs font-medium transition-colors",
+                      <span key={l} className={clsx("mono inline-flex h-9 items-stretch overflow-hidden rounded-lg border text-xs font-medium transition-colors max-sm:h-10",
                         on ? "border-accent/60 bg-accent/10 text-ink" : "border-line bg-panel text-mute hover:border-dim/50 hover:bg-hover hover:text-ink")}>
                         <button type="button" aria-pressed={on} onClick={() => toggleLang(l)} onDoubleClick={() => on && setPrimary(l)}
                           title={t("{lang} — double-click to make primary", { lang: LANG_NAMES[l] })}
-                          className="px-2.5 transition-transform active:scale-95">
+                          className="px-2.5 transition-transform active:scale-95 max-sm:min-w-10">
                           {LANG_SHORT[l]}
                         </button>
                         {on && (canPick ? (
@@ -380,10 +380,10 @@ export const Composer = forwardRef<ComposerHandle, { onTemplateChange?: (tpl: Pr
           {/* ── a script file, or full manual control ───────────────────── */}
           <div className="flex flex-wrap items-center gap-2 border-t border-line px-4 py-2.5">
             <span className="min-w-0 flex-1 basis-52 text-xs text-dim">{t("Script in a Word, PDF or text file? Or want to direct every shot yourself?")}</span>
-            <Button size="sm" variant="ghost" loading={busy === "import"} disabled={!!busy && busy !== "import"} icon={<FileText className="size-3.5" />} onClick={() => void create("import")}>
+            <Button size="sm" variant="ghost" className="max-sm:h-10" loading={busy === "import"} disabled={!!busy && busy !== "import"} icon={<FileText className="size-3.5" />} onClick={() => void create("import")}>
               {t("Upload a script file")}
             </Button>
-            <Button size="sm" variant="ghost" loading={busy === "manual"} disabled={!!busy && busy !== "manual"} icon={<PenLine className="size-3.5" />} onClick={() => void create("manual")}>
+            <Button size="sm" variant="ghost" className="max-sm:h-10" loading={busy === "manual"} disabled={!!busy && busy !== "manual"} icon={<PenLine className="size-3.5" />} onClick={() => void create("manual")}>
               {t("Build shot by shot")}
             </Button>
           </div>

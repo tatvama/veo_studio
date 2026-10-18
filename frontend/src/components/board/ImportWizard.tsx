@@ -23,6 +23,7 @@ AJJI – 70s, silver hair in a bun, round glasses, cotton saree
 RAVI – 25, lean, curly hair, blue kurta
 
 LOOK: warm film grain, soft contrast
+WARDROBE: Ajji – green cotton saree; Ravi – blue kurta
 
 SCENE 1: INT. KITCHEN - MORNING
 Grandmother's sunlit kitchen, brass vessels on the shelf.
@@ -40,10 +41,12 @@ VISUAL: Wide shot of the kitchen, steam rising from the stove.
 VO: Some flavours never leave you.
 
 SCENE 2: EXT. GARDEN - DAY
+WARDROBE: Ravi – muddy cricket whites
 MOOD: playful
 VISUAL: Mango trees sway in the breeze.
-RAVI (smiling): I can smell it from here!
-AJJI: Then come inside.`;
+RAVI (O.S.): I can smell it from here!
+AJJI: Then come inside.
+AJJI (CONT'D): And wash your hands first.`;
 
 type Step = "source" | "cast" | "preview";
 type Method = "auto" | "markers" | "ai";
@@ -268,6 +271,7 @@ export function ImportWizard({ open, onClose, eid, projectId, hasShots, onDone, 
                 <summary className="cursor-pointer font-medium">{t("Best results: this layout (any language)")}</summary>
                 <p className="mt-2 text-mute">{t("SCENE / INT. / EXT. start a scene · SHOT starts a shot (add 4s, 6s or 8s) · VISUAL: is what we see · NAME: is dialogue (add an emotion in brackets) · VO: is voice-over. Scripts in other layouts are arranged by AI, keeping your words.")}</p>
                 <p className="mt-1.5 text-mute">{t("CHARACTERS: lists who is who and how they look · MOOD:, LOOK: (or LIGHTING:, WEATHER:), SOUND: and MUSIC: under a scene heading hold for the whole scene, and before the first scene for every scene · SFX: inside a shot is that shot's sound effect.")}</p>
+                <p className="mt-1.5 text-mute">{t("WARDROBE: Ravi – white kurta; Meera – red saree says who wears what (before the first scene for every scene, under a scene heading for that scene; COSTUME: and OUTFIT: work too) · NAME (O.S.) is someone heard but not seen: voiced, never mouth-synced · NAME (CONT'D) is the same person speaking on.")}</p>
                 <pre className="mono mt-2 max-h-48 overflow-auto rounded-lg border border-line bg-panel p-2 text-2xs leading-relaxed">{TEMPLATE}</pre>
                 <Button size="sm" variant="ghost" className="mt-1" icon={<ClipboardCopy className="size-3.5" />}
                   onClick={() => { void navigator.clipboard?.writeText(TEMPLATE); toast.success(tr("Template copied")); }}>{t("Copy template")}</Button>

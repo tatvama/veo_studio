@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from .. import catalog
 from ..core import autopilot as autopilot_def
-from ..core import budget, collab, generation, jobs, recovery, sheet_engine
+from ..core import budget, collab, dependencies, generation, jobs, recovery, sheet_engine
 from ..db import get_db
 from ..models import Character, Episode, Location, Project, Shot, Take, User, VoiceProfile
 from ..pipeline.prompting import dialogue_warnings
@@ -193,15 +193,16 @@ def generate(eid: int, body: BatchIn, user: User = Depends(require("creator")), 
 # ── a price for one paid action ──────────────────────────────────────────────
 
 QuoteAction = Literal["extend", "endframe", "edit", "enhance", "sheet", "expressions", "lighting", "outfit", "variations",
-                      "voice_design", "voice_preview", "location_images", "sfx", "table_read"]
+                      "voice_design", "voice_preview", "location_images", "sfx", "table_read", "redo_shots"]
 
 
 class QuoteIn(BaseModel):
     """One single-item paid action, priced before it runs (batches use /episodes/{eid}/estimate). Each action names the
     item it acts on and takes the options of its own endpoint:
     shot (`shot_id`): extend · endframe; take (`take_id`): edit · enhance; character (`character_id`): sheet · expressions ·
-    lighting · outfit · variations · voice_design; `voice_id`: voice_preview; `location_id`: location_images;
-    episode (`episode_id`): sfx · table_read."""
+    lighting · outfit · variations · voice_design, and with `project_id` redo_shots (its shots that are out of date since
+    its look changed, redone per episode by POST /api/episodes/{eid}/impact/regenerate); `voice_id`: voice_preview;
+    `location_id`: location_images; episode (`episode_id`): sfx · table_read."""
     action: QuoteAction
     shot_id: int | None = None
     take_id: int | None = None
@@ -270,6 +271,11 @@ def _quote_specs(db: Session, body: QuoteIn) -> tuple[Project | None, list[dict]
             raise HTTPException(400, "unknown language")
         return p, [generation.table_read_spec(db, p, e, lang)]
     c = get_or_404(db, Character, _need(body.character_id, "character_id"))
+    if a == "redo_shots":  # the same jobs as the character's change-impact report, every episode of the project
+        p = get_or_404(db, Project, _need(body.project_id, "project_id"))
+        imp = dependencies.character_impact(db, p, c)
+        return p, [x for e in imp["episodes"]
+                   for x in dependencies.regenerate_specs(db, p, db.get(Episode, e["episode_id"]), e["shot_ids"])]
     if a == "voice_design":
         return p, [generation.voice_design_spec(db, body.project_id, c, body.language or "en", body.provider, body.description)]
     if a == "variations":

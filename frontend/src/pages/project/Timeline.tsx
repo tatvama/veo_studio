@@ -2,17 +2,19 @@ import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type D
 import { SortableContext, arrayMove, horizontalListSortingStrategy } from "@dnd-kit/sortable";
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
-import { AudioLines, AudioWaveform, Captions, Clapperboard, Film, Keyboard, Layers, Loader2, Magnet, Maximize2, Mic, Music, Type, Volume2, ZoomIn, ZoomOut } from "lucide-react";
+import { AudioLines, AudioWaveform, Captions, Clapperboard, Film, Keyboard, Layers, Loader2, Magnet, Maximize2, Mic, Music, Plus, Type, Volume2, ZoomIn, ZoomOut } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { useGenerate } from "../../components/Generate";
+import { PriceSuffix } from "../../components/kit/Price";
 import { usePeaks, type WaveSeg } from "../../components/review/Waveform";
-import { clamp, formatTC, lsGet, lsSet, shortcutAllowed } from "../../components/review/utils";
+import { clamp, formatTC, lsGet, lsSet, shortcutAllowed, useMediaQuery } from "../../components/review/utils";
 import { Button, Empty, IconButton, Kbd, Skeleton, Tooltip } from "../../components/ui";
 import { api } from "../../lib/api";
-import { secs } from "../../lib/format";
+import { useBatchEstimate, useQuote } from "../../lib/estimates";
+import { secs, usd } from "../../lib/format";
 import type { ShotFx } from "../../lib/fx";
 import { useT } from "../../lib/i18n";
 import { useEpisode, useSettings } from "../../lib/queries";
@@ -25,7 +27,7 @@ import { ClipMenu, type ClipMenuState } from "./production/timeline/ClipMenu";
 import type { MenuAnchor } from "./production/timeline/ContextMenu";
 import { AutoSfxDialog, ClipInspector, MixCard, MusicCard, SequencePlayer, ShortcutsDialog } from "./production/timeline/Panels";
 import {
-  FPS, LABEL_W, MAX_PPS, MIN_PPS, RULER_H, SNAP_PX, TRACK_H, VIDEO_H, clipTail, layoutClips, mediaUrl, ppsToSlider, sliderToPps, spansOf,
+  ACTION_TRACK_H, FPS, LABEL_W, MAX_PPS, MIN_PPS, RULER_H, SNAP_PX, TRACK_H, VIDEO_H, clipTail, layoutClips, mediaUrl, ppsToSlider, sliderToPps, spansOf,
   type Clip, type Holds, type Overlay, type TrimDraft, type TrimMode,
 } from "./production/timeline/shared";
 import {
@@ -69,6 +71,8 @@ function TimelineEditor({ embedded }: { embedded: boolean }) {
   const [showCC, setShowCC] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
   const pendingScroll = useRef<number | null>(null);
+  // a phone gets a read-only preview and the track list; the editing tools need a bigger screen
+  const phone = useMediaQuery("(max-width: 639px)") && !embedded;
 
   const shots = useMemo(() => (ep?.shots ?? []).filter((s) => s.include), [ep]);
   useEffect(() => setOrder(shots.map((s) => s.id)), [shots.map((s) => s.id).join(",")]);
@@ -302,6 +306,11 @@ function TimelineEditor({ embedded }: { embedded: boolean }) {
   };
 
   const elevenMode = settingsData?.providers.find((p) => p.provider === "elevenlabs")?.mode;
+  // the prices on the Music and Sound effects track buttons (the cost dialog shows them again before anything runs)
+  const sfxDone = shots.filter((s) => s.sfx_track?.path).length;
+  const { data: sfxEst } = useQuote(canEdit && shots.length ? { action: "sfx", episode_id: eid, shot_ids: null } : null, [shots.length, sfxDone]);
+  const { data: musicEst } = useBatchEstimate(eid, canEdit && shots.length ? { action: "music" } : null, [shots.length]);
+  const composeMusic = () => void guard("music", () => generate(eid, { action: "music", prompt: musicPrompt }, t("Music")));
   const runSfx = async (ids: number[] | null) =>
     submit(() => api.post<SubmitResult>(`/api/episodes/${eid}/sfx`, { shot_ids: ids }), t("Sound design"));
   const autoSfx = () => {
@@ -388,12 +397,19 @@ function TimelineEditor({ embedded }: { embedded: boolean }) {
   const captionCount = clips.reduce((a, c) => a + spansOf(c.shot).length, 0);
   const musicDb = volDraft ?? settings.music_volume_db ?? -16;
 
+  if (phone) {
+    return <PhoneTimeline tp={tp} clips={clips} total={total} musicUrl={music?.url} musicDb={musicDb} aspect={project.aspect} lang={lang}
+      showTitles={showTitles} setShowTitles={setShowTitles} showCC={showCC} setShowCC={setShowCC} layers={layers}
+      counts={{ dialogue: dialogueCount, narration: narrationCount, sfx: sfxCount, titles: titleCount, captions: captionCount }} music={music?.prompt} />;
+  }
+
   return (
-    <div className={clsx("@container h-full", embedded ? "overflow-hidden" : "overflow-y-auto overscroll-contain")}>
-      <div className={clsx("flex flex-col", embedded ? "h-full gap-2 p-2" : "min-h-full gap-3 p-3 sm:p-4")}>
-        {/* preview + inspector: takes the height the timeline leaves free (at least 340px); in the Studio a fixed share */}
-        <div className={clsx("grid gap-3 @3xl:grid-cols-[minmax(0,1fr)_minmax(280px,340px)] @3xl:grid-rows-[minmax(0,1fr)]",
-          embedded ? "h-[42%] min-h-[200px] shrink-0 grid-rows-[minmax(0,1fr)] gap-2 auto-rows-[minmax(0,1fr)] overflow-y-auto @3xl:grid-cols-[minmax(0,1fr)_minmax(240px,300px)] [&>*]:!min-h-0" : "min-h-[340px] flex-1")}>
+    <div className={clsx("@container h-full", embedded ? "overflow-hidden" : "overflow-y-auto overscroll-contain @3xl:overflow-hidden")}>
+      <div className={clsx("flex flex-col", embedded ? "h-full gap-2 p-2" : "min-h-full gap-3 p-3 @3xl:h-full @3xl:min-h-0")}>
+        {/* preview (about 60 %) + the clip's details: the height the tracks leave free; in the Studio a fixed share */}
+        <div className={clsx("grid gap-3",
+          embedded ? "h-[42%] min-h-[200px] shrink-0 grid-rows-[minmax(0,1fr)] gap-2 auto-rows-[minmax(0,1fr)] overflow-y-auto @3xl:grid-cols-[minmax(0,1fr)_minmax(240px,300px)] [&>*]:!min-h-0"
+            : "min-h-[340px] @3xl:min-h-0 @3xl:flex-1 @3xl:grid-cols-[minmax(0,3fr)_minmax(280px,2fr)] @3xl:grid-rows-[minmax(0,1fr)]")}>
           <SequencePlayer tp={tp} clips={clips} musicUrl={music?.url} musicDb={musicDb} aspect={project.aspect}
             lang={lang} showTitles={showTitles} setShowTitles={setShowTitles} showCC={showCC} setShowCC={setShowCC} total={total}
             overlay={<LayerPlayback tp={tp} doc={layers} />} />
@@ -412,12 +428,13 @@ function TimelineEditor({ embedded }: { embedded: boolean }) {
             </AnimatePresence>
             <MixCard lang={lang} db={musicDb} duck={settings.duck !== false} canEdit={canEdit} onVolume={onVolume} onDuck={(v) => patchSettings({ duck: v })} />
             <MusicCard music={ep.music ?? []} canEdit={canEdit} prompt={musicPrompt} setPrompt={setMusicPrompt} eid={eid} composing={busy === "music"}
-              onCompose={() => void guard("music", () => generate(eid, { action: "music", prompt: musicPrompt }, t("Music")))} />
+              onCompose={composeMusic} />
           </div>
         </div>
 
-        {/* ── timeline ──────────────────────────────────────────────────────── */}
-        <section className={clsx("hud @container relative overflow-hidden rounded-xl border border-line bg-panel", embedded ? "flex min-h-0 flex-1 flex-col" : "shrink-0")}>
+        {/* ── timeline: always on screen, the bottom ~45 % on a laptop (it scrolls inside) ──────────────── */}
+        <section className={clsx("hud @container relative overflow-hidden rounded-xl border border-line bg-panel",
+          embedded ? "flex min-h-0 flex-1 flex-col" : "shrink-0 @3xl:flex @3xl:h-[45%] @3xl:min-h-[220px] @3xl:flex-col")}>
           <span aria-hidden className="edge-light pointer-events-none absolute inset-x-4 top-0 z-10 h-px opacity-70" />
           {/* the instrument strip: what the cut is, the edit modes, layers, zoom */}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-raised/30 px-3 py-2">
@@ -457,9 +474,6 @@ function TimelineEditor({ embedded }: { embedded: boolean }) {
                   <Tooltip content={t("A sound layer: voice-over, extra music, sound effects")}>
                     <Button size="sm" variant="outline" icon={<AudioLines className="size-3.5" />} onClick={() => addLayer("audio")}>{t("Audio layer")}</Button>
                   </Tooltip>
-                  <Tooltip content={t("Plan and generate ambience and spot effects for every shot")}>
-                    <Button size="sm" variant="outline" icon={<AudioWaveform className="size-3.5" />} onClick={autoSfx}>{t("Auto SFX")}</Button>
-                  </Tooltip>
                   {layersSaving && <span className="mono inline-flex items-center gap-1 text-2xs text-dim"><Loader2 className="size-3 animate-spin" />{t("Saving…")}</span>}
                 </div>
               </>
@@ -476,7 +490,7 @@ function TimelineEditor({ embedded }: { embedded: boolean }) {
             <IconButton title={t("Keyboard shortcuts")} onClick={() => setKeysOpen(true)}><Keyboard className="size-4" /></IconButton>
           </div>
 
-          <div ref={scrollRef} className={embedded ? "min-h-0 flex-1 overflow-auto overscroll-contain" : "overflow-x-auto"}>
+          <div ref={scrollRef} className={embedded ? "min-h-0 flex-1 overflow-auto overscroll-contain" : "overflow-x-auto @3xl:min-h-0 @3xl:flex-1 @3xl:overflow-auto @3xl:overscroll-contain"}>
             <div className="relative" style={{ width: contentW, "--tl-major": `${rulerMajor(pps) * pps}px` } as React.CSSProperties}>
               <TimeRuler total={total} pps={pps} view={view} clock={tp.clock} marks={noteMarks} onMark={(m) => tp.seek(m.t)}
                 onScrub={(x, phase) => {
@@ -541,15 +555,23 @@ function TimelineEditor({ embedded }: { embedded: boolean }) {
                   </LaneItem>
                 ))}
               </Track>
-              <Track icon={<Music />} label={t("Music")} tone="ai" count={music ? 1 : undefined} stripe>
+              <Track icon={<Music />} label={t("Music")} tone="ai" count={music ? 1 : undefined} stripe height={canEdit ? ACTION_TRACK_H : TRACK_H}
+                action={canEdit ? (
+                  <TrackButton label={music ? t("New music") : t("Add music")} name={music ? t("New music") : t("Add music")} price={musicEst?.total_usd} busy={busy === "music"} onClick={composeMusic}
+                    title={t("Compose music for this episode (describe it in the Music panel)")} />
+                ) : undefined}>
                 <WaveLane segs={musicSegs} {...lane} className="text-ai opacity-55" />
                 {music ? (
                   <LaneItem tone="ai" pill left={0} width={total * pps}>
                     ♪ {music.prompt.slice(0, 80)} · {settings.music_volume_db ?? -16} dB{settings.duck !== false ? ` · ${t("ducked")}` : ""}
                   </LaneItem>
-                ) : <span className="mono sticky left-[140px] inline-block px-2 text-2xs uppercase leading-[38px] tracking-wider text-dim">{t("No music yet")}</span>}
+                ) : <span className="mono sticky inline-flex h-full items-center px-2 text-2xs uppercase tracking-wider text-dim" style={{ left: LABEL_W + 8 }}>{t("No music yet")}</span>}
               </Track>
-              <Track icon={<AudioWaveform />} label={t("SFX")} tone="ok" count={sfxCount || undefined}>
+              <Track icon={<AudioWaveform />} label={t("Sound effects")} tone="ok" count={sfxCount || undefined} height={canEdit ? ACTION_TRACK_H : TRACK_H}
+                action={canEdit ? (
+                  <TrackButton label={sfxDone ? t("Redo effects") : t("Add effects")} name={sfxDone ? t("Redo sound effects") : t("Add sound effects")} price={elevenMode === "mock" ? 0 : sfxEst?.total_usd} onClick={autoSfx}
+                    title={t("Plan and make ambience and spot effects for every shot")} />
+                ) : undefined}>
                 <WaveLane segs={sfxSegs} {...lane} className="text-ok opacity-60" />
                 {clips.map((c) => {
                   const fx = c.shot.sfx_track;
@@ -601,6 +623,86 @@ function TimelineEditor({ embedded }: { embedded: boolean }) {
       <ClipMenu state={menu} clip={menuClip} eid={eid} lang={lang} projectId={project.id} canEdit={canEdit} canReview={canReview} embedded={embedded}
         onClose={() => setMenu(null)} onSpeed={(shot, s) => saveFx(shot, { speed: Math.abs(s - 1) < 1e-3 ? undefined : s })}
         onInspect={(id) => { setSel(id); setLayerSel(null); }} />
+    </div>
+  );
+}
+
+/** The button on a track's label ("+ Add music · $0.09"): it runs the same action as the panel, with the price first. */
+function TrackButton({ label, name, price, onClick, busy, title }: {
+  label: string; /** the full words, for screen readers and the tooltip */ name: string; price: number | undefined; onClick: () => void; busy?: boolean; title?: string;
+}) {
+  const t = useT();
+  return (
+    <Tooltip content={title}>
+      <button type="button" onClick={onClick} disabled={busy} aria-label={price !== undefined ? `${name} · ${price > 0 ? usd(price) : t("free")}` : name}
+        className="flex h-6 w-full min-w-0 items-center gap-1 rounded-md border border-line bg-raised px-1.5 text-2xs font-medium text-ink transition-colors hover:border-accent/50 hover:text-accent-ink disabled:opacity-60">
+        {busy ? <Loader2 aria-hidden className="size-3 shrink-0 animate-spin" /> : <Plus aria-hidden className="size-3 shrink-0" />}
+        <span className="min-w-0 truncate">{label}</span>
+        <PriceSuffix usd={price} className="ml-auto shrink-0 text-money" />
+      </button>
+    </Tooltip>
+  );
+}
+
+/**
+ * The timeline on a phone: the preview to watch the cut, and what is on each track. Read-only: trimming, transitions and
+ * layers need a bigger screen. Tapping a clip moves the preview there.
+ */
+function PhoneTimeline({ tp, clips, total, musicUrl, musicDb, aspect, lang, showTitles, setShowTitles, showCC, setShowCC, layers, counts, music }: {
+  tp: ReturnType<typeof useTransport>; clips: Clip[]; total: number; musicUrl?: string; musicDb: number; aspect: string; lang: string;
+  showTitles: boolean; setShowTitles: (v: boolean) => void; showCC: boolean; setShowCC: (v: boolean) => void;
+  layers: ReturnType<typeof useLayersEditor>["layers"];
+  counts: { dialogue: number; narration: number; sfx: number; titles: number; captions: number }; music?: string;
+}) {
+  const t = useT();
+  const rows: { icon: React.ReactNode; label: string; value: string; tone: string }[] = [
+    { icon: <Mic />, label: t("Dialogue"), value: counts.dialogue ? t("{n} lines", { n: counts.dialogue }) : t("none"), tone: "text-info" },
+    { icon: <Volume2 />, label: t("Narration"), value: counts.narration ? t("{n} lines", { n: counts.narration }) : t("none"), tone: "text-accent-ink" },
+    { icon: <Music />, label: t("Music"), value: music ? music.slice(0, 60) : t("No music yet"), tone: "text-ai" },
+    { icon: <AudioWaveform />, label: t("Sound effects"), value: counts.sfx ? t("{n} shots", { n: counts.sfx }) : t("none"), tone: "text-ok" },
+    { icon: <Type />, label: t("Titles"), value: counts.titles ? String(counts.titles) : t("none"), tone: "text-accent-2" },
+    { icon: <Captions />, label: t("Captions"), value: counts.captions ? String(counts.captions) : t("none"), tone: "text-mute" },
+  ];
+  return (
+    <div className="h-full overflow-y-auto overscroll-contain">
+      <div className="space-y-3 p-3">
+        <SequencePlayer tp={tp} clips={clips} musicUrl={musicUrl} musicDb={musicDb} aspect={aspect} lang={lang} total={total}
+          showTitles={showTitles} setShowTitles={setShowTitles} showCC={showCC} setShowCC={setShowCC} overlay={<LayerPlayback tp={tp} doc={layers} />} />
+        <section aria-label={t("Clips")} className="overflow-hidden rounded-xl border border-line bg-panel">
+          <p className="eyebrow flex items-center gap-1.5 border-b border-line px-3 py-2"><Film aria-hidden className="size-3.5" />{t("{n} clips", { n: clips.length })}
+            <span className="mono ml-auto text-dim">{formatTC(total, FPS, true)}</span></p>
+          <ul className="divide-y divide-line">
+            {clips.map((c, i) => (
+              <li key={c.shot.id}>
+                <button type="button" onClick={() => tp.seek(c.start)} aria-current={tp.idx === i ? "true" : undefined}
+                  className={clsx("flex min-h-14 w-full items-center gap-3 px-3 py-2 text-left", tp.idx === i ? "bg-accent/10" : "active:bg-hover")}>
+                  <span className="h-10 w-16 shrink-0 overflow-hidden rounded-md border border-line bg-raised">
+                    {(c.shot.keyframe?.thumb_url || c.still) && <img src={c.shot.keyframe?.thumb_url || c.still} alt="" loading="lazy" className="size-full object-cover" />}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="mono block text-xs font-semibold">{c.shot.code}</span>
+                    <span className="block truncate text-xs text-mute">{c.shot.action}</span>
+                  </span>
+                  <span className="mono shrink-0 text-2xs text-dim">{c.duration.toFixed(1)}s</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+        <section aria-label={t("Tracks")} className="overflow-hidden rounded-xl border border-line bg-panel">
+          <p className="eyebrow border-b border-line px-3 py-2">{t("Tracks")}</p>
+          <ul className="divide-y divide-line">
+            {rows.map((r) => (
+              <li key={r.label} className="flex min-h-11 items-center gap-3 px-3 py-2 text-sm">
+                <span aria-hidden className={clsx("shrink-0 [&>svg]:size-4", r.tone)}>{r.icon}</span>
+                <span className="font-medium">{r.label}</span>
+                <span className="ml-auto min-w-0 truncate text-right text-xs text-mute">{r.value}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+        <p className="px-1 text-xs text-dim">{t("To trim, add transitions or layers, open the timeline on a laptop or tablet.")}</p>
+      </div>
     </div>
   );
 }

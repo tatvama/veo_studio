@@ -1,12 +1,14 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { Clapperboard, Film } from "lucide-react";
 import { AnimatePresence } from "motion/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { useGenerate } from "../../components/Generate";
 import { LoadError, useActiveJobs } from "../../components/growth/common";
 import { BrandPanel } from "../../components/growth/BrandPreview";
 import ExportCard, { type ExportMetrics, type RenderRow } from "../../components/growth/ExportCard";
+import { ExportHero } from "../../components/growth/ExportHero";
 import MarketingPanel from "../../components/growth/MarketingPanel";
 import NewRender, { useRenderHistory } from "../../components/growth/NewRender";
 import PublishModal from "../../components/growth/PublishModal";
@@ -17,7 +19,7 @@ import ReviewPanel from "../../components/growth/ReviewPanel";
 import { CutdownCard, DubCard } from "../../components/growth/Tools";
 import { YouTubePanel } from "../../components/growth/YouTubeIntegration";
 import { RoomEmpty, RoomHeader, RoomPage } from "../../components/room/kit";
-import { Button, Modal, Panel, Segmented, Skeleton } from "../../components/ui";
+import { Modal, Panel, Segmented, Skeleton, Tabs } from "../../components/ui";
 import "../../styles/console.css";
 import "../../styles/export.css";
 import { api } from "../../lib/api";
@@ -29,8 +31,10 @@ import type { SubmitResult } from "../../lib/types";
 import { useProjectCtx } from "./context";
 
 type Filter = "all" | "final" | "animatic";
+type Section = "share" | "dub" | "promote" | "renders";
+const SECTIONS: Section[] = ["share", "dub", "promote", "renders"];
 
-/** Placeholder with the shape of the console: header strip, the compose panel, side panels and the queue. */
+/** Placeholder with the shape of the page: header, the hero (player + format + Render), the tabs. */
 function ExportSkeleton() {
   return (
     <RoomPage width="full">
@@ -39,21 +43,15 @@ function ExportSkeleton() {
           <Skeleton className="size-10" />
           <div className="space-y-2"><Skeleton className="h-5 w-24" /><Skeleton className="h-3.5 w-64 max-w-full" /></div>
         </div>
-        <Skeleton className="h-14 w-full rounded-xl @xl:w-96" />
       </div>
-      <div className="grid gap-4 @2xl:grid-cols-2 @4xl:grid-cols-12">
-        <div className="space-y-4 rounded-xl border border-line bg-panel p-4 @2xl:col-span-2 @4xl:col-span-8">
-          <Skeleton className="h-3 w-20" />
-          <div className="grid gap-2.5 @md:grid-cols-2 @3xl:grid-cols-3">{Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-[88px] rounded-xl" />)}</div>
-          <div className="grid gap-2.5 @md:grid-cols-2">{Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-14 rounded-xl" />)}</div>
-          <div className="flex justify-end gap-2"><Skeleton className="h-9 w-24" /><Skeleton className="h-9 w-28" /></div>
+      <div className="grid gap-4 rounded-xl border border-line bg-panel p-4 @3xl:grid-cols-[minmax(0,1.15fr)_minmax(0,1fr)]">
+        <Skeleton className="aspect-video !rounded-lg" />
+        <div className="space-y-3"><Skeleton className="h-5 w-32" /><Skeleton className="h-3.5 w-64 max-w-full" />
+          <div className="grid grid-cols-3 gap-2">{Array.from({ length: 3 }, (_, i) => <Skeleton key={i} className="h-12" />)}</div>
+          <Skeleton className="h-6 w-40" /><div className="flex gap-2"><Skeleton className="h-10 w-32" /><Skeleton className="h-10 w-28" /></div>
         </div>
-        <div className="space-y-4 @2xl:col-span-2 @4xl:col-span-4">
-          <div className="space-y-3 rounded-xl border border-line bg-panel p-4"><Skeleton className="h-3 w-16" /><Skeleton className="mx-auto h-56 w-40 rounded-xl" /></div>
-          <div className="space-y-3 rounded-xl border border-line bg-panel p-4"><Skeleton className="h-3 w-16" /><Skeleton className="h-10 rounded-lg" /><Skeleton className="h-16 rounded-lg" /></div>
-        </div>
-        <div className="space-y-3 rounded-xl border border-line bg-panel p-4 @2xl:col-span-2 @4xl:col-span-12"><Skeleton className="h-3 w-24" /><Skeleton className="h-9" /><Skeleton className="h-9" /></div>
       </div>
+      <div className="mt-6 flex gap-2">{Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-8 w-20" />)}</div>
     </RoomPage>
   );
 }
@@ -80,20 +78,10 @@ export default function ExportPage() {
   const renderJobs = useActiveJobs((j) => (j.type === "export" || j.type === "animatic") && j.episode_id === eid, project.id,
     () => qc.invalidateQueries({ queryKey: ["render-history", project.id] }));
   const dubJobs = useActiveJobs((j) => j.type === "dub" && j.episode_id === eid, project.id);
-  // After the person starts a render, bring the queue into view if it is below the fold (so they see the job appear).
-  const lastAsk = useRef(0);
-  const prevJobs = useRef(renderJobs.length);
-  useEffect(() => {
-    const n = renderJobs.length;
-    if (n > prevJobs.current && Date.now() - lastAsk.current < 10_000) {
-      const list = document.getElementById("renders-section");
-      const scroller = list?.closest<HTMLElement>("[data-page-scroller]");
-      if (list && scroller && list.getBoundingClientRect().top > scroller.getBoundingClientRect().bottom - 120) {
-        list.scrollIntoView({ behavior: "smooth", block: "nearest" });
-      }
-    }
-    prevJobs.current = n;
-  }, [renderJobs.length]);
+  // everything besides the hero, in tabs (?section=); a running render shows its progress in the hero
+  const [params, setParams] = useSearchParams();
+  const asked = params.get("section") as Section | null;
+  const setSection = (v: Section) => { const p = new URLSearchParams(params); p.set("section", v); setParams(p, { replace: true }); };
   const metricsById = useMemo(() => {
     const m: Record<number, ExportMetrics> = {};
     for (const r of insights ?? []) m[r.export_id] = { views: r.views, avg_view_pct: r.avg_view_pct };
@@ -160,7 +148,12 @@ export default function ExportPage() {
   const counts = countQueue(queue, finished.length);
   const spend = (history?.renders ?? []).filter((r) => r.episode_id === eid).reduce((a, r) => a + r.usd, 0);
   const newestFirst = [...finished].sort((a, b) => b.id - a.id);
-  const goMarketing = () => document.getElementById("marketing-pack")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const goMarketing = () => setSection("promote");
+  const section: Section = asked && SECTIONS.includes(asked) ? asked : finished.length ? "share" : "renders";
+  const sectionTabs: { value: Section; label: string; count?: number | string }[] = [
+    { value: "share", label: t("Share") }, { value: "dub", label: t("Dub") }, { value: "promote", label: t("Promote") },
+    { value: "renders", label: t("Renders"), count: renderJobs.length ? `${renderJobs.length} ${t("running")}` : finished.length || undefined },
+  ];
 
   return (
     <RoomPage width="full">
@@ -168,68 +161,71 @@ export default function ExportPage() {
         icon={<Clapperboard />}
         title={t("Export")}
         description={`${epName} · ${t("{n} shots", { n: shots.length })} · ${secs(total)} · ${project.aspect}`}
-        status={<RenderStatusStrip counts={counts} spend={spend} />}
+        status={<div className="max-sm:hidden"><RenderStatusStrip counts={counts} spend={spend} /></div>}
       />
 
-      <div className="grid gap-4 @2xl:grid-cols-2 @4xl:grid-cols-12 @4xl:items-start">
-        {/* compose + channel (the two wrappers only group on wide screens; below that the panels flow in one grid) */}
-        <div className="contents @4xl:col-span-8 @4xl:flex @4xl:flex-col @4xl:gap-4">
-          <div id="new-render" className="order-1 min-w-0 scroll-mt-4 @2xl:col-span-2 @4xl:order-none">
-            <NewRender project={project} episode={ep} lang={lang} canEdit={canEdit} presets={presets} webhook={webhook} onRequested={() => { lastAsk.current = Date.now(); }} />
+      {/* the hero: the newest film, the format, captions, Render with its price, Download */}
+      <ExportHero project={project} episode={ep} lang={lang} canEdit={canEdit} presets={presets} newest={newestFirst[0]} renderJobs={renderJobs}
+        onAllRenders={() => setSection("renders")} />
+
+      {/* everything else */}
+      <Tabs<Section> className="mt-6 max-sm:[&_[role=tab]]:min-h-10" value={section} onChange={setSection} tabs={sectionTabs} />
+      <div className="mt-4">
+        {section === "share" && (
+          <div className="grid gap-4 @4xl:grid-cols-2 @4xl:items-start">
+            <ReviewPanel renders={newestFirst} presets={presets} pid={project.id} canEdit={canEdit} onManage={(x) => setSharing(x)} />
+            <YouTubePanel exports={allExports} metrics={metricsById} canProduce={canProduce} refreshing={metricsJobs.length > 0} onRefreshMetrics={refreshMetrics} />
           </div>
-          <YouTubePanel className="order-4 @4xl:order-none" exports={allExports} metrics={metricsById} canProduce={canProduce} refreshing={metricsJobs.length > 0} onRefreshMetrics={refreshMetrics} />
-        </div>
-
-        {/* brand + review */}
-        <div className="contents @4xl:col-span-4 @4xl:flex @4xl:flex-col @4xl:gap-4">
-          <BrandPanel className="order-5 @4xl:order-none" project={project} />
-          <ReviewPanel className="order-6 @2xl:col-span-2 @4xl:order-none" renders={newestFirst} presets={presets} pid={project.id} canEdit={canEdit} onManage={(x) => setSharing(x)} />
-        </div>
-
-        {/* queue */}
-        <div className="order-2 min-w-0 scroll-mt-4 @2xl:col-span-2 @4xl:order-none @4xl:col-span-12">
-          <RenderQueue items={queue} />
-        </div>
-
-        {/* finished renders: a wall of monitors */}
-        <Panel className="order-3 @2xl:col-span-2 @4xl:order-none @4xl:col-span-12" index={3} eyebrow={t("Library")} icon={<Film />} title={t("Finished renders")}
-          actions={<>
-            <span className="mono text-2xs text-dim" title={t("Renders")}>{library.length}</span>
-            {hasAnimatics && (
-              <Segmented size="sm" value={filter} onChange={setFilter} aria-label={t("Show")} options={filterOptions} className="max-sm:[&>button]:min-h-9" />
-            )}
-          </>}>
-          {!library.length ? (
-            <RoomEmpty icon={<Clapperboard />}
-              title={filter === "all" ? (queue.length ? t("Nothing finished yet") : t("No renders yet")) : t("No {kind} renders", { kind: filter === "final" ? t("final") : t("animatic") })}
-              sub={queue.length && filter === "all" ? t("Finished renders land here when the queue is done.") : t("Make an animatic to check timing, then render the final.")}
-              action={canEdit ? <Button variant="outline" icon={<Clapperboard className="size-4" />}
-                onClick={() => document.getElementById("new-render")?.scrollIntoView({ behavior: "smooth", block: "start" })}>{t("Start a render")}</Button> : undefined} />
-          ) : (
-            <div className="xp-tiles">
-              <AnimatePresence initial={false}>
-                {library.map((x) => (
-                  <ExportCard key={x.id} x={x} pid={project.id} preset={presets[x.preset]} canProduce={canProduce} canEdit={canEdit}
-                    metrics={metricsById[x.id]} upload={uploads.find((j) => Number(j.payload?.export_id) === x.id) ?? null}
-                    onPlay={() => setPlaying(x)} onPublish={() => setPublishing(x)} onLinks={() => setSharing(x)}
-                    onApprove={() => approve(x)} onRerender={() => void rerender(x)} rerendering={busy === rerenderKey(x)} onMarketing={goMarketing} />
-                ))}
-              </AnimatePresence>
+        )}
+        {section === "dub" && (
+          <div className="grid gap-4 @4xl:grid-cols-2 @4xl:items-start">
+            <DubCard project={project} episode={ep} canEdit={canEdit} jobs={dubJobs} onDub={dub} />
+          </div>
+        )}
+        {section === "promote" && (
+          <div className="space-y-4">
+            <div className="grid gap-4 @4xl:grid-cols-2 @4xl:items-start">
+              {canEdit && ep.kind !== "cutdown" && <CutdownCard onCreate={makeCuts} />}
+              <BrandPanel project={project} />
             </div>
-          )}
-        </Panel>
+            <div className="min-w-0"><MarketingPanel project={project} episode={ep} canEdit={canEdit} /></div>
+          </div>
+        )}
+        {section === "renders" && (
+          <div className="grid gap-4 @4xl:grid-cols-12 @4xl:items-start">
+            <div id="new-render" className="min-w-0 scroll-mt-4 @4xl:col-span-8">
+              <NewRender project={project} episode={ep} lang={lang} canEdit={canEdit} presets={presets} webhook={webhook} />
+            </div>
+            <div className="min-w-0 @4xl:col-span-4"><SoundDesignCard project={project} episode={ep} canEdit={canEdit} /></div>
+            <div className="min-w-0 @4xl:col-span-12"><RenderQueue items={queue} /></div>
 
-        {/* tools */}
-        <div className="order-7 grid gap-4 @2xl:col-span-2 @2xl:grid-cols-2 @4xl:order-none @4xl:col-span-12 @4xl:grid-cols-[repeat(auto-fit,minmax(min(100%,17rem),1fr))]">
-          <DubCard project={project} episode={ep} canEdit={canEdit} jobs={dubJobs} onDub={dub} />
-          {canEdit && ep.kind !== "cutdown" && <CutdownCard onCreate={makeCuts} />}
-          <SoundDesignCard project={project} episode={ep} canEdit={canEdit} />
-        </div>
-
-        {/* AI copy */}
-        <div className="order-8 min-w-0 @2xl:col-span-2 @4xl:order-none @4xl:col-span-12">
-          <MarketingPanel project={project} episode={ep} canEdit={canEdit} />
-        </div>
+            {/* finished renders: a wall of monitors */}
+            <Panel className="@4xl:col-span-12" eyebrow={t("Library")} icon={<Film />} title={t("Finished renders")}
+              actions={<>
+                <span className="mono text-2xs text-dim" title={t("Renders")}>{library.length}</span>
+                {hasAnimatics && (
+                  <Segmented size="sm" value={filter} onChange={setFilter} aria-label={t("Show")} options={filterOptions} className="max-sm:[&>button]:min-h-9" />
+                )}
+              </>}>
+              {!library.length ? (
+                <RoomEmpty icon={<Clapperboard />}
+                  title={filter === "all" ? (queue.length ? t("Nothing finished yet") : t("No renders yet")) : t("No {kind} renders", { kind: filter === "final" ? t("final") : t("animatic") })}
+                  sub={queue.length && filter === "all" ? t("Finished renders land here when the queue is done.") : t("Make a quick preview to check timing, then render the final.")} />
+              ) : (
+                <div className="xp-tiles">
+                  <AnimatePresence initial={false}>
+                    {library.map((x) => (
+                      <ExportCard key={x.id} x={x} pid={project.id} preset={presets[x.preset]} canProduce={canProduce} canEdit={canEdit}
+                        metrics={metricsById[x.id]} upload={uploads.find((j) => Number(j.payload?.export_id) === x.id) ?? null}
+                        onPlay={() => setPlaying(x)} onPublish={() => setPublishing(x)} onLinks={() => setSharing(x)}
+                        onApprove={() => approve(x)} onRerender={() => void rerender(x)} rerendering={busy === rerenderKey(x)} onMarketing={goMarketing} />
+                    ))}
+                  </AnimatePresence>
+                </div>
+              )}
+            </Panel>
+          </div>
+        )}
       </div>
 
       <Modal open={!!playing} onClose={() => setPlaying(null)} size={playing && presets[playing.preset]?.w && presets[playing.preset].w < presets[playing.preset].h * 0.9 ? "md" : "lg"}
