@@ -195,8 +195,10 @@ def fit_to_voices(db: Session, project: Project, shots: list[Shot], lang: str) -
     narration longer than 8 s extends the clip (extend_to, ~7 s an extension). A shot with someone speaking on screen
     stays one clip of at most 8 s: a longer line is listed as a problem (the lip-sync holds the clip's last frame until
     the voice ends, it never cuts the speech). Returns (problems, shots changed)."""
-    from ..pipeline.voice import choose_duration
     from .problems import problem
+
+    def choose_duration(seconds: float) -> int:  # the clip a voice fits in (pipeline/voice.choose_duration's rule)
+        return next((d for d in (4, 6, 8) if seconds + 0.6 <= d), 8)
     notes: list[dict] = []
     changed = 0
     for s in shots:
