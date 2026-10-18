@@ -3,6 +3,7 @@ import {
   Activity, BookOpen, BookUser, Boxes, Clapperboard, Coins, FileText, Film, Gauge, Globe, Home, LayoutGrid, LayoutTemplate, ListVideo, Megaphone,
   MessageSquareText, MonitorPlay, Palette, PanelsTopLeft, ScrollText, Search, Send, Settings, ShieldCheck, SquareKanban, Users,
 } from "lucide-react";
+import { Workflow } from "lucide-react";
 import { ROLE_RANK, type Role } from "../../lib/types";
 
 type T = (s: string) => string;
@@ -67,6 +68,8 @@ export interface ProjectTab {
   to: string; label: string; icon: LucideIcon; keywords?: string; area: ProjectArea;
   /** Projects made from the user's own material hide this page until it has something in it (it is about writing from a concept). */
   ownHidden?: boolean;
+  /** Not listed among the step's views (only while it is open): reached from its page's button and the command palette. */
+  advanced?: boolean;
 }
 
 /**
@@ -81,9 +84,10 @@ export function getProjectTabs(t: T): ProjectTab[] {
     { to: "scenes", area: "story", label: t("Scenes"), icon: SquareKanban, ownHidden: true, keywords: "story scene cards beats" },
     { to: "bible", area: "cast", label: t("Characters & places"), icon: Users, keywords: "cast bible characters locations style voices photos lock versions costumes" },
     { to: "world", area: "cast", label: t("Props & wardrobe"), icon: Globe, ownHidden: true, keywords: "cast world props costumes wardrobe continuity bible timeline end state" },
-    { to: "storyboard", area: "shots", label: t("Storyboard"), icon: LayoutGrid, keywords: "shots keyframes videos takes" },
-    { to: "shots", area: "shots", label: t("List"), icon: ListVideo, keywords: "shots shot list import script word pdf manual builder dialogue voice-over produce" },
-    { to: "studio", area: "shots", label: t("Studio"), icon: PanelsTopLeft, keywords: "shots one screen workspace panels timeline viewer multi monitor drag drop film map" },
+    { to: "canvas", area: "shots", label: t("Canvas"), icon: Workflow, keywords: "shots canvas nodes drag drop scenes cast film map make price" },
+    { to: "storyboard", area: "shots", label: t("Grid"), icon: LayoutGrid, keywords: "shots storyboard grid keyframes videos takes" },
+    { to: "shots", area: "shots", label: t("Text"), icon: ListVideo, keywords: "shots shot list text import script word pdf manual builder dialogue voice-over produce" },
+    { to: "studio", area: "shots", label: t("Advanced layout"), icon: PanelsTopLeft, advanced: true, keywords: "shots studio one screen workspace panels dock timeline viewer multi monitor drag drop" },
     { to: "timeline", area: "edit", label: t("Timeline"), icon: Film, keywords: "edit cut music audio sound titles" },
     { to: "finish", area: "edit", label: t("Finishing room"), icon: MonitorPlay,
       keywords: "edit desktop checkout check in lock versions rollback 4k upscale local render folder sync windows screens scopes multi monitor" },
