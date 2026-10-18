@@ -114,9 +114,9 @@ class RunLog:
             raise Cancelled()
         reason = problems.BUDGET_STOP.replace("Produce all", again)
         self.problems.add(None, "budget", reason, "What is made is kept and nothing is made twice; raise the budget "
-                                                  "first if the run should go further")
+                                                  "first if the run should go further", action="continue")
 
-    def save(self, announce: bool) -> list[dict]:
+    def save(self, announce: bool, draft: bool = False) -> list[dict]:
         problems.save(self.ctx.project_id, self.ctx.episode_id, self.problems.items, self.ctx.type, self.ctx.job_id,
-                      announce)
+                      announce, draft)
         return self.problems.items

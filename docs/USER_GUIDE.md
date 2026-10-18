@@ -2,7 +2,7 @@
 
 How to use the studio day to day. For installing, configuring and deploying it, see the [README](../README.md).
 
-- [Daily workflow](#daily-workflow)
+- [Daily workflow](#daily-workflow) · [The Shots canvas](#the-shots-canvas) · [Make it for me: drafts and recipes](#make-it-for-me-drafts-and-recipes) · [Problems you can act on](#problems-you-can-act-on)
 - [Character boards](#character-boards)
 - [Seedance characters (BytePlus)](#seedance-characters-byteplus)
 - [Model Hub](#model-hub)
@@ -11,26 +11,95 @@ How to use the studio day to day. For installing, configuring and deploying it, 
 
 ## Daily workflow
 
+The usual path, start to finish:
+
+1. **Home box:** paste your script or describe your idea.
+2. **Check story:** the scenes, shots, speakers and voice-over lines we read from it, before anything is saved.
+3. **Cast:** a picture and a voice for every character (**Make the cast**, price first), or your own photos.
+4. **Shots**, in three views of the same film: **Canvas** (the scenes as rows of shot cards you can drag, link and fix),
+   **Grid** (big pictures to compare takes) and **Text** (the shot list as words).
+5. **Make it for me:** everything the shots still need, only what is missing, with the price before it starts. Try
+   **Quick draft first** for a cheap 480p cut, or a **recipe** in one click.
+6. The **Next bar** at the bottom of every project screen always says what is next (with its price), shows what is
+   being made, and lists any **problems** with a one-click fix.
+7. **Export:** the finished film, with captions, for Shorts, Reels or YouTube.
+
 | Step | Where | What happens |
 |---|---|---|
 | Concept | Home | One box: **paste your script, or describe your idea** (or **start from a template**: Short, Reel ad, product ad, web-series episode, devotional story, explainer, music video, kids story). A pasted script is recognised (*Script found: 3 scenes, 12 lines — we'll use your words*): **Start with my script** creates the project and opens **Check story** (scenes, shots, people, voice-over lines, length, warnings) before anything is saved; after the import you land on **Cast** with **Make the cast** and its price. An idea is written up for you (**Start**, or choose how far AI takes it). A script file is under **Upload a script file** |
 | Brief | 1 Story › Brief | AI fills audience, tone, length and CTA. **Trend scout** suggests current trends, hook patterns and formats for your audience. Series: **Plan season** |
 | Hook + script | 1 Story › Hooks & script | 6 scored hooks (with **what worked before** from your YouTube analytics), pick one and **Write script**. Then the **writers' room**: **Critic** scores the draft and the loop rewrites until it passes, **Table read** plays the whole episode in the cast voices, **Continuity** checks props, wardrobe and time of day, **Localization** translates and gives each language a native-speaker polish. Every change is saved in **Versions** with a diff and restore |
 | Scenes | 1 Story › Scenes | One card per scene: goal, conflict, turn, emotion, cast, props, wardrobe, blocking and coverage plan. Approve the cards, then **Break into shots** follows them |
-| Cast | 2 Cast | **Build from script** creates the cast, locations and style. Generate sheets and voices, approve images and **Lock**. **Train identity** gives a character a face model so every keyframe keeps the exact face. A consent record is asked for when a real person's face or voice is used |
-| Shots | 3 Shots › Storyboard · List · Studio | **Keyframes** (cents each), then **Videos**, then **Voice + lip-sync**, then **Music**. Click a shot to edit it, pick the **engine** (or Auto), run a **shootout** between 2–4 engines and pick the winner, compare takes, retake, extend, **Edit with words** or approve. Each take shows its engine and QC (face match, lip-sync score) |
-| Timeline | 4 Edit › Timeline | Zoom, snap, J/K/L shuttle, waveforms for dialogue, music and SFX, **Auto SFX**, title and lower-third track, caption preview, music volume and ducking |
+| Cast | 2 Cast | Faces first: the list of faces on the left (with *voice ✓ / no voice* and *look out of date*), the open character's big pictures in the middle (**Approve** / **Redo** on each, **Make pictures** with its price) and a details panel on the right: **Voice** (play the sample, **Design voice** with its price), **Look lock**, **Outfits**, **Who they are** and **Advanced** (expressions, lighting, boards, identity training, Seedance, consent, versions). When a character's look changes after shots were made, **Redo these shots** (with its price) remakes the shots that still show the old look. Places work the same way. **Build from script** creates the cast and places; a consent record is asked for when a real person's face or voice is used |
+| Shots | 3 Shots › Canvas · Grid · Text | **Pictures** (cents each), then **Videos**, then **Voice + mouth sync**, then **Sound** and **Music**: one at a time from a shot's step dots, or all at once with **Make it for me**. Click a shot to edit it, pick the **engine** (or Auto), run a **shootout** between 2–4 engines and pick the winner, compare takes, retake, extend, **Edit with words** or approve. Each take shows its engine and QC (face match, lip-sync score). See [the Shots canvas](#the-shots-canvas). The Grid shows the cast's faces on every shot; **Who** shows only one character's shots (and the make buttons then cover just theirs) |
+| Timeline | 4 Edit › Timeline | The preview (left) and the clip's details (right) on top, the tracks always on screen below. Zoom, snap, J/K/L shuttle, waveforms for dialogue, music and sound effects, **Add music** and **Add effects** (with their prices) on the Music and Sound effects tracks, title and lower-third track, caption preview, music volume and ducking |
 | Finishing room | 4 Edit › Finishing room | **Check out** the cut so the web timeline goes read-only for everyone else, **check in** with a note (every check-in is a version you can **restore**), **AI upscale** to 4K or 2K (free on the desktop's graphics card, or in the cloud with the price shown first), **review notes** from your renders as markers on the timeline, and **pop-out** program monitor, scopes, mixer and notes windows. In the **desktop app** it also has the project folder, file names in series, local 4K renders on your graphics card and the machine check (see below) |
-| Export | 5 Deliver › Export | **Animatic** (free preview), **Render** (Shorts / Reels / YouTube / Square, karaoke or clean captions, auto-reframe, brand-kit end card), **Dub**, **Cut into shorts**, **Marketing pack** (titles, descriptions, hashtags and thumbnails per platform and language), **Publish to YouTube** (or schedule it), **Client link** |
+| Export | 5 Deliver › Export | One card on top: the newest film playing, **Reels 9:16 / YouTube 16:9 / Square**, captions on or off, **Render** with its price, **Download** and a **Quick preview**. Below it, tabs: **Share** (client link, YouTube), **Dub**, **Promote** (cut into shorts, brand kit, marketing pack) and **Renders** (every format, look & sound, sound design, the queue and all finished renders). A quick draft run's **draft cut** (480p) is listed with the renders; it is never published |
 | Review | 5 Deliver › Review | Frame-accurate player, timecoded comments, draw on the frame, A/B **wipe compare** between renders, approve the final. Clients get a link that works without an account, on phone or desktop |
 | Director | Right panel (`Ctrl+J`) | Ask in plain words, e.g. *"dub into Telugu"*, *"Ravi wears his wedding outfit in this episode"*, *"cut this into 3 shorts"*, *"freeze Ravi's look for episodes 1-3"*, *"what is stale?"*. Or give it the whole film in one message with tagged pictures ([below](#the-director-one-long-prompt-with-pictures)). In Co-pilot mode it proposes the work with a price and you click **Approve** |
 | World | 2 Cast › Props & wardrobe | **Props** (reusable objects with a reference image, mentioned in scripts with `@`), the **wardrobe timeline** (who wears what in every scene, continuity breaks flagged) and the **Continuity Bible** (the state at the end of every scene, written by AI and corrected by hand, carried into the next scene's prompts) |
 | Dashboard | Overview (project home) | Shots by status, approved vs planned seconds, spend by provider, **cost per approved second**, **change impact** (everything stale after an edit, with a one-click regenerate), seasons |
 | Ads & Reels | 5 Deliver › Ads & Reels | One brief into every language x aspect variant with **locked brand facts**; reels cut from highlights of what you already made |
 
-**v3 (Tatvam):** `@mentions` in the script editor (characters, places, props stored by id), an import wizard that previews visuals and dialogue before anything is saved, Film Map **shot-to-shot links** (last frame or extension) and **next shot**, the **Character Lock** (face, body, voice, costume, gestures, strictness), **character versions** per episode range, **costumes** with 3-angle turnarounds, the **back view** and **lighting variants** in the reference pack, the **Google dialogue route** (Veo speaks each line itself in the languages you allow; dubbing regenerates per language; QC checks the words spoken), **change impact** (edits mark takes stale instead of deleting anything), and a professional timeline (right-click AI actions, roll trims, speed, keyframe animation on layers). Design notes: [docs/V3.md](docs/V3.md); the plan: [TATVAM_PLAN.md](TATVAM_PLAN.md).
+**v3 (Tatvam):** `@mentions` in the script editor (characters, places, props stored by id), an import wizard that previews visuals and dialogue before anything is saved, **shot-to-shot links** on the canvas (Continue, Exact match, Extend) and **next shot**, the **Character Lock** (face, body, voice, costume, gestures, strictness), **character versions** per episode range, **costumes** with 3-angle turnarounds, the **back view** and **lighting variants** in the reference pack, the **Google dialogue route** (Veo speaks each line itself in the languages you allow; dubbing regenerates per language; QC checks the words spoken), **change impact** (edits mark takes stale instead of deleting anything), and a professional timeline (right-click AI actions, roll trims, speed, keyframe animation on layers). Design notes: [docs/V3.md](docs/V3.md); the plan: [TATVAM_PLAN.md](TATVAM_PLAN.md).
 
 **Anywhere:** `Ctrl+K` opens the command palette (pages, projects, actions, theme, language, search). `?` lists every shortcut. **Search everything** finds shots, takes, scenes, characters and renders by what's in them ("Ravi near the lamp at night").
+
+### The Shots canvas
+
+**3 Shots › Canvas** shows the whole film on one board. Phones get the same shots as a list, with the shot opening in a
+sheet.
+
+- **Scenes are rows**, top to bottom in film order, with their shots left to right. Fold a scene with its arrow; drag
+  its grip up or down to move it. Its header shows the place, the time of day, the mood, the scene's music (play it, or
+  **Add music**) and **Make scene** with its price.
+- **Each shot is a card** with its picture or clip (hover to play), its length, its words and its cast, and **five step
+  dots**: Picture → Video → Voice → Mouth sync → Sound. Green is made, glowing is being made, red failed, amber is out of
+  date (the shot changed after it was made), dashed is not made yet, faint means nothing to make (no lines to voice).
+  Click a dot to make that step again, its price first.
+- **Drag from the library** (left): a face onto a shot adds that character (onto a scene's title: to all its shots), a
+  place onto a scene sets where it happens, a prop onto a shot adds it. Click a face to light up every shot they are in.
+- **Link shots** by dragging one shot's right edge onto another. The label on the link says how the second continues:
+  **Continue** (it starts from the first clip's last frame), **Exact match** (it starts exactly on the first shot's end
+  frame, so the two join without a jump) or **Extend** (its video extends the first clip). Click the label to switch.
+- **The inspector** (right) edits the selected shot: the words, lines and voice-over, cast, framing, camera, place,
+  outfits, sound effects and, under Advanced, length, engine and links. Edits save themselves. It also shows what
+  failed with its fix, and the shot's **takes**: pictures and videos, newest first, the ones in use marked. Click
+  another take to use it instead (the next step then starts from it); nothing is deleted. **Make it** makes what the
+  shot still needs; **More** opens the full shot (prompt, effects, comments).
+- **Tidy** puts the scenes back in rows and the shots left to right; **Fit** shows the whole film; `Ctrl+F` finds a shot
+  by code or words; `Ctrl+Z` / `Ctrl+Y` undo and redo moves, links and cast changes. The film card at the end renders
+  the film and downloads it.
+
+### Make it for me: drafts and recipes
+
+**Make it for me** (the Next bar, the Text view, the Brief) makes everything the shots still need, in order, only what is
+missing. Switch steps off to leave them out, pick the video quality, and the price shows before anything starts.
+
+- **Quick draft first (480p, cheaper):** every shot without a clip gets a cheap 480p preview on the cheapest engine
+  that makes one (the dialog names it in the price), the voices are made and kept, and the drafts are cut together as a
+  **draft cut** (in Export). Drafts get no quality check, aren't extended and never replace a finished clip. When the
+  draft is ready, the Next bar offers **Make the final film** with its price: the drafts are remade as finished clips and
+  the film is rendered. A draft never counts as finished: the final render waits until every shot has its real clip.
+- **Recipes** are saved choices, one click each, at the top of the dialog. Three come built in: **Reels draft** (a
+  quick 480p cut with one music track), **Full film, Hero quality** (everything at the best quality, stopping after new
+  cast pictures and voices so you can check them) and **Storyboard first** (the cast and a picture per shot, to check the
+  look before paying for video). **Save these choices** keeps the current ones as a recipe for the whole team; a team
+  recipe's **×** deletes it. A recipe only fills the dialog: you still see the price first.
+
+### Problems you can act on
+
+When a run can't make something, it says so in plain words with what to do next, and the fix is one click away:
+
+- the **Next bar** shows **3 problems** (it hides when there are none); click it for the list;
+- the **Overview**'s Problems card lists them first;
+- on the **canvas** the shot's step dot turns red and its card says what failed.
+
+Each problem has its button: **Retry** (that step again, price first), **Try another engine** (for a failed or blocked
+video: the other engines that can make this shot, each with its price; the one you pick makes this shot only, as
+picked, so "Google first" doesn't swap it), **Make the voice**, **Open the shot** (something to change by hand, like a line
+too long for one clip) or **Make it for me** (a run that stopped at your budget carries on; nothing is made twice). A
+problem drops off the list once its step has been made. The next run starts a fresh list.
 
 ### The Director: one long prompt with pictures
 
@@ -70,8 +139,8 @@ Each mode is a **routing chain** in the Model Hub (for example Veo 3.1 Lite → 
 A shot can have a **start frame** (its keyframe) and an **end frame**: the same shot a few seconds later, where the action has got to. The video is then made with **first + last frame** (Seedance, Veo, Kling …), so the clip runs from one picture to the other instead of wandering. An engine without first + last frame starts from the start frame only.
 
 - **One shot:** in the shot drawer, **End frame** makes it from the start frame, the cast and the shot's **How it ends** text (Details › Shot); the menu next to it uploads your own or stops using one. The viewer switches between **Start** and **End**, and the row under the takes shows start → end.
-- **Synced shots:** link a shot to the one before with **End frame** (Details › Advanced › Continues from, or click a link on the Film Map). It then starts on *exactly* that end frame (a free copy), so the two clips join without a jump. Because both clips come from frames known in advance, they are made side by side instead of one after the other.
-- **A whole scene:** **Frames** (Storyboard toolbar, or on a scene's header) makes every start and end frame in order, each following the one before, with a price first. **Sync the clips** links each shot of the scene to the one before (one continuous action); **Remake** redoes frames that are already good. End frames get the same vision check as keyframes (compared with their own start frame), with one automatic retake.
+- **Synced shots:** link a shot to the one before with **Exact match** (Details › Advanced › Continues from, or click a link's label on the canvas). It then starts on *exactly* that end frame (a free copy), so the two clips join without a jump. Because both clips come from frames known in advance, they are made side by side instead of one after the other.
+- **A whole scene:** **Frames** (the Grid view's toolbar, or on a scene's header) makes every start and end frame in order, each following the one before, with a price first. **Sync the clips** links each shot of the scene to the one before (one continuous action); **Remake** redoes frames that are already good. End frames get the same vision check as keyframes (compared with their own start frame), with one automatic retake.
 - **Frames engine:** the dialog's engine choice is saved for the project and used for every start and end frame, including single keyframes. Pick **Seedream 5.0 Pro** for a Seedance film; **Auto** keeps the team's image chain (Google first). The Director (`storyboard_frames`) and the MCP server (`storyboard_frames`) do the same.
 
 ## Character boards
@@ -190,13 +259,14 @@ The app is a fixed-viewport **production cockpit** (design system: [docs/DESIGN.
 - **Sign-in page** (`/login`): a cinematic showreel of AI-made stills behind a glass sign-in card, with the engine lineup (Google, fal.ai, ElevenLabs, Sarvam, sync.so) scrolling along the bottom. Refresh the stills with `backend/.venv/Scripts/python scripts/showcase/generate.py` (Google Nano Banana, about $0.42), or `... generate.py fal --loops` for fal.ai FLUX stills plus two Kling motion loops (about $1.06; needs fal.ai credit).
 - **Rail:** a slim icon column for Home, Search, Library, Model Hub, Brand kits and (by role) Approvals, Costs, Team, Audit and Settings. Labels are tooltips, so the work area never shifts. On phones it becomes a bottom tab bar.
 - **Home:** greeting and a KPI strip, the one box to start a production (paste a script or describe an idea) with templates, your productions with progress, and a column with the live queue, what needs your attention, recent activity and engine health.
-- **Project workspace:** one header on top (back to Home, the title, the steps as a stepper **1 Story · 2 Cast · 3 Shots · 4 Edit · 5 Deliver**, the open step's views, spend, search, the **Director**, the **⋯** menu and your account) and the **Next bar** at the bottom: what is being made right now (click it for the job list with costs, retry and cancel) and the next step in plain words with its price and one button. Projects made from your own script leave out the Story step until it has writing in it (⋯ › *Show the Story step*). The steps' pages: **Story** (Brief · Script; *Advanced:* Scene cards), **Cast** (Cast; *Advanced:* Props & wardrobe), **Shots** (Storyboard · Text view · Advanced layout), **Edit** (Timeline · Pro finishing) and **Deliver** (Export · Review · Ads & Reels · Posters). The **Overview** (the gauge icon) shows progress with the next step, problems and spend; the rest is under **More**. The Director docks on the right on laptops and wider screens and opens over the page on smaller ones.
-- **Make it for me:** one button (the Next bar, the shot list's Text view, the Brief) lets the studio do the work: with no shots yet it goes from your idea to the final film, stopping where you ask so you can check; once there are shots it makes everything they still need (cast pictures and voices, pictures, videos, voices and mouth sync, sound, music, the final film), only what is missing. The price shows before anything starts.
+- **Project workspace:** one header on top (back to Home, the title, the steps as a stepper **1 Story · 2 Cast · 3 Shots · 4 Edit · 5 Deliver**, the open step's views, spend, search, the **Director**, the **⋯** menu and your account) and the **Next bar** at the bottom: what is being made right now (click it for the job list with costs, retry and cancel), any **problems** with their one-click fixes, and the next step in plain words with its price and one button (after a quick draft: **Make the final film**). Projects made from your own script leave out the Story step until it has writing in it (⋯ › *Show the Story step*). The steps' pages: **Story** (Brief · Script; *Advanced:* Scene cards), **Cast** (Cast; *Advanced:* Props & wardrobe), **Shots** (Canvas · Grid · Text; *Advanced:* Advanced layout), **Edit** (Timeline · Pro finishing) and **Deliver** (Export · Review · Ads & Reels · Posters). The **Overview** (the gauge icon) shows progress with the next step, problems and spend; the rest is under **More**. The Director docks on the right on laptops and wider screens and opens over the page on smaller ones.
+- **Make it for me:** one button (the Next bar, the shot list's Text view, the Brief) lets the studio do the work: with no shots yet it goes from your idea to the final film, stopping where you ask so you can check; once there are shots it makes everything they still need (cast pictures and voices, pictures, videos, voices and mouth sync, sound, music, the final film), only what is missing, or a quick 480p draft first, or a saved recipe ([more](#make-it-for-me-drafts-and-recipes)). The price shows before anything starts.
 - **Prices first:** every button that spends money shows what it costs before it runs (a cost dialog, or the price on the button). Edits in the shot panel save themselves, so **Retake** always uses what you wrote.
 - **Status strip (bottom, outside projects):** connection, engine mode, a live job ticker and shortcut hints.
 - **Themes:** dark, light or follow the system: a one-click sun/moon button in the top bar, the full choice in the account menu or `Ctrl+K`.
 - **Interface language:** English is the maintained interface language. The account menu, login page and `Ctrl+K` still offer हिन्दी, ಕನ್ನಡ, తెలుగు and தமிழ் from earlier machine translations; they are not maintained, and untranslated strings show in English. Film terms (Shot, Scene, Take, Storyboard …) stay in English on purpose. Content languages (scripts, voices, captions, dubbing) are separate and fully supported.
 - **Motion:** smooth transitions throughout; respects the system's reduce-motion setting, or turn it off in the account menu.
+- **Phones:** Home, Cast, Timeline, Export and the project header are one column with 40 px touch targets. On the Cast a tap on a face opens it full screen with its details under the pictures; the Timeline is a preview and the list of what is on each track (editing needs a bigger screen); details open as sheets from the bottom.
 - **Install as an app:** in Chrome or Edge, use *Install Tatvam AI Studio* from the address bar (works on desktop and Android). The app shell loads offline; your work always comes live from the server.
 
 ### Tatvam Studio desktop app (the finishing room)
@@ -222,7 +292,9 @@ For the editors who finish a cut in 4K. It is the same studio in a Windows app, 
 - **Render:** pick a preset (YouTube 4K, Shorts / Reels 4K, YouTube 2K, Shorts / Reels 2K, ProRes master, broadcast 1080p25, review 1080p), turn on
   **Use AI upscales** or **Local upscale**, and **Render**. It runs on the graphics card (NVENC, Quick Sync or AMF), shows
   progress and time left, and with **Upload when done** the file appears in 5 Deliver › Export and Review as the
-  next version (v1, v2 …), ready for review links and phone approvals. No AI runs here, so nothing is charged.
+  next version (v1, v2 …), ready for review links and phone approvals. No AI runs here, so nothing is charged. It
+  sounds like the web export: every clip's sound and every voice are brought to one loudness before the mix, and the
+  music dips under the voices only (not under the rain or the sound effects).
 - **Windows & screens:** open the **Program** monitor, **Source**, **Timeline**, **Scopes**, **Mixer**, **Review notes**,
   **Media**, **Renders** or **Bible** in their own windows (`Ctrl+Shift+1…8`), on any screen, full screen or as a
   **clean feed** for a client monitor. `Ctrl+Shift+M` sends the program monitor to the next screen. **Workspaces**

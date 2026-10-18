@@ -25,7 +25,10 @@ export interface PlanSegment {
   audio_override: string | null;
   extra_audio: PlanAudio[];
   keep_src_audio: boolean;
+  /** The clip's own sound: newer plans send it already levelled to the server's clip target (plan.audio_levels). */
   src_gain_db: number;
+  /** additive: the level of the voice that replaces the clip's sound (server assembler.segment_levels). Older plans: none. */
+  override_gain_db?: number;
   has_audio?: boolean;
   /** Where the segment starts on the finished cut. */
   start?: number;
@@ -62,7 +65,11 @@ export interface RenderPlan {
   segments: PlanSegment[];
   end_card?: { key: string; seconds: number; transition?: [string, number] | null; vf?: string } | null;
   layers?: { pics: PlanPic[]; sounds: PlanSound[] } | null;
-  music?: { key: string; volume_db?: number; duck?: boolean } | null;
+  /** `sidechain` (additive): the cut's voices alone, what the music ducks under (server assembler.voice_track); without
+   *  it (older plans) the music ducks under the whole mix. */
+  music?: { key: string; volume_db?: number; duck?: boolean; sidechain?: string | null } | null;
+  /** additive: the segments' gains are levelled (clip sound and voices to these LUFS before the mix), as on the server. */
+  audio_levels?: { levelled?: boolean; clip_lufs?: number; voice_lufs?: number };
   captions?: { srt?: string; ass?: string; burn?: boolean; style?: string; font?: string } | null;
   luts?: Record<string, string>;
   loudnorm?: string;
@@ -323,8 +330,9 @@ export function segmentArgs(seg: PlanSegment, ctx: SegmentCtx): string[] {
   const inputsAudio: string[] = [];
   let idx = 1;
   if (ctx.override) {
+    const gain = seg.override_gain_db ? `,volume=${num(seg.override_gain_db)}dB` : "";
     args.push("-i", ctx.override);
-    inputsAudio.push(`[${idx}:a]aresample=48000,aformat=channel_layouts=stereo,apad[a${idx}]`);
+    inputsAudio.push(`[${idx}:a]aresample=48000,aformat=channel_layouts=stereo${gain},apad[a${idx}]`);
     idx++;
   } else if (seg.keep_src_audio && ctx.hasAudio) {
     const gain = seg.src_gain_db ? `,volume=${num(seg.src_gain_db)}dB` : "";
@@ -398,15 +406,15 @@ export function stillArgs(opts: { image: string; out: string; seconds: number; w
   return args;
 }
 
-/** A still's voice + extra sounds mixed into one track (backend assembler._mix_audio). */
-export function mixAudioArgs(base: string | null | undefined, extra: ResolvedAudio[], seconds: number, out: string): string[] {
+/** A still's voice + extra sounds mixed into one track (backend assembler._mix_audio); `baseGainDb` levels the voice. */
+export function mixAudioArgs(base: string | null | undefined, extra: ResolvedAudio[], seconds: number, out: string, baseGainDb = 0): string[] {
   const args: string[] = [];
   const filters: string[] = [];
   const labels: string[] = [];
   let idx = 0;
   if (base) {
     args.push("-i", base);
-    filters.push(`[${idx}:a]aresample=48000,apad[a${idx}]`);
+    filters.push(`[${idx}:a]aresample=48000${baseGainDb ? `,volume=${num(baseGainDb)}dB` : ""},apad[a${idx}]`);
     labels.push(`[a${idx}]`);
     idx++;
   }
@@ -513,10 +521,22 @@ export function mixArgs(baseAudio: string, sounds: ResolvedSound[], total: numbe
   return [...args, "-filter_complex", f.join(";"), "-map", "[m]", "-t", f3(total), "-ar", "48000", "-ac", "2", out];
 }
 
-/** Loop / trim the music, fade it out and duck it under the voices (backend ffmpeg.music_bed). */
-export function musicBedArgs(music: string, voiceMix: string | null, out: string, length: number, volumeDb = -16, duck = true): string[] {
+/**
+ * Loop / trim the music, fade it out and duck it under the voices (backend ffmpeg.music_bed). `sidechain` (the plan's
+ * music.sidechain: the voices alone) is what the music dips under, as on the server; without it (an older plan) it dips
+ * under the whole mix.
+ */
+export function musicBedArgs(music: string, voiceMix: string | null, out: string, length: number, volumeDb = -16, duck = true,
+  sidechain: string | null = null): string[] {
   const fadeStart = Math.max(length - 2.0, 0);
   const base = `[0:a]aresample=48000,aformat=channel_layouts=stereo,volume=${num(volumeDb)}dB,atrim=0:${f3(length)},afade=t=out:st=${f3(fadeStart)}:d=2[m]`;
+  if (voiceMix && duck && sidechain) {
+    const fc = `${base};[1:a]aresample=48000,aformat=channel_layouts=stereo[vo];`
+      + "[2:a]aresample=48000,aformat=channel_layouts=stereo[sc];"
+      + "[m][sc]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=350[md];"
+      + "[md][vo]amix=inputs=2:normalize=0:duration=first[out]";
+    return ["-stream_loop", "-1", "-i", music, "-i", voiceMix, "-i", sidechain, "-filter_complex", fc, "-map", "[out]", "-t", f3(length), "-ar", "48000", out];
+  }
   if (voiceMix && duck) {
     const fc = `${base};[1:a]aresample=48000,aformat=channel_layouts=stereo,asplit=2[sc][vo];`
       + "[m][sc]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=350[md];"

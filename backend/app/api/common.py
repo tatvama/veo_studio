@@ -8,7 +8,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from ..core import budget, studio
-from ..core.recovery import blocked_info
+from ..core.recovery import blocked_info, last_failure
 from ..models import (AudioAsset, Character, CharacterAsset, Comment, Episode, Export, Job, Location, LocationAsset, Project,
                       Shot, Take, User, VoiceProfile)
 from ..pipeline.prompting import effective_quality, effective_voice_mode
@@ -70,6 +70,7 @@ def shot_out(db: Session, s: Shot, project: Project, lang: str | None = None, *,
     else:
         n_comments = int(comment_counts.get(s.id, 0))
     from ..core import frames
+    failed = None if active else last_failure(db, s)  # the last video failed: offer another engine (or a retry)
     return s.to_dict(
         keyframe=take_out(current(db, s.id, "keyframe")),
         endframe=take_out(current(db, s.id, frames.END)),  # the frame the clip runs to (core/frames.py)
@@ -82,7 +83,8 @@ def shot_out(db: Session, s: Shot, project: Project, lang: str | None = None, *,
         effective_quality=effective_quality(s, project),
         effective_voice_mode=effective_voice_mode(s, project, lang),
         active_jobs=active,
-        blocked=None if active else blocked_info(db, s),  # a safety filter stopped the last video: offer another engine
+        blocked=blocked_info(db, s, failed or {}),  # a safety filter stopped the last video: offer another engine
+        failed=failed,
         comments=n_comments,
         ref_images=[{**r, "url": url(r.get("path", ""))} for r in (s.ref_images or [])],
     )

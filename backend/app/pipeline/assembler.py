@@ -175,6 +175,8 @@ def plan(db: Session, episode: Episode, lang: str, kind: str, tmp: Path,
 
         if (video.params or {}).get("mock"):
             warnings.append(f"{shot.code}: placeholder clip (made without an API key) — generate it for real")
+        if (video.params or {}).get("draft") and kind == "final":  # (a "draft" render is made of them on purpose)
+            warnings.append(f"{shot.code}: 480p draft clip: make the final film to replace it")
         vdur = max(video.duration_s or ff.duration(st.abs(video.path)), 0.5)
         trim_in = max(shot.trim_in or 0.0, 0.0)
         avail = max(vdur - trim_in - max(shot.trim_out or 0.0, 0.0), 0.5)  # the clip as trimmed
@@ -582,15 +584,22 @@ def segment_levels(sg: Segment) -> tuple[float, float, list[tuple]]:
     return round(sg.src_gain_db + src, 2), over, extra
 
 
-def voice_track(timed: list[Timed], total: float, out: Path) -> Path | None:
-    """The voices alone (dialogue and narration) where they play on the cut: what the music ducks under. Keyed on the
-    whole mix it also dipped under every rain bed and sound effect, pumping in and out. None: no voices."""
+def voice_parts(timed: list[Timed]) -> list[tuple]:
+    """Where each voice plays on the cut: (file, start on the cut s, in-point in the file s, seconds)."""
     parts = []
     for tm in timed:
         for path, offset, at in tm.sg.voices:
             start = offset / tm.speed
             if start < tm.seg_len - 0.05:
                 parts.append((path, tm.start + start, at, tm.seg_len - start))
+    return parts
+
+
+def voice_track(timed: list[Timed], total: float, out: Path) -> Path | None:
+    """The voices alone (dialogue and narration) where they play on the cut: what the music ducks under. Keyed on the
+    whole mix it also dipped under every rain bed and sound effect, pumping in and out. None: no voices. (The desktop
+    render plan carries the same track by its storage key: core/desktop.render_plan.)"""
+    parts = voice_parts(timed)
     try:
         return ff.place_audio(parts, total, out) if parts else None
     except (ff.FFmpegError, OSError) as e:  # ducking is a nicety: the mix goes on without it (OSError: a huge command)

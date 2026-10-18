@@ -14,7 +14,7 @@ import { RoomEmpty, RoomHeader, RoomPage } from "../../components/room/kit";
 import { Alert, Badge, Button, Menu, Panel, Segmented, Skeleton, StatusDot, Tooltip } from "../../components/ui";
 import { api } from "../../lib/api";
 import { renderPresetLabel, renderTag } from "../../lib/desktop";
-import { LANG_NAMES, LANG_SHORT, secs } from "../../lib/format";
+import { LANG_NAMES, LANG_SHORT, renderKindLabel, secs } from "../../lib/format";
 import { tr, useT } from "../../lib/i18n";
 import { useAuthStatus, useEpisode, useSettings } from "../../lib/queries";
 import type { Comment, ExportRow } from "../../lib/types";
@@ -104,7 +104,7 @@ export default function ReviewPage() {
     setParams(next, { replace: true });
   };
 
-  const kindLabel = (x: ExportRow) => (x.kind === "final" ? t("Final") : t("Animatic"));
+  const kindLabel = (x: ExportRow) => t(renderKindLabel(x.kind));
   const label = (x: ExportRow) =>
     `${renderTag(x)} · ${kindLabel(x)} · ${LANG_SHORT[x.language] ?? x.language} · ${renderPresetLabel(x.preset, presets)} · ${secs(x.duration_s)}`;
   const short = (x: ExportRow) => `${kindLabel(x)} ${LANG_SHORT[x.language] ?? x.language} · ${presets[x.preset]?.aspect ?? renderPresetLabel(x.preset, presets)} · ${renderTag(x)}`;

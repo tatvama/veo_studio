@@ -383,8 +383,8 @@ export default function ShotDrawer({ shotId, onClose, onPrev, onNext, position, 
             </div>}
           </div>
         )}
-        {/* a safety filter blocked the last video: retry on another engine (shown on every tab) */}
-        {shot.blocked && <div className="border-b border-line px-3 py-2.5"><Recovery shot={shot} canEdit={canChange} /></div>}
+        {/* the last video failed (a safety filter, or anything else): try another engine (shown on every tab) */}
+        {(shot.blocked || shot.failed) && <div className="border-b border-line px-3 py-2.5"><Recovery shot={shot} canEdit={canChange} /></div>}
         {/* the shot's own references: what the keyframe and video must follow besides the characters */}
         {(canEdit || (shot.ref_images?.length ?? 0) > 0) && (
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line px-3 py-2.5">

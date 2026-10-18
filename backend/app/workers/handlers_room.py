@@ -416,22 +416,29 @@ def produce(ctx: JobContext) -> dict:
     before it, and (link_scenes) a scene that picks up straight from the one before starts from its last frame.
     review_looks: when the run made new looks or voices, it stops after them so they can be checked before every shot
     uses them; running it again carries on (nothing is made twice). What fails is listed as the run's problems (the
-    result's "problems", the episode's run_problems); the export is skipped while shots have no video."""
+    result's "problems", the episode's run_problems); the export is skipped while shots have no video.
+    draft ("Quick draft first"): every shot without a clip gets a cheap 480p preview on the cheapest engine that makes
+    one (no QC, never replacing a finished clip), no extensions and no mouth sync yet (the voices are made and kept),
+    and the export is a draft render of that cut. The final film is the same run without `draft`: the drafts are
+    remade as finished clips (a draft never counts as one)."""
     p = ctx.payload
-    steps = [s for s in generation.PRODUCE_STEPS if s in (p.get("steps") or generation.PRODUCE_STEPS)]
-    r = RunLog(ctx, "Produce all")
+    draft = bool(p.get("draft"))
+    steps = [s for s in generation.PRODUCE_STEPS if s in (p.get("steps") or generation.PRODUCE_STEPS)
+             and not (draft and s == "extend")]
+    r = RunLog(ctx, "Make it for me (draft)" if draft else "Produce all")
     problems.start(ctx.episode_id)
     _set_paused(ctx.episode_id, None)
     try:
         try:
             out = _produce(ctx, r, steps)
         except BudgetStop:
-            r.stopped_at_budget("Produce all")
+            r.stopped_at_budget("Make it for me" if draft else "Produce all")
             out = {"steps": steps, "jobs": r.done, "stopped": "budget"}
     except BaseException:
-        r.save(announce=False)
+        r.save(announce=False, draft=draft)
         raise
-    out["problems"] = r.save(announce=True)
+    out["problems"] = r.save(announce=True, draft=draft)
+    out["draft"] = draft
     return out
 
 
@@ -441,6 +448,7 @@ def _produce(ctx: JobContext, r: RunLog, steps: list[str]) -> dict:
     p = ctx.payload
     shot_ids = p.get("shot_ids") or None
     quality = p.get("quality")
+    draft = bool(p.get("draft"))
     link_rule = p.get("link_scenes") if p.get("link_scenes") in ("auto", "always") else "never"
     done = r.done
     carried = False
@@ -477,11 +485,13 @@ def _produce(ctx: JobContext, r: RunLog, steps: list[str]) -> dict:
                 specs = generation.keyframe_specs(db, project, [s for s in shots if "videos" not in steps
                                                                 or not links.waits_for_clip(db, s)], only_missing=True)
             elif step == "videos":  # in link order: a shot that continues another starts from its finished clip
-                # remake: the Director was asked for these shots by name, so they are made again even with a video
-                need = [s.id for s in shots if p.get("remake") or not is_real(current(db, s.id, "video"))]
+                # remake: the Director was asked for these shots by name, so they are made again even with a video;
+                # a draft run drafts only the shots with no clip at all (a draft or a finished clip is kept)
+                need = [s.id for s in shots if (generation.needs_draft(db, s) if draft
+                                                else p.get("remake") or not is_real(current(db, s.id, "video")))]
                 db.commit()
                 res = scene_chain.make_videos_in_order(SessionLocal, r.run, project.id, need, quality, label,
-                                                       extend=in_waves)
+                                                       extend=in_waves, draft=draft)
                 done[step] = res["videos"]
                 if res["extensions"]:
                     done["extend"] = done.get("extend", 0) + res["extensions"]
@@ -492,16 +502,23 @@ def _produce(ctx: JobContext, r: RunLog, steps: list[str]) -> dict:
                 need = [s for s in shots if budget.Estimator.needs_lipsync(s, project, lang) and not has_fresh(db, s.id, "lipsync", lang)]
                 narr = [s for s in shots if budget.Estimator.voice_only(s, project, lang) and s not in need
                         and not current(db, s.id, "narration" if (s.narration or {}).get(lang) else "voice", lang)]
-                specs = generation.lipsync_specs(db, project, need, lang) + generation.voice_specs(db, project, narr, lang)
+                if draft:  # a draft clip is remade for the final film: its voice is kept, its mouth sync waits for that
+                    need = [s for s in need if not current(db, s.id, "voice", lang)]
+                    specs = generation.voice_specs(db, project, need + narr, lang)
+                else:
+                    specs = generation.lipsync_specs(db, project, need, lang) + generation.voice_specs(db, project, narr, lang)
             elif step == "sound" and (snd := generation.sound_step(db, project, episode, shots)):
                 specs = [snd[0]]  # ElevenLabs, or the free library without its key
             elif step == "music" and (mus := generation.music_step(db, project, episode, p.get("music_per_scene"))):
                 specs = [mus[0]]  # the scenes' missing pieces, or the one score
             elif step == "export":
-                # never an export with still pictures where clips should be: the gaps are listed instead
-                missing = problems.missing_videos(db, shots)
+                # never an export with still pictures where clips should be: the gaps are listed instead (a draft
+                # run renders its drafts as a draft cut; the final film counts a draft as a gap still to make)
+                missing = problems.missing_videos(db, shots, drafts_ok=draft)
                 if missing:
-                    r.problems.extend([problems.export_skipped(missing)])
+                    r.problems.extend([problems.export_skipped(missing, draft)])
+                elif draft:
+                    specs = [generation.render_spec(project, episode, lang, "final", "draft", {"captions": True, "draft": True})]
                 else:
                     preset = "youtube" if project.aspect == "16:9" else ("square" if project.aspect == "1:1" else "shorts")
                     specs = [generation.render_spec(project, episode, lang, "final", preset, {"captions": True})]

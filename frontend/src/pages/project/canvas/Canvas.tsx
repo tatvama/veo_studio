@@ -20,6 +20,7 @@ import { useCharacters, useEpisode, useLocations } from "../../../lib/queries";
 import type { Character, Episode, ExportRow, Location } from "../../../lib/types";
 import { useProps, type Prop } from "../../../lib/v3";
 import { useProjectCtx } from "../context";
+import { OPEN_SHOT_EVENT, withRunProblems } from "../problems";
 import { LoadError } from "../production/LoadError";
 import { ratioOf } from "../production/shotMeta";
 import ShotDrawer from "../ShotDrawer";
@@ -60,7 +61,9 @@ export function ShotsCanvas({ embedded = false, onSelectShot }: { embedded?: boo
   const { data: cast } = useCharacters(project.id);
   const { data: places } = useLocations(project.id);
   const { data: props } = useProps(project.id);
-  const { data: info } = useCanvasInfo(eid, lang);
+  const { data: raw } = useCanvasInfo(eid, lang);
+  // the last run's problems on their shots' dots and failure cards, next to the steps that failed since
+  const info = useMemo<CanvasInfo | undefined>(() => (raw ? { ...raw, shots: withRunProblems(raw.shots, raw.run_problems) } : raw), [raw]);
   const phone = useMedia("(max-width: 639px)");
   const [sel, setSel] = useState<Sel>(null);
   const [drawer, setDrawer] = useState<number | null>(null);
@@ -82,6 +85,17 @@ export function ShotsCanvas({ embedded = false, onSelectShot }: { embedded?: boo
     eid, pid: project.id, lang, canEdit, episode, cast: cast ?? NONE, locations: places ?? NONE, props: props ?? NONE, ui,
   });
   useEffect(() => () => useCanvasUI.getState().reset(), []);
+  // "Open the shot" from the Next bar's problem list: over the canvas, not on another page
+  useEffect(() => {
+    const h = (e: Event) => {
+      const id = Number((e as CustomEvent<{ shotId?: number }>).detail?.shotId);
+      if (!id) return;
+      e.preventDefault();
+      ui.openShot(id);
+    };
+    window.addEventListener(OPEN_SHOT_EVENT, h);
+    return () => window.removeEventListener(OPEN_SHOT_EVENT, h);
+  }, [ui]);
 
   if (isLoading) return <div className="h-full overflow-hidden"><PageSkeleton cards={4} /></div>;
   if (isError || !episode) return <div className="p-6"><LoadError what={t("the shots")} onRetry={() => void refetch()} /></div>;
@@ -323,14 +337,16 @@ const CanvasBoard = forwardRef<BoardApi, BoardProps>(function CanvasBoard(
     });
     const last = boxes.at(-1);
     const shots = groups.flatMap((g) => g.shots);
-    const finals = (episode.exports ?? []).filter((x) => x.kind !== "animatic");
+    // the film's renders (a quick draft's cut is not the film: it is offered on its own while there is no film yet)
+    const finals = (episode.exports ?? []).filter((x) => x.kind === "final");
     const latest: ExportRow | null = finals[0] ?? null;
     const ready: ExportRow | null = finals.find((x) => x.status === "ready" && x.url) ?? null;
+    const draftCut: ExportRow | null = (episode.exports ?? []).find((x) => x.kind === "draft" && x.status === "ready" && x.url) ?? null;
     const secs = shots.reduce((n, s) => n + shotSeconds(s.duration_s, s.extend_to), 0);
     const withVideo = shots.filter((s) => s.video).length;
     const scenesN = groups.filter((g) => g.scene).length;
-    const film = memoFilm("film", [secs, scenesN, shots.length, withVideo, latest, ready], () => ({
-      secs, scenes: scenesN, shots: shots.length, withVideo, latest, ready,
+    const film = memoFilm("film", [secs, scenesN, shots.length, withVideo, latest, ready, draftCut], () => ({
+      secs, scenes: scenesN, shots: shots.length, withVideo, latest, ready, draftCut,
     }));
     nodes.push({ id: "film", type: "film", position: { x: 0, y: last ? last.y + last.h + LAYOUT.gapY : 0 }, data: film,
       draggable: false, selectable: false, deletable: false });

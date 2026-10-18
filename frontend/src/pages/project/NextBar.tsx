@@ -1,19 +1,21 @@
-import { ArrowRight, CirclePause, FileText, Lightbulb, Rocket, Users, Wand2 } from "lucide-react";
-import { useState } from "react";
+import { ArrowRight, CirclePause, Clapperboard, FileText, Lightbulb, Rocket, TriangleAlert, Users, Wand2 } from "lucide-react";
+import { useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import JobTray from "../../components/JobTray";
 import { useGenerate } from "../../components/Generate";
-import { Button, Tooltip } from "../../components/ui";
+import { Button, Popover, Tooltip } from "../../components/ui";
 import { useBatchEstimate } from "../../lib/estimates";
 import { usd } from "../../lib/format";
 import { tr, useT } from "../../lib/i18n";
 import { useSettings } from "../../lib/queries";
 import type { Episode } from "../../lib/types";
 import { useProjectCtx } from "./context";
+import { FixList, useFixes } from "./FixList";
 import { isOwnMaterial } from "./flow";
 import { openImport } from "./importEvent";
 import { MakeItForMe } from "./MakeItForMe";
 import { makeBody, type Make, type NextStep } from "./nextStep";
+import { problemCountLabel } from "./problems";
 
 /**
  * Runs a next step: opens its page, or starts what it makes (the cast, "Make it for me", the script import), always with
@@ -41,6 +43,11 @@ export function useNextStepRunner(step: NextStep | null, episode: Episode | unde
       try { await generate(eid, { action: "produce", steps: ["cast"] }, tr("Make the cast")); } finally { setBusy(false); }
       return;
     }
+    if (m === "final") {  // after a quick draft: the drafts remade as finished clips, the film rendered (price first)
+      setBusy(true);
+      try { await generate(eid, makeBody("final")!, tr("Make the final film")); } finally { setBusy(false); }
+      return;
+    }
     setMake(true);
   };
   const modal = <MakeItForMe open={make} onClose={() => setMake(false)} hasShots={shots.length > 0} />;
@@ -64,7 +71,7 @@ export function NextBar({ step, episode }: { step: NextStep | null; episode?: Ep
   const icon = step?.tone === "warn" ? <CirclePause className="size-3.5 text-warn" /> : step?.tone === "info" ? <Rocket className="size-3.5 text-ai" />
     : <Lightbulb className="size-3.5 text-accent-ink" />;
   const primaryIcon = step?.make === "cast" ? <Users className="size-3.5" /> : step?.make === "import" ? <FileText className="size-3.5" />
-    : step?.make ? <Wand2 className="size-3.5" /> : undefined;
+    : step?.make === "final" ? <Clapperboard className="size-3.5" /> : step?.make ? <Wand2 className="size-3.5" /> : undefined;
   // "Make it for me" stays one click away when the primary button is something else
   // (not before an own-material project has shots: there is no idea to make a film from, only a script to bring)
   const offerMake = canEdit && !!episode && (shots.length > 0 || !isOwnMaterial(project))
@@ -83,6 +90,7 @@ export function NextBar({ step, episode }: { step: NextStep | null; episode?: Ep
       </div>
       {step && (
         <div className="flex min-w-0 flex-1 items-center justify-end gap-2 border-l border-line pl-3 pr-2 sm:pr-3">
+          <ProblemsChip onContinue={openMake} />
           <p className="hidden min-w-0 flex-1 items-center justify-end gap-1.5 text-right text-xs text-mute @min-[44rem]:flex" title={step.text}>
             {icon}<span className="truncate">{step.text}</span>
           </p>
@@ -102,5 +110,32 @@ export function NextBar({ step, episode }: { step: NextStep | null; episode?: Ep
       )}
       {modal}
     </div>
+  );
+}
+
+/**
+ * "3 problems": what the last run couldn't make and the shots' failed steps, each with its fix (FixList), one click
+ * away on every project screen. Hidden when there are none.
+ */
+function ProblemsChip({ onContinue }: { onContinue: () => void }) {
+  const t = useT();
+  const items = useFixes();
+  const anchor = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  if (!items.length) return null;
+  return (
+    <>
+      <button ref={anchor} type="button" onClick={() => setOpen((v) => !v)} aria-haspopup="dialog" aria-expanded={open}
+        title={t("What didn't get made, and how to fix it")}
+        className="mono inline-flex h-7 shrink-0 items-center gap-1.5 rounded-lg border border-bad/40 bg-bad/10 px-2 text-2xs font-semibold text-bad transition-colors hover:bg-bad/20">
+        <TriangleAlert className="size-3.5" />{t(problemCountLabel(items.length), { n: items.length })}
+      </button>
+      <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} placement="top-end" width={400} className="p-3">
+        <p className="eyebrow mb-2 !text-bad">{t(problemCountLabel(items.length), { n: items.length })}</p>
+        <div className="max-h-[60vh] overflow-y-auto pr-1">
+          <FixList items={items} onContinue={onContinue} onDone={() => setOpen(false)} />
+        </div>
+      </Popover>
+    </>
   );
 }

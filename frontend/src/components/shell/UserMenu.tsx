@@ -90,7 +90,7 @@ export function UserMenu({ user, expanded = false, placement = "right-end", dens
       onClick={() => setOpen((v) => !v)}
       aria-label={t("Account and preferences")}
       aria-expanded={open}
-      className={clsx("flex items-center justify-center self-center rounded-full outline-none ring-2 transition focus-visible:ring-accent/60", dense ? "size-8" : "mt-1 size-10", open ? "ring-accent/60" : "ring-transparent hover:ring-line")}
+      className={clsx("flex items-center justify-center self-center rounded-full outline-none ring-2 transition focus-visible:ring-accent/60", dense ? "size-8 max-sm:size-10" : "mt-1 size-10", open ? "ring-accent/60" : "ring-transparent hover:ring-line")}
     >
       <Avatar name={name} size={dense ? 28 : 34} />
     </button>

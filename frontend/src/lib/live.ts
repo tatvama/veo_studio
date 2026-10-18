@@ -51,10 +51,11 @@ export function useLiveEvents(projectId: number | null) {
         // a finished or blocked video changes the shot's recovery options too
         if (t.startsWith("job") || t === "jobs.created") touch("jobs", "episode", "costs", "shot", "shot-alternatives");
         if (t === "job.updated" && e.payload.status === "failed") toast.error(`Job failed: ${String(e.payload.error || e.payload.type).slice(0, 160)}`);
-        if (t === "run.finished") {  // Produce all / Autopilot / Scenes in order ended; what it couldn't make is on the board
+        if (t === "run.finished") {  // Make it for me / Autopilot / Scenes in order ended; what it couldn't make is on the board
           touch("board", "episode", "project");
           const n = Array.isArray(e.payload.problems) ? e.payload.problems.length : 0;
-          if (n) toast.warning(`Finished with ${n} problem${n === 1 ? "" : "s"} — see the shot list`, { duration: 15000 });
+          if (n) toast.warning(`Finished with ${n} problem${n === 1 ? "" : "s"}: open them from the bar at the bottom, each has a one-click fix`, { duration: 15000 });
+          else if (e.payload.draft) toast.success("The draft is ready: watch it, then make the final film from the bar at the bottom", { duration: 15000 });
         }
         if (t === "produce.paused") {  // Produce all stopped for the new looks and voices to be checked
           touch("board", "characters", "locations");
@@ -62,6 +63,7 @@ export function useLiveEvents(projectId: number | null) {
         }
         if (t.startsWith("take") || t === "shot.updated" || t === "episode.updated" || t === "audio.created") touch("episode", "shot", "board", "impact", "dashboard", "wardrobe", "continuity-bible", "dialogue-check");
         if (t === "bible.updated") touch("characters", "character", "locations", "location", "project", "costumes", "character-versions", "character-lock", "character-look", "props", "mentions");
+        if (t.startsWith("take") || t === "bible.updated") touch("character-impact");  // the Cast's "look out of date" and "Redo these shots"
         if (t.startsWith("project") || t === "autopilot.updated") touch("project", "projects", "seasons", "dashboard");
         if (t.startsWith("job")) touch("dashboard");
         if (t === "agent.message") touch("agent");

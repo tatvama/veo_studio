@@ -94,6 +94,7 @@ export function planKeys(plan: RenderPlan): string[] {
   for (const p of plan.layers?.pics ?? []) out.add(p.key);
   for (const p of plan.layers?.sounds ?? []) out.add(p.key);
   if (plan.music?.key) out.add(plan.music.key);
+  if (plan.music?.sidechain) out.add(plan.music.sidechain);
   for (const k of Object.values(plan.luts ?? {})) out.add(k);
   out.delete("");
   return [...out];
@@ -504,7 +505,9 @@ export class RenderManager {
     let finalAudio = voice;
     if (plan.music?.key && c.music) {
       const out = path.join(tmp, `${tag}mixed.wav`);
-      await band.step("music", musicBedArgs(need(plan.music.key), voice, out, total, plan.music.volume_db ?? -16, plan.music.duck !== false), total);
+      // the voices alone, when the plan has them: the music dips under speech only (not under rain beds and effects)
+      const sidechain = plan.music.sidechain ? need(plan.music.sidechain) : null;
+      await band.step("music", musicBedArgs(need(plan.music.key), voice, out, total, plan.music.volume_db ?? -16, plan.music.duck !== false, sidechain), total);
       finalAudio = out;
     }
     return { body, finalAudio, total };
@@ -519,9 +522,10 @@ export class RenderManager {
     const override = seg.audio_override ? need(seg.audio_override) : null;
     if (seg.source_kind === "still") {
       let audio = override;
-      if (extra.length) {
+      const overGain = override ? seg.override_gain_db ?? 0 : 0;
+      if (extra.length || overGain) { // (a levelled voice is mixed too, as the server's _mix_audio does)
         audio = path.join(tmp, `${tag}segaud_${i}.wav`);
-        await runFfmpeg(ff, mixAudioArgs(override, extra, seg.seg_len, audio), { signal, cwd: tmp });
+        await runFfmpeg(ff, mixAudioArgs(override, extra, seg.seg_len, audio, overGain), { signal, cwd: tmp });
       }
       await band.step(`seg${i}`, stillArgs({ image: need(seg.source), out, seconds: seg.seg_len, w, h, fps, audio, kenburns: seg.kenburns,
         vf: seg.vf, vfPost: seg.vf_post, afFx: seg.af_fx, luts, enc: c.inter, localUpscale: c.localUpscale && !seg.upscaled }), undefined, signal);

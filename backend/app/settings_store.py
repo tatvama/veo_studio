@@ -100,6 +100,9 @@ DEFAULTS: dict[str, Any] = {
     "auto_reframe": True,
     "sfx_auto": True,  # Autopilot adds sound effects (only with an ElevenLabs key: core/generation.sound_effects_ready)
     "ui_default_language": "en",
+    # Make it for me recipes the team saved (core/recipes.py; three more ship built in): steps, quality, quick draft,
+    # stop to check the cast, link scenes, music per scene
+    "make_recipes": [],
     # Desktop finishing room (docs/DESKTOP.md): the largest render it may upload, and the AI upscale step (fal)
     "desktop_upload_max_mb": 8000,
     "upscale_fal_endpoint": "fal-ai/topaz/upscale/video",

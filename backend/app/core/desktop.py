@@ -430,6 +430,24 @@ def _even(v: float) -> int:
     return max(2, int(round(v / 2)) * 2)
 
 
+def _voice_sidechain(project_id: int, episode_id: int, timed: list, total: float, tmp: Path, key) -> str | None:
+    """The cut's voices alone (assembler.voice_track), kept in storage by what is in it so later plans reuse it: the
+    track the desktop ducks the music under, like the server render. None when the cut has no voices."""
+    st = get_storage()
+    parts = assembler.voice_parts(timed)
+    if not parts:
+        return None
+    sig = hashlib.sha1(json.dumps([[str(p), round(a, 3), round(b, 3), round(c, 3)] for p, a, b, c in parts]
+                                  + [round(total, 3)]).encode()).hexdigest()[:16]
+    k = f"projects/{project_id}/desktop/voices_{episode_id}_{sig}.m4a"
+    if not st.exists(k):
+        made = assembler.voice_track(timed, total, tmp / "voices.m4a")
+        if made is None or not made.exists():
+            return None
+        st.save_file(k, made)
+    return key(k)
+
+
 def render_plan(db: Session, episode: Episode, lang: str | None = None, w: int | None = None, h: int | None = None,
                 fps: int = 24, effects: bool = True, captions: bool = True, music: bool = True,
                 upscaled: bool = False) -> dict[str, Any]:
@@ -437,7 +455,13 @@ def render_plan(db: Session, episode: Episode, lang: str | None = None, w: int |
     w×h, then the end card, layers, music, captions and loudness. Uses assembler.plan() and assembler.timeline(), the
     code the server render runs. LUT files are written @@LUT_<id>@@; every media reference is a storage key.
     For the GPU engine (docs/ENGINE.md §2, §5) each segment also carries its cleaned `fx` and `gpu_transition`, each
-    picture layer its `raw` clip values, and `gpu_only` lists what only the GPU draws (e.g. ["chroma", "gl:cube"])."""
+    picture layer its `raw` clip values, and `gpu_only` lists what only the GPU draws (e.g. ["chroma", "gl:cube"]).
+
+    Sound, as the server mixes it (assembler.render): each segment's gains are already levelled
+    (assembler.segment_levels: the clip's own sound to ff.CLIP_LUFS, every voice to ff.VOICE_LUFS) in the fields an
+    older desktop already applies (`src_gain_db`, `extra_audio[].gain_db`), plus `override_gain_db` for the voice that
+    replaces a clip's sound; `music.sidechain` is the voices alone (assembler.voice_track) for the music to duck under
+    (an older desktop ducks under the whole mix, as before). `audio_levels` says which targets were used."""
     st = get_storage()
     project = db.get(Project, episode.project_id)
     lang = (lang or project.primary_language)[:8]
@@ -475,13 +499,16 @@ def render_plan(db: Session, episode: Episode, lang: str | None = None, w: int |
             look = str(fx.get("look") or "")
             if look.startswith("lut:") and look[4:] in all_luts:
                 used_luts.add(look[4:])
+            # the levels the server mixes at (assembler.segment_levels): the clip's sound and every voice levelled
+            src_gain, over_gain, levelled = assembler.segment_levels(sg)
             seg: dict[str, Any] = {
                 "shot_id": sg.shot.id, "code": sg.shot.code, "source": key(src), "source_kind": sg.source_kind,
                 "upscaled": up is not None, "duration": round(sg.duration, 3), "trim_in": round(sg.trim_in, 3), "speed": tm.speed,
                 "seg_len": round(tm.seg_len, 3), "start": round(tm.start, 3), "audio_override": key(sg.audio_key) or None,
                 "extra_audio": [{"key": key(e[3] if len(e) > 3 else ""), "offset": float(e[1]), "gain_db": float(e[2]) if len(e) > 2 else 0.0}
-                                for e in sg.extra_audio],
-                "keep_src_audio": sg.keep_src_audio, "src_gain_db": sg.src_gain_db,
+                                for e in levelled],
+                "keep_src_audio": sg.keep_src_audio, "src_gain_db": src_gain,
+                "override_gain_db": over_gain if sg.audio_key else 0.0,
                 "transition": list(tm.transition) if tm.transition else None,  # FFmpeg xfade (a gl-transition is "fade")
                 "fx": cfx, "gpu_transition": fxlib.gpu_transition(cfx, tm.transition[1]) if tm.transition else None}
             if sg.source_kind == "still":
@@ -539,6 +566,10 @@ def render_plan(db: Session, episode: Episode, lang: str | None = None, w: int |
             bed = {"key": key(m.path), **level}
         elif music:
             warnings.append("No music track yet")
+        if bed and level["duck"]:  # the music dips under the voices alone, not under every rain bed and sound effect
+            bed["sidechain"] = _voice_sidechain(project.id, episode.id, timed, total, tmp, key)
+            if bed["sidechain"] is None:  # no voices: nothing to dip for (the server mixes the music in level too)
+                bed["duck"] = False
 
         burn = bool(captions) and ro["caption_style"] != "none"
         srt, ass = assembler.caption_files(cues, overlays, burn, ro["caption_style"], w, h, tmp)
@@ -553,6 +584,7 @@ def render_plan(db: Session, episode: Episode, lang: str | None = None, w: int |
                          "burn": burn, "style": ro["caption_style"], "font": get_settings().caption_font},
             "luts": {i: key(all_luts[i]) for i in sorted(used_luts)},
             "loudnorm": ff.LOUDNORM,
+            "audio_levels": {"levelled": True, "clip_lufs": ff.CLIP_LUFS, "voice_lufs": ff.VOICE_LUFS},
             "stabilize_filters": {"detect": ff.STAB_DETECT.format(trf="@@TRF@@"), "transform": ff.STAB_TRANSFORM.format(trf="@@TRF@@")},
             "keys": keys,
         }

@@ -146,7 +146,7 @@ are missing.
     "shot_id": 41, "code": "E02-SH03", "source": "projects/1/shots/41/video/ab.mp4", "source_kind": "video",
     "upscaled": false, "duration": 5.5, "trim_in": 0.2, "speed": 1.0, "seg_len": 5.5,
     "audio_override": null, "extra_audio": [{"key": "…", "offset": 0.0, "gain_db": 0}],
-    "keep_src_audio": true, "src_gain_db": 0, "has_audio": true,
+    "keep_src_audio": true, "src_gain_db": -2.4, "override_gain_db": 0, "has_audio": true,
     "pre": "reverse,setpts=(PTS-STARTPTS)/1.5,", "stabilize": false, "center": [0.5, 0.42],
     "kenburns": true, "vf_post": "hflip,eq=contrast=1.12,format=yuv420p", "af_fx": "afade=t=in:st=0:d=0.5",
     "transition": ["fade", 0.5]
@@ -156,7 +156,8 @@ are missing.
     "pics": [{"key": "…", "kind": "video", "start": 1, "in": 0, "dur": 3, "chain": ["setpts=…"], "x": "main_w*0.5-overlay_w/2", "y": "…"}],
     "sounds": [{"key": "…", "start": 1, "in": 0, "dur": 3, "gain_db": 0, "fade_in": 0, "fade_out": 0}]
   },
-  "music": {"key": "…", "volume_db": -16, "duck": true},
+  "music": {"key": "…", "volume_db": -16, "duck": true, "sidechain": "projects/1/desktop/voices_3_9f2c….m4a"},
+  "audio_levels": {"levelled": true, "clip_lufs": -20.0, "voice_lufs": -16.0},
   "captions": {"srt": "1\n00:00:00,200 --> …", "ass": "[Script Info]…", "burn": true},
   "luts": {"3": "projects/1/luts/3.cube"},
   "loudnorm": "loudnorm=I=-14:TP=-1.5:LRA=11",
@@ -175,6 +176,16 @@ short side; `fps` is clamped to 1..120. The server render and the plan share `ti
 
 `upscaled=1` makes the plan use a ready `upscale` take (§2.6) of the current video whenever one exists and isn't
 stale. `segment.upscaled` says whether that happened.
+
+**Sound, as the server mixes it.** The segments' gains are levelled like the server render's
+(`assembler.segment_levels`): `src_gain_db` brings the clip's own sound to the clip loudness and every voice in
+`extra_audio` to the speech loudness (the scene's bed and sound effects keep their own levels), and the additive
+`override_gain_db` levels the voice that replaces a clip's sound (applied on that input, and in a still's voice mix).
+`audio_levels {levelled, clip_lufs, voice_lufs}` names the targets. `music.sidechain` (additive) is a storage key of the
+voices alone where they play on the cut (`assembler.voice_track`, kept per content): the music ducks under it, not under
+every rain bed and sound effect. With no voices it is null and `music.duck` is false (the server mixes the music in level
+then). The format stays backward compatible: an older desktop applies the levelled gains through the fields it
+already reads and, without `sidechain`, ducks under the whole mix as before.
 
 ### 2.5 Render upload (to the Render Center)
 

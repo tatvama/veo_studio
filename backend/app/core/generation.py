@@ -80,21 +80,46 @@ def enhance_spec(db: Session, project: Project, shot: Shot, take: Take) -> dict:
                 label=f"Enhance keyframe {shot.code}")
 
 
+def needs_draft(db: Session, shot: Shot) -> bool:
+    """A draft run makes this shot's 480p preview: it has no clip at all (a draft or a finished clip is kept; a
+    placeholder made without an API key counts as none)."""
+    v = current(db, shot.id, "video")
+    return v is None or not (is_real(v) or (v.params or {}).get("draft"))
+
+
+def draft_engine(db: Session, project: Project, shot: Shot) -> dict | None:
+    """The engine a draft of this shot runs on: the cheapest that renders 480p (core/recovery.options "draft"), priced
+    for this shot. Named on the job, so it runs as picked ("Google first" doesn't move it: Veo makes no 480p). None when
+    no enabled engine renders 480p."""
+    from . import recovery
+    opts = recovery.options(db, shot, project, "draft")
+    return opts[0] if opts else None
+
+
 def video_specs(db: Session, project: Project, shots: list[Shot], quality: str | None = None, only_missing: bool = False,
-                mode: str | None = None) -> list[dict]:
+                mode: str | None = None, draft: bool = False) -> list[dict]:
+    """The video jobs of these shots, in the order they can start. `draft`: a 480p preview of each shot that has no
+    clip yet, on its draft_engine (no QC; a shot no engine can draft is left out, see draft_engine)."""
     from ..pipeline.scene_look import anchor_map
     est = Estimator(db)
     anchors = anchor_map(db, shots)
     first, after = [], []
     for s in shots:
-        if only_missing and is_real(current(db, s.id, "video")):
+        if (draft and not needs_draft(db, s)) or (only_missing and is_real(current(db, s.id, "video"))):
             continue
         q = quality or s.quality_mode or project.quality_mode
+        pick = draft_engine(db, project, s) if draft else None
+        if draft and pick is None:
+            continue
         # (a clip that runs to an end frame is 8 s on Veo, whatever length was asked: Estimator.video)
         ends = frames.wants_end(db, s) and (mode or s.mode or "auto") in ("auto", "keyframe_to_video", "interpolate")
-        cost = est.video(s, project, q, ends=ends)
+        cost = float(pick["est_usd"]) if pick else est.video(s, project, q, ends=ends)
         kf = current(db, s.id, "keyframe")
         payload: dict[str, Any] = {"quality": q, "mode": mode}
+        if pick:
+            payload.update(engine=pick["id"], engine_label=pick["display_name"], draft=True)
+            if links.extends(s) and (mode or s.mode or "auto") in ("auto", "extend"):
+                payload["mode"] = "keyframe_to_video"  # a draft never extends another draft: it starts from its picture
         src = frames.sync_source(db, s)
         if src is not None:  # a synced shot: its start frame is a copy of the end frame before (core/frames.py) ...
             if frames.end_take(db, src) is None:
@@ -108,10 +133,34 @@ def video_specs(db: Session, project: Project, shots: list[Shot], quality: str |
         if frames.end_take(db, s) is None and frames.wants_end(db, s) and (mode or s.mode or "auto") in (
                 "auto", "keyframe_to_video", "interpolate"):
             cost += frames.image_price(db, project, 1)  # its end frame (out of date, or one a shot starts on) first
+        label = f"Draft {s.code} 480p ({pick['display_name']})" if pick else f"Video {s.code} ({q})"
         (after if "after_shot" in payload else first).append(
             spec("video", payload=payload, project_id=project.id, episode_id=s.episode_id, shot_id=s.id, estimate=cost,
-                 label=f"Video {s.code} ({q})"))
+                 label=label))
     return first + after
+
+
+def recover_spec(db: Session, project: Project, shot: Shot, engine: str | None = None) -> dict:
+    """Make this shot's video again on another engine, after its last video failed or a safety filter blocked it:
+    the named engine (or the best other option, core/recovery.options), priced for this shot. A hand-picked engine is
+    explicit: it runs as picked, "Google first" doesn't move it, and the engines that failed are skipped.
+    Raises ValueError (in plain words) when no other engine can make it."""
+    from . import recovery
+    failed = recovery.last_failure(db, shot)
+    skip = list((failed or {}).get("engines") or [])
+    pick = recovery.pick(db, recovery.options(db, shot, project, "recover", skip), engine, "make")
+    return spec("video", payload={"engine": pick["id"], "recovery": True, "skip_engines": skip},
+                project_id=project.id, episode_id=shot.episode_id, shot_id=shot.id, estimate=pick["est_usd"],
+                label=f"Retry {shot.code} on {pick['display_name']}")
+
+
+def draft_spec(db: Session, project: Project, shot: Shot, engine: str | None = None) -> dict:
+    """A cheap 480p preview of this shot on the named engine (or the cheapest that renders 480p). It doesn't replace a
+    finished clip, gets no QC, and the final film still makes the finished clip. Raises ValueError when none can."""
+    from . import recovery
+    pick = recovery.pick(db, recovery.options(db, shot, project, "draft"), engine, "draft")
+    return spec("video", payload={"engine": pick["id"], "draft": True}, project_id=project.id, episode_id=shot.episode_id,
+                shot_id=shot.id, estimate=pick["est_usd"], label=f"Draft {shot.code} 480p ({pick['display_name']})")
 
 
 def voice_specs(db: Session, project: Project, shots: list[Shot], lang: str) -> list[dict]:
@@ -283,9 +332,12 @@ def music_step(db: Session, project: Project, episode: Episode, per_scene: bool 
 
 def render_spec(project: Project, episode: Episode, lang: str, kind: str = "final", preset: str = "shorts",
                 options: dict | None = None) -> dict:
+    """A render job. options["draft"] (with kind "final"): a draft cut of the 480p drafts, saved as an Export of kind
+    "draft" (workers/handlers._render), never counted as the final film."""
+    what = "Draft render" if kind == "final" and (options or {}).get("draft") else "Export" if kind == "final" else "Animatic"
     return spec("export" if kind == "final" else "animatic", payload={"language": lang, "preset": preset, "options": options or {}},
                 project_id=project.id, episode_id=episode.id, estimate=0.0,
-                label=f"{'Export' if kind == 'final' else 'Animatic'} E{episode.number:02} [{lang}] {preset}")
+                label=f"{what} E{episode.number:02} [{lang}] {preset}")
 
 
 def dub_spec(db: Session, project: Project, episode: Episode, lang: str, then_export: str | None = None) -> dict:
@@ -576,23 +628,32 @@ def extensions_needed(db: Session, shot: Shot) -> int:
     return max(0, -(-int(gap) // 7)) if gap > 1 else 0
 
 
+DRAFT_LABELS = {"videos": "Draft videos 480p", "voices": "Voices (mouth sync comes with the final film)",
+                "export": "Draft render"}
+
+
 def produce_plan(db: Session, project: Project, episode: Episode, shots: list[Shot], steps: list[str],
                  quality: str | None = None, lang: str | None = None, link_scenes: str = "never",
-                 music_per_scene: bool | None = None) -> tuple[float, list[dict]]:
+                 music_per_scene: bool | None = None, draft: bool = False) -> tuple[float, list[dict]]:
     """Cost of Produce all, step by step (only what is still missing). Returns (total, items for the cost dialog).
     link_scenes "auto": a scene that picks up straight from the one before will start from its last frame (made in the
     run, see workers/handlers_room.produce), so that first shot's keyframe is counted with its video, not twice.
-    music_per_scene: one piece of music per scene (None: music_per_scene_default)."""
+    music_per_scene: one piece of music per scene (None: music_per_scene_default).
+    draft ("Quick draft first"): 480p videos of the shots with no clip (video_specs draft), no extensions, the voices
+    without their mouth sync, no QC on the drafts, and a draft render."""
     lang = lang or project.primary_language
     est = Estimator(db)
     items: list[dict] = []
     planned = links.planned_links(db, shots, link_scenes)
+    if draft:
+        steps = [s for s in steps if s != "extend"]
     # (only when this run also makes the videos: keyframes alone, for a storyboard, are all made)
     waiting = {s.id for s in shots if "videos" in steps and links.waits_for_clip(db, s, planned)}
 
-    def add(step: str, n: int, usd: float) -> None:
+    def add(step: str, n: int, usd: float, on: str = "") -> None:
         if n:
-            items.append({"label": f"{PRODUCE_LABELS[step]} · {n}", "usd": round(usd, 4)})
+            name = DRAFT_LABELS.get(step, PRODUCE_LABELS[step]) if draft else PRODUCE_LABELS[step]
+            items.append({"label": f"{name}{f' on {on}' if on else ''} · {n}", "usd": round(usd, 4)})
 
     ks: list[dict] = []
     vs: list[dict] = []
@@ -604,11 +665,13 @@ def produce_plan(db: Session, project: Project, episode: Episode, shots: list[Sh
         ks = keyframe_specs(db, project, [s for s in shots if s.id not in waiting], only_missing=True)
         add("keyframes", len(ks), sum(s["estimate"] for s in ks))
     if "videos" in steps:
-        vs = video_specs(db, project, shots, quality, only_missing=True)
+        vs = video_specs(db, project, shots, quality, only_missing=True, draft=draft)
         if "keyframes" in steps:  # the missing keyframe is already counted above
             no_kf = {s.id for s in shots if not current(db, s.id, "keyframe") and s.id not in waiting}
             vs = [{**s, "estimate": max(0.0, s["estimate"] - (est.image(1) if s["shot_id"] in no_kf else 0))} for s in vs]
-        add("videos", len(vs), sum(s["estimate"] for s in vs))
+        # a draft names its engine (picked for 480p, not the team's chain): no spending on another provider unseen
+        on = ", ".join(dict.fromkeys(str(v["payload"].get("engine_label") or "") for v in vs)) if draft else ""
+        add("videos", len(vs), sum(s["estimate"] for s in vs), on)
     if "extend" in steps:
         n, usd = 0, 0.0
         for s in shots:
@@ -621,15 +684,20 @@ def produce_plan(db: Session, project: Project, episode: Episode, shots: list[Sh
         need = [s for s in shots if Estimator.needs_lipsync(s, project, lang) and not has_fresh(db, s.id, "lipsync", lang)]
         narr = [s for s in shots if Estimator.voice_only(s, project, lang) and s not in need
                 and not current(db, s.id, "narration" if (s.narration or {}).get(lang) else "voice", lang)]
-        cost = sum(est.lipsync(s) + est.voice(s, lang) for s in need) + sum(est.voice(s, lang) for s in narr)
-        add("voices", len(need) + len(narr), cost)
+        if draft:  # the voices only (kept for the final film); the mouth sync waits for the finished clips
+            voiced = [s for s in need if not current(db, s.id, "voice", lang)]
+            add("voices", len(voiced) + len(narr), sum(est.voice(s, lang) for s in voiced + narr))
+            need = []
+        else:
+            cost = sum(est.lipsync(s) + est.voice(s, lang) for s in need) + sum(est.voice(s, lang) for s in narr)
+            add("voices", len(need) + len(narr), cost)
     if "sound" in steps and (snd := sound_step(db, project, episode, shots)):
         add("sound", snd[1], snd[0]["estimate"])
     if "music" in steps and (mus := music_step(db, project, episode, music_per_scene)):
         add("music", mus[1], mus[0]["estimate"])
     if "export" in steps:
         add("export", 1, 0.0)
-    items += checks_allowance(db, est, {s.id: s for s in shots}, ks, vs, need)
+    items += checks_allowance(db, est, {s.id: s for s in shots}, ks, [] if draft else vs, need)  # (drafts get no QC)
     return round(sum(i["usd"] for i in items), 2), items
 
 

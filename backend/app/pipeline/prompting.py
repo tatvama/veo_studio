@@ -22,6 +22,7 @@ from ..core import lock as lock_core
 from ..models import Character, CharacterAsset, CharacterVersion, Episode, Location, LocationAsset, Project, Prop, Shot, Style
 from ..storage import get_storage
 from . import scene_look
+from . import shot_facts
 
 # "source" = a photo the user uploaded. When approved it is the truth about the character's look, so it comes first.
 CHAR_REF_ORDER = ["source", "front", "three_quarter", "full_body", "profile", "back", "outfit", "expression"]
@@ -31,9 +32,7 @@ LOC_REF_ORDER = ["wide", "medium", "source", "detail"]
 MAX_WORDS_PER_CLIP = {4: 10, 6: 16, 8: 22}  # a line longer than this is rushed or cut off by the engine
 
 
-def effective_quality(shot: Shot, project: Project) -> str:
-    q = shot.quality_mode or project.quality_mode or "saver"
-    return q if q in catalog.QUALITY_MODES else "saver"
+effective_quality = shot_facts.effective_quality  # (it lives there: core/recovery reads it without this module)
 
 
 def shot_lines(shot: Shot, lang: str) -> list[dict]:

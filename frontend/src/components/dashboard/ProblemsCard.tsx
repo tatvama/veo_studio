@@ -6,6 +6,7 @@ import { useJobs } from "../../lib/queries";
 import { useUI } from "../../lib/store";
 import type { Episode } from "../../lib/types";
 import type { EpisodeDashboard } from "../../lib/v3";
+import { FixList, useFixes } from "../../pages/project/FixList";
 import { Button, Panel } from "../ui";
 import { isQcFailedShot } from "./shotState";
 
@@ -23,29 +24,41 @@ function Row({ icon, tone, text, action }: { icon: ReactNode; tone: "bad" | "war
 }
 
 /**
- * What needs you, in one list: shots that failed the quality check, takes out of date because their shot changed,
- * spend waiting for a producer, and jobs that failed today. "No problems" when there are none.
+ * What needs you, in one list: what the last run couldn't make and the shots' failed steps (each with its one-click fix:
+ * retry, try another engine, make the voice, open the shot, or carry on), shots that failed the quality check, takes
+ * out of date because their shot changed, spend waiting for a producer, and jobs that failed today. "No problems" when
+ * there are none.
  */
-export function ProblemsCard({ d, episode, pid, canProduce, onImpact, index, className }: {
+export function ProblemsCard({ d, episode, pid, canProduce, onImpact, onMake, index, className }: {
   d: EpisodeDashboard | undefined; episode: Episode | undefined; pid: number; canProduce: boolean;
   /** Shows the out-of-date takes (the change-impact panel). */
-  onImpact: () => void; index?: number; className?: string;
+  onImpact: () => void;
+  /** Opens Make it for me (a run that stopped at the budget carries on from there). */
+  onMake?: () => void; index?: number; className?: string;
 }) {
   const t = useT();
   const nav = useNavigate();
   const setSelectedShot = useUI((s) => s.setSelectedShot);
   const setTrayOpen = useUI((s) => s.setTrayOpen);
+  const fixes = useFixes();
   const { data: recent } = useJobs(pid, "");
   const failedJobs = (recent ?? []).filter((j) => j.status === "failed" && Date.now() - new Date(j.finished_at || j.created_at).getTime() < RECENT_MS).length;
   const qc = (episode?.shots ?? []).filter((s) => s.include && s.status !== "approved" && isQcFailedShot(s));
   const stale = d?.footage.stale_takes ?? 0;
   const approvals = canProduce ? d?.queue.pending_approvals ?? 0 : 0;
-  const none = !qc.length && !stale && !approvals && !failedJobs;
+  const none = !fixes.length && !qc.length && !stale && !approvals && !failedJobs;
   return (
     <Panel index={index} className={className} tone={none ? "ok" : "warn"} eyebrow={t("Problems")} icon={none ? <CheckCircle2 /> : <TriangleAlert />}>
       {none ? (
         <p className="flex items-center gap-2 text-sm text-mute"><CheckCircle2 className="size-4 text-ok" />{t("No problems. Everything is on track.")}</p>
       ) : (
+        <>
+        {fixes.length > 0 && (
+          <div className={(qc.length || stale || approvals || failedJobs) ? "mb-3 border-b border-line pb-3" : undefined}>
+            <p className="mb-2 text-xs text-mute">{fixes.length === 1 ? t("1 thing didn't get made. Fix it in one click:") : t("{n} things didn't get made. Fix each in one click:", { n: fixes.length })}</p>
+            <FixList items={fixes} limit={4} onContinue={onMake} />
+          </div>
+        )}
         <ul className="divide-y divide-line">
           {qc.length > 0 && (
             <Row icon={<XCircle className="size-4" />} tone="bad"
@@ -68,6 +81,7 @@ export function ProblemsCard({ d, episode, pid, canProduce, onImpact, index, cla
               action={<Button size="sm" onClick={() => setTrayOpen(true)}>{t("See why")}</Button>} />
           )}
         </ul>
+        </>
       )}
     </Panel>
   );

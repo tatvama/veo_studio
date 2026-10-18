@@ -221,11 +221,12 @@ def extend_shots(open_db: Callable[[], Session], run: Run, project_id: int, shot
 
 def make_videos_in_order(open_db: Callable[[], Session], run: Run, project_id: int, shot_ids: list[int],
                          quality: str | None = None, label: str = "Videos", fix_links: bool = False,
-                         extend: bool = False) -> dict[str, Any]:
+                         extend: bool = False, draft: bool = False) -> dict[str, Any]:
     """Make the videos of these shots in link order (`run(specs, label)` queues child jobs and waits for them, and
     for their QC and retakes, and returns their statuses). A linked shot whose keyframe was not made from the source's
     finished clip gets a new keyframe first. `extend`: each wave's shots are brought up to their extend_to length
     before the next wave starts, so a shot that continues one starts from the end of its whole (extended) clip.
+    `draft`: 480p previews instead (generation.video_specs draft), never extended.
     Returns {"waves": n, "videos": n succeeded, "extensions": n, "keyframes": n, "warnings": [...]}."""
     with open_db() as db:
         shots = [s for s in (db.get(Shot, i) for i in shot_ids) if s is not None]
@@ -258,11 +259,11 @@ def make_videos_in_order(open_db: Callable[[], Session], run: Run, project_id: i
         with open_db() as db:
             project = db.get(Project, project_id)
             shots = [db.get(Shot, sid) for sid in wave]
-            v_specs = generation.video_specs(db, project, shots, quality)
+            v_specs = generation.video_specs(db, project, shots, quality, draft=draft)
             db.commit()
         if v_specs:
             made_v += _succeeded(run(v_specs, step), len(v_specs))
-        if extend:
+        if extend and not draft:
             made_x += extend_shots(open_db, run, project_id, wave, f"{step}: extensions")
     return {"waves": len(order), "videos": made_v, "extensions": made_x, "keyframes": made_k, "warnings": warnings}
 

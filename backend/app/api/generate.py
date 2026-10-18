@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from .. import catalog
 from ..core import autopilot as autopilot_def
-from ..core import budget, collab, generation, jobs, recovery, sheet_engine
+from ..core import budget, collab, dependencies, generation, jobs, recovery, sheet_engine
 from ..db import get_db
 from ..models import Character, Episode, Location, Project, Shot, Take, User, VoiceProfile
 from ..pipeline.prompting import dialogue_warnings
@@ -43,6 +43,7 @@ class BatchIn(BaseModel):
     steps: list[str] | None = None  # produce: which of generation.PRODUCE_STEPS to run (default all)
     review_looks: bool = False  # produce: stop after new cast looks & voices so they can be checked
     link_scenes: Literal["auto", "never"] = "never"  # produce: a scene that picks up straight from the last starts on its last frame
+    draft: bool = False  # produce: "Quick draft first": 480p previews on the cheapest engine that makes them, a draft render
     pause_after: list[str] | None = None  # autopilot: milestones to stop at for approval
     resume: bool = False  # autopilot: continue the paused run (same target, the stops still ahead)
 
@@ -124,18 +125,24 @@ def _specs(db: Session, project: Project, episode: Episode, body: BatchIn) -> li
             raise HTTPException(400, "bad quality")
         if not shots:
             raise HTTPException(400, "The shot list is empty: add or import shots first")
+        if body.draft and "videos" in steps:
+            todo = [s for s in shots if generation.needs_draft(db, s)]
+            if todo and generation.draft_engine(db, project, todo[0]) is None:
+                raise HTTPException(400, "No video engine makes 480p drafts: switch one on in Model Hub (Seedance does), "
+                                         "or turn off “Quick draft first” to make the final film")
         per_scene = (generation.music_per_scene_default(db, episode) if body.music_per_scene is None
                      else body.music_per_scene)  # decided here, so the run makes what the estimate priced
         total, items = generation.produce_plan(db, project, episode, shots, steps, body.quality, lang, body.link_scenes,
-                                               music_per_scene=per_scene)
+                                               music_per_scene=per_scene, draft=body.draft)
         if not items:
             return []
+        what = "Quick draft" if body.draft else "Produce all"
         return [jobs.spec("produce", payload={"steps": steps, "shot_ids": body.shot_ids, "quality": body.quality,
                                               "language": body.language, "items": items,
                                               "review_looks": body.review_looks, "link_scenes": body.link_scenes,
-                                              "music_per_scene": per_scene},
+                                              "music_per_scene": per_scene, "draft": body.draft},
                           project_id=project.id, episode_id=episode.id, estimate=total,
-                          label=f"Produce all E{episode.number:02} ({len(shots)} shots)")]
+                          label=f"{what} E{episode.number:02} ({len(shots)} shots)")]
     raise HTTPException(400, f"unknown action {a}")
 
 
@@ -190,18 +197,63 @@ def generate(eid: int, body: BatchIn, user: User = Depends(require("creator")), 
     return jobs.submit(db, user, p, specs)
 
 
+# ── recipes: saved "Make it for me" choices ──────────────────────────────────
+
+class RecipeIn(BaseModel):
+    name: str
+    steps: list[str]
+    quality: str | None = None
+    draft: bool = False
+    review_looks: bool = False
+    link_scenes: Literal["auto", "never"] = "auto"
+    music_per_scene: bool = True
+    about: str = ""
+
+
+@router.get("/recipes")
+def list_recipes(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """The built-in recipes and the team's own (core/recipes.py). Applying one fills Make it for me; its price is still
+    shown before anything starts."""
+    from ..core import recipes
+    return {"recipes": recipes.all_recipes(db)}
+
+
+@router.post("/recipes")
+def save_recipe(body: RecipeIn, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
+    """Save the dialog's choices as a team recipe (one with the same name is replaced)."""
+    from ..core import recipes
+    try:
+        out = recipes.save(db, body.model_dump(), by=user.name or user.email)
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    db.commit()
+    return {**out, "builtin": False}
+
+
+@router.delete("/recipes/{rid}")
+def delete_recipe(rid: str, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
+    from ..core import recipes
+    if not recipes.delete(db, rid):
+        raise HTTPException(404, "No team recipe with that id (the built-in ones can't be deleted)")
+    db.commit()
+    return {"ok": True}
+
+
 # ── a price for one paid action ──────────────────────────────────────────────
 
-QuoteAction = Literal["extend", "endframe", "edit", "enhance", "sheet", "expressions", "lighting", "outfit", "variations",
-                      "voice_design", "voice_preview", "location_images", "sfx", "table_read"]
+QuoteAction = Literal["extend", "endframe", "recover", "draft", "edit", "enhance", "sheet", "expressions", "lighting",
+                      "outfit", "variations", "voice_design", "voice_preview", "location_images", "sfx", "table_read",
+                      "redo_shots"]
 
 
 class QuoteIn(BaseModel):
     """One single-item paid action, priced before it runs (batches use /episodes/{eid}/estimate). Each action names the
     item it acts on and takes the options of its own endpoint:
-    shot (`shot_id`): extend · endframe; take (`take_id`): edit · enhance; character (`character_id`): sheet · expressions ·
-    lighting · outfit · variations · voice_design; `voice_id`: voice_preview; `location_id`: location_images;
-    episode (`episode_id`): sfx · table_read."""
+    shot (`shot_id`): extend · endframe · recover (another engine, `engine`) · draft (480p, `engine`); take (`take_id`):
+    edit · enhance; character (`character_id`): sheet · expressions · lighting · outfit · variations · voice_design, and
+    with `project_id` redo_shots (its shots that are out of date since its look changed, redone per episode by
+    POST /api/episodes/{eid}/impact/regenerate); `voice_id`: voice_preview; `location_id`: location_images; episode
+    (`episode_id`): sfx · table_read."""
     action: QuoteAction
     shot_id: int | None = None
     take_id: int | None = None
@@ -242,11 +294,17 @@ def _char_engine(db: Session, c: Character, pick: str | None) -> str | None:
 
 def _quote_specs(db: Session, body: QuoteIn) -> tuple[Project | None, list[dict]]:
     a = body.action
-    if a in ("extend", "endframe"):
+    if a in ("extend", "endframe", "recover", "draft"):
         s = get_or_404(db, Shot, _need(body.shot_id, "shot_id"))
         p = db.get(Project, db.get(Episode, s.episode_id).project_id)
         if a == "extend":
             return p, [generation.extend_spec(db, p, s, body.prompt)]
+        if a in ("recover", "draft"):
+            try:
+                make = generation.recover_spec if a == "recover" else generation.draft_spec
+                return p, [make(db, p, s, body.engine or None)]
+            except ValueError as e:  # no other engine can make (or draft) this shot
+                raise HTTPException(400, str(e)) from e
         return p, [generation.endframe_spec(db, p, s, body.hero, body.engine or None)]
     if a in ("edit", "enhance"):
         t = get_or_404(db, Take, _need(body.take_id, "take_id"))
@@ -270,6 +328,11 @@ def _quote_specs(db: Session, body: QuoteIn) -> tuple[Project | None, list[dict]
             raise HTTPException(400, "unknown language")
         return p, [generation.table_read_spec(db, p, e, lang)]
     c = get_or_404(db, Character, _need(body.character_id, "character_id"))
+    if a == "redo_shots":  # the same jobs as the character's change-impact report, every episode of the project
+        p = get_or_404(db, Project, _need(body.project_id, "project_id"))
+        imp = dependencies.character_impact(db, p, c)
+        return p, [x for e in imp["episodes"]
+                   for x in dependencies.regenerate_specs(db, p, db.get(Episode, e["episode_id"]), e["shot_ids"])]
     if a == "voice_design":
         return p, [generation.voice_design_spec(db, body.project_id, c, body.language or "en", body.provider, body.description)]
     if a == "variations":

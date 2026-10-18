@@ -27,6 +27,8 @@ export interface Shot {
   active_jobs: string[]; comments: number; takes?: Take[];
   /** A safety filter stopped the shot's last video and nothing replaced it yet (offer another engine). */
   blocked?: ShotBlocked | null;
+  /** The shot's last video failed, for any reason, and nothing replaced it yet (offer a retry or another engine). */
+  failed?: ShotFailure | null;
   engine: string; overlays: { text: string; start: number; end: number; kind: "title" | "lower_third"; anim?: string }[];
   /** transitions & effects (see lib/fx.ts) */
   fx?: import("./fx").ShotFx;
@@ -44,6 +46,8 @@ export interface Shot {
 export interface FramesLink { from_shot_id: number; from: string; status: "ok" | "waiting" | "pending" | "broken"; end_take_id: number | null }
 export interface ShotRef { label: string; url: string; path?: string }
 export interface ShotBlocked { job_id: number; error: string; engines: string[]; engine_labels: string[]; at: string | null }
+/** The shot's last video failed (blocked by a safety filter or not) and nothing replaced it: `engines` failed (or blocked). */
+export interface ShotFailure extends ShotBlocked { blocked: boolean }
 /** Another engine for a shot, priced for this shot (GET /api/shots/{id}/alternatives). */
 export interface ShotOption {
   id: string; display_name: string; provider: string; routes: number; provider_mode: "live" | "mock" | "missing";
@@ -53,6 +57,8 @@ export interface ShotOption {
 }
 export interface ShotAlternatives {
   blocked: ShotBlocked | null; options: ShotOption[]; cast: { ready: string[]; missing: string[] }; safety_fallback: boolean;
+  /** The last video failure the "recover" options leave out the engines of (blocked or not). */
+  failed?: ShotFailure | null;
 }
 
 export interface Scene { id: number; episode_id: number; order: number; title: string; location_id: number | null; time_of_day: string; summary: string }
@@ -79,6 +85,8 @@ export interface Board {
   version?: string;
   /** Produce all stopped after making new cast looks and voices, so they can be checked before every shot uses them */
   produce_paused?: { after: string; at: string } | null;
+  /** What the last run (Make it for me, Autopilot) couldn't make and still stands, with its fix (pages/project/problems.ts). */
+  run_problems?: import("../pages/project/problems").RunProblem[];
   limits: { durations: number[]; extend_step_s: number; max_extend_s: number };
 }
 /** A parsed script before it is saved: speakers and characters are still names from the file. */

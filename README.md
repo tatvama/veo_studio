@@ -41,13 +41,16 @@ through fal.ai, OpenRouter and BytePlus. The **Director** agent (Claude or Gemin
 
 ## Features
 
-A project goes through an **Overview** and **five steps** (details in the [user guide](docs/USER_GUIDE.md)):
+A project goes through an **Overview** and **five steps** (details in the [user guide](docs/USER_GUIDE.md)). The usual
+path: type an idea or paste a script in the **Home box** → **Check story** (the scenes and speakers we read) → **Cast**
+(a picture and a voice per character) → the shots in **Canvas · Grid · Text** → **Make it for me** (everything still
+missing, its price first) → the **Next bar** at the bottom always says what is next → **Export**.
 
 | Step | What you do |
 |---|---|
 | **1 Story** | Brief (AI fills audience, tone, CTA; trend scout), 6 scored hooks, script writing with the **writers' room** (critic loop, table read in the cast voices, continuity check, native-speaker localization), versions with diff and restore, `@mentions`, scene cards |
 | **2 Cast** | Characters and places from the script, reference sheets, **Character Lock** (face, body, voice, costume, gestures), costumes with turnarounds, props, wardrobe timeline, continuity bible, identity (LoRA) training, consent records |
-| **3 Shots** | Storyboard · List · Studio views; keyframes then videos, engine picker per shot, **shootouts** between 2–4 engines, Film Map shot links, scene continuity (anchor shot first, keyframe QC with automatic retake), Enhance |
+| **3 Shots** | **Canvas** (scenes as rows, each shot a card with five step dots: picture, video, voice, mouth sync, sound; drag faces, places and props onto shots; link shots with Continue / Exact match / Extend; an inspector with the shot's takes; Tidy and undo) · **Grid** · **Text** views; engine picker per shot, **shootouts** between 2–4 engines, scene continuity (anchor shot first, keyframe QC with automatic retake), Enhance. **Make it for me** makes what is missing, with **Quick draft first** (480p previews and a draft cut, then the final film) and one-click **recipes**; **problems** a run leaves come with a one-click fix (Retry, **Try another engine**, make the voice, open the shot) |
 | **4 Edit** | Professional timeline: J/K/L, roll trims, speed, keyframes, waveforms, Auto SFX, titles, caption preview, music ducking. **Finishing room**: check the cut out, versions with rollback, 4K AI upscale, review notes on the timeline, pop-out monitors, and on the desktop app local 4K renders |
 | **5 Deliver** | Render for Shorts / Reels / YouTube with karaoke captions and brand end cards, dubbing, cut-downs, marketing pack, YouTube publishing, client review links, Ads & Reels campaigns, **Poster Studio** |
 
@@ -351,8 +354,8 @@ Team, personal and project budgets are set in the app (**Settings → Budget**).
 | Vite 8, TypeScript 7, @vitejs/plugin-react | Build and type checking |
 | Tailwind CSS 4, clsx, tailwind-merge | Styling |
 | TanStack Query 5, Zustand 5 | Server state and client state |
-| @xyflow/react | Film Map (shot-to-shot link graph) |
-| dockview | Dockable panels in the Studio view |
+| @xyflow/react | The Shots canvas (scene rows, shot cards, links between shots) |
+| dockview | Dockable panels in the Advanced layout |
 | Konva, react-konva | Poster Studio canvas |
 | @dnd-kit | Drag and drop (storyboard, timeline, lists) |
 | motion | Animations |
@@ -453,6 +456,9 @@ while offline. AI work still runs on the server, with the same cost check and ap
   clean feed; five workspaces (Edit, Colour, Audio, Review, Story) on `Ctrl+1…5`; all windows follow one playhead.
 - **4K and 2K:** presets YouTube 4K (HEVC 10-bit), Shorts / Reels 4K, YouTube 2K, Shorts / Reels 2K, ProRes 422 HQ
   master, broadcast 1080p25, review 1080p; uploads go to the Render Center as v1, v2 …
+- **The same sound as the web export:** the render plan carries each clip's levels (the clip's own sound and every
+  voice brought to one loudness before the mix) and the voices alone as the track the music ducks under, so a desktop
+  render sounds like the server's.
 - **AI upscale of the 1080p clips to 4K or 2K:** free on the PC's own graphics card with Real-ESRGAN (installed on
   demand; about 2 minutes per 6-second shot on a GTX 1660 Ti), or in the cloud with fal.ai Topaz (priced before it runs).
   Either way the result is the shot's upscale take, used by every render.

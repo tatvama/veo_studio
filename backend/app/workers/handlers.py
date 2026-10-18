@@ -475,6 +475,12 @@ def make_keyframe(ctx: JobContext, shot_id: int, own: dict, seen: set[int] | Non
 
 # ── video (any engine) ───────────────────────────────────────────────────────
 
+def clip_aspect(project: Project) -> str:
+    """The shape of a project's clips: Veo makes 16:9 or 9:16 only, so a square film gets wide clips and the export
+    crops the square around the face. Every job that makes or edits a clip uses it (video, omni_edit)."""
+    return project.aspect if project.aspect in ("16:9", "9:16") else "16:9"
+
+
 @handler("video")
 def video(ctx: JobContext) -> dict:
     st = get_storage()
@@ -576,8 +582,7 @@ def video(ctx: JobContext) -> dict:
             modes_ok = ["i2v", "ref2v"] if refs else ["i2v"]  # keyframe first: the frame you approved is the first frame
         else:
             modes_ok = ["i2v", "t2v"]
-        # Veo makes 16:9 or 9:16 only: a square film gets wide clips, and the export crops the square around the face
-        aspect = project.aspect if project.aspect in ("16:9", "9:16") else "16:9"
+        aspect = clip_aspect(project)
         duration = shot.duration_s
         src_info = _veo_source(extend_src) if extend_src is not None else None
         db.commit()
@@ -1536,7 +1541,7 @@ def omni_edit(ctx: JobContext) -> dict:
         shot = db.get(Shot, take.shot_id)
         project = _project_of(db, shot)
         path = st.abs(take.path)
-        aspect = project.aspect if project.aspect in ("16:9", "9:16") else "9:16"
+        aspect = clip_aspect(project)  # (a square film's clips are wide, like the video job makes them)
         # an edited lip-synced (or voice-locked) clip stays that kind and language, so it replaces the one it came from
         out_kind = take.kind if take.kind in ("lipsync", "voicelock") else "video"
         out_lang = take.language if out_kind != "video" else None
@@ -1561,6 +1566,8 @@ def omni_edit(ctx: JobContext) -> dict:
 def _render(ctx: JobContext, kind: str) -> dict:
     p = ctx.payload
     lang, preset, options = p.get("language", "en"), p.get("preset", "shorts" if kind == "final" else "draft"), p.get("options") or {}
+    if kind == "final" and options.get("draft"):
+        kind = "draft"  # the cut of a quick draft run (its 480p drafts): never counted as the final film
     with SessionLocal() as db:
         ex = db.get(Export, p["export_id"]) if p.get("export_id") else None
         if not ex:
@@ -1603,8 +1610,8 @@ def _render(ctx: JobContext, kind: str) -> dict:
         project = db.get(Project, ctx.project_id)
         info = {"project": project.title, "episode": episode.number, "language": lang, "preset": preset,
                 "duration_s": ex.duration_s, "video_path": ex.path}
-    # never publish a cut with placeholders in it (missing shots or clips made without an API key)
-    unfinished = [w for w in out["warnings"] if "placeholder" in w or "no video yet" in w]
+    # never publish a cut with placeholders in it (missing shots, clips made without an API key, 480p drafts)
+    unfinished = [w for w in out["warnings"] if "placeholder" in w or "no video yet" in w or "480p draft" in w]
     if kind == "final" and options.get("publish") and webhook and unfinished:
         print(f"[export] not published: {len(unfinished)} unfinished shot(s)")
         out["warnings"] = [*out["warnings"], "Not published: some shots are placeholders or still images — finish them first"]

@@ -2,7 +2,8 @@
 
 GET   /api/episodes/{eid}/canvas  per shot, which of the five steps apply (picture, video, voice, mouth sync, sound) and
                                   the last failed run of a step that nothing has replaced since (its reason, to retry);
-                                  each scene's own piece of music; whether sound effects and lip-sync can really be made.
+                                  each scene's own piece of music; whether sound effects and lip-sync can really be made;
+                                  the last run's problems that still stand (run_problems).
 PATCH /api/scenes/{scid}/notes    a scene's mood, look, sound and music notes (the shot list's scene fields) without
                                   saving the whole shot list.
 """
@@ -14,7 +15,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..core import generation
+from ..core import generation, problems
 from ..core.budget import Estimator
 from ..db import get_db
 from ..events import emit
@@ -35,7 +36,12 @@ def _iso(at: datetime | None) -> str | None:
 
 
 def _problem(job_id: int, error: str, at: datetime | None) -> dict:
-    return {"job_id": job_id, "error": (error or "").strip()[:300] or "It stopped with an error", "at": _iso(at)}
+    """A failed step: the job's error and, in plain words, why and what to do next (core/problems.explain); `blocked`
+    when a safety filter stopped it (then another engine is the fix)."""
+    err = (error or "").strip()
+    reason, nxt = problems.explain(err)
+    return {"job_id": job_id, "error": err[:300] or "It stopped with an error", "at": _iso(at), "reason": reason,
+            "next": nxt, "blocked": err.lower().startswith(problems.BLOCKED.lower())}
 
 
 @router.get("/episodes/{eid}/canvas")
@@ -95,7 +101,10 @@ def canvas(eid: int, lang: str | None = None, user: User = Depends(current_user)
                               "selected": bool(a.selected)}
 
     return {"episode_id": e.id, "language": lang, "shots": out, "scene_music": music, "sound_engine": sound_engine,
-            "lipsync_engine": generation.lipsync_ready(db)}
+            "lipsync_engine": generation.lipsync_ready(db),
+            # what the last run (Make it for me, Autopilot, Scenes in order) couldn't make and still stands, with the
+            # one-click fix of each (core/problems.py): the Next bar's problem list, the Overview and the shot nodes
+            "run_problems": problems.live(db, e)}
 
 
 class SceneNotesIn(BaseModel):

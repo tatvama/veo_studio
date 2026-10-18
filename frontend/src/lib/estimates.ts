@@ -14,16 +14,33 @@ export const estimateBatch = (eid: number, body: Record<string, unknown>, silent
   api.post<Estimate>(`/api/episodes/${eid}/estimate`, body, { silent });
 
 export type QuoteAction =
-  | "extend" | "endframe" | "edit" | "enhance" | "sheet" | "expressions" | "lighting" | "outfit" | "variations"
-  | "voice_design" | "voice_preview" | "location_images" | "sfx" | "table_read";
+  | "extend" | "endframe" | "recover" | "draft" | "edit" | "enhance" | "sheet" | "expressions" | "lighting" | "outfit" | "variations"
+  | "voice_design" | "voice_preview" | "location_images" | "sfx" | "table_read"
+  /** a character's shots that are out of date since its look changed (`character_id` + `project_id`) */
+  | "redo_shots";
 
 /** One single-item action, named by the item it acts on (`shot_id`, `take_id`, `character_id`, …) plus its options. */
 export const quote = (body: { action: QuoteAction } & Record<string, unknown>, silent = false) =>
   api.post<Estimate>("/api/estimate", body, { silent });
 
+/**
+ * A single-item price to show on a button before it is pressed ("Make pictures · $0.20"). Quiet, like useBatchEstimate:
+ * no price when it can't be priced. `null` body = don't ask (no rights, nothing selected).
+ */
+export function useQuote(body: ({ action: QuoteAction } & Record<string, unknown>) | null, deps: unknown[] = []) {
+  return useQuery({
+    queryKey: ["quote", body, ...deps],
+    queryFn: () => quote(body!, true),
+    enabled: !!body,
+    staleTime: 30_000,
+    retry: false,
+  });
+}
+
 /** Backend words in price lines and job names, and the plain words the UI uses for them. Longest first. */
 const PLAIN: [string, string][] = [
   ["Cast looks & voices", "Cast pictures & voices"], ["Voices & lip-sync", "Voices & mouth sync"], ["Final export", "Final film"],
+  ["Draft videos 480p", "Quick drafts (480p videos)"],
   ["Extensions", "Longer clips"], ["Keyframes", "Pictures"], ["Keyframe", "Picture"], ["Lip-sync", "Mouth sync"], ["lip-sync", "mouth sync"],
 ];
 

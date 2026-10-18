@@ -147,18 +147,26 @@ const TRACK_TONE = {
 } as const;
 export type TrackTone = keyof typeof TRACK_TONE;
 
-/** One row: a sticky label column (a lit tick in the track's colour, icon, mono name, item count) and the lane with its faint time grid. */
-export function Track({ icon, label, tone = "neutral", count, height = TRACK_H, stripe, children }: {
-  icon: ReactNode; label: string; tone?: TrackTone; count?: number | string; height?: number; stripe?: boolean; children: ReactNode;
+/**
+ * One row: a sticky label column (a lit tick in the track's colour, icon, mono name, item count) and the lane with its faint
+ * time grid. `action` puts a button on a second line of the label column ("Add music · $0.09"); give the row the height for it.
+ */
+export function Track({ icon, label, tone = "neutral", count, height = TRACK_H, stripe, action, children }: {
+  icon: ReactNode; label: string; tone?: TrackTone; count?: number | string; height?: number; stripe?: boolean; action?: ReactNode; children: ReactNode;
 }) {
   const tt = TRACK_TONE[tone];
+  const head = (
+    <>
+      <span className={clsx("grid size-5 shrink-0 place-items-center rounded-md border [&>svg]:size-3", tt.chip)}>{icon}</span>
+      <span className="mono min-w-0 flex-1 truncate text-2xs font-medium uppercase tracking-wider text-mute">{label}</span>
+      {count !== undefined && count !== "" && <span className="mono shrink-0 text-2xs tabular-nums text-dim">{count}</span>}
+    </>
+  );
   return (
     <div className="flex border-b border-line/60" style={{ height }}>
-      <div className="sticky left-0 z-30 flex shrink-0 items-center gap-2 border-r border-line bg-panel pl-3 pr-2" style={{ width: LABEL_W }}>
+      <div className={clsx("sticky left-0 z-30 flex shrink-0 border-r border-line bg-panel pl-3 pr-2", action ? "flex-col justify-center gap-1" : "items-center gap-2")} style={{ width: LABEL_W }}>
         <span aria-hidden className={clsx("absolute inset-y-1.5 left-0 w-[2px] rounded-r", tt.bar)} />
-        <span className={clsx("grid size-5 shrink-0 place-items-center rounded-md border [&>svg]:size-3", tt.chip)}>{icon}</span>
-        <span className="mono min-w-0 flex-1 truncate text-2xs font-medium uppercase tracking-wider text-mute">{label}</span>
-        {count !== undefined && count !== "" && <span className="mono shrink-0 text-2xs tabular-nums text-dim">{count}</span>}
+        {action ? <><span className="flex min-w-0 items-center gap-2">{head}</span>{action}</> : head}
       </div>
       <div className={clsx("tl-lane relative flex-1", stripe && "bg-raised/35")}>{children}</div>
     </div>
