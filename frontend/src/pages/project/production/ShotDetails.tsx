@@ -76,7 +76,7 @@ export function Details({ shot, form, setForm, lang, lines, disabled, hasLines, 
                   </button>
                 );
               })}
-              {!cast?.length && <p className="text-2xs text-dim">{t("No characters in the bible yet.")}</p>}
+              {!cast?.length && <p className="text-2xs text-dim">{t("No characters in Cast yet.")}</p>}
             </div>
           </Field>
           {inShot.length > 0 && (
@@ -107,7 +107,7 @@ export function Details({ shot, form, setForm, lang, lines, disabled, hasLines, 
         defaultOpen={hasLines || !disabled}>
         <div className="space-y-2">
           {speakers.size > 1 && (
-            <p className="rounded-lg bg-warn/10 px-2.5 py-1.5 text-2xs leading-snug text-warn">{t("Tip: one speaker per shot lip-syncs best (use shot / reverse-shot)")}</p>
+            <p className="rounded-lg bg-warn/10 px-2.5 py-1.5 text-2xs leading-snug text-warn">{t("Tip: mouth sync works best with one speaker per shot (use shot / reverse-shot)")}</p>
           )}
           {lines.map((l, i) => (
             <div key={i} className="space-y-1.5 rounded-lg border border-line border-l-2 border-l-info/50 bg-panel p-2">
@@ -248,8 +248,8 @@ function SceneAnchorToggle({ shot, disabled }: { shot: Shot; disabled: boolean }
       <Toggle checked={a.is_anchor} disabled={disabled || busy || (a.is_anchor && !a.pinned)} onChange={(v) => void pin(v)}
         label={<span className="text-xs">{t("Scene look anchor")}</span>} />
       <p className="text-2xs text-dim">
-        {a.is_anchor ? t("The other keyframes of this scene copy this one's set, light and wardrobe.")
-          : t("This keyframe follows the look of {code}.", { code: a.code })}
+        {a.is_anchor ? t("The other pictures of this scene copy this one's set, light and wardrobe.")
+          : t("This picture follows the look of {code}.", { code: a.code })}
       </p>
     </div>
   );
@@ -383,7 +383,7 @@ function EngineCard({ shot, canEdit, hasLines, lipEngine, setLipEngine, onShooto
       <div className="space-y-2">
         <EnginePicker key={shot.id} shot={shot} canEdit={canEdit} embedded />
         {canEdit && hasLines && (
-          <EnginePicker key={`lip-${shot.id}`} shot={shot} purpose="lipsync" canEdit={canEdit} value={lipEngine} onChange={setLipEngine} label={t("Lip-sync engine")} embedded />
+          <EnginePicker key={`lip-${shot.id}`} shot={shot} purpose="lipsync" canEdit={canEdit} value={lipEngine} onChange={setLipEngine} label={t("Mouth sync engine")} embedded />
         )}
       </div>
     </Collapse>

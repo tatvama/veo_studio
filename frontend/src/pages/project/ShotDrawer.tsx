@@ -1,10 +1,10 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import {
-  AudioLines, ChevronLeft, ChevronRight, CircleCheck, Ellipsis, FileText, Film, Image as ImageIcon, Lock, MessageSquare, Mic, Plus, Save,
+  AudioLines, ChevronLeft, ChevronRight, CircleCheck, Ellipsis, FileText, Film, Image as ImageIcon, Lock, MessageSquare, Mic, Plus,
   SlidersHorizontal, Sparkles, Undo2, WandSparkles, X,
 } from "lucide-react";
-import { AnimatePresence, motion } from "motion/react";
+import { motion } from "motion/react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { EndFrameControls, FramePair } from "../../components/board/FramePair";
@@ -12,12 +12,15 @@ import { ShotRefs, UploadKeyframeButton } from "../../components/board/ShotMedia
 import { useGenerate } from "../../components/Generate";
 import { QcChecklist } from "../../components/hub/Qc";
 import ShootoutModal from "../../components/hub/ShootoutModal";
+import { SaveStatus } from "../../components/room/kit";
+import { useSaveShortcut } from "../../components/room/util";
 import { Badge, Button, Field, IconButton, Menu, Modal, ScrollStrip, Skeleton, Tag, Textarea } from "../../components/ui";
 import { api } from "../../lib/api";
-import { LANG_SHORT, QUALITY_INFO, usd } from "../../lib/format";
+import { estimateBatch, quote } from "../../lib/estimates";
+import { LANG_SHORT, QUALITY_INFO } from "../../lib/format";
 import { tr, useT } from "../../lib/i18n";
 import { useShot } from "../../lib/queries";
-import type { DialogueLine, Shot, SubmitResult, Take } from "../../lib/types";
+import type { DialogueLine, Estimate, Shot, SubmitResult, Take } from "../../lib/types";
 import { FxEditor } from "../../components/fx/FxEditor";
 import { useEditLock, useLockHolder } from "../../lib/collab";
 import { useProjectCtx } from "./context";
@@ -28,7 +31,7 @@ import { QualityMenu } from "./production/QualityMenu";
 import { Details } from "./production/ShotDetails";
 import { Recovery } from "./production/Recovery";
 import { Comments, PromptView } from "./production/ShotExtras";
-import { ratioOf } from "./production/shotMeta";
+import { ratioOf, shotStatusLabel } from "./production/shotMeta";
 import { Takes } from "./production/ShotTakes";
 import { KIND_LABELS, TakeInfo, TakeStrip } from "./production/ViewerPanel";
 
@@ -67,7 +70,7 @@ export default function ShotDrawer({ shotId, onClose, onPrev, onNext, position, 
   const t = useT();
   const { project, lang, canEdit, canReview } = useProjectCtx();
   const qc = useQueryClient();
-  const { submit } = useGenerate();
+  const { priced } = useGenerate();
   const { data: shot, isError, refetch } = useShot(shotId, lang);
   const [tab, setTab] = useState<Tab>("details");
   const [view, setView] = useState<View>("final");
@@ -80,10 +83,25 @@ export default function ShotDrawer({ shotId, onClose, onPrev, onNext, position, 
   const [lipEngine, setLipEngine] = useState("auto");
   const [text, setText] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
 
+  // Edits save themselves (a moment after you stop typing), so what you see is what Retake and Video use.
+  // `base` is the form as the server last had it: a server update replaces the form only while it holds no newer edits.
   const [formFor, setFormFor] = useState<number | null>(null);
-  useEffect(() => { if (shot) { setForm(pickForm(shot)); setFormFor(shot.id); } }, [shot?.id, shot && JSON.stringify(pickForm(shot))]);
+  const formRef = useRef(form);
+  formRef.current = form;
+  const base = useRef("");
+  const serverForm = shot ? JSON.stringify(pickForm(shot)) : "";
+  useEffect(() => {
+    if (!shot) return;
+    if (formFor !== shot.id || JSON.stringify(formRef.current) === base.current) {
+      setForm(pickForm(shot));
+      setFormFor(shot.id);
+      base.current = serverForm;
+    }
+  }, [shot?.id, serverForm]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     setView("final"); setPinned(null); setLipEngine("auto");
     scroller.current?.scrollTo({ top: 0 });
@@ -91,7 +109,7 @@ export default function ShotDrawer({ shotId, onClose, onPrev, onNext, position, 
 
   const refresh = () => { qc.invalidateQueries({ queryKey: ["shot", shotId] }); qc.invalidateQueries({ queryKey: ["episode"] }); };
   // (the form is seeded from the shot in an effect, so don't call it "unsaved" in the one render before that)
-  const dirty = !!shot && formFor === shot.id && JSON.stringify(pickForm(shot)) !== JSON.stringify(form);
+  const dirty = !!shot && formFor === shot.id && serverForm !== JSON.stringify(form);
   // team editing: hold this shot while you have unsaved changes; look-only while a teammate holds it (or the list)
   const othersLock = useLockHolder(`shot:${shotId}`, shot ? `board:${shot.episode_id}` : null);
   const myLock = useEditLock(canEdit ? `shot:${shotId}` : null, dirty);
@@ -102,19 +120,77 @@ export default function ShotDrawer({ shotId, onClose, onPrev, onNext, position, 
     setBusy(key);
     try { await fn(); } catch { /* api() showed the error */ } finally { setBusy(null); }
   };
-  const save = () => run("save", async () => { await api.patch(`/api/shots/${shotId}`, form); refresh(); toast.success(tr("Shot saved")); });
-  const undo = () => run("undo", async () => { await api.post(`/api/shots/${shotId}/undo`); refresh(); toast.success(tr("Undone")); });
-  const act = (path: string, what: string, body: Record<string, any> = {}) =>
-    run(path, () => submit(() => api.post<SubmitResult>(`/api/shots/${shotId}/${path}`, body), `${what} ${shot?.code ?? ""}`));
+
+  /** Saves the edits now (one save at a time). False when the save failed (api() showed why). */
+  const inFlight = useRef<Promise<boolean> | null>(null);
+  const saveNow = async (): Promise<boolean> => {
+    while (inFlight.current) await inFlight.current;
+    const body = formRef.current;
+    const json = JSON.stringify(body);
+    if (json === base.current) return true;
+    setSaving(true);
+    const p = api.patch(`/api/shots/${shotId}`, body).then(() => {
+      base.current = json;
+      setJustSaved(true);
+      qc.invalidateQueries({ queryKey: ["shot", shotId] });
+      qc.invalidateQueries({ queryKey: ["episode"] });
+      return true;
+    }, () => false);
+    inFlight.current = p;
+    try { return await p; } finally { inFlight.current = null; setSaving(false); }
+  };
+  useEffect(() => {
+    if (!dirty || !canChange) return;
+    const id = window.setTimeout(() => void saveNow(), 1200);
+    return () => window.clearTimeout(id);
+  }, [dirty, canChange, JSON.stringify(form)]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!justSaved) return;
+    const id = window.setTimeout(() => setJustSaved(false), 2000);
+    return () => window.clearTimeout(id);
+  }, [justSaved]);
+  useSaveShortcut(canChange && dirty, () => void saveNow());
+  // Moving to another shot (or closing) before the save timer fired: send the edits of the shot being left.
+  const leaving = useRef<{ sid: number; body: Partial<Shot> } | null>(null);
+  useEffect(() => { leaving.current = dirty && canChange && JSON.stringify(form) !== base.current ? { sid: shotId, body: form } : null; });
+  useEffect(() => () => {
+    const l = leaving.current;
+    if (!l) return;
+    void api.patch(`/api/shots/${l.sid}`, l.body).then(() => {
+      qc.invalidateQueries({ queryKey: ["shot", l.sid] });
+      qc.invalidateQueries({ queryKey: ["episode"] });
+    }, () => { /* api() showed the error */ });
+  }, [shotId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const undo = () => run("undo", async () => {
+    await api.post(`/api/shots/${shotId}/undo`);
+    base.current = "";  // take the server's copy back in
+    refresh();
+    toast.success(tr("Undone"));
+  });
+  /**
+   * A paid action on this shot: its unsaved edits are saved first (the prompt is built from the saved shot), then the
+   * price is shown before anything is spent (a free one just runs).
+   */
+  const act = (key: string, what: string, price: () => Promise<Estimate>, path: string, body: Record<string, any> = {}) =>
+    run(key, async () => {
+      if (dirty && !(await saveNow())) return;
+      return priced({ quote: price, run: () => api.post<SubmitResult>(path, body), what: `${what} ${shot?.code ?? ""}`.trim() });
+    });
+  const batch = (action: string, extra: Record<string, unknown> = {}) => () =>
+    estimateBatch(shot?.episode_id ?? 0, { action, shot_ids: [shotId], ...extra });
+  const makePicture = () => act("keyframe", t("Picture"), batch("keyframes"), `/api/shots/${shotId}/keyframe`);
+  const makeVideo = () => act("video", shot?.video ? t("Retake") : t("Video"), batch("videos", { quality: quality || undefined }),
+    `/api/shots/${shotId}/video`, { quality: quality || undefined });
+  const lipBody = () => ({ language: lang, model: lipEngine !== "auto" ? lipEngine : undefined });
   const approve = () => run("approve", async () => {
     const on = shot?.status !== "approved";
     await api.post(`/api/shots/${shotId}/approve`, { approved: on });
     refresh();
     toast.success(on ? tr("{code} approved", { code: shot?.code ?? "" }) : tr("{code} approval removed", { code: shot?.code ?? "" }));
   });
-  const lipBody = () => ({ language: lang, model: lipEngine !== "auto" ? lipEngine : undefined });
 
-  // shortcuts inside the drawer
+  // shortcuts inside the drawer: only A (approve, free). Nothing that spends money sits on a single key.
   useEffect(() => {
     if (embedded) return;
     const h = (e: KeyboardEvent) => {
@@ -122,29 +198,27 @@ export default function ShotDrawer({ shotId, onClose, onPrev, onNext, position, 
       if (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       if (document.querySelector("[role=dialog], .fixed.inset-0.z-50")) return; // a modal is open
-      const k = e.key.toLowerCase();
-      if (k === "a" && canReview) approve();
-      if (k === "k" && canEdit) act("keyframe", tr("Keyframe"));
-      if (k === "v" && canEdit) act("video", tr("Video"), { quality: quality || undefined });
+      if (e.key.toLowerCase() === "a" && canReview) approve();
     };
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
-  }, [shotId, quality, shot?.status, canEdit, canReview, embedded]);
+  }, [shotId, shot?.status, canReview, embedded]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const frame = (children: ReactNode) => embedded ? (
     <div aria-label={t("Shot details")} className="@container relative flex h-full w-full flex-col bg-panel">{children}</div>
   ) : (
     <>
-      {/* narrow areas: the drawer floats over the grid, so dim it and let a click on the dimmed part close it */}
+      {/* up to laptop widths (1440 px) the drawer floats over the grid, so dim it and let a click on the dimmed part close it;
+          on wider screens it sits beside the grid */}
       <motion.div key="scrim" aria-hidden onClick={onClose}
         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.2 }}
-        className="absolute inset-0 z-20 bg-black/45 @5xl:hidden" />
+        className="absolute inset-0 z-20 bg-black/45 @min-[90rem]:hidden" />
       <motion.aside
         key="drawer" aria-label={t("Shot details")}
         initial={{ x: 44, opacity: 0 }} animate={{ x: 0, opacity: 1 }}
         exit={{ x: 44, opacity: 0, transition: { duration: 0.16, ease: "easeIn" } }}
         transition={{ type: "spring", stiffness: 420, damping: 38, mass: 0.8 }}
-        className="@container absolute inset-y-0 right-0 z-30 flex w-[min(100%,560px)] flex-col border-l border-line bg-panel shadow-modal @5xl:static @5xl:z-auto @5xl:w-[560px] @5xl:shrink-0 @5xl:shadow-none"
+        className="@container absolute inset-y-0 right-0 z-30 flex w-[min(100%,480px)] flex-col border-l border-line bg-panel shadow-modal @min-[90rem]:static @min-[90rem]:z-auto @min-[90rem]:w-[480px] @min-[90rem]:shrink-0 @min-[90rem]:shadow-none"
       >
         {children}
       </motion.aside>
@@ -230,7 +304,7 @@ export default function ShotDrawer({ shotId, onClose, onPrev, onNext, position, 
               <span className="eq" aria-hidden><i /><i /><i /><i /></span>{t("generating…")}
             </span>
           )}
-          <Badge tone={approved ? "ok" : "neutral"} dot>{t(shot.status.replaceAll("_", " "))}</Badge>
+          <Badge tone={approved ? "ok" : "neutral"} dot>{shotStatusLabel(t, shot.status)}</Badge>
           <IconButton title={t("Close (Esc)")} onClick={onClose}><X className="size-4" /></IconButton>
         </div>
         <div className="flex flex-wrap items-center gap-1.5 px-3 pb-2">
@@ -253,35 +327,41 @@ export default function ShotDrawer({ shotId, onClose, onPrev, onNext, position, 
 
         {canChange && (
           <div className="flex flex-wrap items-end gap-x-5 gap-y-3 border-b border-line bg-raised/25 px-3 py-2.5">
-            {/* picture: keyframe → video (one primary action at a time: the video while there is none, then Approve) */}
+            {/* picture → video (one primary action at a time: the video while there is none, then Approve). Every button that
+                spends money shows its price first; edits are saved before a retake, so it uses what you wrote. */}
             <div className="space-y-1.5">
               <p className="eyebrow">{t("Picture")}</p>
               <div className="flex flex-wrap items-center gap-2">
-                <Button size="sm" icon={<ImageIcon className="size-3.5" />} loading={busy === "keyframe"} onClick={() => act("keyframe", t("Keyframe"))}>
-                  {t("Keyframe")}<Hint>K</Hint>
+                <Button size="sm" icon={<ImageIcon className="size-3.5" />} loading={busy === "keyframe"} onClick={makePicture}
+                  title={t("Make the start picture (you see the price first)")}>
+                  {shot.keyframe ? t("New picture") : t("Picture")}
                 </Button>
                 <UploadKeyframeButton shotId={shot.id} label={t("Upload")} onDone={refresh} />
                 <EndFrameControls shot={shot} onDone={refresh} />
                 <div className="inline-flex">
                   <Button size="sm" variant={shot.video ? "secondary" : "primary"} className="rounded-r-none" icon={<Film className="size-3.5" />} loading={busy === "video"}
-                    onClick={() => act("video", t("Video"), { quality: quality || undefined })}>
-                    {shot.video ? t("Retake") : t("Video")}<Hint>V</Hint>
+                    onClick={makeVideo} title={shot.video ? t("Make a new take with your latest edits (you see the price first)") : t("Make the video (you see the price first)")}>
+                    {shot.video ? t("Retake") : t("Video")}
                   </Button>
                   <QualityMenu joined tone={shot.video ? "secondary" : "primary"} value={quality} onChange={setQuality} defaultKey={shot.effective_quality} defaultLabel={t("This shot's default")} />
                 </div>
               </div>
             </div>
-            {/* sound: voice → lip-sync read as one pipeline, so they sit in one joined group; "more" closes the row */}
+            {/* sound: voice → mouth sync read as one pipeline, so they sit in one joined group; "more" closes the row */}
             {(hasLines || !!shot.narration?.[lang] || !!shot.video) && <div className="space-y-1.5">
               <p className="eyebrow">{t("Sound")}</p>
               <div className="flex items-center gap-2">
                 {(hasLines || shot.narration?.[lang]) && (
                   <div className="inline-flex">
                     <Button size="sm" className={clsx(shot.video && hasLines && "rounded-r-none")} icon={<Mic className="size-3.5" />} loading={busy === "voice"}
-                      onClick={() => act("voice", t("Voice"), { language: lang })}>{t("Voice {lang}", { lang: langShort })}</Button>
+                      onClick={() => act("voice", t("Voice"), batch("voices", { language: lang }), `/api/shots/${shotId}/voice`, { language: lang })}>
+                      {t("Voice {lang}", { lang: langShort })}
+                    </Button>
                     {shot.video && hasLines && (
                       <Button size="sm" className="-ml-px rounded-l-none" icon={<AudioLines className="size-3.5" />} loading={busy === "lipsync"}
-                        onClick={() => act("lipsync", t("Lip-sync"), lipBody())}>{t("Lip-sync {lang}", { lang: langShort })}</Button>
+                        onClick={() => act("lipsync", t("Mouth sync"), batch("lipsync", lipBody()), `/api/shots/${shotId}/lipsync`, lipBody())}>
+                        {t("Mouth sync {lang}", { lang: langShort })}
+                      </Button>
                     )}
                   </div>
                 )}
@@ -291,7 +371,7 @@ export default function ShotDrawer({ shotId, onClose, onPrev, onNext, position, 
                     { icon: <WandSparkles className="size-4" />, label: t("Edit with words"), onClick: () => setEditOpen(true) },
                     shot.dialogue?.[project.primary_language]?.length ? {
                       icon: <Mic className="size-4" />, label: t("Voice lock"), separator: true,
-                      onClick: () => void act("voicelock", t("Voice lock")),
+                      onClick: () => void act("voicelock", t("Voice lock"), batch("voicelock"), `/api/shots/${shotId}/voicelock`),
                     } : null,
                   ]} trigger={(p) => (
                     <IconButton title={t("More actions")} {...p} disabled={busy === "voicelock" || busy === "extend"}>
@@ -350,25 +430,14 @@ export default function ShotDrawer({ shotId, onClose, onPrev, onNext, position, 
       <footer className="relative flex shrink-0 flex-wrap items-center gap-2 border-t border-line bg-panel px-3 py-2.5">
         <span aria-hidden className="edge-light pointer-events-none absolute inset-x-4 top-0 h-px opacity-60" />
         {canEdit && (
-          <Button size="sm" variant="ghost" icon={<Undo2 className="size-3.5" />} loading={busy === "undo"} onClick={undo}>
-            <span className="hidden @sm:inline">{t("Undo last save")}</span><span className="@sm:hidden">{t("Undo")}</span>
+          <Button size="sm" variant="ghost" icon={<Undo2 className="size-3.5" />} loading={busy === "undo"} onClick={undo} title={t("Put back the shot as it was before the last saved change")}>
+            <span className="hidden @sm:inline">{t("Undo last change")}</span><span className="@sm:hidden">{t("Undo")}</span>
           </Button>
         )}
         <div className="min-w-0 flex-1 text-right">
-          <AnimatePresence initial={false}>
-            {dirty && (
-              <motion.span key="dirty" initial={{ opacity: 0, x: 6 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0 }}
-                className="mono inline-flex items-center gap-1.5 text-2xs font-medium uppercase tracking-wider text-warn">
-                <span className="live-dot is-warn" aria-hidden />{t("Unsaved changes")}
-              </motion.span>
-            )}
-          </AnimatePresence>
+          {/* edits save themselves; this says where they stand */}
+          {canChange && formFor === shot.id && <SaveStatus state={saving ? "saving" : dirty ? "dirty" : justSaved ? "saved" : "clean"} />}
         </div>
-        {canEdit && (
-          <Button size="sm" variant={dirty ? "primary" : "secondary"} disabled={!dirty || !canChange} loading={busy === "save"} icon={<Save className="size-3.5" />} onClick={save}>
-            {t("Save shot")}
-          </Button>
-        )}
         {canReview && (
           <Button size="sm" variant={approved || dirty || !shot.video ? "secondary" : "primary"} icon={<CircleCheck className={clsx("size-3.5", approved && "text-ok")} />}
             loading={busy === "approve"} onClick={approve}>
@@ -381,16 +450,21 @@ export default function ShotDrawer({ shotId, onClose, onPrev, onNext, position, 
       <Modal open={editOpen} onClose={() => setEditOpen(false)} title={t("Edit this clip with words")}
         footer={<><Button variant="ghost" onClick={() => setEditOpen(false)}>{t("Cancel")}</Button>
           <Button variant="primary" disabled={!text.trim() || !shot.video} loading={busy === "edit"} onClick={() => run("edit", async () => {
-            const r = await submit(() => api.post<SubmitResult>(`/api/takes/${shot.video!.id}/edit`, { instruction: text }), tr("Edit with words"));
+            const take = shot.video!.id;
+            const r = await priced({ quote: () => quote({ action: "edit", take_id: take, instruction: text }),
+              run: () => api.post<SubmitResult>(`/api/takes/${take}/edit`, { instruction: text }), what: tr("Edit with words") });
             if (r) { setEditOpen(false); setText(""); }
-          })}>{t("Edit · ~{usd}", { usd: usd((shot.video?.duration_s || 8) * 0.1) })}</Button></>}>
+          })}>{t("See the price")}</Button></>}>
         <Field label={t("What should change?")} hint={t("e.g. 'remove the extra person on the left', 'make it night', 'add light rain'. A new take is created; the old one is kept.")}>
           <Textarea value={text} onChange={(e) => setText(e.target.value)} autoFocus />
         </Field>
       </Modal>
       <Modal open={extendOpen} onClose={() => setExtendOpen(false)} title={t("Extend this shot by 7 seconds")}
         footer={<><Button variant="ghost" onClick={() => setExtendOpen(false)}>{t("Cancel")}</Button>
-          <Button variant="primary" loading={busy === "extend"} onClick={async () => { await act("extend", t("Extend"), { prompt: text }); setExtendOpen(false); setText(""); }}>{t("Extend")}</Button></>}>
+          <Button variant="primary" loading={busy === "extend"} onClick={async () => {
+            await act("extend", t("Extend"), () => quote({ action: "extend", shot_id: shotId, prompt: text }), `/api/shots/${shotId}/extend`, { prompt: text });
+            setExtendOpen(false); setText("");
+          }}>{t("See the price")}</Button></>}>
         <Field label={t("What happens next?")} hint={t("Extension works on 720p clips made in the last 2 days.")}>
           <Textarea value={text} onChange={(e) => setText(e.target.value)} placeholder={t("Ravi steps closer to the lamp; the flame bends towards him.")} autoFocus />
         </Field>
@@ -405,7 +479,7 @@ function ViewSwitch({ view, onChange, pinned, hasEnd }: { view: View; onChange: 
   return (
     <RailSeg grow size="sm" label={t("What to show")} value={(pinned ? "" : view) as View} onChange={onChange} options={[
       { value: "final", label: t("Final") }, { value: "video", label: t("Raw video") },
-      { value: "keyframe", label: hasEnd ? t("Start") : t("Keyframe") },
+      { value: "keyframe", label: hasEnd ? t("Start") : t("Picture") },
       ...(hasEnd ? [{ value: "endframe" as const, label: t("End") }] : []),
     ]} />
   );

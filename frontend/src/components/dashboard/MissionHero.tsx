@@ -29,19 +29,23 @@ export function useGo(pid: number) {
     if (go.kind === "tab") nav(`/p/${pid}/${go.tab}`);
     else if (go.kind === "path") nav(go.to);
     else if (go.kind === "shot") { setSelectedShot(go.shotId); nav(`/p/${pid}/storyboard`); }
-    else document.getElementById(go.id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    else {
+      const el = document.getElementById(go.id);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+      else if (go.id === "mission-impact") window.dispatchEvent(new Event("veo:show-impact"));  // folded under the Overview's "More"
+    }
   };
 }
 
 interface Waypoint { key: string; label: string; icon: LucideIcon; stage: Stage; credit: number; current: boolean; live: boolean; to: string }
 
-/** The flight path: the five steps as a track of nodes. Horizontal on wide panels, a vertical list on narrow ones. */
+/** The steps as a track of nodes. Horizontal on wide panels, a vertical list on narrow ones. */
 function FlightPath({ items }: { items: Waypoint[] }) {
   const t = useT();
   const word = (w: Waypoint) => (w.stage.state === "done" ? t("Done") : w.stage.state === "progress" ? t("Active") : w.current ? t("Next") : w.stage.state === "none" ? t("Optional") : t("To do"));
   const fallback = (w: Waypoint) => w.stage.hint ?? (w.stage.state === "done" ? t("Complete") : w.stage.state === "progress" ? t("In progress") : w.stage.state === "none" ? t("Not needed for your own material") : t("Not started"));
   return (
-    <ol aria-label={t("Production flight path")} className="grid gap-0 @2xl/hero:grid-cols-[repeat(var(--n),minmax(0,1fr))]" style={{ "--n": items.length } as CSSProperties}>
+    <ol aria-label={t("Production steps")} className="grid gap-0 @2xl/hero:grid-cols-[repeat(var(--n),minmax(0,1fr))]" style={{ "--n": items.length } as CSSProperties}>
       {items.map((w, i) => {
         const Icon = w.icon;
         const state = w.stage.state;
@@ -90,10 +94,14 @@ export function MissionHeroSkeleton() {
 }
 
 /**
- * The hero band: which episode this is, the flight path through the pipeline, overall completion, and the one next best action.
+ * The hero band: which episode this is, the steps and how far each got, overall completion, and the one next step.
  */
-export function MissionHero({ project, episode, d, stages, action, index = 0 }: {
+export function MissionHero({ project, episode, d, stages, action, index = 0, onMake, makePrice, busy }: {
   project: Project; episode: Episode | undefined; d: EpisodeDashboard | undefined; stages: Record<string, Stage>; action: MissionAction | null; index?: number;
+  /** Starts an action that makes something (the cast, "Make it for me", the import), with its price first. */
+  onMake?: (a: { make?: MissionAction["make"]; go: ActionGo }) => void;
+  /** The price of what the primary button starts, when it costs money. */
+  makePrice?: string | null; busy?: boolean;
 }) {
   const t = useT();
   const go = useGo(project.id);
@@ -122,7 +130,7 @@ export function MissionHero({ project, episode, d, stages, action, index = 0 }: 
   const planned = d?.footage.planned_s ?? 0;
 
   return (
-    <Panel index={index} tone="accent" flush eyebrow={t("Mission control")} icon={<Gauge />}
+    <Panel index={index} tone="accent" flush eyebrow={t("Progress")} icon={<Gauge />}
       actions={running ? (
         <span className="mono inline-flex items-center gap-2 text-2xs uppercase tracking-wider text-accent-ink">
           <span className="eq"><i /><i /><i /><i /></span>{t("{n} running", { n: d?.queue.active_jobs ?? 0 })}
@@ -163,7 +171,7 @@ export function MissionHero({ project, episode, d, stages, action, index = 0 }: 
         </div>
 
         <div className="relative px-3 pb-4 pt-5 @2xl/hero:px-4">
-          <p className="eyebrow mb-3 flex items-center gap-2 px-1.5">{t("Flight path")}<span aria-hidden className="h-px flex-1 bg-line" /></p>
+          <p className="eyebrow mb-3 flex items-center gap-2 px-1.5">{t("Steps")}<span aria-hidden className="h-px flex-1 bg-line" /></p>
           <FlightPath items={items} />
         </div>
 
@@ -171,7 +179,7 @@ export function MissionHero({ project, episode, d, stages, action, index = 0 }: 
           <div role="status" className={cn("relative flex flex-wrap items-center gap-x-4 gap-y-3 border-t border-line bg-gradient-to-r to-transparent px-4 py-3 @2xl/hero:px-5", WASH[action.tone])}>
             <div className="min-w-0 flex-1 basis-72">
               <p className={cn("eyebrow flex items-center gap-1.5", TEXT[action.tone])}>
-                <ArrowRight className="size-3" />{t("Next best action")}<span aria-hidden className="text-dim">/</span>{action.kicker}
+                <ArrowRight className="size-3" />{t("Next step")}{action.kicker && <><span aria-hidden className="text-dim">/</span>{action.kicker}</>}
               </p>
               <p className="mt-1.5 text-sm leading-snug">{action.text}</p>
             </div>
@@ -179,8 +187,13 @@ export function MissionHero({ project, episode, d, stages, action, index = 0 }: 
               <button type="button" onClick={() => openDirector()} className="inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-ai transition-colors hover:bg-ai/10 max-sm:hidden">
                 <Bot className="size-4" />{t("Ask the Director")}
               </button>
-              {action.secondary && <Button variant="ghost" onClick={() => go(action.secondary!.go)}>{action.secondary.label}</Button>}
-              <Button variant="primary" iconRight={<ArrowRight className="size-4" />} onClick={() => go(action.go)}>{action.label}</Button>
+              {action.secondary && (
+                <Button variant="ghost" onClick={() => (action.secondary!.make && onMake ? onMake(action.secondary!) : go(action.secondary!.go))}>{action.secondary.label}</Button>
+              )}
+              <Button variant="primary" iconRight={<ArrowRight className="size-4" />} loading={busy}
+                onClick={() => (action.make && onMake ? onMake(action) : go(action.go))}>
+                {action.label}{action.make && makePrice && <span className="mono">· {makePrice}</span>}
+              </Button>
             </div>
           </div>
         )}

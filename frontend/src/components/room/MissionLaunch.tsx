@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowRight, Check, CirclePause, Loader2, Play, Rocket, Square } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, CirclePause, Loader2, Play, Rocket, Square, Wand2 } from "lucide-react";
 import { useState, type CSSProperties } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
@@ -15,11 +15,15 @@ import { Badge, Button, Segmented, Skeleton, Tooltip } from "../ui";
 import { WorkPanel } from "./workspace";
 
 /**
- * Autopilot as a mission launch: the milestones are a stepper, the "stop for my approval" gates sit between the steps (click one
- * to arm it), and one button launches the run. Same behaviour as the old Autopilot panel: pick how far it goes, choose where it
- * pauses for approval, watch it by milestone, continue after a stop, stop after the current step.
+ * "Make it for me" on the Brief: the milestones as a stepper, watched by milestone while it runs, continued after a stop,
+ * stopped after the current step. With `onStart` the run starts from the shared "Make it for me" dialog (the one entry point,
+ * with its price first); without it the stepper's own gates and Run button start it.
  */
-export function MissionLaunch({ project, eid, canEdit, index }: { project: Project; eid: number; canEdit: boolean; index?: number }) {
+export function MissionLaunch({ project, eid, canEdit, index, onStart }: {
+  project: Project; eid: number; canEdit: boolean; index?: number;
+  /** Opens the shared "Make it for me" dialog instead of starting from here. */
+  onStart?: () => void;
+}) {
   const t = useT();
   const qc = useQueryClient();
   const { generate } = useGenerate();
@@ -74,8 +78,8 @@ export function MissionLaunch({ project, eid, canEdit, index }: { project: Proje
     : <Badge tone="neutral" dot>{t("Ready")}</Badge>;
 
   return (
-    <WorkPanel id="autopilot" index={index} tone="ai" icon={<Rocket />} kicker={t("Mission launch")} title={t("Autopilot")} badge={status}
-      description={t("Makes the episode for you, milestone by milestone, and can stop after each one so you approve before it spends more. One budget approval up front; it stops if spending goes 50% over the estimate.")}
+    <WorkPanel id="autopilot" index={index} tone="ai" icon={<Wand2 />} kicker={t("From idea to film")} title={t("Make it for me")} badge={status}
+      description={t("Makes the episode for you, step by step, and can stop after each one so you can check before it spends more. One approval up front; it stops if spending goes 50% over the price.")}
       className="border-ai/25">
       {!settings ? (
         <div className="grid gap-3 @2xl:grid-cols-4" aria-busy="true">{Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="h-16" />)}</div>
@@ -151,7 +155,13 @@ export function MissionLaunch({ project, eid, canEdit, index }: { project: Proje
             </p>
           )}
 
-          {idle && (
+          {idle && onStart && (
+            <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3 border-t border-line pt-4">
+              <p className="min-w-0 flex-1 basis-64 text-xs text-mute">{t("Choose how far it goes and where it stops for you to check. You see the price before anything starts.")}</p>
+              <Button variant="primary" icon={<Wand2 className="size-4" />} onClick={onStart}>{ended ? t("Try again") : t("Make it for me")}</Button>
+            </div>
+          )}
+          {idle && !onStart && (
             <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3 border-t border-line pt-4">
               <div className="min-w-0 space-y-1.5">
                 <p className="eyebrow">{t("Run automatically until")}</p>

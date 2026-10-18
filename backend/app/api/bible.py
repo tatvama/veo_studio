@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from .. import catalog
-from ..core import generation, jobs, reference_images, sheet_engine, studio
+from ..core import dependencies, generation, jobs, reference_images, sheet_engine, studio
 from ..db import get_db
 from ..events import emit
 from ..models import (Character, CharacterAsset, Consent, Location, LocationAsset, Project, ProjectCast, ProjectLocation, Style,
@@ -287,6 +287,8 @@ async def upload_character_photo(cid: int, request: Request, file: UploadFile = 
     if not ext:
         raise HTTPException(400, "Upload a PNG, JPG or WEBP image")
     save_character_image(db, c, await file.read(), ext, user=user, label=label, ai_made=ai_made, request=request)
+    dependencies.character_changed(db, c)  # a new approved picture: the shots showing them are out of date
+    db.commit()
     return character_out(db, c)
 
 
@@ -380,6 +382,8 @@ def save_board_views(aid: int, body: BoardSaveIn, user: User = Depends(require("
     c = db.get(Character, a.character_id)
     _check_unlocked(c, user)
     made = char_board.save_views(db, a, [x.model_dump() for x in body.panels])
+    if made:  # new approved views: the shots showing them are out of date
+        dependencies.character_changed(db, c)
     db.commit()
     emit(db, None, "bible.updated", {"character_id": c.id})
     return {"saved": [x.id for x in made], "character": character_out(db, c)}
@@ -395,13 +399,18 @@ class AssetPatch(BaseModel):
 @router.patch("/character-assets/{aid}")
 def patch_char_asset(aid: int, body: AssetPatch, user: User = Depends(require("reviewer")), db: Session = Depends(get_db)):
     a = get_or_404(db, CharacterAsset, aid)
-    _check_unlocked(db.get(Character, a.character_id), user)
+    ch = db.get(Character, a.character_id)
+    _check_unlocked(ch, user)
     data = body.model_dump(exclude_unset=True)
     # an upload stays an upload: relabelling a real person's photo as a sheet view would make it eligible for BytePlus
     if "kind" in data and (data["kind"] == "source") != (a.kind == "source"):
         raise HTTPException(400, "An uploaded image can't become a generated view, or the other way round")
+    before = (bool(a.approved and not a.archived), a.kind)
     for k, v in data.items():
         setattr(a, k, v)
+    after = (bool(a.approved and not a.archived), a.kind)
+    if before != after and (before[0] or after[0]):  # an approved picture added, approved or taken away
+        dependencies.character_changed(db, ch)
     db.commit()
     from ..workers.handlers_hub import REGISTER_KINDS, maybe_auto_register
     eligible = a.kind in REGISTER_KINDS or (a.kind == "source" and a.ai_made)
@@ -584,11 +593,7 @@ class PreviewIn(BaseModel):
 @router.post("/voices/{vid}/preview")
 def preview_voice(vid: int, body: PreviewIn, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
     vp = get_or_404(db, VoiceProfile, vid)
-    from ..core.budget import Estimator
-    est = Estimator(db)
-    cost = float(est.prices["tts_per_1k_chars"].get(vp.provider, 0.05)) * max(len(body.text), 80) / 1000 if est._live(vp.provider) else 0
-    return jobs.submit(db, user, None, [jobs.spec("voice_preview", payload={"voice_profile_id": vid, "text": body.text},
-                                                  estimate=cost, label="Voice preview")])
+    return jobs.submit(db, user, None, [generation.voice_preview_spec(db, vp, body.text)])
 
 
 @router.get("/voices/library")

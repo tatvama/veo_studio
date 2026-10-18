@@ -138,6 +138,8 @@ def get_board(db: Session, project: Project, episode: Episode) -> dict:
     return {"episode_id": episode.id, "language": lang, "scenes": out, "version": board_version(db, episode),
             # a Produce all run that stopped for the new looks and voices to be checked (workers/handlers_room.produce)
             "produce_paused": (episode.settings or {}).get("produce_paused"),
+            # what the last run (Produce all, Autopilot, Scenes in order) couldn't make, and what to do (core/problems.py)
+            "run_problems": (episode.settings or {}).get("run_problems") or [],
             "limits": {"durations": [4, 6, 8], "extend_step_s": EXTEND_STEP_S, "max_extend_s": MAX_EXTEND_S}}
 
 

@@ -75,7 +75,7 @@ export function Kpis({ canDecide }: { canDecide: boolean }) {
   const partial = (projects?.length ?? 0) > SHOT_SCOPE;
 
   return (
-    <Panel index={1} className="isolate" eyebrow={t("Mission overview")}
+    <Panel index={1} className="isolate" eyebrow={t("At a glance")}
       actions={<span className="eyebrow flex items-center gap-2"><span aria-hidden className={clsx("live-dot", !busy && "is-idle")} />{busy ? t("live") : t("idle")}</span>}>
       <div aria-hidden className="cc-ground -z-10 rounded-xl" />
       <div className="@container relative">

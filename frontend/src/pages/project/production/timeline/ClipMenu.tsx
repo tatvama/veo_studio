@@ -16,10 +16,11 @@ import type { Shot, SubmitResult, Take } from "../../../../lib/types";
 import { markFresh, type TakeV3 } from "../../../../lib/v3";
 import { ContextMenu, type CtxItem, type MenuAnchor } from "./ContextMenu";
 import { SPEED_PRESETS, type Clip } from "./shared";
+import { estimateBatch, quote } from "../../../../lib/estimates";
 
 export interface ClipMenuState { shotId: number; anchor: MenuAnchor; returnFocus: HTMLElement | null }
 
-const KIND_LABEL: Record<string, string> = { video: "Video", lipsync: "Lip-sync", voicelock: "Voice lock" };
+const KIND_LABEL: Record<string, string> = { video: "Video", lipsync: "Mouth sync", voicelock: "Voice lock" };
 
 /**
  * The actions behind a main-track clip's right-click / "…" menu: AI regeneration (through the cost flow), take
@@ -34,7 +35,7 @@ export function ClipMenu({ state, clip, eid, lang, projectId, canEdit, canReview
   const t = useT();
   const qc = useQueryClient();
   const navigate = useNavigate();
-  const { submit } = useGenerate();
+  const { priced } = useGenerate();
   const setSelectedShot = useUI((s) => s.setSelectedShot);
   const [takes, setTakes] = useState<{ shotId: number; list: Take[] } | null>(null);
   const [dialog, setDialog] = useState<"extend" | "edit" | null>(null);
@@ -57,9 +58,12 @@ export function ClipMenu({ state, clip, eid, lang, projectId, canEdit, canReview
     qc.invalidateQueries({ queryKey: ["episode", eid] });
     if (shot) qc.invalidateQueries({ queryKey: ["shot", shot.id] });
   };
-  const act = (path: string, what: string, body: Record<string, any> = {}) => {
+  /** A paid action on this clip's shot: the price first (the same estimate as the batch buttons), then the job. */
+  const act = (path: "video" | "lipsync", what: string, body: Record<string, any> = {}) => {
     if (!shot) return;
-    void submit(() => api.post<SubmitResult>(`/api/shots/${shot.id}/${path}`, body), `${what} ${shot.code}`);
+    const action = path === "video" ? "videos" : "lipsync";
+    void priced({ quote: () => estimateBatch(eid, { action, shot_ids: [shot.id], ...body }),
+      run: () => api.post<SubmitResult>(`/api/shots/${shot.id}/${path}`, body), what: `${what} ${shot.code}` });
   };
   const select = async (take: Take) => {
     try {
@@ -100,9 +104,12 @@ export function ClipMenu({ state, clip, eid, lang, projectId, canEdit, canReview
     if (!shot || !shot.video) return;
     setBusy(true);
     try {
+      const take = shot.video.id;
       const r = dialog === "edit"
-        ? await submit(() => api.post<SubmitResult>(`/api/takes/${shot.video!.id}/edit`, { instruction: text }), `${t("Edit with words")} ${shot.code}`)
-        : await submit(() => api.post<SubmitResult>(`/api/shots/${shot.id}/extend`, { prompt: text }), `${t("Extend")} ${shot.code}`);
+        ? await priced({ quote: () => quote({ action: "edit", take_id: take, instruction: text }),
+            run: () => api.post<SubmitResult>(`/api/takes/${take}/edit`, { instruction: text }), what: `${t("Edit with words")} ${shot.code}` })
+        : await priced({ quote: () => quote({ action: "extend", shot_id: shot.id, prompt: text }),
+            run: () => api.post<SubmitResult>(`/api/shots/${shot.id}/extend`, { prompt: text }), what: `${t("Extend")} ${shot.code}` });
       if (r) { setDialog(null); setText(""); }
     } finally { setBusy(false); }
   };
@@ -131,7 +138,7 @@ export function ClipMenu({ state, clip, eid, lang, projectId, canEdit, canReview
             <span className="flex items-center gap-1 truncate">
               #{x.id} · {t(KIND_LABEL[x.kind] ?? x.kind)}{x.language && ` · ${LANG_SHORT[x.language] ?? x.language}`}
               {x.selected && <Check className="size-3 shrink-0 text-accent-ink" />}
-              {(x as TakeV3).stale && <span className="rounded bg-warn/15 px-1 text-2xs text-warn">{t("stale")}</span>}
+              {(x as TakeV3).stale && <span className="rounded bg-warn/15 px-1 text-2xs text-warn">{t("out of date")}</span>}
             </span>
             <span className="block truncate text-2xs font-normal text-dim">
               {x.params?.quality ? `${t(QUALITY_INFO[x.params.quality]?.label ?? x.params.quality)} · ` : ""}{ago(x.created_at)}{x.cost_usd ? ` · ${usd(x.cost_usd)}` : ""}
@@ -147,8 +154,8 @@ export function ClipMenu({ state, clip, eid, lang, projectId, canEdit, canReview
       children: Object.entries(QUALITY_INFO).map(([k, q]) => ({ label: t(q.label), hint: q.price, active: shot.effective_quality === k,
         onClick: () => act("video", t("Video"), { quality: k }) })) },
     { label: t("Extend +7s"), icon: <Plus className="size-3.5" />, disabled: !canEdit || !v, onClick: () => { setText(shot.extend_prompt || ""); setDialog("extend"); } },
-    { label: t("Fix lip-sync ({lang})", { lang: LANG_SHORT[lang] ?? lang }), icon: <AudioLines className="size-3.5" />, disabled: !canEdit || !v,
-      onClick: () => act("lipsync", t("Lip-sync"), { language: lang }) },
+    { label: t("Fix mouth sync ({lang})", { lang: LANG_SHORT[lang] ?? lang }), icon: <AudioLines className="size-3.5" />, disabled: !canEdit || !v,
+      onClick: () => act("lipsync", t("Mouth sync"), { language: lang }) },
     { label: t("Edit with words"), icon: <WandSparkles className="size-3.5" />, disabled: !canEdit || !v, onClick: () => { setText(""); setDialog("edit"); } },
     { label: t("Swap take"), icon: <ArrowLeftRight className="size-3.5" />, disabled: !canReview, hint: loaded && takeList.length ? String(takeList.length) : undefined,
       children: takeRows() },
@@ -172,7 +179,7 @@ export function ClipMenu({ state, clip, eid, lang, projectId, canEdit, canReview
         label={t("Clip actions for {code}", { code: shot?.code ?? "" })} />
       <Modal open={dialog === "edit"} onClose={() => setDialog(null)} title={t("Edit this clip with words")}
         footer={<><Button variant="ghost" onClick={() => setDialog(null)}>{t("Cancel")}</Button>
-          <Button variant="primary" disabled={!text.trim() || !v} loading={busy} onClick={() => void runDialog()}>{t("Edit · ~{usd}", { usd: usd((v?.duration_s || 8) * 0.1) })}</Button></>}>
+          <Button variant="primary" disabled={!text.trim() || !v} loading={busy} onClick={() => void runDialog()}>{t("See the price")}</Button></>}>
         <Field label={t("What should change?")} hint={t("e.g. 'remove the extra person on the left', 'make it night', 'add light rain'. A new take is created; the old one is kept.")}>
           <Textarea value={text} onChange={(e) => setText(e.target.value)} autoFocus />
         </Field>

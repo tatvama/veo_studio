@@ -30,7 +30,7 @@ export function CutLockBanner({ lock, pid }: { lock: CutLock; pid?: number }) {
         })}
         {lock.machine && <span className="mono ml-2 text-2xs text-dim">{lock.machine}</span>}
       </span>
-      {pid ? <Link to={`/p/${pid}/finish`} className="shrink-0 font-medium text-accent-ink hover:underline">{t("Finishing room")}</Link> : null}
+      {pid ? <Link to={`/p/${pid}/finish`} className="shrink-0 font-medium text-accent-ink hover:underline">{t("Pro finishing")}</Link> : null}
     </div>
   );
 }

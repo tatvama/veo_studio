@@ -57,6 +57,16 @@ def select(db: Session, take: Take) -> None:
 
 
 def has_fresh(db: Session, shot_id: int, kind: str, language: str) -> bool:
-    """A lip-sync / voice-lock take exists for this language and was made from the current video."""
+    """A lip-sync / voice-lock take exists for this language, is real work and was made from the current video. A
+    placeholder made without a key counts as missing once a real engine for it is connected (its own provider, or any
+    live lip-sync engine), so Produce all and Autopilot make the real one."""
     t = current(db, shot_id, kind, language)
-    return t is not None and not is_stale(db, t, current(db, shot_id, "video"))
+    if t is None or not is_real(t) or (kind == "lipsync" and (t.params or {}).get("mock") and _lipsync_live(db)):
+        return False
+    return not is_stale(db, t, current(db, shot_id, "video"))
+
+
+def _lipsync_live(db: Session) -> bool:
+    from ..core import model_hub  # (model_hub doesn't import this module: no cycle)
+    from ..providers.services import provider_mode
+    return any(provider_mode(m.provider) == "live" for m, _ in model_hub.candidates(db, "lipsync", ["lipsync"]))

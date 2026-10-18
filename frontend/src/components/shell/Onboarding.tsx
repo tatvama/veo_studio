@@ -52,7 +52,7 @@ function buildSteps(t: (s: string, v?: Record<string, string | number>) => strin
   return [
     { icon: Clapperboard, title: t("Welcome to Tatvam AI Studio"), next: t("Let's go"),
       body: t("Turn a concept into a finished video — hook, script, scenes, shots and video — in English, Hindi, Kannada, Telugu and Tamil. Here's a one-minute tour.") },
-    { anchor: "nav-projects", fallback: menu, icon: FolderOpen, title: t("Command center"),
+    { anchor: "nav-projects", fallback: menu, icon: FolderOpen, title: t("Home"),
       body: t("Every video starts as a project. Describe a concept or start from a template; your team's projects, live queue and approvals are listed here.") },
     { anchor: "nav-search", fallback: menu, icon: Search, title: t("Search everything"),
       body: t("Find shots, takes, characters and renders by what's in them — in plain words.") },
@@ -61,7 +61,7 @@ function buildSteps(t: (s: string, v?: Record<string, string | number>) => strin
     { anchor: "step-cast", projectOnly: true, icon: Users, title: `2 · ${t("Cast")}`,
       body: t("Characters, places, voices, props and wardrobe. Lock each look once it is approved, so every shot stays consistent.") },
     { anchor: "step-shots", projectOnly: true, icon: LayoutGrid, title: `3 · ${t("Shots")}`,
-      body: t("Plan shots, generate keyframes and videos, and pick the best takes, as a storyboard, a list or the Studio. The cost is always shown before anything is generated.") },
+      body: t("Plan shots, generate pictures and videos, and pick the best takes, as a storyboard, a list or the Studio. The cost is always shown before anything is generated.") },
     { anchor: "step-edit", projectOnly: true, icon: Film, title: `4 · ${t("Edit")}`,
       body: t("Arrange and trim clips, and add music, narration, sound effects and titles.") },
     { anchor: "step-deliver", projectOnly: true, icon: Clapperboard, title: `5 · ${t("Deliver")}`,

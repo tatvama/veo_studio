@@ -157,7 +157,9 @@ def plan(db: Session, project: Project, episode: Episode, scenes: list[Scene], q
         out_scenes.append({"scene": sc.order + 1, "scene_id": sc.id, "title": sc.title, "shots": [s.code for s in shots],
                            "to_make": items, "has_end_state": bool(sc.end_state), "notes": notes,
                            "usd": round(sum(i["usd"] for i in items), 4)})
-    return {"scenes": out_scenes, "total_usd": round(total, 2),
+    # room for QC's automatic retakes in the run's budget (generation.RETAKE_SHARE), so its 1.5× spend guard holds
+    allowance = round(total * generation.RETAKE_SHARE, 2) if est.settings.get("auto_retake", True) else 0.0
+    return {"scenes": out_scenes, "total_usd": round(total + allowance, 2), "retake_allowance_usd": allowance,
             "shots_to_make": sum(len(s["to_make"]) for s in out_scenes)}
 
 
@@ -186,11 +188,45 @@ def link_to_previous_scene(db: Session, scene: Scene, rule: str) -> str | None:
 Run = Callable[[list[dict], str], Any]
 
 
+def _succeeded(st: Any, queued: int) -> int:
+    """How many children succeeded, from what `run` returned ({job id: status}); a runner that returns no statuses
+    counts what it queued."""
+    return sum(1 for s in st.values() if s == "succeeded") if isinstance(st, dict) else queued
+
+
+def extend_shots(open_db: Callable[[], Session], run: Run, project_id: int, shot_ids: list[int],
+                 label: str = "Extensions") -> int:
+    """Bring these shots up to their extend_to length, in rounds (each extension adds ~7 s); a shot whose clip didn't
+    grow in a round is left alone. Returns the extensions that succeeded."""
+    last_len: dict[int, float] = {}
+    made = 0
+    for rnd in range(4):
+        with open_db() as db:
+            project = db.get(Project, project_id)
+            specs = []
+            for s in (db.get(Shot, i) for i in shot_ids):
+                if s is None or not generation.extensions_needed(db, s):
+                    continue
+                vid = current(db, s.id, "video")
+                if not is_real(vid) or last_len.get(s.id) == vid.duration_s:
+                    continue
+                last_len[s.id] = vid.duration_s
+                specs.append(generation.extend_spec(db, project, s, s.extend_prompt or f"The action continues naturally. {s.action}"))
+            db.commit()
+        if not specs:
+            break
+        made += _succeeded(run(specs, f"{label} (round {rnd + 1})"), len(specs))
+    return made
+
+
 def make_videos_in_order(open_db: Callable[[], Session], run: Run, project_id: int, shot_ids: list[int],
-                         quality: str | None = None, label: str = "Videos", fix_links: bool = False) -> dict[str, Any]:
+                         quality: str | None = None, label: str = "Videos", fix_links: bool = False,
+                         extend: bool = False) -> dict[str, Any]:
     """Make the videos of these shots in link order (`run(specs, label)` queues child jobs and waits for them, and
-    for their QC and retakes). A linked shot whose keyframe was not made from the source's finished clip gets a new
-    keyframe first. Returns {"waves": n, "videos": n, "keyframes": n, "warnings": [...]}."""
+    for their QC and retakes, and returns their statuses). A linked shot whose keyframe was not made from the source's
+    finished clip gets a new keyframe first. `extend`: each wave's shots are brought up to their extend_to length
+    before the next wave starts, so a shot that continues one starts from the end of its whole (extended) clip.
+    Returns {"waves": n, "videos": n succeeded, "extensions": n, "keyframes": n, "warnings": [...]}."""
     with open_db() as db:
         shots = [s for s in (db.get(Shot, i) for i in shot_ids) if s is not None]
         order = [[s.id for s in w] for w in waves(db, shots)]
@@ -201,11 +237,10 @@ def make_videos_in_order(open_db: Callable[[], Session], run: Run, project_id: i
         project = db.get(Project, project_id)
         end_specs = [generation.endframe_spec(db, project, s) for s in needed]
         db.commit()
-    made_v = made_k = 0
+    made_v = made_k = made_x = 0
     warnings: list[str] = []
     for spec_ in end_specs:
-        run([spec_], f"{label}: end frames first")
-        made_k += 1
+        made_k += _succeeded(run([spec_], f"{label}: end frames first"), 1)
     for i, wave in enumerate(order, 1):
         step = f"{label} {i}/{len(order)}" if len(order) > 1 else label
         with open_db() as db:
@@ -219,17 +254,17 @@ def make_videos_in_order(open_db: Callable[[], Session], run: Run, project_id: i
             kf_specs = generation.keyframe_specs(db, project, redo)
             db.commit()
         if kf_specs:
-            run(kf_specs, f"{step}: first frames from the clips before")
-            made_k += len(kf_specs)
+            made_k += _succeeded(run(kf_specs, f"{step}: first frames from the clips before"), len(kf_specs))
         with open_db() as db:
             project = db.get(Project, project_id)
             shots = [db.get(Shot, sid) for sid in wave]
             v_specs = generation.video_specs(db, project, shots, quality)
             db.commit()
         if v_specs:
-            run(v_specs, step)
-            made_v += len(v_specs)
-    return {"waves": len(order), "videos": made_v, "keyframes": made_k, "warnings": warnings}
+            made_v += _succeeded(run(v_specs, step), len(v_specs))
+        if extend:
+            made_x += extend_shots(open_db, run, project_id, wave, f"{step}: extensions")
+    return {"waves": len(order), "videos": made_v, "extensions": made_x, "keyframes": made_k, "warnings": warnings}
 
 
 def shots_to_make(db: Session, shots: list[Shot], fix_links: bool = False) -> list[Shot]:

@@ -178,6 +178,8 @@ def plan(db: Session, episode: Episode, lang: str, kind: str, tmp: Path,
         vdur = max(video.duration_s or ff.duration(st.abs(video.path)), 0.5)
         trim_in = max(shot.trim_in or 0.0, 0.0)
         avail = max(vdur - trim_in - max(shot.trim_out or 0.0, 0.0), 0.5)  # the clip as trimmed
+        if lines and lips and lips.path and float(lips.duration_s or 0) - trim_in > avail + 0.05:
+            avail = float(lips.duration_s) - trim_in  # the lip-sync held the clip's last frame until the line ended
         # the shot's planned length (the extension's, when the clip was extended): a longer clip is trimmed to it
         planned = float(shot.extend_to) if shot.extend_to and vdur > shot.duration_s + 1 else float(shot.duration_s or 0)
         dur = min(avail, planned) if planned > 0 else avail

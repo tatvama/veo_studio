@@ -233,7 +233,7 @@ export function SceneCardView({ scene, index, cast, locations, canEdit, expanded
                 </Block>
 
                 <Block id={`${base}-cast`} n={3} title={t("Characters in scene")}>
-                  {!cast.length ? <p className="text-xs text-dim">{t("No cast yet — build the bible first.")}</p> : (
+                  {!cast.length ? <p className="text-xs text-dim">{t("No cast yet — build the cast first.")}</p> : (
                     <div className="flex flex-wrap gap-1.5">
                       {cast.map((c) => {
                         const on = draft.characters.includes(c.id);
@@ -253,7 +253,7 @@ export function SceneCardView({ scene, index, cast, locations, canEdit, expanded
                     <div className="space-y-1.5 rounded-lg border border-line bg-bg/40 p-3">
                       <p className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs font-medium text-mute">
                         <Shirt className="size-3.5 text-dim" />{t("Wardrobe — must stay consistent")}
-                        <span className="ml-auto text-2xs font-normal text-dim">{t("Named costumes come from the Bible; pick Other… for free text.")}</span>
+                        <span className="ml-auto text-2xs font-normal text-dim">{t("Named costumes come from Cast; pick Other… for free text.")}</span>
                       </p>
                       <div className="grid gap-2 @xl:grid-cols-2">
                         {inScene.map((c) => (

@@ -14,17 +14,17 @@ import { useT } from "../../../lib/i18n";
 import type { Shot } from "../../../lib/types";
 import { fmtDur } from "./instruments";
 import { joinNames } from "./Recovery";
-import { displayMedia, isStale, qcFailed, shotStages, staleReason, thumbRatio, type StageState } from "./shotMeta";
+import { displayMedia, isStale, qcFailed, shotStages, shotStatusLabel, staleReason, thumbRatio, type StageState } from "./shotMeta";
 
 /** Amber "Stale" pill: the shot changed after this take was made. The tooltip says what changed. */
 export function StaleBadge({ reason, className }: { reason: string; className?: string }) {
   const t = useT();
-  const tip = reason ? t("Stale — {reason}", { reason }) : t("Stale — the shot changed after this take was made");
+  const tip = reason ? t("Out of date — {reason}", { reason }) : t("Out of date — the shot changed after this take was made");
   return (
     <Tooltip content={tip}>
       <span role="img" aria-label={tip}
         className={clsx("mono inline-flex h-[18px] shrink-0 items-center gap-1 rounded-md border border-warn/35 bg-warn/12 px-1.5 text-2xs font-medium leading-none text-warn", className)}>
-        <History className="size-3" />{t("Stale")}
+        <History className="size-3" />{t("Out of date")}
       </span>
     </Tooltip>
   );
@@ -135,7 +135,7 @@ export const ShotCard = memo(function ShotCard({ shot, lang, aspect, index, sele
           <div className={clsx("mon-frame flex h-full flex-col overflow-hidden rounded-xl border border-line bg-panel", isDragging && "opacity-90 shadow-modal")}>
             {/* head: LED + shot code on the left, timecode and flags on the right */}
             <div className="flex h-7 shrink-0 items-center gap-1.5 border-b border-line/70 bg-raised/40 px-2">
-              <span aria-hidden className={clsx("size-1.5 shrink-0 rounded-full", LED[shot.status] ?? LED.draft)} title={t(shot.status.replaceAll("_", " "))} />
+              <span aria-hidden className={clsx("size-1.5 shrink-0 rounded-full", LED[shot.status] ?? LED.draft)} title={shotStatusLabel(t, shot.status)} />
               <span className="mono text-2xs font-semibold tracking-wide text-ink">{code}</span>
               {lock && <LockMark name={lock.name} />}
               {shot.blocked && <BlockedBadge engines={shot.blocked.engine_labels ?? []} />}
@@ -168,7 +168,7 @@ export const ShotCard = memo(function ShotCard({ shot, lang, aspect, index, sele
                 ) : (
                   <div className="flex h-full flex-col items-center justify-center gap-1.5 p-3 text-center text-2xs text-white/55">
                     <ImageIcon className="size-5" />
-                    <span className="eyebrow !text-white/60">{t("No keyframe yet")}</span>
+                    <span className="eyebrow !text-white/60">{t("No picture yet")}</span>
                     <span className="line-clamp-3 text-white/50">{shot.action}</span>
                   </div>
                 )}
@@ -236,15 +236,15 @@ export const ShotCard = memo(function ShotCard({ shot, lang, aspect, index, sele
               </p>
               <div>
                 <div className="grid grid-cols-5 gap-1.5">
-                  <Seg icon={<ImageIcon />} state={st.kf} label={st.kf === "done" ? t("Keyframe ready") : t("No keyframe yet")} />
+                  <Seg icon={<ImageIcon />} state={st.kf} label={st.kf === "done" ? t("Picture ready") : t("No picture yet")} />
                   <Seg icon={<Film />} state={blockedNoVideo ? "bad" : st.vid}
                     label={blockedNoVideo ? t("Video blocked by a safety filter") : st.vid === "done" ? t("Video ready") : t("No video yet")} />
                   <Seg icon={<Mic />} state={st.voice ?? "na"}
                     label={st.voice === null ? t("No spoken lines in this language.") : st.voice === "done" ? t("Voice ready ({lang})", { lang: ls }) : t("Voice not generated yet ({lang})", { lang: ls })} />
                   <Seg icon={<AudioLines />} state={st.lip ?? "na"}
-                    label={st.lip === null ? t("No spoken lines in this language.") : st.lip === "done" ? t("Lip-synced ({lang})", { lang: ls })
+                    label={st.lip === null ? t("No spoken lines in this language.") : st.lip === "done" ? t("Mouth synced ({lang})", { lang: ls })
                       : t("{n} line(s) in {lang}; voice mode {mode}", { n: st.lines, lang, mode: shot.effective_voice_mode })} />
-                  <Seg icon={<ShieldCheck />} state={qcBad ? "bad" : qcRan ? "done" : "todo"} label={qcBad ? t("QC failed") : qcRan ? t("QC passed") : t("Quality check")} />
+                  <Seg icon={<ShieldCheck />} state={qcBad ? "bad" : qcRan ? "done" : "todo"} label={qcBad ? t("Failed quality check") : qcRan ? t("Passed quality check") : t("Quality check")} />
                 </div>
                 {(stale || shot.video?.qc || shot.lipsync?.qc || (!shot.video && shot.keyframe?.qc?.checked_at)) && (
                   <div className="mt-1.5 flex flex-wrap items-center gap-1 empty:hidden">

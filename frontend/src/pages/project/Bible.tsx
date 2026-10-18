@@ -1,8 +1,8 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { MapPin, Palette, Sparkles, UserRound, Users } from "lucide-react";
+import { ArrowRight, MapPin, Palette, Sparkles, UserRound, Users, Wand2 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { CastGrid } from "../../components/room/CastGrid";
 import { CharacterDetail } from "../../components/room/CharacterDetail";
@@ -13,11 +13,14 @@ import { StyleEditor } from "../../components/room/StyleEditor";
 import { scaleMeter, voicedLanguages } from "../../components/room/cast";
 import { useConsentRows } from "../../components/room/util";
 import { StatStrip, ViewSwitch } from "../../components/room/workspace";
+import { useGenerate } from "../../components/Generate";
+import { Money } from "../../components/kit/Money";
 import { Button, Meter } from "../../components/ui";
 import { api } from "../../lib/api";
 import { LANG_SHORT } from "../../lib/format";
 import { tr, useT } from "../../lib/i18n";
-import { useCharacters, useLocations } from "../../lib/queries";
+import { useBatchEstimate } from "../../lib/estimates";
+import { useCharacters, useEpisode, useLocations } from "../../lib/queries";
 import type { Character } from "../../lib/types";
 import { useProjectCtx } from "./context";
 
@@ -25,10 +28,14 @@ export { AudioButton } from "../../components/room/AudioButton";
 
 type Tab = "cast" | "locations" | "style";
 
-/** The bible: cast, locations and visual style. Cast and locations are ID-card grids; opening one shows its own file (?char= / ?loc=). */
+/**
+ * Cast: the characters, places and look of the film. Cast and places are ID-card grids; opening one shows its own file
+ * (?char= / ?loc=). Once there are shots, "Make the cast" (with its price) makes a picture and a voice for everyone who
+ * has none, so they look and sound the same in every shot. A script import lands here.
+ */
 export default function BiblePage() {
   const t = useT();
-  const { project, eid, canEdit, canProduce } = useProjectCtx();
+  const { project, eid, lang, canEdit, canProduce } = useProjectCtx();
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
   const { data: chars, isLoading, isError: charsError, refetch: refetchChars } = useCharacters(project.id);
@@ -77,6 +84,22 @@ export default function BiblePage() {
   };
 
   const listing = !charId && !locId;
+
+  // ── next: make the cast (pictures and voices for whoever has none), priced on the button ──
+  const nav = useNavigate();
+  const loc = useLocation();
+  const fromImport = !!(loc.state as { fromImport?: boolean } | null)?.fromImport;
+  const { generate } = useGenerate();
+  const { data: ep } = useEpisode(eid, lang);
+  const shotCount = (ep?.shots ?? []).filter((s) => s.include).length;
+  const pictured = (chars ?? []).filter((c) => c.avatar_url).length;
+  const { data: castEst } = useBatchEstimate(eid, canEdit && shotCount > 0 ? { action: "produce", steps: ["cast"] } : null, [shotCount, pictured, (chars ?? []).length]);
+  const castTodo = !!castEst && castEst.count > 0;
+  const makeCast = () => run("cast", () => generate(eid, { action: "produce", steps: ["cast"] }, tr("Make the cast")));
+  const run = async (key: string, fn: () => Promise<unknown>) => {
+    setBusy(key);
+    try { await fn(); } catch { /* api toasts */ } finally { setBusy(""); }
+  };
   const showBuild = canEdit && listing && ((tab === "cast" && !!chars?.length) || (tab === "locations" && !!locs?.length));
 
   // ── the bible at a glance ────────────────────────────────────────────────
@@ -102,11 +125,37 @@ export default function BiblePage() {
     <RoomPage width="wide" scrollRef={scroller}>
       {listing && (
         <>
-          <RoomHeader icon={<Users />} title={t("Characters & places")}
-            description={t("Your film's bible: the cast, places and look. Lock each one once it is approved so every shot matches.")}
+          <RoomHeader icon={<Users />} title={t("Cast")}
+            description={t("Everyone and every place in your film, with their pictures and voices. Lock each one once it looks right, so every shot matches.")}
             actions={showBuild && (
               <Button variant="primary" icon={<Sparkles className="size-4" />} loading={busy === "propose"} onClick={propose}>{t("Build from script")}</Button>
             )} />
+
+          {canEdit && (castTodo || (fromImport && shotCount > 0)) && (
+            <section className="hud relative mb-5 flex flex-wrap items-center gap-x-5 gap-y-3 rounded-xl border border-accent/30 bg-gradient-to-r from-accent/10 to-transparent px-4 py-3.5" aria-label={t("Next step")}>
+              <span aria-hidden className="edge-light pointer-events-none absolute inset-x-4 top-0 h-px" />
+              <div className="min-w-0 flex-1 basis-80">
+                <p className="eyebrow !text-accent-ink">{fromImport ? t("Story imported · next step") : t("Next step")}</p>
+                <p className="mt-1 text-sm font-medium">
+                  {castTodo ? t("Make the cast: a picture of every character and place, and a voice for everyone who speaks.") : t("Your cast is ready. Next: the shots.")}
+                </p>
+                <p className="mt-0.5 text-xs text-mute">
+                  {castTodo ? t("So they look and sound the same in every shot. Want to use your own photos? Open a character and add them first: only what is missing is made.")
+                    : t("Make the pictures and videos one by one, or let the studio make them all.")}
+                </p>
+              </div>
+              {castTodo ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button variant="ghost" onClick={() => nav(`/p/${project.id}/shots`)}>{t("Skip for now")}</Button>
+                  <Button variant="primary" icon={<Wand2 className="size-4" />} loading={busy === "cast"} disabled={!!busy} onClick={() => void makeCast()}>
+                    {t("Make the cast")}{castEst && castEst.total_usd > 0 && <span className="mono">· <Money v={castEst.total_usd} /></span>}
+                  </Button>
+                </div>
+              ) : (
+                <Button variant="primary" iconRight={<ArrowRight className="size-4" />} onClick={() => nav(`/p/${project.id}/shots`)}>{t("Go to the shots")}</Button>
+              )}
+            </section>
+          )}
 
           <StatStrip index={1} className="mb-6" cells={[
             {
@@ -129,10 +178,10 @@ export default function BiblePage() {
             },
           ]} />
 
-          <ViewSwitch<Tab> className="mb-6" label={t("Bible view")} value={tab} onChange={(v) => go({ tab: v, char: null, loc: null })}
+          <ViewSwitch<Tab> className="mb-6" label={t("Cast view")} value={tab} onChange={(v) => go({ tab: v, char: null, loc: null })}
             items={[
-              { value: "cast", label: t("Cast"), icon: <UserRound />, count: chars?.length || undefined },
-              { value: "locations", label: t("Locations"), icon: <MapPin />, count: locs?.length || undefined },
+              { value: "cast", label: t("People"), icon: <UserRound />, count: chars?.length || undefined },
+              { value: "locations", label: t("Places"), icon: <MapPin />, count: locs?.length || undefined },
               { value: "style", label: t("Style"), icon: <Palette /> },
             ]} />
         </>

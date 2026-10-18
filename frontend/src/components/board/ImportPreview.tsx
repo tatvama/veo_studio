@@ -71,8 +71,67 @@ export function ImportSummary({ res }: { res: ImportResult }) {
  * read-only screenplay: scene headings with a mono number in the margin, shots as sub-blocks with their VISUAL line, dialogue as
  * a speaker chip over the words (speakers shown as the cast member they map to, or Voice-over).
  */
-export function ImportPreview({ res, picks, pool, hasShots, writeScript, onWriteScript }: {
+/** The story at a glance before anything is saved: the counts, then everyone the script names (who they are, how they're read). */
+function StoryCheck({ res, picks, pool, onPeople }: {
+  res: ImportResult; picks: Record<string, CastPick>; pool: Map<number, Character>; onPeople?: () => void;
+}) {
+  const t = useT();
+  const shots = res.draft.scenes.flatMap((s) => s.shots);
+  const isVo = (speaker: string) => speaker === "VO" || (picks[speaker] ?? NEW_PICK).kind === "vo";
+  const voLines = shots.reduce((a, h) => a + h.lines.filter((l) => isVo(l.speaker)).length, 0);
+  const seconds = shots.reduce((a, h) => a + Math.max(h.extend_to || 0, h.duration_s || 0), 0);
+  const people = res.characters.filter((c) => (picks[c.name] ?? NEW_PICK).kind !== "vo");
+  const length = seconds >= 60 ? `${Math.floor(seconds / 60)}:${String(Math.round(seconds % 60)).padStart(2, "0")}` : `${Math.round(seconds)}s`;
+  return (
+    <div className="space-y-3">
+      <div className="hud relative grid grid-cols-2 gap-x-5 gap-y-3 rounded-xl border border-line bg-raised/30 px-3.5 py-3 @md:grid-cols-5" role="group"
+        aria-label={t("{s} scenes, {n} shots, {p} people, {v} voice-over lines, {l} long", { s: res.draft.scenes.length, n: shots.length, p: people.length, v: voLines, l: length })}>
+        <Figure n={res.draft.scenes.length} label={t("Scenes")} />
+        <Figure n={shots.length} label={t("Shots")} />
+        <Figure n={people.length} label={t("People")} />
+        <Figure n={voLines} label={t("Voice-over lines")} />
+        <span className="flex flex-col gap-1">
+          <span className="eyebrow">{t("Length")}</span>
+          <span className="mono text-lg font-medium leading-none tracking-tight text-ink">{length}</span>
+        </span>
+      </div>
+      {people.length > 0 && (
+        <div className="rounded-xl border border-line">
+          <div className="flex items-center gap-2 border-b border-line px-3.5 py-2">
+            <span className="eyebrow flex-1">{t("People in your story")}</span>
+            {onPeople && <button type="button" onClick={onPeople} className="text-2xs font-medium text-accent-ink hover:underline">{t("Change who is who")}</button>}
+          </div>
+          <ul className="grid divide-y divide-line @2xl:grid-cols-2 @2xl:divide-y-0">
+            {people.map((c) => {
+              const p = picks[c.name] ?? NEW_PICK;
+              const matchedTo = p.kind === "existing" ? pool.get(p.id)?.name : undefined;
+              const facts = [c.gender ? t(c.gender) : "", c.age ? t("age {age}", { age: c.age }) : "",
+                c.lines ? (c.lines === 1 ? t("1 line") : t("{n} lines", { n: c.lines })) : t("on screen, no lines")].filter(Boolean).join(" · ");
+              return (
+                <li key={c.name} className="flex min-w-0 items-start gap-2.5 px-3.5 py-2 @2xl:border-b @2xl:border-line">
+                  <span className="mono mt-0.5 grid size-7 shrink-0 place-items-center rounded-full border border-line bg-raised text-2xs font-semibold text-mute">{c.name.charAt(0)}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="flex flex-wrap items-center gap-1.5 text-sm font-semibold uppercase tracking-wide">
+                      {c.name}
+                      {matchedTo ? <Badge tone="ok">{t("is {name}", { name: matchedTo })}</Badge> : <Badge tone="accent">{t("new")}</Badge>}
+                    </span>
+                    <span className="block text-2xs text-dim">{facts}</span>
+                    {c.description && <span className="line-clamp-2 block text-2xs leading-snug text-mute" title={c.description}>{c.description}</span>}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function ImportPreview({ res, picks, pool, hasShots, writeScript, onWriteScript, onPeople }: {
   res: ImportResult; picks: Record<string, CastPick>; pool: Map<number, Character>; hasShots: boolean; writeScript: boolean; onWriteScript: (v: boolean) => void;
+  /** Opens the "who is who" step (match a name to someone in the cast, or read it as voice-over). */
+  onPeople?: () => void;
 }) {
   const t = useT();
   const creating = res.characters.filter((c) => (picks[c.name] ?? NEW_PICK).kind === "new").map((c) => c.name);
@@ -85,7 +144,11 @@ export function ImportPreview({ res, picks, pool, hasShots, writeScript, onWrite
 
   return (
     <div className="space-y-3">
-      <ImportSummary res={res} />
+      <StoryCheck res={res} picks={picks} pool={pool} onPeople={onPeople} />
+      <p className="flex items-center gap-1.5 text-2xs text-dim">
+        <Badge tone={res.method === "ai" ? "ai" : "ok"}>{res.method === "ai" ? <><Sparkles className="size-3" />{t("Arranged by AI")}</> : <><Check className="size-3" />{t("Read from your layout")}</>}</Badge>
+        <span className="mono min-w-0 truncate" title={res.source}>{res.source}</span>
+      </p>
       {res.warnings.map((w) => <Alert key={w} tone="warn">{w}</Alert>)}
       {hasShots && <Alert tone="warn">{t("This replaces the current shot list. Shots with paid takes are kept out of the cut, not deleted.")}</Alert>}
 

@@ -71,6 +71,8 @@ class GenRequest:
     # the shot's character / location references with labels, in every mode (engines that take reference images
     # name them in the prompt; BytePlus swaps a registered character's photos for its asset library entries)
     cast_refs: list[tuple[str, Path]] = field(default_factory=list)
+    # lip-sync with more than one person on screen: who speaks ({frame, x, y} on their face, or {"auto": True})
+    speaker: dict | None = None
 
 
 # ── schema reading ───────────────────────────────────────────────────────────

@@ -41,7 +41,11 @@ class Estimator:
             return 0.0
         return n * float(self.prices["image_each"].get(self.models["image_hero" if hero else "image"], 0.07))
 
-    def video(self, shot: Shot, project: Project, quality: str | None = None, engine: str | None = None) -> float:
+    def video(self, shot: Shot, project: Project, quality: str | None = None, engine: str | None = None,
+              ends: bool = False) -> float:
+        """One clip of this shot. On Veo: a shot that will be extended is made at 720p (the only resolution Veo extends,
+        workers/handlers.video), and the clip is 8 s whatever length was asked when it runs to an end frame (`ends`),
+        uses reference images, or is 1080p or 4k (providers/services.video)."""
         from . import model_hub
         q = quality or effective_quality(shot, project)
         qm = catalog.QUALITY_MODES[q]
@@ -56,10 +60,12 @@ class Estimator:
         if choice is None:
             return 0.0
         m, _ = choice
+        veo = m.builtin and m.provider == "google"
+        res = "720p" if veo and shot.extend_to else qm["resolution"]
         secs = model_hub.clamp_duration(m, shot.duration_s)
-        if m.builtin and m.provider == "google" and (qm["resolution"] != "720p"):
+        if veo and (res != "720p" or ends or shot.mode == "reference_to_video"):
             secs = 8
-        return model_hub.price_for(m, seconds=secs, resolution=qm["resolution"])
+        return model_hub.price_for(m, seconds=secs, resolution=res)
 
     def engine_video(self, shot: Shot, project: Project, engine_id: str) -> float:
         from . import model_hub
@@ -97,19 +103,32 @@ class Estimator:
             total += self._tts(voice_for(self.db, "NARRATOR", lang, project)["provider"], narration)
         return total
 
+    def spoken_seconds(self, shot: Shot) -> float:
+        """How long the shot's speech runs: its longest recorded voice, else ~2.5 words a second of its longest line."""
+        from ..pipeline.selection import takes
+        rec = [t.duration_s or 0.0 for t in takes(self.db, shot.id, "voice", any_language=True)]
+        if rec:
+            return max(rec)
+        words = max((sum(len((l.get("line") or "").split()) for l in lines) for lines in (shot.dialogue or {}).values()),
+                    default=0)
+        return words / 2.5 + 0.6 if words else 0.0
+
     def lipsync(self, shot: Shot, model: str | None = None) -> float:
+        """A lip-sync pass runs as long as the clip, or as the voice when that is longer (the clip is held on its last
+        frame until the voice ends: workers/handlers.lipsync)."""
         from . import model_hub
         from ..pipeline.selection import current
         vt = current(self.db, shot.id, "video")
+        secs = max(float(shot.duration_s or 0), self.spoken_seconds(shot))
         if (vt and (vt.params or {}).get("audio_driven")
                 and settings_store.get_setting(self.db, "dub_method") == "regenerate"):
             # an audio-driven shot is dubbed by generating a new talking clip, not by a lip-sync pass
             choice = model_hub.first_choice(self.db, "dialogue", ["a2v"], model if model and ":" in model else None)
-            return model_hub.price_for(choice[0], seconds=shot.duration_s) if choice else 0.0
+            return model_hub.price_for(choice[0], seconds=secs) if choice else 0.0
         choice = model_hub.first_choice(self.db, "lipsync", ["lipsync"], model if model and ":" in model else None)
         if choice is None:
             return 0.0
-        return model_hub.price_for(choice[0], seconds=shot.duration_s)
+        return model_hub.price_for(choice[0], seconds=secs)
 
     def voicelock(self, shot: Shot) -> float:
         if not self._live("elevenlabs"):

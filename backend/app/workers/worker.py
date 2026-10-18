@@ -46,6 +46,10 @@ MAX_RATE_LIMIT_WAITS = 100
 # died or was taken down) is put back in the queue by any worker.
 HEARTBEAT_S = 30.0
 STALE_RUNNING_S = 10 * 60
+# A run gives up on its children only after this long with nothing moving at all: no child finished, progressed or
+# went back to wait for a quota (each quota retry counts as movement, so a day-long wait for Veo's daily quota is fine).
+# A child waiting for someone's approval never times out: the run says what it waits for.
+STUCK_S = 6 * 3600
 
 
 def handler(name: str):
@@ -57,6 +61,31 @@ def handler(name: str):
 
 class Cancelled(Exception):
     pass
+
+
+class BudgetStop(Exception):
+    """A run's spend guard tripped: queued work is cancelled, running work (already paid) finishes, and the run ends
+    with the problem "Stopped at your budget" instead of failing."""
+
+
+def _wait_note(rows: list[Job]) -> str:
+    """What the children are waiting for, for the run's progress: a provider's quota (and until when), or an approval."""
+    for j in rows:
+        if j.status == "awaiting_approval":
+            return f"waiting for your approval of {j.label or j.type}"
+    now = utcnow()
+    for j in rows:
+        err = j.error or ""
+        if j.status == "queued" and j.run_after and j.run_after > now and err.startswith("Waiting for the "):
+            provider = err[len("Waiting for the "):].split(" rate limit", 1)[0][:40]
+            return f"waiting for {provider} quota until {j.run_after:%H:%M} UTC"
+    return ""
+
+
+def _counts_note(st: dict[int, str]) -> str:
+    ok = sum(1 for s in st.values() if s == "succeeded")
+    bad = sum(1 for s in st.values() if s in ("failed", "cancelled"))
+    return f"{ok}/{len(st)} done" + (f", {bad} failed" if bad else "")
 
 
 class JobContext:
@@ -73,6 +102,7 @@ class JobContext:
         self.batch_id = job.batch_id
         self.services = Services()
         self._last_progress = 0.0
+        self._p = 0.0
 
     # db helpers
     def db(self) -> Session:
@@ -82,7 +112,7 @@ class JobContext:
         now = time.time()
         if now - self._last_progress < 1.0 and p < 1.0:
             return
-        self._last_progress = now
+        self._last_progress, self._p = now, p
         with SessionLocal() as db:
             db.execute(update(Job).where(Job.id == self.job_id).values(progress=max(0.0, min(p, 1.0)), message=message[:500]))
             db.commit()
@@ -137,6 +167,10 @@ class JobContext:
             parent = db.get(Job, self.job_id)
             if not parent or parent.cancel_requested or parent.status == "cancelled":
                 raise Cancelled()  # stopped: start no new (paid) work
+            if parent.batch_id and parent.parent_job_id:
+                root = db.query(Job).filter(Job.batch_id == parent.batch_id, Job.parent_job_id.is_(None)).first()
+                if root is not None and (root.result or {}).get("budget_stopped"):
+                    return 0  # the run stopped at its budget: no follow-up work (QC, retakes) is started
             # the same work already waiting or running (e.g. this run was resumed after a restart): reuse it
             same = db.query(Job).filter(Job.type == type_, Job.status.in_(("queued", "running", "awaiting_approval")))
             if shot_id:
@@ -160,33 +194,65 @@ class JobContext:
             emit(db, self.project_id, "jobs.created", {"count": 1, "parent": self.job_id})
             return j.id
 
-    def wait_children(self, ids: list[int], label: str = "Waiting", timeout_s: float = 26 * 3600,
+    def wait_children(self, ids: list[int], label: str = "Waiting", timeout_s: float = STUCK_S,
                       guard: Callable[[], None] | None = None) -> dict[int, str]:
-        """Wait for child jobs. Long on purpose: a child may wait most of a day for a provider's daily quota.
-        `guard` runs every few seconds (e.g. the spend cap); if it raises, or this job is stopped, the children stop too."""
-        start, last_guard = time.time(), 0.0
+        """Wait for child jobs. A child may wait most of a day for a provider's daily quota, so this gives up only after
+        `timeout_s` with nothing moving (see STUCK_S); the progress says what the children wait for. `guard` runs every
+        few seconds (e.g. the spend cap): BudgetStop lets running children finish and cancels the queued ones; any other
+        error, or this job being stopped, stops the children too."""
+        ids = [i for i in ids if i]
+        moved, last_guard, seen = time.time(), 0.0, None
         while True:
             with SessionLocal() as db:
-                rows = db.query(Job.id, Job.status).filter(Job.id.in_(ids)).all() if ids else []
-            st = {r[0]: r[1] for r in rows}
+                rows = db.query(Job).filter(Job.id.in_(ids)).all() if ids else []
+                st = {j.id: j.status for j in rows}
+                mark = [(j.id, j.status, round(j.progress or 0, 2), j.message, j.error, j.attempts, j.run_after) for j in rows]
+                note = _wait_note([j for j in rows if j.status not in ("succeeded", "failed", "cancelled")])
+                approval = any(j.status == "awaiting_approval" for j in rows)
+            if mark != seen:
+                seen, moved = mark, time.time()
             done = [i for i, s in st.items() if s in ("succeeded", "failed", "cancelled")]
-            self.progress(len(done) / max(len(ids), 1), f"{label}: {len(done)}/{len(ids)} done")
+            self.progress(len(done) / max(len(ids), 1), f"{label}: {_counts_note(st)}" + (f" · {note}" if note else ""))
             if len(done) == len(ids):
                 return st
-            try:
-                if self.cancelled():
-                    raise Cancelled()
-                if guard and time.time() - last_guard > 10:
-                    last_guard = time.time()
-                    guard()
-                if time.time() - start > timeout_s:
-                    raise ProviderError("timed out waiting for child jobs")
-            except Exception:
-                from ..core.jobs import cancel_tree
-                with SessionLocal() as db:
-                    cancel_tree(db, [self.job_id])
-                    db.commit()
-                raise
+            self._watch(guard, last_guard, moved, timeout_s, approval)
+            if guard and time.time() - last_guard > 10:
+                last_guard = time.time()
+            time.sleep(2)
+
+    def _watch(self, guard: Callable[[], None] | None, last_guard: float, moved: float, timeout_s: float,
+               waiting_on_people: bool) -> None:
+        """One check while a run waits: stopped by the user, the spend guard, or nothing moving for too long."""
+        try:
+            if self.cancelled():
+                raise Cancelled()
+            if guard and time.time() - last_guard > 10:
+                guard()
+            if not waiting_on_people and time.time() - moved > timeout_s:
+                raise ProviderError(f"Gave up waiting: nothing moved for {timeout_s / 3600:g} hours")
+        except BudgetStop:
+            self.stop_at_budget()
+            raise
+        except Exception:
+            from ..core.jobs import cancel_tree
+            with SessionLocal() as db:
+                cancel_tree(db, [self.job_id])
+                db.commit()
+            raise
+
+    def stop_at_budget(self) -> None:
+        """The spend guard tripped: start nothing new (queued work of this run is cancelled, and follow-ups such as QC
+        retakes are not queued any more), and wait for the work already running (and paid) to finish."""
+        from ..core.jobs import cancel_queued_tree, running_in_tree
+        self.save_result(budget_stopped=True)
+        while True:
+            with SessionLocal() as db:
+                cancel_queued_tree(db, [self.job_id])
+                db.commit()
+                busy = running_in_tree(db, [self.job_id])
+            if not busy or self.cancelled():
+                return
+            self.progress(0.99, f"Stopped at your budget: waiting for {busy} running job{'s' if busy != 1 else ''} to finish")
             time.sleep(2)
 
 
@@ -365,13 +431,18 @@ class Worker:
             result = fn(ctx) or {}
         except Cancelled:
             status, error = "cancelled", "Cancelled"
+        except BudgetStop:  # (runs catch it themselves and end with the problem; this is the safety net)
+            from ..core.problems import BUDGET_STOP
+            status, error = "failed", BUDGET_STOP
         except NeedsApproval as e:
             # a fallback route costs more than this job was approved for: wait for a producer instead of spending
             status, error, refund = "awaiting_approval", str(e), True
             result = {"extra_asked_usd": e.extra_usd, "extra_engine": e.engine}
             self._ask_extra(job_id, e)
-        except ProviderBlocked as e:
-            status, error = "failed", f"Blocked by safety filter: {e}"
+        except ProviderBlocked as e:  # plain words and a next step (core/problems.py); the prefix marks it as a block
+            from ..core.problems import BLOCKED, TRY_ANOTHER
+            said = str(e).strip().rstrip(".")
+            status, error = "failed", f"{BLOCKED}: {said}." + ("" if "Next:" in said else f" Next: {TRY_ANOTHER}.")
         except ProviderNotConfigured as e:
             status, error = "failed", str(e)
         except RetryableProviderError as e:

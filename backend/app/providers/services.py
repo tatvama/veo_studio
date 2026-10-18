@@ -376,7 +376,9 @@ class Services:
 
     # ── Lip-sync ─────────────────────────────────────────────────────────────
     def lipsync(self, video: Path, audio: Path, model: str, on_tick: Callable[[float], bool] | None = None,
-                active_speaker: bool = False) -> MediaResult:
+                active_speaker: dict | bool | None = None) -> MediaResult:
+        """`active_speaker`: who to lip-sync when more than one person is on screen ({frame, x, y} on their face, or
+        {"auto": True} for sync.so's own detection; see providers/syncso.py)."""
         d = ff.duration(video)
         price = float(self.prices["lipsync_per_second"].get(model, 0.05)) * d
         if _require("sync") == "mock":
@@ -525,7 +527,10 @@ class Services:
                               extend_uri=req.video_uri if req.mode == "extend" else "", negative=req.negative,
                               on_tick=on_tick, on_operation=on_request, resume_operation=resume)
         if m.provider == "sync" and m.builtin:
-            return self.lipsync(req.video, req.audio, self.models.get(m.endpoint, "lipsync-2"), on_tick=on_tick)
+            return self.lipsync(req.video, req.audio, self.models.get(m.endpoint, "lipsync-2"), on_tick=on_tick,
+                                active_speaker=req.speaker)
+        # (the catalog lip-sync engines on fal take no "who speaks" option: with two people on screen they pick a face
+        # themselves; the cost dialog warns about it, core/generation.speaker_warnings)
 
         # catalog engine (fal.ai, OpenRouter, BytePlus)
         seconds = float(req.duration or 8)

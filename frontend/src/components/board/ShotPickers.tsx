@@ -96,7 +96,7 @@ export function CharacterPicker({ selected, projectCast, library, onToggle, onCr
 // ── video model ──────────────────────────────────────────────────────────────
 
 const VIA_LABEL: Record<VideoFit["characters"], string> = {
-  refs: "photos go to the model", keyframe: "through the keyframe", none: "can't use them",
+  refs: "photos go to the model", keyframe: "through the picture", none: "can't use them",
 };
 
 /** Small icons for what a model can use from the shot. */
@@ -107,7 +107,7 @@ export function FitChips({ fit, className }: { fit: VideoFit; className?: string
     <span className={clsx("inline-flex flex-wrap items-center gap-x-2 gap-y-0.5 text-2xs", className)}>
       <span className={clsx("mono inline-flex items-center gap-0.5", tone)}
         title={t("Characters: {how}", { how: t(VIA_LABEL[fit.characters]) })}>
-        <UserRound className="size-3" />{fit.characters === "refs" ? `${fit.max_refs}` : fit.characters === "keyframe" ? t("via keyframe") : "✕"}
+        <UserRound className="size-3" />{fit.characters === "refs" ? `${fit.max_refs}` : fit.characters === "keyframe" ? t("via picture") : "✕"}
       </span>
       <span className={clsx("inline-flex items-center gap-0.5", fit.location === "none" ? TONE_TEXT_SM.bad : "text-mute")}
         title={t("Location: {how}", { how: t(VIA_LABEL[fit.location]) })}><MapPin className="size-3" />{fit.location === "none" ? "✕" : "✓"}</span>
@@ -231,16 +231,16 @@ export function FitNotes({ engine, auto, characters, hasLocation, refCount, hasL
   if (characters.length && f.characters === "none") {
     notes.push({ tone: "bad", text: t("{model} can't use character photos — {names} won't look like themselves. Pick a model that supports characters:", { model: engine.display_name, names }) });
   } else if (characters.length && f.characters === "keyframe") {
-    notes.push({ tone: "info", text: t("{names}: kept through the keyframe, which is made from their photos.", { names }) });
+    notes.push({ tone: "info", text: t("{names}: kept through the picture, which is made from their photos.", { names }) });
   }
   const noPhoto = characters.filter((c) => !c.avatar_url).map((c) => c.name);
   if (noPhoto.length) notes.push({ tone: "warn", text: t("No photo or design yet for {names} — add one so the face stays the same in every shot.", { names: noPhoto.join(", ") }) });
   if (hasLocation && f.location === "none") notes.push({ tone: "warn", text: t("{model} can't use the location's images; the place is described in words only.", { model: engine.display_name }) });
   const imgs = characters.length + refCount + (hasLocation ? 1 : 0);
   if (f.characters === "refs" && imgs > f.max_refs) {
-    notes.push({ tone: "info", text: t("{model} takes {n} reference images; the rest reach it through the keyframe.", { model: engine.display_name, n: f.max_refs }) });
+    notes.push({ tone: "info", text: t("{model} takes {n} reference images; the rest reach it through the picture.", { model: engine.display_name, n: f.max_refs }) });
   }
-  if (hasLines && !f.sound) notes.push({ tone: "info", text: t("This model is silent: the lines are voiced afterwards and lip-synced.") });
+  if (hasLines && !f.sound) notes.push({ tone: "info", text: t("This model is silent: the lines are voiced afterwards and mouth synced.") });
   const seedance = takesRegistered(engine) && characters.length > 0;
   if (!notes.length && !seedance) return null;
   const fix = characters.length && f.characters === "none" ? alternatives.filter((e) => e.fit.characters !== "none").slice(0, 3) : [];

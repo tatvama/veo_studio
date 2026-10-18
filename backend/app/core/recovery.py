@@ -2,6 +2,7 @@
 the shot's characters (registered in the BytePlus asset library, Seedance takes them as trusted references)."""
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -9,12 +10,52 @@ from sqlalchemy.orm import Session
 from .. import catalog
 from ..models import AIModel, Character, Job, Project, Shot
 from ..pipeline.prompting import effective_quality
+from ..providers.base import ProviderBlocked
 from ..providers.services import provider_mode
 from . import credit, model_hub
 
 BLOCK_PREFIX = "Blocked by safety filter"
 VIDEO_MODES = {"t2v", "i2v", "ref2v", "flf"}
 DRAFT_RES = "480p"
+
+# A blocked video is tried once more with these words toned down (weapons, blood, violence), the action kept: a filter
+# that tripped on "the knife" often lets "the kitchen tool" through. Whole words only, any case.
+SOFTER = {
+    "gun": "prop", "guns": "props", "pistol": "prop", "pistols": "props", "revolver": "prop", "rifle": "long prop",
+    "rifles": "long props", "shotgun": "long prop", "firearm": "prop", "firearms": "props", "weapon": "object",
+    "weapons": "objects", "knife": "kitchen tool", "knives": "kitchen tools", "dagger": "tool", "sword": "staff",
+    "swords": "staffs", "machete": "tool", "blood": "dust", "bloody": "dusty", "bloodied": "dusty", "bleeding": "hurt",
+    "gore": "mess", "gory": "messy", "kill": "defeat", "kills": "defeats", "killed": "defeated", "killing": "defeating",
+    "murder": "crime", "murders": "crimes", "murdered": "harmed", "murderer": "culprit", "stab": "strike",
+    "stabs": "strikes", "stabbed": "struck", "stabbing": "striking", "shoot": "aim at", "shoots": "aims at",
+    "corpse": "still figure", "corpses": "still figures", "violence": "conflict", "violent": "intense",
+    "violently": "intensely", "bomb": "device", "bombs": "devices", "explosion": "burst of light", "wounded": "hurt",
+    "wounds": "bruises", "strangle": "grab", "strangles": "grabs", "strangled": "grabbed", "torture": "pressure",
+    "tortured": "pressured", "suicide": "despair",
+}
+_SOFTER_RX = re.compile(r"\b(?:" + "|".join(sorted(SOFTER, key=len, reverse=True)) + r")\b", re.IGNORECASE)
+
+
+def soften(prompt: str) -> tuple[str, list[str]]:
+    """The prompt with weapons, blood and violence words toned down, and the words it changed (none: nothing to tone)."""
+    found: list[str] = []
+
+    def swap(m: re.Match) -> str:
+        word = m.group(0)
+        found.append(word.lower())
+        new = SOFTER[word.lower()]
+        return new.capitalize() if word[:1].isupper() else new
+
+    out = _SOFTER_RX.sub(swap, prompt or "")
+    return out, list(dict.fromkeys(found))
+
+
+def blocked(e: Exception, toned: list[str] | None = None) -> ProviderBlocked:
+    """A safety block in plain words with the next step (the worker writes "Blocked by safety filter: …" before it)."""
+    said = " ".join(str(e).split())[:240].rstrip(".")
+    again = f" It was tried again without {', '.join(toned[:5])}, and blocked again." if toned else ""
+    return ProviderBlocked(f"{said}.{again} Next: soften the action or the words, or try another engine (the shot's "
+                           "Recover options)", provider=getattr(e, "provider", ""))
 
 
 def seedance_ready(ch: Character | None) -> bool:
@@ -97,3 +138,29 @@ def options(db: Session, shot: Shot, project: Project, purpose: str = "recover",
     out.sort(key=lambda d: (not d["uses_registered"], d["provider"] in blocked_providers,
                             d["provider_mode"] != "live", d["est_usd"]))
     return out
+
+
+def seedance_engine(db: Session, shot: Shot, project: Project, quality: str | None = None) -> AIModel | None:
+    """The engine that will make this shot's clip, when it is one that takes registered characters (Seedance on
+    BytePlus), else None."""
+    q = quality if quality in catalog.QUALITY_MODES else effective_quality(shot, project)
+    explicit = shot.engine if shot.engine and shot.engine != "auto" else None
+    choice = model_hub.first_choice(db, f"video.{q}", ["i2v", "ref2v", "t2v"], explicit)
+    m = choice[0] if choice else None
+    return m if m is not None and (m.capabilities or {}).get("asset_refs") else None
+
+
+def seedance_warnings(db: Session, project: Project, shots: list[Shot], quality: str | None = None) -> list[str]:
+    """What the cost dialog says when Seedance will make shots whose people aren't registered with BytePlus: it gets
+    only the keyframe, and its real-person filter may block a realistic face (the fallback to registered references
+    works only for registered, accepted characters)."""
+    names: list[str] = []
+    for s in shots:
+        if s.characters and seedance_engine(db, s, project, quality) is not None:
+            names += [n for n in cast_status(db, s)["missing"] if n not in names]
+    if not names:
+        return []
+    return [f"Seedance makes some of these shots and may block a realistic face it only sees in the keyframe: "
+            f"{', '.join(names[:6])}{' …' if len(names) > 6 else ''} {'is' if len(names) == 1 else 'are'}n't registered "
+            "with BytePlus. Register them in the Bible (BytePlus), or turn on automatic registration (Settings → "
+            "Generation) and Produce all registers AI-made characters in its cast step."]

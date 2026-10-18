@@ -244,7 +244,7 @@ function ShotRow({ no, shot, cast, toneOf, disabled, codes, onChange, onMove, ca
         <span className="mono text-xs font-semibold tracking-wide text-ink">{label}</span>
         <span className="flex flex-wrap items-center gap-1 @3xl:flex-col @3xl:items-start">
           {shot.has_video ? <Badge tone="ok"><Film className="size-3" />{t("video {s}s", { s: shot.video_s ?? 0 })}</Badge>
-            : shot.thumb_url ? <Badge tone="info"><ImageUp className="size-3" />{shot.keyframe_uploaded ? t("your keyframe") : t("keyframe")}</Badge> : null}
+            : shot.thumb_url ? <Badge tone="info"><ImageUp className="size-3" />{shot.keyframe_uploaded ? t("your picture") : t("picture")}</Badge> : null}
           {shot.generating && <Badge tone="accent"><span className="eq" aria-hidden><i /><i /><i /><i /></span>{t("generating")}</Badge>}
         </span>
         {!disabled && (
@@ -276,7 +276,7 @@ function ShotRow({ no, shot, cast, toneOf, disabled, codes, onChange, onMove, ca
             </div>
             {shot.id && onMediaChanged && (
               <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-line px-2 py-1.5">
-                {!disabled && <UploadKeyframeButton shotId={shot.id} onDone={onMediaChanged} label={shot.keyframe_uploaded ? t("Replace your keyframe") : t("Upload keyframe")} />}
+                {!disabled && <UploadKeyframeButton shotId={shot.id} onDone={onMediaChanged} label={shot.keyframe_uploaded ? t("Replace your picture") : t("Upload picture")} />}
                 <span className="text-2xs text-dim">{t("References:")}</span>
                 <ShotRefs shotId={shot.id} refs={shot.ref_images ?? []} canEdit={!disabled} onChanged={onMediaChanged} compact />
               </div>
@@ -331,7 +331,7 @@ function ShotRow({ no, shot, cast, toneOf, disabled, codes, onChange, onMove, ca
             <CellLabel className="mb-0">{t("Dialogue")}</CellLabel>
             {speakers.size > 1 && (
               <p className={cn("flex items-start gap-1.5 rounded-md bg-warn/10 px-2 py-1 text-2xs", TONE_TEXT_SM.warn)}>
-                <AlertTriangle className="mt-px size-3 shrink-0" />{t("Two people speak in this shot — one speaker per shot lip-syncs best")}
+                <AlertTriangle className="mt-px size-3 shrink-0" />{t("Two people speak in this shot — mouth sync works best with one speaker per shot")}
               </p>
             )}
             {shot.lines.map((l, i) => {

@@ -83,7 +83,7 @@ export default function FinishPage() {
 
   return (
     <RoomPage width="full">
-      <RoomHeader icon={<MonitorPlay />} title={t("Finishing room")}
+      <RoomHeader icon={<MonitorPlay />} title={t("Pro finishing")}
         description={`${epName} · ${t("{n} shots", { n: shots.length })} · ${secs(total)} · ${t("Check out the cut, keep versions, and finish it in 4K.")}`}
         status={isDesktop
           ? <Badge tone="accent" dot>{t("Tatvam Desktop")}{info?.appVersion ? ` ${info.appVersion}` : ""}</Badge>

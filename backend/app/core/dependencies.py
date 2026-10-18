@@ -16,7 +16,8 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from ..events import emit
-from ..models import Episode, Project, Shot, Take
+from ..models import Character, Episode, Project, ProjectCast, Shot, Take
+from ..pipeline.prompting import outfit_for
 from .generation import endframe_spec, keyframe_specs, lipsync_specs, video_specs, voice_specs
 
 KEYFRAME_FIELDS = {"framing", "camera", "action", "characters", "outfits", "location_id", "prop_ids", "ref_images",
@@ -51,24 +52,26 @@ def _mark(db: Session, t: Take, reason: str, out: list[Take]) -> None:
 
 
 def mark_stale(db: Session, shot: Shot, fields: set[str], dialogue_before: dict | None = None,
-               narration_before: dict | None = None, note: str = "") -> list[Take]:
+               narration_before: dict | None = None, note: str = "", reason: str = "") -> list[Take]:
     """Flag the takes a change to `fields` invalidates. `dialogue_before`/`narration_before` are the old values
-    (the shot already holds the new ones) so only the languages that actually changed are flagged."""
+    (the shot already holds the new ones) so only the languages that actually changed are flagged. `reason`: the
+    words on the pictures and clips instead of "<fields> changed" (e.g. "Ravi's look changed")."""
     takes = db.query(Take).filter(Take.shot_id == shot.id, Take.archived.is_(False), Take.status == "ready").all()
     out: list[Take] = []
     what = ", ".join(sorted(LABELS.get(f, f) for f in fields if f in VIDEO_FIELDS)) or note or "shot changed"
+    why = reason or f"{what} changed"
     if fields & KEYFRAME_FIELDS:
         for t in takes:
             if t.kind == "keyframe" and t.provider != "upload":
-                _mark(db, t, f"{what} changed", out)
+                _mark(db, t, why, out)
     if fields & ENDFRAME_FIELDS:
         for t in takes:
             if t.kind == "endframe" and t.provider != "upload":
-                _mark(db, t, f"{what} changed", out)
+                _mark(db, t, why, out)
     if fields & VIDEO_FIELDS:
         for t in takes:
             if t.kind in ("video", "lipsync", "voicelock"):
-                _mark(db, t, f"{what} changed", out)
+                _mark(db, t, why, out)
     if "dialogue" in fields:
         for lang in _lang_changes(dialogue_before, shot.dialogue):
             for t in takes:
@@ -119,6 +122,59 @@ def impact(db: Session, project: Project, episode: Episode) -> dict[str, Any]:
     specs = regenerate_specs(db, project, episode, [g["shot_id"] for g in groups])
     return {"shots": groups, "counts": counts, "estimate_usd": round(sum(x["estimate"] for x in specs), 4),
             "plan": [{"label": x["label"], "usd": x["estimate"]} for x in specs]}
+
+
+# ── a character's look changed ───────────────────────────────────────────────
+
+LOOK_KINDS = ("keyframe", "endframe", "video", "lipsync", "voicelock")
+
+
+def character_shots(db: Session, character_id: int, project_id: int | None = None) -> list[Shot]:
+    """The shots in the cut that show this character: in one project, or in every project it is cast in."""
+    pids = {project_id} if project_id else {r.project_id for r in db.query(ProjectCast).filter(
+        ProjectCast.character_id == character_id).all()}
+    if not pids:
+        return []
+    rows = (db.query(Shot).join(Episode, Episode.id == Shot.episode_id)
+            .filter(Episode.project_id.in_(pids), Shot.include.is_(True)).order_by(Episode.number, Shot.order, Shot.id).all())
+    return [s for s in rows if str(character_id) in {str(x) for x in s.characters or []}]
+
+
+def character_changed(db: Session, ch: Character, what: str = "look", outfit: str | None = None) -> list[Take]:
+    """The character's approved pictures were added, approved or taken away, its lock changed, or (outfit) one of its
+    outfits was edited: the keyframes, end frames and clips (and their lip-syncs) of the shots that show them (wearing
+    that outfit) are out of date, "Ravi's look changed". Nothing is redone by itself: the impact report lists them with
+    the cost of redoing them (character_impact; POST /api/episodes/{eid}/impact/regenerate redoes them). No commit."""
+    reason = f"{ch.name}'s {what} changed"
+    out: list[Take] = []
+    for s in character_shots(db, ch.id):
+        if outfit is not None and outfit_for(db, s, ch) != outfit:
+            continue
+        out += mark_stale(db, s, {"characters"}, reason=reason)
+    return out
+
+
+def character_impact(db: Session, project: Project, ch: Character) -> dict[str, Any]:
+    """The project's shots that show this character and have out-of-date pictures or clips, per episode, with what
+    redoing them costs (the same jobs as the episode's impact report)."""
+    shown = character_shots(db, ch.id, project.id)
+    stale = {sid for (sid,) in db.query(Take.shot_id).filter(
+        Take.shot_id.in_([s.id for s in shown]), Take.stale.is_(True), Take.archived.is_(False),
+        Take.kind.in_(LOOK_KINDS)).distinct().all()} if shown else set()
+    by_ep: dict[int, list[Shot]] = {}
+    for s in shown:
+        if s.id in stale:
+            by_ep.setdefault(s.episode_id, []).append(s)
+    episodes, total = [], 0.0
+    for eid, shots in by_ep.items():
+        ep = db.get(Episode, eid)
+        usd = round(sum(x["estimate"] for x in regenerate_specs(db, project, ep, [s.id for s in shots])), 4)
+        total += usd
+        episodes.append({"episode_id": eid, "number": ep.number, "shot_ids": [s.id for s in shots],
+                         "codes": [s.code for s in shots], "estimate_usd": usd})
+    episodes.sort(key=lambda e: e["number"])
+    return {"character_id": ch.id, "name": ch.name, "shots": [c for e in episodes for c in e["codes"]],
+            "shot_ids": [i for e in episodes for i in e["shot_ids"]], "episodes": episodes, "estimate": round(total, 4)}
 
 
 def regenerate_specs(db: Session, project: Project, episode: Episode, shot_ids: list[int] | None = None,
