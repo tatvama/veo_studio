@@ -5,6 +5,27 @@ All notable changes to Tatvam AI Studio. From 3.0.0 on, this file is written by
 ([Conventional Commits](https://www.conventionalcommits.org/)); see [CONTRIBUTING.md](CONTRIBUTING.md#releases).
 Versions follow [Semantic Versioning](https://semver.org/).
 
+## [3.4.0](https://github.com/tatvama/veo_studio/compare/v3.3.0...v3.4.0) (2026-10-18)
+
+
+### Features
+
+* **audio:** background sound under dialogue, free sound effects, music per scene and a lip-sync warning ([#63](https://github.com/tatvama/veo_studio/issues/63)) ([7e3b315](https://github.com/tatvama/veo_studio/commit/7e3b315a510e5192bc04d32978277096b2b56d67))
+* **canvas:** a drag-node Shots screen — scene groups, shot steps, drag the cast onto shots, run with prices ([#64](https://github.com/tatvama/veo_studio/issues/64)) ([0674071](https://github.com/tatvama/veo_studio/commit/067407159c1a32a27730fa8740cbeba4179ebd66))
+* **desktop:** the installed app connects to studio.taatvam.com by default ([#57](https://github.com/tatvama/veo_studio/issues/57)) ([fc1294e](https://github.com/tatvama/veo_studio/commit/fc1294e01791e67d59e2ef72e0841a4ac5a7218c))
+* **flow:** one easy path — script box on Home, prices on every button, Make it for me, a Next bar and plain words ([#65](https://github.com/tatvama/veo_studio/issues/65)) ([d599b8c](https://github.com/tatvama/veo_studio/commit/d599b8cd0ef7b14d7be824a250afcc088c10804f))
+* **produce:** voices that fit the cast, voice-over that fits its clip, a stop to check looks, scenes that join ([#62](https://github.com/tatvama/veo_studio/issues/62)) ([37a6fc6](https://github.com/tatvama/veo_studio/commit/37a6fc61b9cae9b74c9ec4262bd659d7ff452500))
+* **screens:** Cast faces first, problems you can act on, try another engine, quick drafts, recipes and phone layouts ([#68](https://github.com/tatvama/veo_studio/issues/68)) ([43a7150](https://github.com/tatvama/veo_studio/commit/43a7150c6e0b65f8d8aea39ab084753e914ca9fd))
+
+
+### Bug Fixes
+
+* **continuity:** carry a script's cast, scene mood and sound through every shot, and finish the film's audio ([#60](https://github.com/tatvama/veo_studio/issues/60)) ([f3433be](https://github.com/tatvama/veo_studio/commit/f3433be6849dffc19675f15681065c6ce0b909a9))
+* **desktop:** electron-builder 26 config for the Windows installer ([#58](https://github.com/tatvama/veo_studio/issues/58)) ([9ac5f2f](https://github.com/tatvama/veo_studio/commit/9ac5f2f2e83be465a3cc739fd2e81b3e5721f02e))
+* **film:** screenplay speakers, narrator shots, no cut-off or made-up speech, outfit lines and a cleaner sound mix ([#67](https://github.com/tatvama/veo_studio/issues/67)) ([c99479c](https://github.com/tatvama/veo_studio/commit/c99479c39b7d8e4ecb5f465c29c46a89baea699d))
+* **import:** read script lines with linear-time patterns ([#61](https://github.com/tatvama/veo_studio/issues/61)) ([ab55f19](https://github.com/tatvama/veo_studio/commit/ab55f190ae872104575d513182e91c92c56a3179))
+* **runs:** runs list their problems, voices before videos, safer retakes and budget, redo after a character change ([#66](https://github.com/tatvama/veo_studio/issues/66)) ([02fa610](https://github.com/tatvama/veo_studio/commit/02fa6100b4018a835e549b458f48dd4fb7646564))
+
 ## [3.3.0](https://github.com/tatvama/veo_studio/compare/v3.2.0...v3.3.0) (2026-10-16)
 
 
