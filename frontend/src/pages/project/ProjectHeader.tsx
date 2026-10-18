@@ -61,7 +61,7 @@ function Stepper({ pid, steps, area }: { pid: number; steps: StepView[]; area?: 
               <li className="shrink-0">
                 <Tooltip content={[s.blurb, s.stage.hint].filter(Boolean).join(" · ")} side="bottom" delay={500}>
                   <Link to={`/p/${pid}/${s.to}`} data-tour={`step-${s.id}`} aria-current={on ? "step" : undefined} aria-label={t("Step {n}: {label}", { n: i + 1, label: s.label })}
-                    className={clsx("relative flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/50",
+                    className={clsx("relative flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm font-medium outline-none transition-colors focus-visible:ring-2 focus-visible:ring-accent/50 max-sm:h-10 max-sm:min-w-10 max-sm:justify-center",
                       on ? "text-ink" : "text-mute hover:bg-hover hover:text-ink")}>
                     {on && (
                       <motion.span layoutId={`stepper-${pid}`} transition={{ type: "spring", stiffness: 520, damping: 42, mass: 0.7 }}
@@ -103,7 +103,7 @@ export function ProjectMenu({ pid, area, story }: { pid: number; area?: ProjectA
     ]} trigger={(tp) => (
       <Tooltip content={t("Project menu")} side="bottom">
         <button type="button" {...tp} aria-label={t("Project menu")}
-          className="grid size-8 shrink-0 place-items-center rounded-lg text-mute transition-colors hover:bg-hover hover:text-ink">
+          className="grid size-8 shrink-0 place-items-center rounded-lg text-mute transition-colors hover:bg-hover hover:text-ink max-sm:size-10">
           <Ellipsis className="size-4" />
         </button>
       </Tooltip>
@@ -120,7 +120,7 @@ function Languages({ project, className }: { project: Project; className?: strin
     <div className={clsx("flex shrink-0 rounded-md border border-line bg-raised/50 p-0.5", className)} role="radiogroup" aria-label={t("Working language")}>
       {project.languages.map((l) => (
         <button key={l} role="radio" aria-checked={ctx.lang === l} onClick={() => ctx.setLang(l)}
-          className={clsx("mono relative h-6 rounded px-1.5 text-2xs font-medium transition-colors", ctx.lang === l ? "text-[var(--on-accent)]" : "text-mute hover:text-ink")}>
+          className={clsx("mono relative h-6 rounded px-1.5 text-2xs font-medium transition-colors max-sm:h-9 max-sm:min-w-9", ctx.lang === l ? "text-[var(--on-accent)]" : "text-mute hover:text-ink")}>
           {ctx.lang === l && <motion.span layoutId={`hdr-lang-${project.id}`} className="absolute inset-0 rounded bg-accent" transition={{ type: "spring", stiffness: 520, damping: 40 }} />}
           <span className="relative">{LANG_SHORT[l]}{l === project.primary_language ? "★" : ""}</span>
         </button>
@@ -151,16 +151,16 @@ export function ProjectHeader(p: HeaderProps) {
         {/* identity: back home, title, episode, language */}
         <div className="flex min-w-0 items-center gap-1 max-lg:flex-1">
           <Tooltip content={t("Home: all projects")} side="bottom">
-            <Link to="/" aria-label={t("Home: all projects")} className="grid size-8 shrink-0 place-items-center rounded-lg text-mute transition-colors hover:bg-hover hover:text-ink">
+            <Link to="/" aria-label={t("Home: all projects")} className="grid size-8 shrink-0 place-items-center rounded-lg text-mute transition-colors hover:bg-hover hover:text-ink max-sm:size-10">
               <ChevronLeft className="size-4" />
             </Link>
           </Tooltip>
           <input value={p.title} onChange={(e) => p.onTitle(e.target.value)} onBlur={p.onSaveTitle}
             onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} disabled={!ctx.canEdit} aria-label={t("Project title")} title={p.title}
-            className="w-44 min-w-16 truncate rounded-md border border-transparent bg-transparent px-1.5 py-1 text-[0.95rem] font-semibold tracking-tight outline-none transition-colors hover:border-line focus:border-accent/60 focus:bg-raised disabled:hover:border-transparent max-lg:flex-1 lg:@max-[72rem]:w-28 @min-[96rem]:w-56" />
+            className="w-44 min-w-16 truncate rounded-md border border-transparent bg-transparent px-1.5 py-1 text-[0.95rem] font-semibold tracking-tight outline-none transition-colors hover:border-line focus:border-accent/60 focus:bg-raised disabled:hover:border-transparent max-lg:flex-1 max-sm:h-10 lg:@max-[72rem]:w-28 @min-[96rem]:w-56" />
           {(episodes.length > 1 || project.type === "series") && (
             <>
-              <Select value={ctx.eid} onChange={(e) => ctx.setEpisode(Number(e.target.value))} className="h-8 w-auto max-w-[7rem] shrink-0 text-xs" aria-label={t("Episode")}>
+              <Select value={ctx.eid} onChange={(e) => ctx.setEpisode(Number(e.target.value))} className="h-8 w-auto max-w-[7rem] shrink-0 text-xs max-sm:h-10" aria-label={t("Episode")}>
                 {episodes.map((e) => (
                   <option key={e.id} value={e.id}>{e.kind === "cutdown" ? "✂ " : ""}{project.type === "series" || e.kind === "cutdown" ? `E${String(e.number).padStart(2, "0")} · ` : ""}{e.title || t("Untitled")}</option>
                 ))}
@@ -177,7 +177,7 @@ export function ProjectHeader(p: HeaderProps) {
         <div className="flex min-w-0 items-center gap-1.5 max-lg:order-last max-lg:basis-full lg:shrink">
           <Tooltip content={t("Overview")} side="bottom">
             <Link to={`/p/${pid}/dashboard`} aria-label={t("Overview")} aria-current={p.area === "home" ? "page" : undefined}
-              className={clsx("grid size-8 shrink-0 place-items-center rounded-lg transition-colors",
+              className={clsx("grid size-8 shrink-0 place-items-center rounded-lg transition-colors max-sm:size-10",
                 p.area === "home" ? "bg-accent/10 text-accent-ink ring-1 ring-accent/30" : "text-mute hover:bg-hover hover:text-ink")}>
               <Gauge className="size-4" />
             </Link>
@@ -191,7 +191,7 @@ export function ProjectHeader(p: HeaderProps) {
           )}
           {main.length > 1 && open && (
             /* phones: the views as a select, so the steps keep the row */
-            <Select value={p.tab} onChange={(e) => nav(`/p/${pid}/${e.target.value}`)} className="h-8 w-auto shrink-0 text-xs sm:hidden" aria-label={t("{step} views", { step: open.label })}>
+            <Select value={p.tab} onChange={(e) => nav(`/p/${pid}/${e.target.value}`)} className="h-8 w-auto shrink-0 text-xs max-sm:h-10 sm:hidden" aria-label={t("{step} views", { step: open.label })}>
               {main.map((x) => <option key={x.to} value={x.to}>{x.label}</option>)}
             </Select>
           )}
@@ -200,7 +200,7 @@ export function ProjectHeader(p: HeaderProps) {
               label: x.label, icon: <x.icon className="size-4" />, onClick: () => nav(`/p/${pid}/${x.to}`),
             }))} trigger={(tp) => (
               <Tooltip content={t("Tools for writers and specialists")} side="bottom">
-                <button type="button" {...tp} className="flex h-8 shrink-0 items-center gap-1 rounded-lg px-2 text-xs font-medium text-mute transition-colors hover:bg-hover hover:text-ink">
+                <button type="button" {...tp} className="flex h-8 shrink-0 items-center gap-1 rounded-lg px-2 text-xs font-medium text-mute transition-colors hover:bg-hover hover:text-ink max-sm:h-10 max-sm:min-w-10 max-sm:justify-center">
                   <SlidersHorizontal className="size-3.5" /><span className="sr-only @min-[80rem]:not-sr-only">{t("Advanced")}</span><ChevronDown className="size-3" />
                 </button>
               </Tooltip>
@@ -219,7 +219,7 @@ export function ProjectHeader(p: HeaderProps) {
           <IconButton title={`${t("Search")} (${MOD}+K)`} tipSide="bottom" onClick={() => setPaletteOpen(true)} className="max-sm:hidden"><Search className="size-4" /></IconButton>
           <Tooltip content={`${t("Director")} (${MOD}+J)`} side="bottom">
             <button data-tour="director" onClick={p.onToggleDirector} aria-pressed={p.directorOpen} aria-label={t("Director")}
-              className={clsx("flex h-8 items-center gap-1.5 rounded-lg border px-2.5 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ai/50",
+              className={clsx("flex h-8 items-center gap-1.5 rounded-lg border px-2.5 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ai/50 max-sm:h-10 max-sm:px-3",
                 p.directorOpen ? "border-ai/40 bg-ai/12 text-ai" : "border-line bg-raised/60 text-mute hover:border-ai/40 hover:text-ai")}>
               <Bot className="size-4 shrink-0" />
               <span className="hidden text-sm font-medium @min-[72rem]:inline">{t("Director")}</span>

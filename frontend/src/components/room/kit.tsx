@@ -146,7 +146,7 @@ export function DetailBar({ backLabel, onBack, name, pos }: {
 }) {
   return (
     <div className="flex items-center gap-2">
-      <button type="button" onClick={onBack} className="-ml-1.5 inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-mute transition-colors hover:bg-hover hover:text-ink">
+      <button type="button" onClick={onBack} className="-ml-1.5 inline-flex h-8 max-sm:h-10 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-mute transition-colors hover:bg-hover hover:text-ink">
         <ArrowLeft className="size-4" />{backLabel}
       </button>
       {name && <span aria-hidden className="text-dim">/</span>}

@@ -69,3 +69,6 @@ export const VOICE_MODES: Record<string, string> = {
 export const SHOT_MODES: Record<string, string> = {
   auto: "Auto", text_to_video: "Text → video", interpolate: "First + last frame", reference_to_video: "Reference images",
 };
+
+/** What a render is called: the final film, a quick draft run's 480p cut, or a free animatic (pass it through t()). */
+export const renderKindLabel = (kind: string) => (kind === "final" ? "Final" : kind === "draft" ? "Draft cut" : "Animatic");

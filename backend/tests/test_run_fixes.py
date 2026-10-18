@@ -344,6 +344,17 @@ def test_a_new_look_marks_the_shots_and_can_be_redone(client: TestClient):
     assert imp["shot_ids"] == [sid] and imp["episodes"][0]["episode_id"] == eid and "estimate" in imp
     with SessionLocal() as db:
         assert imp["shots"] == [db.get(Shot, sid).code]
+    # the Cast page prices "Redo these shots" first, with exactly the jobs the redo runs
+    est = ok(c.post("/api/estimate", headers=H, json={"action": "redo_shots", "character_id": ravi, "project_id": pid}))
+    assert est["count"] >= 1 and abs(est["total_usd"] - imp["estimate"]) < 1e-6 and "ok" in est["budget"]
+    assert c.post("/api/estimate", headers=H, json={"action": "redo_shots", "character_id": ravi}).status_code == 400
+    # someone else in the shot: Ravi's change is not their look changing
+    meera = ok(c.post("/api/characters", headers=H, json={"name": "Meera", "project_id": pid}))["id"]
+    with SessionLocal() as db:
+        db.get(Shot, sid).characters = [ravi, meera]
+        db.commit()
+    assert ok(c.get(f"/api/characters/{meera}/impact?project_id={pid}"))["shot_ids"] == []
+    assert ok(c.get(f"/api/characters/{ravi}/impact?project_id={pid}"))["shot_ids"] == [sid]
     out = ok(c.post(f"/api/episodes/{eid}/impact/regenerate", headers=H, json={"shot_ids": imp["shot_ids"]}))
     assert [j["shot_id"] for j in out["jobs"]] == [sid]
     wait_jobs(c, pid, timeout=600)

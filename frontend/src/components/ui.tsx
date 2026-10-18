@@ -36,7 +36,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonHTMLAttributes<HTMLBut
       className={cn(
         "inline-flex items-center justify-center gap-1.5 rounded-lg font-medium select-none whitespace-nowrap", press,
         "disabled:opacity-45 disabled:cursor-not-allowed",
-        size === "sm" && "h-7 px-2.5 text-xs", size === "md" && "h-9 px-3.5 text-sm", size === "lg" && "h-11 px-5 text-base",
+        size === "sm" && "h-7 px-2.5 text-xs", size === "md" && "h-9 px-3.5 text-sm max-sm:h-10", size === "lg" && "h-11 px-5 text-base",
         block && "w-full",
         variant === "primary" && "btn-primary text-black",
         variant === "secondary" && "border border-line bg-raised text-ink hover:border-dim/40 hover:bg-hover",
@@ -61,7 +61,7 @@ export function IconButton({ title, className, children, active, shortcut, tipSi
   const btn = (
     <button
       aria-label={title}
-      className={cn("inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-mute hover:bg-hover hover:text-ink disabled:opacity-45", press,
+      className={cn("inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-mute hover:bg-hover hover:text-ink disabled:opacity-45 max-sm:size-10", press,
         active && "bg-hover text-ink", className)}
       {...rest}
     >
@@ -74,7 +74,7 @@ export function IconButton({ title, className, children, active, shortcut, tipSi
 const field = "w-full rounded-lg border border-line bg-panel px-3 text-sm text-ink placeholder:text-dim transition-[border-color,box-shadow,background-color] duration-150 hover:border-dim/40 focus:border-accent/70 focus:outline-none focus:ring-[3px] focus:ring-accent/15 disabled:opacity-50 disabled:hover:border-line";
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(function Input({ className, ...rest }, ref) {
-  return <input ref={ref} className={cn(field, "h-9", className)} {...rest} />;
+  return <input ref={ref} className={cn(field, "h-9 max-sm:h-10", className)} {...rest} />;
 });
 
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(function Textarea({ className, ...rest }, ref) {
@@ -82,7 +82,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
 });
 
 export function Select({ className, children, ...rest }: SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select className={cn(field, "h-9", className)} {...rest}>{children}</select>;
+  return <select className={cn(field, "h-9 max-sm:h-10", className)} {...rest}>{children}</select>;
 }
 
 /** Text input with a leading magnifier and a clear button. `className` sizes the whole control. */
@@ -275,7 +275,7 @@ export function Segmented<T extends string | number>({ value, options, onChange,
             aria-checked={on}
             title={o.title}
             onClick={() => onChange(o.value)}
-            className={cn("relative rounded-md font-medium transition-colors", size === "sm" ? "px-2 py-0.5 text-xs" : "px-3 py-1 text-sm",
+            className={cn("relative rounded-md font-medium transition-colors max-sm:min-h-10 max-sm:min-w-10", size === "sm" ? "px-2 py-0.5 text-xs" : "px-3 py-1 text-sm",
               on ? "text-ink" : "text-mute hover:text-ink")}
           >
             {on && <motion.span layoutId={`seg-${id}`} transition={SPRING} className="absolute inset-0 rounded-md bg-raised shadow-sm ring-1 ring-inset ring-line" />}

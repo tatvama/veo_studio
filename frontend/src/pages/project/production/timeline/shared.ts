@@ -57,8 +57,8 @@ export const clipTail = (c: Clip) => c.start + c.duration + c.hold;
 export type Overlay = Shot["overlays"][number];
 export interface Span { start: number; end: number; text: string }
 
-/** Width of the sticky track-label column. */
-export const LABEL_W = 132;
+/** Width of the sticky track-label column (room for a track's "Add music · price" button). */
+export const LABEL_W = 176;
 export const MIN_PPS = 4;
 export const MAX_PPS = 240;
 export const SNAP_PX = 8;
@@ -66,6 +66,8 @@ export const FPS = DEFAULT_FPS;
 /** Row heights (px): the video track carries thumbnails so it is taller than the audio / text tracks. */
 export const VIDEO_H = 52;
 export const TRACK_H = 38;
+/** A track whose label column carries a button on a second line (Music, Sound effects). */
+export const ACTION_TRACK_H = 54;
 export const RULER_H = 30;
 /** backend generation.sfx_spec: 0.002 $/s × 6 s per shot when ElevenLabs is live */
 export const SFX_USD_PER_SHOT = 0.012;

@@ -62,9 +62,35 @@ function Seg({ icon, state, label }: { icon: ReactNode; state: SegState; label: 
 /** The status LED in the tile header: where the shot stands overall. */
 const LED: Record<string, string> = { approved: "bg-ok shadow-[0_0_6px_0_var(--color-ok)]", video_ready: "bg-accent shadow-[0_0_6px_0_var(--color-accent)]", keyframe_ready: "bg-info", draft: "bg-dim/60" };
 
-export const ShotCard = memo(function ShotCard({ shot, lang, aspect, index, selected, picking, picked, threshold, draggable, engineName, onOpen }: {
+/** Who is in a shot, as the card shows them: a face and a name. */
+export interface CardFace { id: number; name: string; avatar_url?: string }
+
+/** The cast in a shot: small overlapping faces, with the first names when there is room for them. */
+function Faces({ faces }: { faces: CardFace[] }) {
+  const t = useT();
+  const shown = faces.slice(0, 3);
+  const more = faces.length - shown.length;
+  const names = faces.map((f) => f.name).join(", ");
+  return (
+    <span className="flex min-w-0 items-center gap-1.5" title={names}>
+      <span className="flex shrink-0 items-center">
+        {shown.map((f, i) => (
+          <span key={f.id} className={clsx("inline-grid size-5 shrink-0 place-items-center overflow-hidden rounded-full bg-raised ring-2 ring-panel", i > 0 && "-ml-1.5")}>
+            {f.avatar_url ? <img src={f.avatar_url} alt="" loading="lazy" draggable={false} className="size-full object-cover" />
+              : <span aria-hidden className="text-[9px] font-semibold uppercase text-mute">{f.name.slice(0, 1)}</span>}
+          </span>
+        ))}
+        {more > 0 && <span className="mono -ml-1.5 inline-grid size-5 place-items-center rounded-full bg-raised text-[9px] font-semibold text-mute ring-2 ring-panel">+{more}</span>}
+      </span>
+      <span className="min-w-0 truncate text-2xs text-mute"><span className="sr-only">{t("In this shot:")} </span>{faces.map((f) => f.name.split(/\s+/)[0]).join(", ")}</span>
+    </span>
+  );
+}
+
+export const ShotCard = memo(function ShotCard({ shot, lang, aspect, index, selected, picking, picked, threshold, draggable, engineName, onOpen, faces }: {
   shot: Shot; lang: string; aspect: string; index: number; selected: boolean; picking: boolean; picked: boolean; threshold: number;
   draggable: boolean; engineName: string; onOpen: (id: number) => void;
+  /** the cast in this shot (faces on the card) */ faces?: CardFace[];
 }) {
   const t = useT();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: shot.id, disabled: !draggable });
@@ -231,6 +257,7 @@ export const ShotCard = memo(function ShotCard({ shot, lang, aspect, index, sele
 
             {/* caption + stage strip */}
             <div className="flex flex-1 flex-col justify-between gap-2 px-2.5 pb-2 pt-2">
+              {faces && faces.length > 0 && <Faces faces={faces} />}
               <p className="line-clamp-2 min-h-[2.1rem] text-xs leading-snug text-mute">
                 {shot.framing && <span className="mono text-2xs font-medium uppercase tracking-wide text-ink">{shot.framing} </span>}{shot.action}
               </p>

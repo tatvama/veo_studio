@@ -1,23 +1,21 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, MapPin, Palette, Sparkles, UserRound, Users, Wand2 } from "lucide-react";
-import { AnimatePresence, motion } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { ArrowRight, MapPin, Palette, Sparkles, UserRound, Users, Wand2, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
-import { CastGrid } from "../../components/room/CastGrid";
+import { FaceList, PlaceList } from "../../components/room/CastList";
 import { CharacterDetail } from "../../components/room/CharacterDetail";
-import { RoomHeader, RoomPage } from "../../components/room/kit";
-import { LocationsTab } from "../../components/room/Locations";
+import { RoomEmpty } from "../../components/room/kit";
+import { PlaceDetail, useAddPlace } from "../../components/room/Locations";
 import { NewCharacterModal } from "../../components/room/NewCharacter";
+import { useCastImpact } from "../../components/room/redo";
 import { StyleEditor } from "../../components/room/StyleEditor";
-import { scaleMeter, voicedLanguages } from "../../components/room/cast";
-import { useConsentRows } from "../../components/room/util";
-import { StatStrip, ViewSwitch } from "../../components/room/workspace";
+import { ViewSwitch } from "../../components/room/workspace";
 import { useGenerate } from "../../components/Generate";
-import { Money } from "../../components/kit/Money";
-import { Button, Meter } from "../../components/ui";
+import { PriceSuffix } from "../../components/kit/Price";
+import { useElementWidth } from "../../components/review/utils";
+import { Button, IconButton, Skeleton } from "../../components/ui";
 import { api } from "../../lib/api";
-import { LANG_SHORT } from "../../lib/format";
 import { tr, useT } from "../../lib/i18n";
 import { useBatchEstimate } from "../../lib/estimates";
 import { useCharacters, useEpisode, useLocations } from "../../lib/queries";
@@ -27,31 +25,37 @@ import { useProjectCtx } from "./context";
 export { AudioButton } from "../../components/room/AudioButton";
 
 type Tab = "cast" | "locations" | "style";
+/** phone: the list, or one open face full screen · two: list + the face (panel under the pictures) · three: list, pictures, panel */
+type Mode = "phone" | "two" | "three";
 
 /**
- * Cast: the characters, places and look of the film. Cast and places are ID-card grids; opening one shows its own file
- * (?char= / ?loc=). Once there are shots, "Make the cast" (with its price) makes a picture and a voice for everyone who
- * has none, so they look and sound the same in every shot. A script import lands here.
+ * Cast, faces first: on the left the list of faces (picture, name, voice, "look out of date"), in the middle the open
+ * character's big pictures (Approve / Redo, "Make pictures · price", "Redo these shots · price" after a look change), on
+ * the right a details panel (voice, look lock, outfits, Advanced). Places work the same way. On a phone the list comes
+ * first and a tap opens the character full screen with the panel under the pictures. ?char= / ?loc= name the open one.
  */
 export default function BiblePage() {
   const t = useT();
-  const { project, eid, lang, canEdit, canProduce } = useProjectCtx();
+  const { project, eid, lang, canEdit } = useProjectCtx();
   const qc = useQueryClient();
   const [params, setParams] = useSearchParams();
   const { data: chars, isLoading, isError: charsError, refetch: refetchChars } = useCharacters(project.id);
-  const { data: locs } = useLocations(project.id);
-  const { data: consents } = useConsentRows(canProduce);
+  const { data: locs, isLoading: locsLoading, isError: locsError, refetch: refetchLocs } = useLocations(project.id);
   const [busy, setBusy] = useState("");
   const [newChar, setNewChar] = useState<string | null>(null);
-  const scroller = useRef<HTMLDivElement>(null);
+  const [rootRef, width] = useElementWidth<HTMLDivElement>();
+  const w = width || window.innerWidth;
+  const mode: Mode = w < 640 ? "phone" : w < 1000 ? "two" : "three";
 
   const raw = params.get("tab");
   const tab: Tab = raw === "locations" || raw === "style" ? raw : "cast";
-  const charId = tab === "cast" ? Number(params.get("char")) || null : null;
-  const locId = tab === "locations" ? Number(params.get("loc")) || null : null;
-  const view = `${tab}:${charId ?? locId ?? "list"}`;
+  const charParam = Number(params.get("char")) || null;
+  const locParam = Number(params.get("loc")) || null;
+  // on a laptop someone is always open (the first face until you pick one); on a phone the list comes first
+  const charId = tab !== "cast" ? null : charParam ?? (mode !== "phone" ? chars?.[0]?.id ?? null : null);
+  const locId = tab !== "locations" ? null : locParam ?? (mode !== "phone" ? locs?.[0]?.id ?? null : null);
 
-  /** Update the URL (tab / open character / open location). Opening something pushes history so Back returns to the grid. */
+  /** Update the URL (tab / open character / open place). On a phone opening one pushes history, so Back returns to the list. */
   const go = (next: { tab?: Tab; char?: number | null; loc?: number | null }, push = false) => {
     const p = new URLSearchParams(params);
     const apply = (k: string, v: string | number | null | undefined) => { if (v === null || v === undefined || v === "") p.delete(k); else p.set(k, String(v)); };
@@ -60,9 +64,10 @@ export default function BiblePage() {
     if ("loc" in next) apply("loc", next.loc);
     setParams(p, { replace: !push });
   };
+  const openChar = (id: number) => go({ char: id }, mode === "phone");
+  const openLoc = (id: number) => go({ loc: id }, mode === "phone");
 
-  // A new view always starts at the top.
-  useEffect(() => { scroller.current?.scrollTo({ top: 0 }); }, [view]);
+  const stale = useCastImpact((chars ?? []).map((c) => c.id), project.id);
 
   const propose = async () => {
     setBusy("propose");
@@ -74,134 +79,115 @@ export default function BiblePage() {
       qc.invalidateQueries({ queryKey: ["project", project.id] });
     } catch { /* api toasts */ } finally { setBusy(""); }
   };
-
-  // the "New character" tile opens the full form (photos, look) with the typed name filled in
-  const addCharacter = (name: string) => setNewChar(name);
+  // "+ Add" under the list opens the full form (photos, look) with the typed name filled in
   const created = (c: Character) => {
     setNewChar(null);
     qc.invalidateQueries({ queryKey: ["project", project.id] });
-    go({ tab: "cast", char: c.id }, true);
+    go({ tab: "cast", char: c.id }, mode === "phone");
   };
-
-  const listing = !charId && !locId;
+  const place = useAddPlace((l) => go({ tab: "locations", loc: l.id }, mode === "phone"));
 
   // ── next: make the cast (pictures and voices for whoever has none), priced on the button ──
   const nav = useNavigate();
   const loc = useLocation();
   const fromImport = !!(loc.state as { fromImport?: boolean } | null)?.fromImport;
+  const [hideImportNote, setHideImportNote] = useState(false);
   const { generate } = useGenerate();
   const { data: ep } = useEpisode(eid, lang);
   const shotCount = (ep?.shots ?? []).filter((s) => s.include).length;
   const pictured = (chars ?? []).filter((c) => c.avatar_url).length;
   const { data: castEst } = useBatchEstimate(eid, canEdit && shotCount > 0 ? { action: "produce", steps: ["cast"] } : null, [shotCount, pictured, (chars ?? []).length]);
   const castTodo = !!castEst && castEst.count > 0;
-  const makeCast = () => run("cast", () => generate(eid, { action: "produce", steps: ["cast"] }, tr("Make the cast")));
-  const run = async (key: string, fn: () => Promise<unknown>) => {
-    setBusy(key);
-    try { await fn(); } catch { /* api toasts */ } finally { setBusy(""); }
+  const makeCast = async () => {
+    setBusy("cast");
+    try { await generate(eid, { action: "produce", steps: ["cast"] }, tr("Make the cast")); } catch { /* api toasts */ } finally { setBusy(""); }
   };
-  const showBuild = canEdit && listing && ((tab === "cast" && !!chars?.length) || (tab === "locations" && !!locs?.length));
 
-  // ── the bible at a glance ────────────────────────────────────────────────
-  const cast = chars ?? [];
-  const langs = project.languages;
-  const lockedChars = cast.filter((c) => c.locked).length;
-  const voicedMap = cast.map((c) => voicedLanguages(c.voices));
-  const voicedPairs = voicedMap.reduce((n, v) => n + langs.filter((l) => v.has(l)).length, 0);
-  const totalPairs = cast.length * langs.length;
-  const voicePct = totalPairs ? Math.round((voicedPairs / totalPairs) * 100) : 0;
-  const langsDone = cast.length ? langs.filter((l) => voicedMap.every((v) => v.has(l))).length : 0;
-  const trained = cast.filter((c) => c.identity?.status === "ready").length;
-  const training = cast.filter((c) => c.identity?.status === "training" || c.identity?.status === "preparing").length;
-  const failed = cast.filter((c) => c.identity?.status === "failed").length;
-  const places = locs ?? [];
-  const lockedPlaces = places.filter((l) => l.locked).length;
-  const withImages = places.filter((l) => (l.assets?.length ?? 0) > 0 || !!l.thumb_url).length;
-  const castMeter = scaleMeter(lockedChars, cast.length, 10);
-  const placeMeter = scaleMeter(lockedPlaces, places.length, 10);
-  const waiting = isLoading && !chars;
+  const phoneDetail = mode === "phone" && (charId || locId) && tab !== "style";
+  // a phone's detail starts at the top
+  useEffect(() => { if (phoneDetail) document.getElementById("cast-phone-detail")?.scrollTo({ top: 0 }); }, [phoneDetail, charId, locId]);
+
+  const list = tab === "cast" ? (
+    <FaceList chars={chars} loading={isLoading} error={charsError && !chars} onRetry={() => void refetchChars()} selected={charId} onSelect={openChar}
+      canEdit={canEdit} languages={project.languages} stale={stale} onAdd={(name) => setNewChar(name)} adding={false} onPropose={() => void propose()} proposing={busy === "propose"}
+      className="h-full" />
+  ) : (
+    <PlaceList places={locs} loading={locsLoading} error={locsError && !locs} onRetry={() => void refetchLocs()} selected={locId} onSelect={openLoc}
+      canEdit={canEdit} onAdd={(name) => void place.add(name)} adding={place.adding} onPropose={() => void propose()} proposing={busy === "propose"} className="h-full" />
+  );
+  const waiting = tab === "cast" ? isLoading && !chars : locsLoading && !locs;
+  const nothing = waiting ? (
+    <div className="space-y-4 p-5" aria-busy="true">
+      <Skeleton className="h-6 w-48" />
+      <div className="grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,10rem),1fr))]">
+        {Array.from({ length: 4 }, (_, i) => <Skeleton key={i} className="aspect-[3/4] !rounded-xl" />)}
+      </div>
+    </div>
+  ) : (
+    <div className="grid h-full place-items-center p-6">
+      <RoomEmpty icon={tab === "cast" ? <UserRound /> : <MapPin />} title={tab === "cast" ? t("No cast yet") : t("No places yet")}
+        sub={t("Build the cast and the places from your script, or add them by name on the left.")}
+        action={canEdit ? <Button variant="primary" loading={busy === "propose"} icon={<Sparkles className="size-4" />} onClick={() => void propose()}>{t("Build from script")}</Button> : undefined} />
+    </div>
+  );
+  const detail = (columns: boolean, showBack: boolean) => tab === "cast"
+    ? (charId ? <CharacterDetail key={charId} cid={charId} chars={chars ?? []} columns={columns} showBack={showBack} onBack={() => go({ char: null })} onOpen={openChar} /> : nothing)
+    : (locId ? <PlaceDetail key={locId} locId={locId} columns={columns} showBack={showBack} onBack={() => go({ loc: null })} onOpen={openLoc} /> : nothing);
 
   return (
-    <RoomPage width="wide" scrollRef={scroller}>
-      {listing && (
-        <>
-          <RoomHeader icon={<Users />} title={t("Cast")}
-            description={t("Everyone and every place in your film, with their pictures and voices. Lock each one once it looks right, so every shot matches.")}
-            actions={showBuild && (
-              <Button variant="primary" icon={<Sparkles className="size-4" />} loading={busy === "propose"} onClick={propose}>{t("Build from script")}</Button>
-            )} />
-
-          {canEdit && (castTodo || (fromImport && shotCount > 0)) && (
-            <section className="hud relative mb-5 flex flex-wrap items-center gap-x-5 gap-y-3 rounded-xl border border-accent/30 bg-gradient-to-r from-accent/10 to-transparent px-4 py-3.5" aria-label={t("Next step")}>
-              <span aria-hidden className="edge-light pointer-events-none absolute inset-x-4 top-0 h-px" />
-              <div className="min-w-0 flex-1 basis-80">
-                <p className="eyebrow !text-accent-ink">{fromImport ? t("Story imported · next step") : t("Next step")}</p>
-                <p className="mt-1 text-sm font-medium">
-                  {castTodo ? t("Make the cast: a picture of every character and place, and a voice for everyone who speaks.") : t("Your cast is ready. Next: the shots.")}
-                </p>
-                <p className="mt-0.5 text-xs text-mute">
-                  {castTodo ? t("So they look and sound the same in every shot. Want to use your own photos? Open a character and add them first: only what is missing is made.")
-                    : t("Make the pictures and videos one by one, or let the studio make them all.")}
-                </p>
-              </div>
-              {castTodo ? (
-                <div className="flex flex-wrap items-center gap-2">
-                  <Button variant="ghost" onClick={() => nav(`/p/${project.id}/shots`)}>{t("Skip for now")}</Button>
-                  <Button variant="primary" icon={<Wand2 className="size-4" />} loading={busy === "cast"} disabled={!!busy} onClick={() => void makeCast()}>
-                    {t("Make the cast")}{castEst && castEst.total_usd > 0 && <span className="mono">· <Money v={castEst.total_usd} /></span>}
-                  </Button>
-                </div>
-              ) : (
-                <Button variant="primary" iconRight={<ArrowRight className="size-4" />} onClick={() => nav(`/p/${project.id}/shots`)}>{t("Go to the shots")}</Button>
-              )}
-            </section>
-          )}
-
-          <StatStrip index={1} className="mb-6" cells={[
-            {
-              key: "cast", label: t("Characters"), value: waiting ? "—" : cast.length, wide: true,
-              sub: cast.length ? t("{n} locked", { n: lockedChars }) : t("none yet"),
-              visual: cast.length ? <Meter filled={castMeter.filled} total={castMeter.total} tone={lockedChars === cast.length ? "ok" : "accent"} /> : undefined,
-            },
-            {
-              key: "places", label: t("Locations"), value: places.length, sub: places.length ? t("{n} locked · {m} with images", { n: lockedPlaces, m: withImages }) : t("none yet"),
-              visual: places.length ? <Meter filled={placeMeter.filled} total={placeMeter.total} tone={lockedPlaces === places.length ? "ok" : "accent"} /> : undefined,
-            },
-            {
-              key: "voices", label: t("Voice coverage"), value: totalPairs ? voicePct : "—", unit: totalPairs ? "%" : undefined, tone: totalPairs && voicePct === 100 ? "ok" : "neutral",
-              sub: totalPairs ? <span className="mono">{langs.map((l) => LANG_SHORT[l] ?? l).join(" · ")} · {voicedPairs}/{totalPairs}</span> : t("add a character first"),
-              visual: totalPairs ? <Meter filled={langsDone} total={Math.max(1, langs.length)} tone={voicePct === 100 ? "ok" : "accent"} /> : undefined,
-            },
-            {
-              key: "identity", label: t("Identity trained"), value: trained, unit: cast.length ? `/ ${cast.length}` : undefined, tone: cast.length && trained === cast.length ? "ok" : "neutral",
-              sub: failed ? <span className="text-red-300">{t("{n} failed", { n: failed })}</span> : training ? t("{n} training", { n: training }) : cast.length ? t("face model per character") : t("none yet"),
-            },
-          ]} />
-
-          <ViewSwitch<Tab> className="mb-6" label={t("Cast view")} value={tab} onChange={(v) => go({ tab: v, char: null, loc: null })}
+    <div ref={rootRef} className="hud-bg flex h-full min-w-0 flex-col">
+      {!phoneDetail && (
+        <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-line bg-panel/60 px-3 py-2 sm:px-4">
+          <h1 className="flex items-center gap-2 text-base font-semibold tracking-tight"><Users aria-hidden className="size-4 text-accent-ink" />{t("Cast")}</h1>
+          <ViewSwitch<Tab> size={mode === "phone" ? "md" : "sm"} label={t("Cast view")} value={tab} onChange={(v) => go({ tab: v, char: null, loc: null })}
+            className="max-sm:[&_[role=tab]]:h-10"
             items={[
               { value: "cast", label: t("People"), icon: <UserRound />, count: chars?.length || undefined },
               { value: "locations", label: t("Places"), icon: <MapPin />, count: locs?.length || undefined },
               { value: "style", label: t("Style"), icon: <Palette /> },
             ]} />
-        </>
+          <span className="flex-1" />
+          {canEdit && tab !== "style" && ((tab === "cast" && !!chars?.length) || (tab === "locations" && !!locs?.length)) && (
+            <Button size="sm" variant="ghost" className="max-sm:h-10" icon={<Sparkles className="size-3.5" />} loading={busy === "propose"} onClick={() => void propose()}
+              title={t("Add everyone and every place the script names that isn't here yet")}>{t("Build from script")}</Button>
+          )}
+          {canEdit && castTodo ? (
+            <Button size="sm" variant="primary" className="max-sm:h-10" icon={<Wand2 className="size-3.5" />} loading={busy === "cast"} disabled={!!busy} onClick={() => void makeCast()}
+              title={t("A picture of every character and place, and a voice for everyone who speaks: only what is missing is made")}>
+              {t("Make the cast")}<PriceSuffix usd={castEst?.total_usd} />
+            </Button>
+          ) : canEdit && fromImport && shotCount > 0 ? (
+            <Button size="sm" variant="primary" className="max-sm:h-10" iconRight={<ArrowRight className="size-3.5" />} onClick={() => nav(`/p/${project.id}/shots`)}>{t("Go to the shots")}</Button>
+          ) : null}
+        </div>
+      )}
+      {canEdit && fromImport && castTodo && !hideImportNote && !phoneDetail && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-accent/25 bg-accent/8 px-3 py-1.5 text-xs sm:px-4" role="status">
+          <p className="min-w-0 flex-1"><span className="font-medium text-accent-ink">{t("Story imported.")}</span>{" "}
+            {t("Next: make the cast, so everyone looks and sounds the same in every shot. Want your own photos? Open a character and upload them first.")}</p>
+          <Button size="sm" variant="ghost" className="max-sm:h-10" onClick={() => nav(`/p/${project.id}/shots`)}>{t("Skip for now")}</Button>
+          <IconButton title={t("Dismiss")} onClick={() => setHideImportNote(true)} className="max-sm:!size-10"><X className="size-4" /></IconButton>
+        </div>
       )}
 
-      <AnimatePresence mode="wait" initial={false}>
-        <motion.div key={view} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}>
-          {tab === "cast" && (charId ? (
-            <CharacterDetail cid={charId} chars={chars ?? []} onBack={() => go({ char: null })} onOpen={(id) => go({ char: id })} />
-          ) : (
-            <CastGrid chars={chars} loading={isLoading} error={charsError && !chars} onRetry={() => refetchChars()} canEdit={canEdit} languages={project.languages} consents={consents}
-              onOpen={(id) => go({ char: id }, true)} onAdd={addCharacter} adding={busy === "add"} onPropose={propose} proposing={busy === "propose"} />
-          ))}
-          {tab === "locations" && (
-            <LocationsTab locId={locId} onOpen={(id) => go({ loc: id }, true)} onBack={() => go({ loc: null })} onPropose={propose} proposing={busy === "propose"} />
-          )}
-          {tab === "style" && <StyleEditor />}
-        </motion.div>
-      </AnimatePresence>
+      <div className="min-h-0 flex-1">
+        {tab === "style" ? (
+          <div className="h-full overflow-y-auto overscroll-contain" data-page-scroller>
+            <div className="mx-auto w-full max-w-5xl px-4 pb-16 pt-5 @container"><StyleEditor /></div>
+          </div>
+        ) : mode === "phone" ? (
+          phoneDetail ? (
+            <div id="cast-phone-detail" className="h-full overflow-y-auto overscroll-contain px-4 pb-16 pt-3" data-page-scroller>{detail(false, true)}</div>
+          ) : list
+        ) : (
+          <div className="grid h-full" style={{ gridTemplateColumns: `${mode === "three" ? "15rem" : "13.5rem"} minmax(0,1fr)` }}>
+            <div className="min-h-0 border-r border-line bg-panel/40">{list}</div>
+            {mode === "three" ? <div className="min-h-0 min-w-0">{detail(true, false)}</div>
+              : <div key={`${tab}-${charId ?? locId ?? ""}`} className="min-h-0 min-w-0 overflow-y-auto overscroll-contain px-4 pb-16 pt-4" data-page-scroller>{detail(false, false)}</div>}
+          </div>
+        )}
+      </div>
       <NewCharacterModal open={newChar !== null} initialName={newChar ?? ""} projectId={project.id} onClose={() => setNewChar(null)} onCreated={created} />
-    </RoomPage>
+    </div>
   );
 }

@@ -3,26 +3,26 @@ import { SortableContext, arrayMove, rectSortingStrategy } from "@dnd-kit/sortab
 import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import {
-  Check, Clock, Ellipsis, Film, Image as ImageIcon, Layers, LayoutGrid, Mic, Moon, Music, Plus, SquareCheck, Sun, Sunrise, Sunset,
-  WandSparkles,
+  Check, ChevronDown, Clock, Ellipsis, Film, Image as ImageIcon, Layers, LayoutGrid, Mic, Moon, Music, Plus, SquareCheck, Sun, Sunrise, Sunset,
+  Users, WandSparkles, X,
 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { StoryboardFramesModal } from "../../components/board/StoryboardFrames";
 import { useGenerate } from "../../components/Generate";
 import { engineShort, isAutoEngine, useModelList } from "../../components/hub/util";
-import { Button, Empty, IconButton, Kbd, Menu, Meter, ProgressRing, ScrollStrip, Skeleton } from "../../components/ui";
+import { Avatar, Button, Empty, IconButton, Kbd, Menu, Meter, ProgressRing, ScrollStrip, Skeleton } from "../../components/ui";
 import { api } from "../../lib/api";
-import { LANG_SHORT, secs, usd } from "../../lib/format";
+import { LANG_SHORT, secs } from "../../lib/format";
 import { tr, useT } from "../../lib/i18n";
-import { useEpisode, useSettings } from "../../lib/queries";
+import { useCharacters, useEpisode, useSettings } from "../../lib/queries";
 import { useUI } from "../../lib/store";
-import type { Scene, Shot } from "../../lib/types";
+import type { Character, Scene, Shot } from "../../lib/types";
 import { useProjectCtx } from "./context";
-import { Cell, RailSeg } from "./production/instruments";
+import { RailSeg } from "./production/instruments";
 import { LoadError } from "./production/LoadError";
 import { QualityMenu } from "./production/QualityMenu";
-import { ShotCard } from "./production/ShotCard";
+import { ShotCard, type CardFace } from "./production/ShotCard";
 import { displayMedia, qcFailed, ratioOf, thumbRatio } from "./production/shotMeta";
 import { isOwnMaterial } from "./flow";
 import { MakeItForMe } from "./MakeItForMe";
@@ -66,26 +66,36 @@ export default function Storyboard() {
   const byId = useMemo(() => Object.fromEntries(shots.map((s) => [s.id, s])) as Record<number, Shot>, [shots]);
   const ordered = useMemo(() => order.map((id) => byId[id]).filter(Boolean) as Shot[], [order, byId]);
 
+  // the cast: faces on the cards, and "Who" (one character's shots only)
+  const { data: cast } = useCharacters(project.id);
+  const [who, setWho] = useState<number | null>(null);
+  const faceOf = useMemo(() => Object.fromEntries((cast ?? []).map((c) => [c.id, { id: c.id, name: c.name, avatar_url: c.avatar_url }])) as Record<number, CardFace>, [cast]);
+  const facesOf = useCallback((s: Shot) => (s.characters ?? []).map((id) => faceOf[Number(id)]).filter(Boolean), [faceOf]);
+  const inShot = useCallback((s: Shot, cid: number) => (s.characters ?? []).some((id) => Number(id) === cid), []);
+  const people = useMemo(() => (cast ?? []).map((c) => ({ c, n: ordered.filter((s) => inShot(s, c.id)).length })).filter((p) => p.n > 0), [cast, ordered, inShot]);
+  useEffect(() => { if (who && cast && !cast.some((c) => c.id === who)) setWho(null); }, [cast, who]);
+  const base = useMemo(() => (who ? ordered.filter((s) => inShot(s, who)) : ordered), [ordered, who, inShot]);
+
   // names for pinned engines (shares the Model Hub's cached "enabled" list; only fetched when a shot pins one)
   const anyPinned = shots.some((s) => !isAutoEngine(s.engine));
   const { data: enabledModels } = useModelList({ status: "enabled" }, { enabled: anyPinned });
   const engineNames = useMemo(() => Object.fromEntries((enabledModels?.models ?? []).map((m) => [m.id, m.display_name])) as Record<string, string>, [enabledModels]);
 
   const counts = useMemo(() => ({
-    all: ordered.length,
-    kf: ordered.filter((s) => !s.keyframe).length,
-    video: ordered.filter((s) => !s.video).length,
-    qc: ordered.filter(qcFailed).length,
-    approved: ordered.filter((s) => s.status === "approved").length,
-  }), [ordered]);
+    all: base.length,
+    kf: base.filter((s) => !s.keyframe).length,
+    video: base.filter((s) => !s.video).length,
+    qc: base.filter(qcFailed).length,
+    approved: base.filter((s) => s.status === "approved").length,
+  }), [base]);
 
-  const visible = useMemo(() => ordered.filter((s) => {
+  const visible = useMemo(() => base.filter((s) => {
     if (filter === "kf") return !s.keyframe;
     if (filter === "video") return !s.video;
     if (filter === "qc") return qcFailed(s);
     if (filter === "approved") return s.status === "approved";
     return true;
-  }), [ordered, filter]);
+  }), [base, filter]);
   const visibleIds = useMemo(() => new Set(visible.map((s) => s.id)), [visible]);
 
   const groups = useMemo(() => groupByScene(visible, ep?.scenes ?? [], ordered), [visible, ep?.scenes, ordered]);
@@ -182,6 +192,8 @@ export default function Storyboard() {
   if (isLoading || !ep) return <StoryboardSkeleton wide={wide} aspect={project.aspect} />;
 
   const ids = picking && picked.length ? picked : undefined;
+  // with "Who" set, the make buttons cover that person's shots (only what they still need, unless shots are picked)
+  const scopeIds = ids ?? (who ? base.map((s) => s.id) : undefined);
   const total = shots.reduce((a, s) => a + s.duration_s, 0);
   const done = { kf: shots.filter((s) => s.keyframe).length, vid: shots.filter((s) => s.video).length };
   const langShort = LANG_SHORT[lang] ?? lang;
@@ -218,41 +230,19 @@ export default function Storyboard() {
   return (
     <div className="@container relative flex h-full">
       <div className="flex min-w-0 flex-1 flex-col">
-        {/* ── instrument strip (nothing to summarise or filter while the storyboard is empty) ── */}
+        {/* ── one toolbar: how far it got, the filters, who, and the actions (nothing to filter while the storyboard is empty) ── */}
         {shots.length > 0 && <div className="relative shrink-0 border-b border-line bg-panel/75 backdrop-blur">
           <span aria-hidden className="edge-light pointer-events-none absolute inset-x-6 top-0 h-px opacity-70" />
-          {/* telemetry */}
-          <div className="flex flex-wrap items-stretch gap-y-1 px-2 pb-1 pt-2 sm:px-3">
-            <div className="flex shrink-0 items-center gap-2.5 py-0.5 pl-1 pr-3" title={t("{vid}/{n} videos", { vid: done.vid, n: shots.length })}>
-              <ProgressRing value={pct} size={36} stroke={3.5} tone={pct >= 1 ? "var(--color-ok)" : "var(--color-accent)"}>{Math.round(pct * 100)}</ProgressRing>
-              <div className="flex flex-col gap-1.5">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-2 py-1.5 sm:px-3">
+            <div className="flex shrink-0 items-center gap-2" title={`${t("{vid}/{n} videos", { vid: done.vid, n: shots.length })} · ${t("{kf}/{n} pictures", { kf: done.kf, n: shots.length })} · ${secs(total)}`}>
+              <ProgressRing value={pct} size={30} stroke={3} tone={pct >= 1 ? "var(--color-ok)" : "var(--color-accent)"}>{Math.round(pct * 100)}</ProgressRing>
+              <span className="mono flex flex-col text-2xs leading-tight">
                 <span className="eyebrow">{t("Videos")}</span>
-                <span className="mono flex items-baseline gap-0.5 text-[0.95rem] font-medium leading-none"><span className={pct >= 1 ? "text-ok" : "text-ink"}>{done.vid}</span><span className="text-dim">/{shots.length}</span></span>
-              </div>
+                <span className="font-medium"><span className={pct >= 1 ? "text-ok" : "text-ink"}>{done.vid}</span><span className="text-dim">/{shots.length}</span></span>
+              </span>
             </div>
-            <div className="flex min-w-0 flex-wrap items-stretch divide-x divide-line/70 border-l border-line/70">
-              <Cell label={t("Pictures")} bar={{ frac: shots.length ? done.kf / shots.length : 0 }} className="min-w-[5.5rem]" title={t("{kf}/{n} pictures", { kf: done.kf, n: shots.length })}>
-                <span>{done.kf}</span><span className="text-dim">/{shots.length}</span>
-              </Cell>
-              <Cell label={t("Quality issues")} tone={counts.qc ? "bad" : "ok"} className="min-w-[4.5rem]">
-                <span>{counts.qc}</span>
-              </Cell>
-              <Cell label={t("Approved")} tone={counts.approved && counts.approved === shots.length ? "ok" : "neutral"} className="min-w-[5rem] max-sm:hidden">
-                <span>{counts.approved}</span><span className="text-dim">/{shots.length}</span>
-              </Cell>
-              <Cell label={t("Length")} className="min-w-[5rem] max-sm:hidden" title={t("{n} shots", { n: shots.length })}>
-                <span>{secs(total)}</span>
-              </Cell>
-            </div>
-            <div className="flex-1" />
-            <Cell label={t("Spent")} tone="money" className="border-l border-line/70" title={t("Spent on this project")}>
-              <span>{usd(project.spent_usd)}</span>
-            </Cell>
-          </div>
-
-          {/* controls */}
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-line/60 px-2 py-1.5 sm:px-3">
             <FilterRail className="min-w-0 flex-1 basis-[260px]" value={filter} onChange={setFilter} filters={filters} counts={counts} />
+            {people.length > 0 && <WhoFilter people={people} value={who} onChange={setWho} />}
 
             {canEdit && (
               <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">
@@ -261,7 +251,7 @@ export default function Storyboard() {
                 <span aria-hidden className="tick-v hidden h-5 sm:block" />
                 <div className="flex items-center gap-2">
                   <Button size="sm" icon={<ImageIcon className="size-3.5" />} loading={busyAct === "kf"}
-                    onClick={() => run("kf", () => generate(eid, { action: "keyframes", shot_ids: ids, only_missing: !ids }, ids ? tr("Pictures (selected)") : tr("Pictures for shots missing one")))}>
+                    onClick={() => run("kf", () => generate(eid, { action: "keyframes", shot_ids: scopeIds, only_missing: !ids }, ids ? tr("Pictures (selected)") : tr("Pictures for shots missing one")))}>
                     {t("Pictures")}{sel}
                   </Button>
                   <Button size="sm" icon={<Layers className="size-3.5" />} title={t("Start and end frames for every shot, made in order (each follows the one before); optionally synced so the clips join without a jump")}
@@ -270,7 +260,7 @@ export default function Storyboard() {
                   </Button>
                   <div className="inline-flex">
                     <Button size="sm" variant="primary" className="rounded-r-none" icon={<Film className="size-3.5" />} loading={busyAct === "vid"}
-                      onClick={() => run("vid", () => generate(eid, { action: "videos", shot_ids: ids, only_missing: !ids, quality: quality || undefined }, ids ? tr("Videos (selected)") : tr("Videos for shots missing one")))}>
+                      onClick={() => run("vid", () => generate(eid, { action: "videos", shot_ids: scopeIds, only_missing: !ids, quality: quality || undefined }, ids ? tr("Videos (selected)") : tr("Videos for shots missing one")))}>
                       {t("Videos")}{sel}
                     </Button>
                     <QualityMenu joined value={quality} onChange={setQuality} defaultKey={project.quality_mode} />
@@ -325,12 +315,12 @@ export default function Storyboard() {
           ) : !visible.length ? (
             <div className="p-5">
               <Empty icon={<LayoutGrid className="size-8" />} title={t("No shots match this filter")}
-                action={<Button onClick={() => setFilter("all")}>{t("Show all shots")}</Button>} />
+                action={<Button onClick={() => { setFilter("all"); setWho(null); }}>{t("Show all shots")}</Button>} />
             </div>
           ) : (
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
               <SortableContext items={visible.map((s) => s.id)} strategy={rectSortingStrategy}>
-                <div key={filter}>
+                <div key={`${filter}-${who ?? ""}`}>
                   {groups.map((g) => (
                     <section key={g.key} className="pb-5">
                       {g.title && (
@@ -345,10 +335,10 @@ export default function Storyboard() {
                       <div className={clsx("grid gap-3 px-3 pt-3 sm:px-4", wide ? GRID.wide : GRID.tall)}>
                         {g.shots.map((s) => (
                           <ShotCard key={s.id} shot={s} lang={lang} aspect={project.aspect} index={indexOf[s.id] ?? 0} threshold={threshold}
-                            draggable={canEdit && filter === "all"}
+                            draggable={canEdit && filter === "all" && !who}
                             selected={selectedShot === s.id} picking={picking} picked={picked.includes(s.id)}
                             engineName={isAutoEngine(s.engine) ? "" : engineNames[s.engine] || engineShort(s.engine)}
-                            onOpen={onOpen} />
+                            onOpen={onOpen} faces={facesOf(s)} />
                         ))}
                       </div>
                     </section>
@@ -394,6 +384,37 @@ function FilterRail({ value, onChange, filters, counts, className }: {
       <RailSeg label={t("Filter shots")} value={value} onChange={onChange} className="w-max"
         options={filters.map((f) => ({ value: f.id, label: f.label, count: counts[f.id] }))} />
     </ScrollStrip>
+  );
+}
+
+/** "Who": pick a character to see only the shots they are in (a face and a count per person). */
+function WhoFilter({ people, value, onChange }: { people: { c: Character; n: number }[]; value: number | null; onChange: (id: number | null) => void }) {
+  const t = useT();
+  const cur = people.find((p) => p.c.id === value)?.c;
+  return (
+    <span className="inline-flex shrink-0 items-center">
+      <Menu placement="bottom-start" width={240} items={[
+        { label: t("Everyone"), icon: <Users className="size-4" />, active: value === null, onClick: () => onChange(null) },
+        ...people.map((p, i) => ({
+          label: <span className="flex min-w-0 items-center justify-between gap-2"><span className="truncate">{p.c.name}</span><span className="mono text-2xs text-dim">{p.n}</span></span>,
+          icon: <Avatar name={p.c.name} src={p.c.avatar_url || undefined} size={20} />, active: value === p.c.id, separator: i === 0, onClick: () => onChange(p.c.id),
+        })),
+      ]} trigger={(tp) => (
+        <button type="button" {...tp} aria-label={cur ? t("Who: {name}", { name: cur.name }) : t("Who: everyone")}
+          className={clsx("inline-flex h-8 items-center gap-1.5 border px-2 text-xs font-medium transition-colors max-sm:h-10",
+            cur ? "rounded-l-lg border-accent/45 bg-accent/10 text-ink" : "rounded-lg border-line bg-raised/60 text-mute hover:text-ink")}>
+          {cur ? <Avatar name={cur.name} src={cur.avatar_url || undefined} size={20} /> : <Users className="size-3.5" />}
+          <span className="max-w-[8rem] truncate">{cur ? cur.name : t("Who")}</span>
+          <ChevronDown className="size-3 text-dim" />
+        </button>
+      )} />
+      {cur && (
+        <button type="button" onClick={() => onChange(null)} aria-label={t("Show everyone")} title={t("Show everyone")}
+          className="-ml-px grid h-8 w-7 place-items-center rounded-r-lg border border-accent/45 bg-accent/10 text-mute transition-colors hover:text-ink max-sm:h-10 max-sm:w-10">
+          <X className="size-3.5" />
+        </button>
+      )}
+    </span>
   );
 }
 
@@ -465,11 +486,8 @@ function StoryboardSkeleton({ wide, aspect }: { wide: boolean; aspect: string })
   return (
     <div className="flex h-full flex-col" aria-busy="true">
       <div className="shrink-0 border-b border-line bg-panel/75">
-        <div className="flex flex-wrap items-center gap-4 px-3 pb-1 pt-2">
-          <div className="flex items-center gap-2.5"><Skeleton className="size-9 rounded-full" /><div className="space-y-1.5"><Skeleton className="h-2.5 w-12" /><Skeleton className="h-3.5 w-14" /></div></div>
-          {[80, 64, 72, 72].map((w, i) => <div key={i} className="space-y-1.5"><Skeleton className="h-2.5" style={{ width: w * 0.7 }} /><Skeleton className="h-3.5" style={{ width: w * 0.5 }} /></div>)}
-        </div>
-        <div className="flex flex-wrap items-center gap-3 border-t border-line/60 px-3 py-1.5">
+        <div className="flex flex-wrap items-center gap-3 px-3 py-1.5">
+          <div className="flex items-center gap-2"><Skeleton className="size-[30px] rounded-full" /><div className="space-y-1"><Skeleton className="h-2.5 w-10" /><Skeleton className="h-3 w-8" /></div></div>
           <Skeleton className="h-8 w-[22rem] max-w-full" />
           <div className="flex-1" />
           <div className="flex gap-2"><Skeleton className="h-7 w-16" /><Skeleton className="h-7 w-24" /><Skeleton className="h-7 w-28" /><Skeleton className="h-7 w-20" /></div>

@@ -9,7 +9,7 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import "../../styles/console.css";
 import "../../styles/export.css";
-import { LANG_NAMES, LANG_SHORT, secs } from "../../lib/format";
+import { LANG_NAMES, LANG_SHORT, renderKindLabel, secs } from "../../lib/format";
 import { useT } from "../../lib/i18n";
 import type { ExportRow, Job } from "../../lib/types";
 import { Badge, Button, IconButton, Menu, type MenuItemDef } from "../ui";
@@ -56,7 +56,7 @@ function Monitor({ x, ratio, ready, preset, onPlay }: { x: RenderRow; ratio: num
           )}
         </button>
         <span className="mono pointer-events-none absolute left-2 top-2 z-[1] rounded bg-black/65 px-1.5 py-0.5 text-2xs uppercase leading-none tracking-wider text-white">
-          {isFinal ? t("Final") : t("Animatic")}
+          {t(renderKindLabel(x.kind))}
         </span>
         <span className="mono pointer-events-none absolute right-2 top-2 z-[1] rounded bg-black/65 px-1.5 py-0.5 text-2xs leading-none tracking-wider text-white">
           {LANG_SHORT[x.language] ?? x.language}
@@ -180,7 +180,7 @@ export default function ExportCard({
         {/* title + state */}
         <div>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <h3 className="text-sm font-semibold leading-tight tracking-tight">{isFinal ? t("Final") : t("Animatic")} · {langName}</h3>
+            <h3 className="text-sm font-semibold leading-tight tracking-tight">{t(renderKindLabel(x.kind))} · {langName}</h3>
             {approved && <Badge tone="ok"><BadgeCheck className="size-3" />{t("approved")}</Badge>}
             {yt && <Badge tone="info"><MonitorPlay className="size-3" />{t("On YouTube")}</Badge>}
             {uploading && <Badge tone="accent"><Loader2 className="size-3 animate-spin" />{t("Uploading")}</Badge>}
