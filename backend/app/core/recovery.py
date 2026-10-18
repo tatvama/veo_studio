@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from .. import catalog
 from ..models import AIModel, Character, Job, Project, Shot
-from ..pipeline.prompting import effective_quality
+from ..pipeline.shot_facts import effective_quality
 from ..providers.base import ProviderBlocked
 from ..providers.services import provider_mode
 from . import credit, model_hub

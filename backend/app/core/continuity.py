@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from ..agents import schemas as S
-from ..models import Character, Episode, Project, Prop, Scene, Shot, User
+from ..models import Character, Episode, Project, ProjectCast, Prop, Scene, Shot, User
 from . import mentions
 
 END_STATE_SYSTEM = (
@@ -47,10 +47,12 @@ def previous_state(db: Session, scene: Scene) -> dict:
 
 
 def end_state(db: Session, user: User | None, project: Project, episode: Episode, scene: Scene) -> dict:
-    from .studio import _llm, cast
+    from .studio import _llm
     text = _scene_text(episode, scene)
     prev = previous_state(db, scene)
-    team = cast(db, project)  # this project's people only: another project's "Ravi" is someone else
+    # this project's people only: another project's "Ravi" is someone else
+    ids = [r.character_id for r in db.query(ProjectCast).filter(ProjectCast.project_id == project.id).all()]
+    team = db.query(Character).filter(Character.id.in_(ids), Character.archived.is_(False)).all() if ids else []
     names = {str(c.id): c.name for c in team}
     wardrobe = {names.get(str(k), str(k)): v for k, v in (scene.wardrobe or {}).items()}
     props = [p.name for p in db.query(Prop).filter(Prop.id.in_([int(x) for x in (scene.prop_ids or [])])).all()] if scene.prop_ids else []
