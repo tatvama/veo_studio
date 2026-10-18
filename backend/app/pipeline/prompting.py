@@ -22,7 +22,7 @@ from ..core import lock as lock_core
 from ..models import Character, CharacterAsset, CharacterVersion, Episode, Location, LocationAsset, Project, Prop, Shot, Style
 from ..storage import get_storage
 from . import scene_look
-from .shot_facts import effective_quality, offscreen_only, shot_lines  # noqa: F401 (read from here too)
+from . import shot_facts
 
 # "source" = a photo the user uploaded. When approved it is the truth about the character's look, so it comes first.
 CHAR_REF_ORDER = ["source", "front", "three_quarter", "full_body", "profile", "back", "outfit", "expression"]
@@ -30,6 +30,20 @@ STILL_KIND = "approved_still"  # a face from a keyframe the user picked (pipelin
 KEYFRAME_REF_LIMIT = 8
 LOC_REF_ORDER = ["wide", "medium", "source", "detail"]
 MAX_WORDS_PER_CLIP = {4: 10, 6: 16, 8: 22}  # a line longer than this is rushed or cut off by the engine
+
+
+effective_quality = shot_facts.effective_quality  # (it lives there: core/recovery reads it without this module)
+
+
+def shot_lines(shot: Shot, lang: str) -> list[dict]:
+    return list((shot.dialogue or {}).get(lang) or [])
+
+
+def offscreen_only(shot: Shot, project: Project) -> bool:
+    """Every line of the shot is heard from off-screen (O.S.): voiced over the clip, nobody seen saying it, so never
+    lip-synced. The flag is on the primary language's lines (a translation keeps the staging)."""
+    lines = shot_lines(shot, project.primary_language)
+    return bool(lines) and all(l.get("off_screen") for l in lines)
 
 
 _settings_cache: dict[str, Any] = {"at": 0.0, "v": -1, "values": {}}
