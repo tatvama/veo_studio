@@ -3,6 +3,7 @@ import {
   Activity, BookOpen, BookUser, Boxes, Clapperboard, Coins, FileText, Film, Gauge, Globe, Home, LayoutGrid, LayoutTemplate, ListVideo, Megaphone,
   MessageSquareText, MonitorPlay, Palette, PanelsTopLeft, ScrollText, Search, Send, Settings, ShieldCheck, SquareKanban, Users,
 } from "lucide-react";
+import { Workflow } from "lucide-react";
 import { ROLE_RANK, type Role } from "../../lib/types";
 
 type T = (s: string) => string;
@@ -67,7 +68,8 @@ export interface ProjectTab {
   to: string; label: string; icon: LucideIcon; keywords?: string; area: ProjectArea;
   /** Projects made from the user's own material hide this page until it has something in it (it is about writing from a concept). */
   ownHidden?: boolean;
-  /** A writer's or specialist's tool: listed under the step's "Advanced" menu, off the main path (Script → Cast → Shots → Edit → Deliver). */
+  /** Off the main path (Script → Cast → Shots → Edit → Deliver): listed under the step's "Advanced" menu, and among the
+   *  step's views only while it is open. */
   advanced?: boolean;
 }
 
@@ -83,9 +85,10 @@ export function getProjectTabs(t: T): ProjectTab[] {
     { to: "scenes", area: "story", label: t("Scene cards"), icon: SquareKanban, ownHidden: true, advanced: true, keywords: "story scenes scene cards beats" },
     { to: "bible", area: "cast", label: t("Cast"), icon: Users, keywords: "cast bible characters places locations style voices photos lock versions costumes" },
     { to: "world", area: "cast", label: t("Props & wardrobe"), icon: Globe, ownHidden: true, advanced: true, keywords: "cast world props costumes wardrobe continuity bible timeline end state" },
-    { to: "storyboard", area: "shots", label: t("Storyboard"), icon: LayoutGrid, keywords: "shots pictures keyframes videos takes" },
-    { to: "shots", area: "shots", label: t("Text view"), icon: ListVideo, keywords: "shots shot list import script word pdf manual builder dialogue voice-over produce make it for me" },
-    { to: "studio", area: "shots", label: t("Advanced layout"), icon: PanelsTopLeft, keywords: "shots studio one screen workspace panels timeline viewer multi monitor drag drop film map" },
+    { to: "canvas", area: "shots", label: t("Canvas"), icon: Workflow, keywords: "shots canvas nodes drag drop scenes cast film map make price" },
+    { to: "storyboard", area: "shots", label: t("Grid"), icon: LayoutGrid, keywords: "shots storyboard grid pictures keyframes videos takes" },
+    { to: "shots", area: "shots", label: t("Text"), icon: ListVideo, keywords: "shots shot list text import script word pdf manual builder dialogue voice-over produce make it for me" },
+    { to: "studio", area: "shots", label: t("Advanced layout"), icon: PanelsTopLeft, advanced: true, keywords: "shots studio one screen workspace panels dock timeline viewer multi monitor drag drop film map" },
     { to: "timeline", area: "edit", label: t("Timeline"), icon: Film, keywords: "edit cut music audio sound titles" },
     { to: "finish", area: "edit", label: t("Pro finishing"), icon: MonitorPlay,
       keywords: "edit finishing room desktop checkout check in lock versions rollback 4k upscale local render folder sync windows screens scopes multi monitor" },

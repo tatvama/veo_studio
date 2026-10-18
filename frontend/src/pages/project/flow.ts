@@ -14,6 +14,7 @@ export const isOwnMaterial = (p: Project) => p.workflow === "shots" || p.workflo
  * stays reachable by its URL and the command palette.
  */
 export function tabApplies(tab: ProjectTab, project: Project, ep: Episode | undefined, current?: string): boolean {
+  // (an "advanced" page stays in the list: the project header shows it under its Advanced menu, not among the views)
   if (!tab.ownHidden || tab.to === current || !isOwnMaterial(project)) return true;
   if (tab.to === "story") return !!(ep?.hooks?.length || ep?.script?.scenes?.length);
   return !!ep?.scenes?.length;
@@ -30,8 +31,8 @@ export interface StepView extends ProjectStep {
 }
 
 function defaultTab(id: StepId, tabs: ProjectTab[], project: Project, ep: Episode | undefined): string {
-  // own-material projects work in the Studio once they have shots (and start on the shot list), as before
-  if (id === "shots" && isOwnMaterial(project)) return (ep?.shots ?? []).length ? "studio" : "shots";
+  // the Shots step opens on its canvas (it has its own empty state with "Import your script" and "Add a scene")
+  if (id === "shots") return "canvas";
   return tabs[0]?.to ?? "dashboard";
 }
 

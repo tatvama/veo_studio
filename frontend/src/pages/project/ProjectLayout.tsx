@@ -43,6 +43,7 @@ const CampaignPage = lazy(() => import("./Campaign"));
 const PostersGallery = lazy(() => import("../posters/Gallery"));
 const BiblePage = lazy(() => import("./Bible"));
 const BriefPage = lazy(() => import("./Brief"));
+const CanvasPage = lazy(() => import("./canvas/Canvas"));
 const ExportPage = lazy(() => import("./Export"));
 const FinishPage = lazy(() => import("./Finish"));
 const ReviewPage = lazy(() => import("./Review"));
@@ -229,11 +230,12 @@ export default function ProjectLayout() {
                   <Suspense fallback={<div className="h-full overflow-hidden"><PageSkeleton cards={4} /></div>}>
                     <Routes location={loc}>
                       {/* a project opens on its overview (own-material projects on their shots) */}
-                      <Route index element={episode ? <Navigate to={`/p/${pid}/${own ? ((episode.shots ?? []).length ? "studio" : "shots") : "dashboard"}`} replace /> : <div className="p-8"><Spinner /></div>} />
+                      <Route index element={episode ? <Navigate to={`/p/${pid}/${own ? "canvas" : "dashboard"}`} replace /> : <div className="p-8"><Spinner /></div>} />
                       <Route path="brief" element={<BriefPage />} />
                       <Route path="story" element={<StoryPage />} />
                       <Route path="scenes" element={<ScenesPage />} />
                       <Route path="bible" element={<BiblePage />} />
+                      <Route path="canvas" element={<CanvasPage />} />
                       <Route path="shots" element={<ShotListPage />} />
                       <Route path="studio" element={<StudioPage />} />
                       <Route path="storyboard" element={<Storyboard />} />
