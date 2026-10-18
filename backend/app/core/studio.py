@@ -13,10 +13,10 @@ from ..agents import prompts
 from ..agents import schemas as S
 from ..db import utcnow
 from ..events import emit
-from ..models import (Character, Episode, Location, Project, ProjectCast, ProjectLocation, Revision, Scene, ScriptVersion, Shot,
-                      Style, Take, User)
+from ..models import Character, Episode, Location, Project, Revision, Scene, ScriptVersion, Shot, Style, Take, User
 from ..providers.services import Services
 from . import budget
+from . import project_cast
 
 
 def _llm(db: Session, user: User | None, project: Project, task: str, system: str, prompt: str, schema, mock_ctx: dict,
@@ -31,14 +31,11 @@ def lang_name(code: str) -> str:
     return catalog.LANGUAGES.get(code, {}).get("name", code)
 
 
-def cast(db: Session, project: Project) -> list[Character]:
-    ids = [r.character_id for r in db.query(ProjectCast).filter(ProjectCast.project_id == project.id).all()]
-    return db.query(Character).filter(Character.id.in_(ids), Character.archived.is_(False)).order_by(Character.id).all() if ids else []
-
-
-def locations(db: Session, project: Project) -> list[Location]:
-    ids = [r.location_id for r in db.query(ProjectLocation).filter(ProjectLocation.project_id == project.id).all()]
-    return db.query(Location).filter(Location.id.in_(ids), Location.archived.is_(False)).order_by(Location.id).all() if ids else []
+# (they live in core/project_cast.py, which core/mentions reads without importing this module)
+cast = project_cast.cast
+locations = project_cast.locations
+link_character = project_cast.link_character
+link_location = project_cast.link_location
 
 
 def context_text(db: Session, project: Project, episode: Episode | None = None) -> str:
@@ -159,16 +156,6 @@ def generate_script(db: Session, user: User, episode: Episode, instructions: str
 
 
 # ── bible ────────────────────────────────────────────────────────────────────
-
-def link_character(db: Session, project: Project, ch: Character) -> None:
-    if not db.get(ProjectCast, {"project_id": project.id, "character_id": ch.id}):
-        db.add(ProjectCast(project_id=project.id, character_id=ch.id))
-
-
-def link_location(db: Session, project: Project, loc: Location) -> None:
-    if not db.get(ProjectLocation, {"project_id": project.id, "location_id": loc.id}):
-        db.add(ProjectLocation(project_id=project.id, location_id=loc.id))
-
 
 def propose_bible(db: Session, user: User, project: Project, episode: Episode | None) -> dict:
     script = (episode.script if episode else {}) or {}

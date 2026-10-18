@@ -22,6 +22,7 @@ from ..models import AIModel, Job, Project, Shot, Take
 from ..pipeline.selection import current, is_real
 from ..storage import get_storage
 from .links import SYNC, synced  # (the link rules live there: core/links.py imports nothing of core)
+from .staleness import mark_stale  # (nor does core/staleness.py)
 
 END = "endframe"  # the take kind
 MAX_CHAIN = 50  # synced links followed up a chain at most (a cycle stops earlier)
@@ -203,7 +204,6 @@ def _scene_runs(shots: list[Shot]) -> list[list[Shot]]:
 def sync_scenes(db: Session, shots: list[Shot]) -> list[str]:
     """Link each shot of a scene after its first to the shot before it as synced (it starts on that shot's end frame).
     Returns the links set ("B ← A"). Takes made under the old link are flagged out of date."""
-    from .dependencies import mark_stale
     out = []
     for run in _scene_runs(shots):
         for prev, s in zip(run, run[1:]):

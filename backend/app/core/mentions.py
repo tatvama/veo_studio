@@ -12,6 +12,7 @@ from typing import Any, Callable
 from sqlalchemy.orm import Session
 
 from ..models import Character, Location, Project, ProjectLocation, ProjectProp, Prop, User
+from . import project_cast
 
 KINDS = ("character", "location", "prop")
 # Names are at most 160 characters (Location/Prop.name). The bound keeps a long line full of "@[" with no closing "]"
@@ -120,10 +121,9 @@ def _match_name(name: str, rows: list[Any]) -> Any | None:
 def candidates(db: Session, project: Project | None, q: str = "", limit: int = 12, kind: str | None = None) -> list[dict]:
     """Autocomplete list for the editor: the project's cast, locations and props first, then the shared library.
     `kind` narrows to one entity kind (the speaker field only wants characters)."""
-    from . import studio
     q = _norm(q)
     out: list[dict] = []
-    cast = studio.cast(db, project) if project else []
+    cast = project_cast.cast(db, project) if project else []
     cast_ids = {c.id for c in cast}
     chars = cast + [c for c in db.query(Character).filter(Character.shared.is_(True), Character.archived.is_(False)).all()
                     if c.id not in cast_ids]
@@ -153,10 +153,9 @@ def resolve(db: Session, project: Project | None, text: str, create_missing: boo
             user: User | None = None, created: list[dict] | None = None) -> str:
     """Turn bare `@Name` into tokens where a character, location or prop matches. With `create_missing`, an unknown
     name becomes a new character in the project cast (the common case while writing)."""
-    from . import studio
     if "@" not in (text or ""):
         return text or ""
-    cast = studio.cast(db, project) if project else []
+    cast = project_cast.cast(db, project) if project else []
     chars = cast + [c for c in db.query(Character).filter(Character.shared.is_(True), Character.archived.is_(False)).all()
                     if c not in cast]
     locs = db.query(Location).filter(Location.archived.is_(False)).all()
@@ -172,7 +171,7 @@ def resolve(db: Session, project: Project | None, text: str, create_missing: boo
             ch = Character(name=name, shared=False, created_by=user.id if user else None)
             db.add(ch)
             db.flush()
-            studio.link_character(db, project, ch)
+            project_cast.link_character(db, project, ch)
             db.flush()
             chars.append(ch)
             if created is not None:
@@ -187,9 +186,8 @@ def chat_context(db: Session, project: Project, text: str, limit: int = 30) -> t
     """A Director chat message as the AI reads it: tokens become `@Name`, and every mention (picked from the list or
     typed as a bare `@Name`) is listed with the id and what it is. Nothing is created or linked."""
     from ..models import CharacterAsset
-    from . import studio
     models = {"character": Character, "location": Location, "prop": Prop}
-    cast = studio.cast(db, project)
+    cast = project_cast.cast(db, project)
     cast_ids = {c.id for c in cast}
     proj_locs = {r.location_id for r in db.query(ProjectLocation).filter(ProjectLocation.project_id == project.id).all()}
     proj_props = {r.prop_id for r in db.query(ProjectProp).filter(ProjectProp.project_id == project.id).all()}
@@ -247,14 +245,13 @@ def rename(script: dict | None, kind: str, id_: int, new_name: str) -> dict:
 
 def attach_entities(db: Session, project: Project, script: dict | None) -> dict[str, list[int]]:
     """Make sure every mentioned entity belongs to the project (cast, locations, props). Returns what was found."""
-    from . import studio
     found = entities(script)
     db.flush()  # sessions here do not autoflush: see cast links made a moment ago
-    cast_ids = {c.id for c in studio.cast(db, project)}
+    cast_ids = {c.id for c in project_cast.cast(db, project)}
     for cid in found["character"]:
         ch = db.get(Character, cid)
         if ch and cid not in cast_ids:
-            studio.link_character(db, project, ch)
+            project_cast.link_character(db, project, ch)
             cast_ids.add(cid)
             db.flush()
     have_loc = {r.location_id for r in db.query(ProjectLocation).filter(ProjectLocation.project_id == project.id).all()}
