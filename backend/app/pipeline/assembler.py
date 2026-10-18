@@ -152,6 +152,8 @@ def plan(db: Session, episode: Episode, lang: str, kind: str, tmp: Path,
                             f"and the clip {dur:.1f}s; its last frame is held until the words end (longer shot or an "
                             "extension fixes it)")
             dur = max(narr_s, laid)
+        if lines and lips and lips.path and float(lips.duration_s or 0) - trim_in > dur + 0.05:
+            dur = float(lips.duration_s) - trim_in  # the lip-sync held the clip's last frame until the line ended
         vid = {"source": st.abs(video.path), "source_key": video.path}
         if lines and lips and lips.path:
             segs.append(Segment(shot, st.abs(lips.path), "lipsync", dur, trim_in, extra_audio=extra, cues=cues or _even_cues(lines, dur),

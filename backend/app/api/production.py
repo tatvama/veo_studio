@@ -61,6 +61,16 @@ def regenerate_stale(eid: int, body: RegenIn, user: User = Depends(require("crea
     return jobs.submit(db, user, p, specs)
 
 
+@router.get("/characters/{cid}/impact")
+def character_impact(cid: int, project_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """The shots of this project that show the character and are out of date since their look changed (approved
+    pictures, lock or an outfit edited): {character_id, name, shots: [codes], shot_ids, episodes: [{episode_id, number,
+    shot_ids, codes, estimate_usd}], estimate}. Redo them per episode with POST /api/episodes/{episode_id}/impact/
+    regenerate {"shot_ids": [...]} (budget-checked like any generation)."""
+    c = get_or_404(db, Character, cid)
+    return dependencies.character_impact(db, get_or_404(db, Project, project_id), c)
+
+
 @router.post("/takes/{tid}/fresh")
 def mark_fresh(tid: int, user: User = Depends(require("reviewer")), db: Session = Depends(get_db)):
     """The editor looked at a stale take and decided it is still fine."""
@@ -261,7 +271,10 @@ class LockConfigIn(BaseModel):
 @router.put("/characters/{cid}/lock")
 def set_lock(cid: int, body: LockConfigIn, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
     c = get_or_404(db, Character, cid)
+    before = lock_core.effective(c)
     c.lock = {k: v for k, v in body.lock.items() if k in lock_core.DEFAULT}
+    if lock_core.effective(c) != before:  # the lock goes into every prompt of theirs: their shots are out of date
+        dependencies.character_changed(db, c, "lock")
     db.commit()
     emit(db, None, "bible.updated", {"character_id": c.id})
     return {"lock": lock_core.effective(c), "prompt_text": lock_core.prompt_text(c)}
@@ -396,6 +409,8 @@ def create_costume(cid: int, body: CostumeIn, user: User = Depends(require("crea
     if row is None:
         row = Costume(character_id=cid, name=name)
         db.add(row)
+    elif (row.description or "") != (body.description or ""):  # an outfit edited: the shots where it is worn
+        dependencies.character_changed(db, c, f"outfit '{name}'", outfit=name)
     row.description, row.episode_from, row.episode_to = body.description, body.episode_from, body.episode_to
     if body.is_default:
         for other in db.query(Costume).filter(Costume.character_id == cid).all():
@@ -426,6 +441,9 @@ class CostumePatch(BaseModel):
 def patch_costume(coid: int, body: CostumePatch, user: User = Depends(require("creator")), db: Session = Depends(get_db)):
     c = get_or_404(db, Costume, coid)
     data = body.model_dump(exclude_unset=True)
+    if "description" in data and (data["description"] or "") != (c.description or ""):
+        # an outfit edited: the shots where it is worn are out of date
+        dependencies.character_changed(db, db.get(Character, c.character_id), f"outfit '{c.name}'", outfit=c.name)
     if data.get("name") and data["name"] != c.name:  # the images follow the name
         for a in db.query(CharacterAsset).filter(CharacterAsset.character_id == c.character_id, CharacterAsset.kind == "outfit",
                                                  CharacterAsset.outfit == c.name).all():

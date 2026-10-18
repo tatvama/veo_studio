@@ -9,9 +9,10 @@ from sqlalchemy.orm import Session
 
 from .. import catalog
 from ..core import autopilot as autopilot_def
-from ..core import budget, collab, generation, jobs
+from ..core import budget, collab, generation, jobs, recovery
 from ..db import get_db
 from ..models import Episode, Project, Shot, Take, User
+from ..pipeline.prompting import dialogue_warnings
 from ..pipeline.selection import current, has_fresh
 from ..security import current_user, require
 from .common import get_or_404
@@ -154,15 +155,29 @@ def estimate(eid: int, body: BatchIn, user: User = Depends(current_user), db: Se
 
 def _warnings(db: Session, project: Project, episode: Episode, body: BatchIn, specs: list[dict]) -> list[str]:
     """What to know before paying, shown in the cost dialog: shots that will be lip-synced with no live lip-sync
-    engine connected (their voices would be laid over the clips, lips not matching)."""
+    engine connected (their voices would be laid over the clips, lips not matching), or with more than one person on
+    screen; lines too long for their clip or spoken by two people (prompting.dialogue_warnings); and people Seedance may
+    refuse because they aren't registered with BytePlus."""
+    lang = body.language or project.primary_language
     syncing: list = []
+    shots = generation.episode_shots(db, episode, body.shot_ids)
     if body.action == "lipsync":
         syncing = [x for x in specs if x["type"] == "lipsync"]
-    elif body.action == "produce" and specs and "voices" in specs[0]["payload"]["steps"]:
-        lang = body.language or project.primary_language
-        syncing = [s for s in generation.episode_shots(db, episode, body.shot_ids)
-                   if budget.Estimator.needs_lipsync(s, project, lang) and not has_fresh(db, s.id, "lipsync", lang)]
-    return generation.lipsync_warnings(db, syncing)
+        lip_shots = [s for s in shots if s.id in {x["shot_id"] for x in syncing}]
+    elif body.action in ("produce", "autopilot") and specs and (body.action == "autopilot"
+                                                                or "voices" in specs[0]["payload"]["steps"]):
+        syncing = lip_shots = [s for s in shots if budget.Estimator.needs_lipsync(s, project, lang)
+                               and not has_fresh(db, s.id, "lipsync", lang)]
+    else:
+        lip_shots = []
+    out = generation.lipsync_warnings(db, syncing) + generation.speaker_warnings(db, project, lip_shots, lang)
+    if body.action in ("produce", "videos", "lipsync", "voices", "autopilot") and specs:
+        said = [f"{s.code}: {w}" for s in shots for w in dialogue_warnings(s, lang)]
+        out += said[:8] + ([f"… and {len(said) - 8} more like these"] if len(said) > 8 else [])
+    making = body.action == "videos" or (body.action == "produce" and specs and "videos" in specs[0]["payload"]["steps"])
+    if making or (body.action == "autopilot" and specs):
+        out += recovery.seedance_warnings(db, project, [s for s in shots if s.characters], body.quality)
+    return out
 
 
 @router.post("/episodes/{eid}/generate")

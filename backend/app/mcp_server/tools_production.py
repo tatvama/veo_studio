@@ -389,6 +389,10 @@ def _job(j: Job) -> dict[str, Any]:
     if j.type == "scene_chain" and j.result:
         d["scenes"] = (j.result or {}).get("scenes")
         d["paused_after_scene"] = (j.result or {}).get("paused_after")
+    if j.type in ("produce", "autopilot", "scene_chain") and (j.result or {}).get("problems"):
+        d["problems"] = j.result["problems"][:30]  # what the run couldn't make, in plain words, with the next step
+    if (j.result or {}).get("stopped") == "budget":
+        d["stopped"] = "budget"
     return d
 
 

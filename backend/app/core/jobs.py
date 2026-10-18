@@ -202,6 +202,37 @@ def cancel_tree(db: Session, root_ids: list[int]) -> int:
     return n
 
 
+def _tree(db: Session, root_ids: list[int]) -> list[Job]:
+    """These jobs' descendants (children, QC, auto-retakes, nested runs), not the roots themselves."""
+    out, seen, frontier = [], set(root_ids), list(root_ids)
+    while frontier:
+        rows = db.query(Job).filter(Job.parent_job_id.in_(frontier)).all()
+        frontier = []
+        for j in rows:
+            if j.id not in seen:
+                seen.add(j.id)
+                frontier.append(j.id)
+                out.append(j)
+    return out
+
+
+def cancel_queued_tree(db: Session, root_ids: list[int]) -> int:
+    """Cancel the work these jobs started that hasn't begun (queued, waiting for approval); running work, already
+    being paid for, carries on. No commit."""
+    n = 0
+    for j in _tree(db, root_ids):
+        if j.status in ("proposed", "queued", "awaiting_approval"):
+            j.status, j.finished_at = "cancelled", utcnow()
+            _release_shot(db, j)
+            n += 1
+    db.flush()
+    return n
+
+
+def running_in_tree(db: Session, root_ids: list[int]) -> int:
+    return sum(1 for j in _tree(db, root_ids) if j.status == "running")
+
+
 def cancel(db: Session, user: User, job: Job) -> Job:
     cancel_tree(db, [job.id])
     emit(db, job.project_id, "job.updated", {"job_id": job.id, "status": job.status}, commit=False)

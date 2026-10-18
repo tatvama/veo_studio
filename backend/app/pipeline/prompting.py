@@ -403,21 +403,38 @@ def _episode_no(db: Session, shot: Shot) -> int | None:
     return e.number if e else None
 
 
-def video_refs(db: Session, shot: Shot) -> list[tuple[str, Path]]:
-    """Up to 3 refs for Veo reference-to-video, plus the shot's own references."""
+def video_refs(db: Session, shot: Shot, limit: int = 3) -> list[tuple[str, Path]]:
+    """Labelled references for a reference-to-video request, as many as the engine takes (`limit`: Veo 3, Seedance 9).
+    Every on-screen person gets a face first (as far as the limit allows), then one of the shot's own references, then
+    more views of each person, the rest of the shot's references and the location."""
     st = get_storage()
     chars = _chars(db, shot)
     ep_no = _episode_no(db, shot)
-    refs: list[tuple[str, Path]] = []
-    per_char = 2 if len(chars) == 1 else 1
-    for ch in chars[:2]:
-        for a in character_refs(db, ch, outfit_for(db, shot, ch), per_char, ep_no):
-            refs.append((f"{ch.name} ({a.kind})", st.abs(a.path)))
-    refs = refs[: 3 - min(len(shot_refs(shot)), 1)] + shot_refs(shot)  # keep room for at least one shot reference
+    views = 2 if len(chars) == 1 else max(1, min(3, (limit - 1) // max(len(chars), 1)))
+    per_char: list[list[tuple[str, Path]]] = []
+    for ch in chars:
+        got = [(f"{ch.name} ({a.kind})", st.abs(a.path)) for a in character_refs(db, ch, outfit_for(db, shot, ch), views, ep_no)]
+        per_char.append([(lbl, p) for lbl, p in got if p.exists()])
+    own = [(lbl, p) for lbl, p in shot_refs(shot) if p.exists()]
+    faces = [refs[0] for refs in per_char if refs][:limit]
+    room = limit - len(faces)
+    keep_own = own[: min(1, max(room, 0))]  # room for at least one of the shot's own references (a product, a prop)
+    room -= len(keep_own)
+    extra: list[list[tuple[str, Path]]] = [[] for _ in per_char]
+    for i, refs in enumerate(per_char):
+        for r in refs[1:]:
+            if room <= 0:
+                break
+            extra[i].append(r)
+            room -= 1
+    more_own = own[len(keep_own): len(keep_own) + max(room, 0)]
+    room -= len(more_own)
+    out = [r for i, refs in enumerate(per_char) if refs and refs[0] in faces for r in [refs[0], *extra[i]]]
+    out += keep_own + more_own
     la = location_ref(db, shot.location_id)
-    if la and len(refs) < 3:
-        refs.append(("location", st.abs(la.path)))
-    return [(lbl, p) for lbl, p in refs if p.exists()][:3]
+    if la and room > 0 and st.abs(la.path).exists():
+        out.append(("location", st.abs(la.path)))
+    return out[:limit]
 
 
 def _char_label(ch: Character, a: CharacterAsset) -> str:
@@ -444,9 +461,9 @@ def keyframe_refs(db: Session, shot: Shot, continuity_frame: Path | None, anchor
     """Up to 8 labelled references, each with what to copy from it. Guaranteed: one face reference per character, the
     scene anchor's keyframe and the location; then the shot's own references, more character views, props, and the
     previous shot's frame when there is room. In the prompt they read in this order: characters, the shot's own
-    references, anchor, location, props, previous frame."""
+    references, anchor, location, props, previous frame. Every on-screen person gets a face (up to the limit)."""
     st = get_storage()
-    chars = _chars(db, shot)[:4]
+    chars = _chars(db, shot)[:limit]
     ep_no = _episode_no(db, shot)
     per_char: list[list[tuple[str, Path]]] = []
     for ch in chars:

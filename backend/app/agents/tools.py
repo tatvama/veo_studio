@@ -12,7 +12,7 @@ from typing import Any, Callable
 from sqlalchemy.orm import Session
 
 from .. import catalog
-from ..core import budget, continuity, dependencies, generation, jobs, lock as lock_core, studio
+from ..core import budget, continuity, dependencies, generation, jobs, lock as lock_core, problems, studio
 from ..db import utcnow
 from ..models import AgentMessage, Character, Episode, Location, Project, Scene, Shot, Style, User
 from ..pipeline import ffmpeg as ff
@@ -65,10 +65,14 @@ class AgentCtx:
 
 
 def _shot_brief(db: Session, s: Shot, lang: str) -> dict:
+    """keyframe / video: real work only (a placeholder made without a key, or a 480p draft, isn't a finished take)."""
     kf, vid = current(db, s.id, "keyframe"), current(db, s.id, "video")
-    return {"code": s.code, "dur": s.duration_s, "framing": s.framing, "action": s.action[:120],
-            "lines": len((s.dialogue or {}).get(lang) or []), "keyframe": bool(kf), "video": bool(vid),
-            "qc": (vid.qc or {}).get("identity_match") if vid else None, "status": s.status}
+    out = {"code": s.code, "dur": s.duration_s, "framing": s.framing, "action": s.action[:120],
+           "lines": len((s.dialogue or {}).get(lang) or []), "keyframe": is_real(kf), "video": is_real(vid),
+           "qc": (vid.qc or {}).get("identity_match") if vid else None, "status": s.status}
+    if vid is not None and not is_real(vid):
+        out["video_note"] = "draft only" if (vid.params or {}).get("draft") else "placeholder (made without an API key)"
+    return out
 
 
 # ── tool implementations ─────────────────────────────────────────────────────
@@ -88,6 +92,10 @@ def get_project_state(c: AgentCtx) -> dict:
         "shots": [_shot_brief(db, s, p.primary_language) for s in c.shots()][:60],
         "budget": budget.team_status(db),
         "project_spent_usd": round(budget.spent(db, project_id=p.id), 4),
+        # what went wrong: the last run's problems (Produce all, Autopilot, Scenes in order) and the latest failed jobs,
+        # in plain words with the next step
+        "run_problems": list((ep.settings or {}).get("run_problems") or [])[:30],
+        "failed_jobs": problems.recent_failures(db, p.id),
     }
 
 
@@ -521,10 +529,16 @@ def import_script(c: AgentCtx, text: str = "", message_id: int = 0, start: str =
         return {"error": err}
     db, p, ep = c.db, c.project, c.ep()
     draft = script_import.build_draft(db, c.user, p, src, method)
+    # exact names only (this cast first, then the library): a first-name match would merge two people, and nobody
+    # reviews the matches here as in the import wizard
     mapping: dict[str, Any] = {}
     for ch in draft["characters"]:
-        hit = _match(db, p, ch["name"])
-        mapping[ch["name"]] = hit["id"] if hit else ("new" if create_missing_characters else "")
+        hit = _match(db, p, ch["name"], exact_only=True)
+        mapping[ch["name"]] = hit["id"] if hit else "new"
+    unknown = [n for n, v in mapping.items() if v == "new"]
+    if unknown and not create_missing_characters:
+        return {"error": f"No character named exactly {', '.join(unknown[:8])} in this film or the library: allow "
+                         "create_missing_characters, or rename them in the script to match the cast"}
     out = import_apply(ep.id, ImportApplyIn(draft=draft["draft"], mapping=mapping, create_missing=create_missing_characters),
                        c.user, db)
     st = draft["stats"]
@@ -1238,7 +1252,8 @@ def _t(name: str, desc: str, props: dict | None = None, required: list[str] | No
 
 
 TOOL_DECLS = [
-    _t("get_project_state", "Read the current project, episode, cast, shots and budget."),
+    _t("get_project_state", "Read the current project, episode, cast, shots (keyframe/video = real takes only) and "
+                            "budget, the last run's problems and the latest failed jobs with what to do next."),
     _t("update_brief", "Change brief fields.", {"fields": {"type": "object", "description": "title, audience, tone, duration_s, key_message, cta, platform, notes"}}, ["fields"]),
     _t("generate_hooks", "Write N hook options for the opening seconds.", {"n": {"type": "integer"}, "angle": {"type": "string"}}),
     _t("select_hook", "Choose a hook by index.", {"index": {"type": "integer"}}, ["index"]),

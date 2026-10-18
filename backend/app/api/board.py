@@ -36,8 +36,10 @@ def put_board(eid: int, body: B.Board, user: User = Depends(require("creator")),
     return B.save_board(db, user, p, e, body)
 
 
-def _match(db: Session, project: Project, name: str) -> dict | None:
-    """Best existing character for a script name: the project's cast first, then the shared library."""
+def _match(db: Session, project: Project, name: str, exact_only: bool = False) -> dict | None:
+    """Best existing character for a script name: the project's cast first, then the shared library. exact_only (the
+    Director's and MCP imports, where nobody reviews the matches): the same full name only (any case and spacing),
+    never a first-name match ("Ravi" is not "Ravi Kumar") and never a near match from another film's library."""
     low = " ".join(name.strip().lower().split())
     if not low:
         return None
@@ -45,7 +47,7 @@ def _match(db: Session, project: Project, name: str) -> dict | None:
     cast = studio.cast(db, project)
     lib = db.query(Character).filter(Character.shared.is_(True), Character.archived.is_(False)).all()
     for pool, in_project in ((cast, True), (lib, False)):
-        for exact in (True, False):
+        for exact in ((True,) if exact_only else (True, False)):
             for c in pool:
                 cn = " ".join((c.name or "").strip().lower().split())
                 if not cn:

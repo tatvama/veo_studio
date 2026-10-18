@@ -5,6 +5,7 @@ import importlib.util
 import shutil
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -13,7 +14,7 @@ import httpx
 from .. import catalog, settings_store
 from ..agents import prompts
 from ..agents import schemas as S
-from ..core import budget, dependencies, frames, generation, lock as lock_core, model_hub, ratelimit, studio
+from ..core import budget, dependencies, frames, generation, lock as lock_core, model_hub, ratelimit, recovery, studio
 from ..db import SessionLocal, utcnow
 from ..events import emit
 from ..models import (AIModel, AudioAsset, Character, CharacterAsset, Episode, Export, Location, LocationAsset, Project, Shot,
@@ -21,7 +22,8 @@ from ..models import (AIModel, AudioAsset, Character, CharacterAsset, Episode, E
 from ..pipeline import assembler, faces, ffmpeg as ff, scene_look
 from ..pipeline.prompting import (character_refs, compile_enhance_prompt, compile_keyframe_prompt, compile_video_prompt,
                                   effective_quality, effective_voice_mode, enhance_refs, keyframe_refs, look_of,
-                                  native_languages, negative_prompt, outfit_for, shot_lines, video_refs)
+                                  MAX_WORDS_PER_CLIP, native_languages, negative_prompt, outfit_for, shot_lines,
+                                  video_refs)
 from ..pipeline.selection import current, select
 from ..pipeline.voice import build_dialogue, build_narration, choose_duration
 from ..providers.base import (NeedsApproval, ProviderBlocked, ProviderError, ProviderNotConfigured, ProviderOutOfCredit,
@@ -325,6 +327,61 @@ def _loras_for(db, shot: Shot, episode_no: int | None) -> list[dict]:
     return [{"path": ident["lora_url"], "scale": float(ident.get("scale", 1.0))}] if ident else []
 
 
+MAX_ENGINE_REFS = 9  # the most reference images a video engine takes (Seedance); Veo's reference-to-video takes 3
+
+
+def _refs_for(m: AIModel, shot_id: int) -> list[tuple[str, Path]]:
+    """The labelled references a reference-to-video request sends: as many as this engine takes (its max_refs), a face
+    for every on-screen person first (pipeline/prompting.video_refs)."""
+    with SessionLocal() as db:
+        return video_refs(db, db.get(Shot, shot_id), int((m.capabilities or {}).get("max_refs") or 3))
+
+
+# What Veo can extend (Gemini API docs, https://ai.google.dev/gemini-api/docs/veo, checked 18 Oct 2026): "Video
+# extension is also limited to 720p videos" (7 s added per extension, up to 20 times, inputs up to 141 s); "Gemini API
+# only supports video extensions for Veo-generated videos", referenced from a previous generation; and "Generated videos
+# are stored on the server for 2 days, after which they are removed" (using a video for an extension starts its 2 days
+# again). Our own copy uploaded again is not a Veo-generated video, so an expired clip can't be extended on Veo: the job
+# says so in plain words instead.
+VEO_KEEPS_S = 2 * 24 * 3600
+
+
+def _veo_source(t: Take) -> dict[str, Any]:
+    p = t.params or {}
+    return {"provider": t.provider, "mock": bool(p.get("mock")), "resolution": str(p.get("resolution") or "").lower(),
+            "uri": t.remote_ref or "", "made": t.created_at, "touched": p.get("remote_touched_at")}
+
+
+def veo_cant_extend(src: dict[str, Any], now: datetime | None = None) -> str:
+    """Why Veo can't extend this clip ("" = it can)."""
+    if src.get("mock"):
+        return ""  # a placeholder made without a key: the mock extends anything
+    if src.get("provider") not in ("google", "gemini") or not str(src.get("uri") or "").startswith("http"):
+        return ("Veo extends only clips it made itself, and this one wasn't made by Veo. Extend it with the engine that "
+                "made it (pick it on the shot), or remake the shot's video on Veo first.")
+    if src.get("resolution") not in ("", "720p"):
+        return (f"Veo extends only 720p clips and this one is {src['resolution']}. Remake the shot's video (a shot with an "
+                "extend-to length is made at 720p), then extend it.")
+    last = src.get("made")
+    try:
+        touched = datetime.fromisoformat(str(src.get("touched")).rstrip("Z")) if src.get("touched") else None
+    except ValueError:
+        touched = None
+    last = max(x for x in (last, touched) if x is not None) if (last or touched) else None
+    if last is not None and ((now or utcnow()) - last).total_seconds() > VEO_KEEPS_S - 3600:
+        return ("Veo keeps the clips it makes for 2 days and this one is older, so Veo can't extend it any more. Remake "
+                "the shot's video and extend that, or extend it with another engine (pick one on the shot).")
+    return ""
+
+
+def _touch_remote(take_id: int) -> None:
+    with SessionLocal() as db:
+        t = db.get(Take, take_id)
+        if t is not None:
+            t.params = {**(t.params or {}), "remote_touched_at": utcnow().isoformat() + "Z"}
+            db.commit()
+
+
 # ── keyframe ─────────────────────────────────────────────────────────────────
 
 @handler("keyframe")
@@ -461,10 +518,15 @@ def video(ctx: JobContext) -> dict:
         end = frames.end_take(db, shot)
         end_path = st.abs(end.path) if end else None
         want_end = end_path is not None or frames.wants_end(db, shot)
-        vr = video_refs(db, shot)
-        refs, ref_labels = [x for _, x in vr], [l for l, _ in vr]
+        # every on-screen person, as many as any engine takes (Seedance 9); a reference-to-video request gets as many
+        # as its own engine takes (Veo 3), see build()
+        vr = video_refs(db, shot, MAX_ENGINE_REFS)
+        refs = [x for _, x in vr]
         last_frame = extend_from = None
         extend_uri = ""
+        extend_src: Take | None = None
+        # Veo extends only 720p clips: a shot that will be extended gets its first clip at 720p on Veo
+        base_720 = bool(shot.extend_to) and not p.get("draft")
         if mode == "interpolate" and not want_end:
             nxt = (db.query(Shot).filter(Shot.episode_id == shot.episode_id, Shot.include.is_(True), Shot.order > shot.order)
                    .order_by(Shot.order).first())
@@ -473,10 +535,16 @@ def video(ctx: JobContext) -> dict:
         link_parent = None
         if extend:
             vt = current(db, shot.id, "video")
+            if p.get("extend_from_take"):  # a retake of an extension: the clip it was made from is extended again
+                base = db.get(Take, int(p["extend_from_take"]))
+                if base is not None and base.shot_id == shot.id and base.kind == "video" and not base.archived \
+                        and st.exists(base.path):
+                    vt = base
             if not vt:
                 raise ProviderError("Nothing to extend yet — generate a video for this shot first")
             extend_from = st.abs(vt.path)
             extend_uri = vt.remote_ref or ""
+            extend_src = vt
             prompt = (p.get("prompt") or shot.action) + "\n" + prompt
         elif shot.continuity_from_shot_id and shot.continuity_mode == "extend" and mode in ("auto", "extend") and not native:
             # Film Map link: this shot IS the continuation of the linked shot's clip
@@ -510,9 +578,11 @@ def video(ctx: JobContext) -> dict:
             modes_ok = ["i2v", "t2v"]
         aspect = project.aspect if project.aspect in ("16:9", "9:16") else "9:16"
         duration = shot.duration_s
+        src_info = _veo_source(extend_src) if extend_src is not None else None
         db.commit()
 
-    state: dict[str, Any] = {"kf": kf_path, "audio": None, "end": end_path, "end_take": end.id if end else None}
+    state: dict[str, Any] = {"kf": kf_path, "audio": None, "end": end_path, "end_take": end.id if end else None,
+                             "ref_labels": [], "resolution": qm["resolution"]}
 
     def ensure_kf() -> Path | None:
         if state["kf"] is None:
@@ -545,30 +615,57 @@ def video(ctx: JobContext) -> dict:
         return state["audio"]
 
     def build(m: AIModel, mode_: str) -> GenRequest:
+        veo = m.provider == "google"
+        if mode_ == "extend" and veo and src_info is not None:
+            why = veo_cant_extend(src_info)
+            if why:  # (another engine of the extend chain may still take it; else the job fails with these words)
+                raise ProviderError(why, provider="gemini")
         first = ensure_kf() if mode_ in ("i2v", "flf", "a2v") else None
         if ends and mode_ in ("flf", "i2v"):
             ensure_end()  # (also before a start-frame-only clip: the shot after it starts on this end frame)
         last = (state["end"] or last_frame) if mode_ == "flf" else None
         audio = ensure_voice() if mode_ == "a2v" else None
+        own_refs = _refs_for(m, ctx.shot_id) if mode_ == "ref2v" else []
+        state["ref_labels"] = [l for l, _ in own_refs]
+        res_ = "480p" if draft else "720p" if extend or (veo and base_720) else qm["resolution"]
+        state["resolution"] = res_
         return GenRequest(mode=mode_, prompt=prompt, negative=negative, first_frame=first,
-                          last_frame=last, refs=refs if mode_ == "ref2v" else [],
+                          last_frame=last, refs=[x for _, x in own_refs],
                           audio=audio, video=extend_from, video_uri=extend_uri, duration=duration, aspect=aspect,
-                          resolution="480p" if draft else "720p" if extend else qm["resolution"],
-                          generate_audio=not audio_driven,
+                          resolution=res_, generate_audio=not audio_driven,
                           loras=loras if mode_ in ("i2v", "t2v", "ref2v", "flf") else [], cast_refs=vr)
 
+    def make() -> tuple:
+        nonlocal audio_driven
+        try:
+            return run_chain(ctx, chain, modes_ok, build, explicit=explicit, skip=p.get("skip_engines"))
+        except ProviderNotConfigured:
+            if not audio_driven:
+                raise
+            audio_driven = False  # no audio-driven engine available → regular video, voice + lip-sync later
+            return run_chain(ctx, f"video.{q}", ["i2v", "t2v"], build, skip=p.get("skip_engines"))
+
+    toned: list[str] = []
     try:
-        m, used, res, attempts = run_chain(ctx, chain, modes_ok, build, explicit=explicit, skip=p.get("skip_engines"))
-    except ProviderNotConfigured:
-        if not audio_driven:
-            raise
-        audio_driven = False  # no audio-driven engine available → regular video, voice + lip-sync later
-        m, used, res, attempts = run_chain(ctx, f"video.{q}", ["i2v", "t2v"], build, skip=p.get("skip_engines"))
+        m, used, res, attempts = make()
+    except ProviderBlocked as e:
+        # once more with the weapons, blood and violence words toned down (the meaning kept), before giving up
+        softer, toned = recovery.soften(prompt)
+        if not toned or p.get("toned_down"):
+            raise recovery.blocked(e) from e
+        ctx.progress(0.1, f"Blocked by a safety filter: once more without {', '.join(toned[:4])}")
+        prompt = softer
+        try:
+            m, used, res, attempts = make()
+        except ProviderBlocked as e2:
+            raise recovery.blocked(e2, toned) from e2
+    if extend and m.provider == "google" and extend_src is not None:
+        _touch_remote(extend_src.id)  # Veo keeps a clip 2 days from its last use: extending it starts that again
     with SessionLocal() as db:
         shot = db.get(Shot, ctx.shot_id)
         prev = current(db, shot.id, "video")
-        params = {"quality": q, "resolution": "480p" if draft else qm["resolution"], "mode": used,
-                  "refs": ref_labels if used == "ref2v" else [],
+        params = {"quality": q, "resolution": state["resolution"], "mode": used,
+                  "refs": state["ref_labels"] if used == "ref2v" else [], "toned_down": toned or None,
                   "engine": m.id, "engine_label": m.display_name, "attempts": attempts,
                   "retake_count": p.get("retake_count", 0), "audio_driven": used == "a2v",
                   "language": lang if (used == "a2v" or vm == "native") else None,
@@ -584,7 +681,8 @@ def video(ctx: JobContext) -> dict:
         t = save_take(db, ctx, shot, as_kind, res.data, "mp4", language=lang if as_kind == "lipsync" else None,
                       provider=m.provider, model=m.endpoint, params={**params, "method": "native"} if as_kind == "lipsync" else params,
                       prompt=prompt, duration=res.duration_s if not extend else 0.0, cost=res.usage.usd,
-                      remote_ref=res.remote_ref, parent=(prev.id if extend and prev else None) or link_parent,
+                      remote_ref=res.remote_ref,
+                      parent=extend_src.id if extend_src is not None else (link_parent or (prev.id if extend and prev else None)),
                       auto_select=not p.get("shootout") and not keep_final)
         lip_t = None
         if used == "a2v" and as_kind == "video":  # the clip already speaks the line: it is also this language's lip-synced take
@@ -603,10 +701,13 @@ def video(ctx: JobContext) -> dict:
         code = shot.code
     ctx.save_result(ops={})
     if (has_chars or lip_t or vm == "native") and not draft:  # a draft is a preview: no QC, no automatic retakes
+        # an extension's retake is an extension of the same clip again (with its prompt), never a new base clip
+        again = ({"extend": True, "prompt": p.get("prompt") or "", "extend_from_take": extend_src.id}
+                 if p.get("extend") and extend_src is not None else {})
         ctx.enqueue_child("qc", {"take_id": (lip_t or t).id, "retake_count": p.get("retake_count", 0), "quality": q,
                                  "language": lang, "native": native,
                                  "engine": m.id, "tried": [*(p.get("skip_engines") or []), m.id],
-                                 "shootout": bool(p.get("shootout"))},
+                                 "shootout": bool(p.get("shootout")), **again},
                           label=f"QC {code}")
     return {"take_id": t.id, "engine": m.id, "mode": used}
 
@@ -662,11 +763,21 @@ def qc(ctx: JobContext) -> dict:
         settings = settings_store.all_settings(db)
         video_path = st.abs(take.path)
         action, code, has_chars = shot.action, shot.code, bool(shot.characters)
-        is_lip = take.kind == "lipsync" or bool((take.params or {}).get("audio_driven"))
-        native_take = bool((take.params or {}).get("native_language")) or (take.params or {}).get("method") == "native"
-        language = take.language or (take.params or {}).get("language") or project.primary_language
+        tp = take.params or {}
+        is_lip = take.kind == "lipsync" or bool(tp.get("audio_driven"))
+        native_take = bool(tp.get("native_language")) or tp.get("method") == "native"
+        # a lip-sync pass (or voice lock) over a finished clip: only the lips can be retaken, never the clip under them
+        lip_only = bool(ctx.payload.get("lip_only")) or take.kind == "voicelock" or tp.get("method") == "redub"
+        # the words come from a studio voice (TTS), exactly as written: no transcription check (it misreads Indian
+        # languages); the spoken-words check is for clips where Veo speaks the line itself
+        tts_voice = lip_only or bool(tp.get("audio_driven")) or tp.get("method") == "audio_driven"
+        language = take.language or tp.get("language") or project.primary_language
         lines = " / ".join(l.get("line", "") for l in shot_lines(shot, language))
         lang_name = catalog.LANGUAGES.get(language, {}).get("name", language)
+        n_words = sum(len((l.get("line") or "").split()) for l in shot_lines(shot, language))
+        clip_s = int(round(take.duration_s or shot.duration_s or 8))
+        fits = MAX_WORDS_PER_CLIP.get(clip_s, MAX_WORDS_PER_CLIP[8])
+        too_long = native_take and n_words > fits
         strict = max((float(L.get("strictness", 0.5)) for L in locks), default=0.5)
         outfit_required = outfit_expected and any(lock_core.requires_outfit(L) for L in locks) and bool(settings.get("outfit_qc", True))
         db.commit()
@@ -701,7 +812,7 @@ def qc(ctx: JobContext) -> dict:
     # 4) spoken words: did the clip say the scripted line, in the right language? (native Veo speech or a dub)
     words = None
     words_on = settings.get("dialogue_words_qc", True) and video_path.stat().st_size < 18_000_000
-    if listen and (is_lip or native_take) and lines and words_on:
+    if listen and native_take and not tts_voice and lines and words_on:
         wp = (f"Expected language: {lang_name}. Expected line(s): {lines}\nListen to the clip. Transcribe exactly what is "
               "spoken, name the language actually spoken, score word accuracy, pronunciation and lip-sync, and say whether "
               "any text is burned into the picture.")
@@ -725,6 +836,10 @@ def qc(ctx: JobContext) -> dict:
     report.update({"passed": passed, "identity_ok": identity_ok, "lipsync_ok": lip_ok, "words_ok": words_ok,
                    "outfit_ok": outfit_ok, "threshold": thr, "face_threshold": fthr, "lipsync_threshold": lthr,
                    "words_threshold": wthr, "strictness": strict})
+    if too_long and not words_ok:  # making the clip again won't fit the line in it: the run lists it instead
+        report["problem"] = {"step": "QC", "reason": f"The line has {n_words} words; about {fits} fit a {clip_s} s clip, "
+                                                     "so Veo rushes or drops some of it",
+                             "next": "Split the shot or shorten the line, then remake the video"}
     with SessionLocal() as db:
         take = db.get(Take, take_id)
         take.qc = report
@@ -737,15 +852,30 @@ def qc(ctx: JobContext) -> dict:
     if (passed or ctx.payload.get("shootout") or not settings.get("auto_retake")
             or retakes >= int(settings.get("max_auto_retakes") or 2)):
         return {"passed": passed}
+    look_bad = not identity_ok or bool(obj.extra_people) or bool(obj.text_artifacts) or not outfit_ok
+    if lip_only:  # a lip-sync take is only ever re-lip-synced (one retake count for the whole lip-sync)
+        redo = "lipsync" if not lip_ok else None
+        why = "" if redo else "the clip under the lip-sync doesn't pass: remake the video"
+    else:  # (a line too long for its clip is no reason to make the clip again: it is listed as a problem)
+        redo_video = look_bad or tp.get("audio_driven") or (native_take and not words_ok and not too_long)
+        redo = "video" if redo_video else "lipsync" if not lip_ok else None
+        why = "" if redo else (report.get("problem") or {}).get("reason", "")
+    if redo is None:
+        return {"passed": False, "retake": None, "reason": why}
     tried = list(ctx.payload.get("tried") or [])
+    again = bool(ctx.payload.get("extend")) and redo == "video"
     with SessionLocal() as db:
         shot = db.get(Shot, take.shot_id)
         project = _project_of(db, shot)
         user = _user(db, ctx)
         est = budget.Estimator(db)
-        redo_video = (not identity_ok or obj.extra_people or obj.text_artifacts or not outfit_ok
-                      or (take.params or {}).get("audio_driven") or (native_take and not words_ok))
-        if redo_video:
+        if again:  # an extension is retaken as an extension of the clip it was made from, with its own prompt
+            cost = generation.extend_spec(db, project, shot, ctx.payload.get("prompt") or "")["estimate"]
+            kind, payload = "video", {"quality": ctx.payload.get("quality"), "extend": True,
+                                      "prompt": ctx.payload.get("prompt") or "",
+                                      "extend_from_take": ctx.payload.get("extend_from_take"), "retake_count": retakes + 1,
+                                      "skip_engines": tried if retakes >= 1 else []}
+        elif redo == "video":
             cost = est.video(shot, project, ctx.payload.get("quality"))
             kind, payload = "video", {"quality": ctx.payload.get("quality"), "retake_count": retakes + 1,
                                       "skip_engines": tried if retakes >= 1 else [],
@@ -755,8 +885,8 @@ def qc(ctx: JobContext) -> dict:
             kind, payload = "lipsync", {"language": language, "retake_count": retakes + 1, "skip_engines": tried}
         chk = budget.check(db, user, project, cost) if user else {"ok": False, "reason": "no requester"}
     if chk.get("ok"):
-        ctx.enqueue_child(kind, payload, shot_id=take.shot_id, estimate=cost,
-                          label=f"Auto-retake {code} ({'lips' if kind == 'lipsync' else 'look'})")
+        what = "lips" if kind == "lipsync" else "extension" if again else "look"
+        ctx.enqueue_child(kind, payload, shot_id=take.shot_id, estimate=cost, label=f"Auto-retake {code} ({what})")
         return {"passed": False, "retake": kind}
     return {"passed": False, "retake": None, "reason": chk.get("reason", "")}
 
@@ -824,10 +954,17 @@ def lipsync(ctx: JobContext) -> dict:
         if not voice_t:
             raise ProviderError(f"{shot.code} has no {lang} dialogue to lip-sync")
         video_path = st.abs(vt.path)
-        vdur = ff.duration(video_path)
-        fitted, factor = ff.fit_audio_length(st.abs(voice_t.path), tmp / "fit.wav", max(vdur - 0.1, 1.0))
+        vdur, adur = ff.duration(video_path), ff.duration(st.abs(voice_t.path))
+        held = 0.0
+        if adur > vdur - 0.1:  # never cut the speech: the clip holds its last frame until the voice ends
+            held = adur + 0.25 - vdur
+            longer = tmp / "held.mp4"
+            ff.run(["-i", video_path, "-vf", f"tpad=stop_mode=clone:stop_duration={held:.3f}", "-an",
+                    *ff.h264_args(18), longer])
+            video_path, vdur = longer, ff.duration(longer)
         audio = tmp / "voice_padded.wav"
-        ff.run(["-i", fitted, "-af", f"apad,atrim=0:{vdur:.3f}", "-ar", "48000", "-ac", "1", audio])
+        ff.run(["-i", st.abs(voice_t.path), "-af", f"apad,atrim=0:{vdur:.3f}", "-ar", "48000", "-ac", "1", audio])
+        speaker = _speaker(db, shot, lang, video_path, tmp)
         ids = (vt.id, voice_t.id)
         code = shot.code
         db.commit()
@@ -838,14 +975,15 @@ def lipsync(ctx: JobContext) -> dict:
         method = "audio_driven"
     else:
         m, used, res, attempts = run_chain(ctx, "lipsync", ["lipsync"], lambda m, mode: GenRequest(
-            mode="lipsync", video=video_path, audio=audio, aspect=aspect), explicit=explicit, skip=p.get("skip_engines"),
-            expected_s=60)
+            mode="lipsync", video=video_path, audio=audio, aspect=aspect, speaker=speaker), explicit=explicit,
+            skip=p.get("skip_engines"), expected_s=60)
         method = "redub"
     with SessionLocal() as db:
         shot = db.get(Shot, ctx.shot_id)
         t = save_take(db, ctx, shot, "lipsync", res.data, "mp4", language=lang, provider=m.provider, model=m.endpoint,
-                      params={"video_take_id": ids[0], "voice_take_id": ids[1], "speed_factor": round(factor, 3),
-                              "warning": "dialogue sped up" if factor > 1.01 else "", "engine": m.id,
+                      params={"video_take_id": ids[0], "voice_take_id": ids[1], "held_s": round(held, 2),
+                              "warning": f"the clip holds its last frame {held:.1f}s so the line can finish" if held > 0.3
+                              else "", "speaker": speaker, "engine": m.id,
                               "engine_label": m.display_name, "method": method, "attempts": attempts},
                       cost=res.usage.usd, parent=ids[0])
         ctx.cost(res.usage, db)
@@ -853,10 +991,40 @@ def lipsync(ctx: JobContext) -> dict:
         emit(db, ctx.project_id, "take.created", {"shot_id": shot.id, "take_id": t.id, "kind": "lipsync", "language": lang})
         lip_qc = settings_store.get_setting(db, "lipsync_qc")
     shutil.rmtree(tmp, ignore_errors=True)
-    if lip_qc:
-        ctx.enqueue_child("qc", {"take_id": t.id, "retake_count": p.get("retake_count", 0),
+    if lip_qc:  # (lip_only: its retakes are lip-syncs, on the same retake count; the clip under it is left alone)
+        ctx.enqueue_child("qc", {"take_id": t.id, "retake_count": p.get("retake_count", 0), "lip_only": True,
                                  "tried": [*(p.get("skip_engines") or []), m.id]}, label=f"Lip-sync QC {code}")
-    return {"take_id": t.id, "engine": m.id, "speed_factor": factor}
+    return {"take_id": t.id, "engine": m.id, "held_s": round(held, 2)}
+
+
+def _speaker(db, shot: Shot, lang: str, video: Path, tmp: Path) -> dict | None:
+    """Who the lip-sync should move when more than one person is on screen: a point on the speaker's face in the clip's
+    first frame ({frame, x, y}, found with their face reference), else {"auto": True} (sync.so's own active speaker
+    detection). None with one person on screen. Engines with no such option ignore it (generation.speaker_warnings)."""
+    if len(shot.characters or []) < 2:
+        return None
+    speakers = list(dict.fromkeys(str(l.get("character_id")) for l in shot_lines(shot, lang)))
+    ch = db.get(Character, int(speakers[0])) if len(speakers) == 1 and speakers[0].isdigit() else None
+    emb = _char_embedding(db, ch) if ch is not None else None
+    if not emb or not faces.identity_available():
+        return {"auto": True}
+    try:
+        first = tmp / "first.png"
+        ff.run(["-i", video, "-frames:v", "1", first])
+        img = faces._read(first)
+        rec = faces._recognizer()
+        best, point = -1.0, None
+        for f in faces.detect(img)[:6]:
+            if f["raw"] is None:
+                continue
+            sim = faces.similarity([float(v) for v in rec.feature(rec.alignCrop(img, f["raw"])).flatten()], emb)
+            if sim > best:
+                x, y, w, h = f["box"]
+                best, point = sim, {"frame": 0, "x": int(x + w / 2), "y": int(y + h / 2), "who": ch.name}
+        return point if point is not None and best >= 0.3 else {"auto": True}
+    except Exception as e:  # finding the face is a nicety: the engine's own detection still runs
+        print(f"[lipsync] speaker not found: {e}")
+        return {"auto": True}
 
 
 def _separate(ctx: JobContext, wav: Path, tmp: Path) -> tuple[Path, Path | None, str]:
