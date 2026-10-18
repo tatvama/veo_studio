@@ -68,12 +68,8 @@ export interface ProjectTab {
   to: string; label: string; icon: LucideIcon; keywords?: string; area: ProjectArea;
   /** Projects made from the user's own material hide this page until it has something in it (it is about writing from a concept). */
   ownHidden?: boolean;
-<<<<<<< HEAD
   /** Off the main path (Script → Cast → Shots → Edit → Deliver): listed under the step's "Advanced" menu, and among the
    *  step's views only while it is open. */
-=======
-  /** Not listed among the step's views (only while it is open): reached from its page's button and the command palette. */
->>>>>>> origin/main
   advanced?: boolean;
 }
 
@@ -85,7 +81,6 @@ export function getProjectTabs(t: T): ProjectTab[] {
   return [
     { to: "dashboard", area: "home", label: t("Overview"), icon: Gauge, keywords: "home mission control dashboard progress cost per second spend stale impact seasons" },
     { to: "brief", area: "story", label: t("Brief"), icon: FileText, keywords: "story goal audience autopilot" },
-<<<<<<< HEAD
     { to: "story", area: "story", label: t("Script"), icon: BookOpen, ownHidden: true, keywords: "story hooks script writers room critic table read" },
     { to: "scenes", area: "story", label: t("Scene cards"), icon: SquareKanban, ownHidden: true, advanced: true, keywords: "story scenes scene cards beats" },
     { to: "bible", area: "cast", label: t("Cast"), icon: Users, keywords: "cast bible characters places locations style voices photos lock versions costumes" },
@@ -94,16 +89,6 @@ export function getProjectTabs(t: T): ProjectTab[] {
     { to: "storyboard", area: "shots", label: t("Grid"), icon: LayoutGrid, keywords: "shots storyboard grid pictures keyframes videos takes" },
     { to: "shots", area: "shots", label: t("Text"), icon: ListVideo, keywords: "shots shot list text import script word pdf manual builder dialogue voice-over produce make it for me" },
     { to: "studio", area: "shots", label: t("Advanced layout"), icon: PanelsTopLeft, advanced: true, keywords: "shots studio one screen workspace panels dock timeline viewer multi monitor drag drop film map" },
-=======
-    { to: "story", area: "story", label: t("Hooks & script"), icon: BookOpen, ownHidden: true, keywords: "story hooks script writers room" },
-    { to: "scenes", area: "story", label: t("Scenes"), icon: SquareKanban, ownHidden: true, keywords: "story scene cards beats" },
-    { to: "bible", area: "cast", label: t("Characters & places"), icon: Users, keywords: "cast bible characters locations style voices photos lock versions costumes" },
-    { to: "world", area: "cast", label: t("Props & wardrobe"), icon: Globe, ownHidden: true, keywords: "cast world props costumes wardrobe continuity bible timeline end state" },
-    { to: "canvas", area: "shots", label: t("Canvas"), icon: Workflow, keywords: "shots canvas nodes drag drop scenes cast film map make price" },
-    { to: "storyboard", area: "shots", label: t("Grid"), icon: LayoutGrid, keywords: "shots storyboard grid keyframes videos takes" },
-    { to: "shots", area: "shots", label: t("Text"), icon: ListVideo, keywords: "shots shot list text import script word pdf manual builder dialogue voice-over produce" },
-    { to: "studio", area: "shots", label: t("Advanced layout"), icon: PanelsTopLeft, advanced: true, keywords: "shots studio one screen workspace panels dock timeline viewer multi monitor drag drop" },
->>>>>>> origin/main
     { to: "timeline", area: "edit", label: t("Timeline"), icon: Film, keywords: "edit cut music audio sound titles" },
     { to: "finish", area: "edit", label: t("Pro finishing"), icon: MonitorPlay,
       keywords: "edit finishing room desktop checkout check in lock versions rollback 4k upscale local render folder sync windows screens scopes multi monitor" },
