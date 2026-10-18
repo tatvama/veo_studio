@@ -5,6 +5,19 @@ from pathlib import Path
 
 Cue = tuple[float, float, str]
 
+# how fast a line is spoken, unhurried (about 150 words a minute in English): the South Indian languages pack more
+# into each word, so fewer words fit a second
+WORDS_PER_SECOND = {"en": 2.5, "hi": 2.2, "kn": 1.8, "te": 1.8, "ta": 1.8, "ml": 1.8}
+
+
+def words_per_second(lang: str | None) -> float:
+    return WORDS_PER_SECOND.get((lang or "en").split("-")[0].lower(), 2.5)
+
+
+def speech_seconds(text: str, lang: str | None) -> float:
+    """About how long these words take to say in this language."""
+    return len((text or "").split()) / words_per_second(lang)
+
 
 def chunk_text(text: str, max_chars: int = 30) -> list[str]:
     words = text.replace("\n", " ").split()

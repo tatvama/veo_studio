@@ -6,10 +6,11 @@ import re
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import catalog, settings_store
-from ..models import Character, Project, Shot, VoiceProfile
+from ..models import Character, Project, ProjectCast, Shot, VoiceProfile
 from . import ffmpeg as ff
 from .prompting import shot_lines
 
@@ -51,10 +52,14 @@ def voice_for(db: Session, character_id: Any, lang: str, project: Project) -> di
 
 
 def say(db: Session, project: Project, text: str) -> str:
-    """Apply the pronunciation dictionary: project terms (names, Sanskrit words) and character name pronunciations,
-    whole words only, case-insensitive, longest term first so Sri Rama wins over Rama."""
+    """Apply the pronunciation dictionary: project terms (names, Sanskrit words) and the name pronunciations of this
+    project's cast (another project's "Ravi" may be said differently), whole words only, case-insensitive, longest term
+    first so Sri Rama wins over Rama."""
     table: dict[str, str] = {str(k).strip(): str(v).strip() for k, v in (project.pronunciations or {}).items() if k and v}
-    for ch in db.query(Character).filter(Character.name_pronunciation != "", Character.archived.is_(False)).all():
+    # the cast as core/studio.cast reads it (imported from there it would close an import cycle through core/budget)
+    team = select(ProjectCast.character_id).where(ProjectCast.project_id == project.id)
+    for ch in db.query(Character).filter(Character.id.in_(team), Character.name_pronunciation != "",
+                                         Character.archived.is_(False)).all():
         table.setdefault(ch.name.strip(), ch.name_pronunciation.strip())
     out = text or ""
     for term in sorted(table, key=len, reverse=True):

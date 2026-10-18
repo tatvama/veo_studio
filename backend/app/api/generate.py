@@ -76,7 +76,7 @@ def _specs(db: Session, project: Project, episode: Episode, body: BatchIn) -> li
         return generation.voice_specs(db, project, shots, lang)
     if a == "lipsync":
         need = [s for s in shots if budget.Estimator.needs_lipsync(s, project, lang) or body.shot_ids]
-        narr = [s for s in shots if (s.narration or {}).get(lang) and s not in need]
+        narr = [s for s in shots if budget.Estimator.voice_only(s, project, lang) and s not in need]
         return generation.lipsync_specs(db, project, need, lang, body.model) + generation.voice_specs(db, project, narr, lang)
     if a == "voicelock":
         return generation.voicelock_specs(db, project, shots)

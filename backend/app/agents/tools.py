@@ -294,7 +294,7 @@ def voice_and_lipsync(c: AgentCtx, language: str = "", shot_codes: list[str] | N
     lang = language or c.project.primary_language
     shots = c.shots(shot_codes or None)
     need = [s for s in shots if budget.Estimator.needs_lipsync(s, c.project, lang)]
-    narr = [s for s in shots if (s.narration or {}).get(lang) and s not in need]
+    narr = [s for s in shots if budget.Estimator.voice_only(s, c.project, lang) and s not in need]
     specs = generation.lipsync_specs(c.db, c.project, need, lang) + generation.voice_specs(c.db, c.project, narr, lang)
     return c.submit(specs, f"voices & lip-sync [{lang}]")
 

@@ -31,20 +31,27 @@ def _scene_text(episode: Episode, scene: Scene) -> dict:
     return {"title": scene.title, "summary": scene.summary, "action": "", "lines": []}
 
 
-def previous_state(db: Session, scene: Scene) -> dict:
+def _previous(db: Session, scene: Scene) -> Scene | None:
+    """The nearest scene before this one with an end state written."""
     prev = (db.query(Scene).filter(Scene.episode_id == scene.episode_id, Scene.order < scene.order)
             .order_by(Scene.order.desc()).first())
     while prev is not None and not prev.end_state:
         prev = (db.query(Scene).filter(Scene.episode_id == scene.episode_id, Scene.order < prev.order)
                 .order_by(Scene.order.desc()).first())
+    return prev
+
+
+def previous_state(db: Session, scene: Scene) -> dict:
+    prev = _previous(db, scene)
     return dict(prev.end_state or {}) if prev else {}
 
 
 def end_state(db: Session, user: User | None, project: Project, episode: Episode, scene: Scene) -> dict:
-    from .studio import _llm
+    from .studio import _llm, cast
     text = _scene_text(episode, scene)
     prev = previous_state(db, scene)
-    names = {str(c.id): c.name for c in db.query(Character).all()}
+    team = cast(db, project)  # this project's people only: another project's "Ravi" is someone else
+    names = {str(c.id): c.name for c in team}
     wardrobe = {names.get(str(k), str(k)): v for k, v in (scene.wardrobe or {}).items()}
     props = [p.name for p in db.query(Prop).filter(Prop.id.in_([int(x) for x in (scene.prop_ids or [])])).all()] if scene.prop_ids else []
     prompt = (f"SCENE {scene.order + 1}: {text.get('title', scene.title)} at {text.get('location', '')} {text.get('time_of_day', '')}\n"
@@ -56,7 +63,7 @@ def end_state(db: Session, user: User | None, project: Project, episode: Episode
     out = _llm(db, user, project, "end_state", END_STATE_SYSTEM, prompt, S.EndStateOut,
                {"characters": list(wardrobe) or [l.get("character", "") for l in text.get("lines") or []],
                 "wardrobe": wardrobe, "props": (scene.props or []) + props})
-    by_name = {c.name.strip().lower(): c for c in db.query(Character).filter(Character.archived.is_(False)).all()}
+    by_name = {c.name.strip().lower(): c for c in team}
     chars: dict[str, Any] = {}
     for c in out.characters:
         if c.name.strip().upper() in ("NARRATOR", "VO", "V.O.", "VOICE-OVER", "VOICE OVER"):
@@ -72,10 +79,13 @@ def end_state(db: Session, user: User | None, project: Project, episode: Episode
 
 
 def state_text(db: Session, scene: Scene | None) -> str:
-    """The previous scene's end state as prompt text for the shots of `scene`."""
+    """The previous scene's end state as prompt text for the shots of `scene`: what people wear and carry, the props
+    and the notes. Its time of day and weather only while the story stays put: a scene with a time of its own, or in
+    another place, has its own light and sky (the scene look says them), and the night before mustn't leak into it."""
     if scene is None:
         return ""
-    prev = previous_state(db, scene)
+    row = _previous(db, scene)
+    prev = dict(row.end_state or {}) if row else {}
     if not prev:
         return ""
     bits = []
@@ -85,7 +95,8 @@ def state_text(db: Session, scene: Scene | None) -> str:
             bits.append(f"{c.get('name', '')}: {', '.join(parts)}")
     if prev.get("props"):
         bits.append("props: " + ", ".join(prev["props"]))
-    for k in ("time_of_day", "weather", "notes"):
+    stays = not (scene.time_of_day or "").strip() and scene.location_id == row.location_id
+    for k in (("time_of_day", "weather", "notes") if stays else ("notes",)):
         if prev.get(k):
             bits.append(f"{k.replace('_', ' ')}: {prev[k]}")
     return "; ".join(bits)

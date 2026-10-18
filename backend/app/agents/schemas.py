@@ -123,6 +123,7 @@ class ImportLine(BaseModel):
     speaker: str = Field(description="Character name exactly as written in the script, or VO for voice-over / narration")
     text: str = Field(description="The spoken words copied character-for-character from the script")
     emotion: str = Field(default="", description="Parenthetical or delivery note from the script, if any")
+    off_screen: bool = Field(default=False, description="True when the speaker is heard but not seen (O.S., O.C., off-screen)")
 
 
 class ImportShot(BaseModel):
@@ -144,6 +145,8 @@ class ImportScene(BaseModel):
     look: str = Field(default="", description="Lighting, colour, weather or style the script writes for this scene, copied")
     sound: str = Field(default="", description="Ambience the script writes for the whole scene, copied")
     music: str = Field(default="", description="Music the script asks for in this scene, copied")
+    wardrobe: list[str] = Field(default=[], description="'Name: outfit' for who wears what in this scene, from the "
+                                                        "script's WARDROBE / COSTUME / OUTFIT lines, copied")
     shots: list[ImportShot]
 
 

@@ -284,7 +284,7 @@ def _autopilot_run(ctx: JobContext, stop_at: int, pause_after: list[str], mark) 
                 shots = generation.episode_shots(db, episode)
                 from ..pipeline.selection import current, has_fresh
                 need = [s for s in shots if budget.Estimator.needs_lipsync(s, project, lang) and not has_fresh(db, s.id, "lipsync", lang)]
-                narr = [s for s in shots if (s.narration or {}).get(lang) and s not in need]
+                narr = [s for s in shots if budget.Estimator.voice_only(s, project, lang) and s not in need]
                 specs = generation.lipsync_specs(db, project, need, lang) + generation.voice_specs(db, project, narr, lang)
                 db.commit()
                 run_children(specs, "Voices & lip-sync")
@@ -449,7 +449,8 @@ def produce(ctx: JobContext) -> dict:
                 continue
             elif step == "voices":
                 need = [s for s in shots if budget.Estimator.needs_lipsync(s, project, lang) and not has_fresh(db, s.id, "lipsync", lang)]
-                narr = [s for s in shots if (s.narration or {}).get(lang) and s not in need and not current(db, s.id, "narration", lang)]
+                narr = [s for s in shots if budget.Estimator.voice_only(s, project, lang) and s not in need
+                        and not current(db, s.id, "narration" if (s.narration or {}).get(lang) else "voice", lang)]
                 specs = generation.lipsync_specs(db, project, need, lang) + generation.voice_specs(db, project, narr, lang)
             elif step == "sound" and (snd := generation.sound_step(db, project, episode, shots)):
                 specs = [snd[0]]  # ElevenLabs, or the free library without its key

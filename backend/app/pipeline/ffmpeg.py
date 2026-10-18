@@ -64,6 +64,20 @@ def has_audio(path: Path | str) -> bool:
     return bool(re.search(r"Stream #.*Audio:", info(path)))
 
 
+@lru_cache(maxsize=4096)
+def _has_audio_at(path: str, mtime: float, size: int) -> bool:
+    return has_audio(path)
+
+
+def has_audio_kept(path: Path | str) -> bool:
+    """has_audio, remembered per file version (a take's file never changes): the cost dialog asks it of every shot."""
+    try:
+        s = Path(path).stat()
+    except OSError:
+        return False
+    return _has_audio_at(str(path), s.st_mtime, s.st_size)
+
+
 def video_size(path: Path | str) -> tuple[int, int]:
     m = re.search(r"Stream #.*Video:.*?(\d{2,5})x(\d{2,5})", info(path))
     return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
@@ -83,6 +97,33 @@ def measure(path: Path | str) -> tuple[float | None, float | None]:
 def loudness(path: Path | str) -> float | None:
     """Integrated loudness of a file's sound in LUFS (None: silent or too short to measure)."""
     return measure(path)[0]
+
+
+# every clip's sound and every voice meets the mix at one loudness before the final -14 LUFS: Veo's clips, the TTS
+# voices and the lip-sync takes come out at quite different levels, and one loudnorm on the whole mix can't fix the
+# balance between them (a loud clip then sat over a quiet voice)
+CLIP_LUFS = -20.0  # a clip's own sound (ambience, foley)
+VOICE_LUFS = -16.0  # speech: a voice, the narrator, a lip-synced take, a clip where Veo speaks
+SILENT_LUFS = -55.0  # quieter than this is no sound worth lifting (a silent clip is never pumped up into hiss)
+
+
+@lru_cache(maxsize=2048)
+def _loudness_of(path: str, mtime: float, size: int) -> float | None:
+    return loudness(path)
+
+
+def level_db(path: Path | str, target: float, max_boost: float = 12.0, max_cut: float = 24.0) -> float:
+    """The gain in dB that brings a file's sound to `target` LUFS (one measuring pass, remembered per file version);
+    0 when it has no sound worth levelling or can't be read."""
+    p = Path(path)
+    try:
+        info_ = p.stat()
+        level = _loudness_of(str(p), info_.st_mtime, info_.st_size)
+    except (OSError, FFmpegError, subprocess.SubprocessError):
+        return 0.0
+    if level is None or level < SILENT_LUFS:
+        return 0.0
+    return round(max(min(target - level, max_boost), -max_cut), 2)
 
 
 # ── video encoder ────────────────────────────────────────────────────────────
@@ -274,11 +315,12 @@ def normalize_clip(src: Path, out: Path, w: int, h: int, seconds: float | None =
                    fps: int = 24, audio_override: Path | None = None, mix_extra: list[tuple] | None = None,
                    keep_src_audio: bool = True, src_audio_gain_db: float = 0.0,
                    center: tuple[float, float] | None = None, fx: dict | None = None,
-                   luts: dict[str, str] | None = None) -> Path:
+                   luts: dict[str, str] | None = None, override_gain_db: float = 0.0) -> Path:
     """Scale/crop/trim a clip to the export format. Optionally replace or add audio tracks.
 
     mix_extra: list of (audio_path, start_offset_seconds[, gain_db]) laid over the clip audio.
     center: crop aim (0–1, 0–1), used by face-aware auto-reframe.
+    src_audio_gain_db / override_gain_db: the level of the clip's own sound / of the audio that replaces it.
     """
     from . import fx as fxlib
     fx = fx or {}
@@ -300,7 +342,8 @@ def normalize_clip(src: Path, out: Path, w: int, h: int, seconds: float | None =
     idx = 1
     if audio_override:
         args += ["-i", audio_override]
-        inputs_audio.append(f"[{idx}:a]aresample=48000,aformat=channel_layouts=stereo,apad[a{idx}]")
+        gain = f",volume={override_gain_db}dB" if override_gain_db else ""
+        inputs_audio.append(f"[{idx}:a]aresample=48000,aformat=channel_layouts=stereo{gain},apad[a{idx}]")
         idx += 1
     elif keep_src_audio and has_audio(src):
         gain = f",volume={src_audio_gain_db}dB" if src_audio_gain_db else ""
@@ -416,19 +459,45 @@ def fit_audio_length(src: Path, out: Path, target: float, max_speedup: float = 1
 
 
 def music_bed(music: Path, voice_mix: Path | None, out: Path, length: float, volume_db: float = -16.0,
-              duck: bool = True) -> Path:
-    """Loop/trim music to `length`, fade out, and duck it under the voice track."""
+              duck: bool = True, sidechain: Path | None = None) -> Path:
+    """Loop/trim music to `length`, fade out, and mix it under `voice_mix` (the cut's own sound; None = the music
+    alone). With `duck` it dips under `sidechain`: the voices alone (assembler.voice_track). Keyed on the whole mix it
+    also dipped under every rain bed and sound effect, pumping in and out; with no voices there is nothing to dip for."""
     fade_start = max(length - 2.0, 0)
     base = (f"[0:a]aresample=48000,aformat=channel_layouts=stereo,volume={volume_db}dB,"
             f"atrim=0:{length:.3f},afade=t=out:st={fade_start:.3f}:d=2[m]")
-    if voice_mix and duck:
-        fc = base + (";[1:a]aresample=48000,aformat=channel_layouts=stereo,asplit=2[sc][vo];"
-                     "[m][sc]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=350[md];"
-                     "[md][vo]amix=inputs=2:normalize=0:duration=first[out]")
-        run(["-stream_loop", "-1", "-i", music, "-i", voice_mix, "-filter_complex", fc, "-map", "[out]",
-             "-t", f"{length:.3f}", "-ar", "48000", out])
-    else:
+    if voice_mix is None:
         run(["-stream_loop", "-1", "-i", music, "-filter_complex", base, "-map", "[m]", "-t", f"{length:.3f}", out])
+        return out
+    args: list = ["-stream_loop", "-1", "-i", music, "-i", voice_mix]
+    fc = base + ";[1:a]aresample=48000,aformat=channel_layouts=stereo[vo]"
+    if duck and sidechain:
+        args += ["-i", sidechain]
+        fc += (";[2:a]aresample=48000,aformat=channel_layouts=stereo[sc];"
+               "[m][sc]sidechaincompress=threshold=0.03:ratio=8:attack=20:release=350[md];"
+               "[md][vo]amix=inputs=2:normalize=0:duration=first[out]")
+    else:
+        fc += ";[m][vo]amix=inputs=2:normalize=0:duration=first[out]"
+    run([*args, "-filter_complex", fc, "-map", "[out]", "-t", f"{length:.3f}", "-ar", "48000", out])
+    return out
+
+
+def place_audio(parts: list[tuple], length: float, out: Path) -> Path | None:
+    """One track `length` long with each part (file, start on the track s, in-point in the file s, seconds) laid where
+    it plays. None when no part has sound."""
+    args: list = []
+    chains: list[str] = []
+    for path, start, at, secs in parts:
+        if secs <= 0.05 or not has_audio(path):
+            continue
+        i, ms = len(chains), int(max(start, 0) * 1000)
+        args += ["-ss", f"{max(at, 0):.3f}", "-t", f"{secs:.3f}", "-i", path]
+        chains.append(f"[{i}:a]aresample=48000,aformat=channel_layouts=stereo,adelay={ms}|{ms}[p{i}]")
+    if not chains:
+        return None
+    fc = ";".join(chains) + ";" + "".join(f"[p{i}]" for i in range(len(chains))) + \
+        f"amix=inputs={len(chains)}:normalize=0:duration=longest,apad=whole_dur={length:.3f}[out]"
+    run([*args, "-filter_complex", fc, "-map", "[out]", "-t", f"{length:.3f}", "-ar", "48000", "-ac", "2", out])
     return out
 
 

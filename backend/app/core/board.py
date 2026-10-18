@@ -7,9 +7,9 @@ no longer listed are removed (a shot that already has paid takes is only dropped
 A line's speaker is a character id, or "VO" for voice-over (stored in Shot.narration, read by the project narrator).
 Only the primary language is edited here; other languages are left as they are.
 
-A scene's mood, look, sound and music and a shot's sound effects are the script's own notes: every shot of the scene
-carries them (pipeline/prompting.py, the score and the sound design). Left out (None) they stay as they are, so an
-older editor that doesn't send them never wipes them.
+A scene's mood, look, sound, music and wardrobe and a shot's sound effects are the script's own notes: every shot of
+the scene carries them (pipeline/prompting.py, the score and the sound design). Left out (None) they stay as they are,
+so an older editor that doesn't send them never wipes them; the same goes for a line's off-screen flag.
 """
 from __future__ import annotations
 
@@ -33,6 +33,9 @@ class BoardLine(BaseModel):
     speaker: int | str = Field(description='character id, or "VO" for voice-over')
     text: str = ""
     emotion: str = ""
+    # heard, not seen saying it (O.S.): voiced, never lip-synced. None = keep what the line had (an editor that doesn't
+    # know the flag never drops it)
+    off_screen: bool | None = None
 
 
 class BoardShot(BaseModel):
@@ -59,6 +62,7 @@ class BoardScene(BaseModel):
     look: str | None = None
     sound: str | None = None
     music: str | None = None
+    wardrobe: dict | None = None  # who wears what in the scene, {character id: outfit} (None = keep)
     shots: list[BoardShot] = []
 
 
@@ -111,7 +115,8 @@ def get_board(db: Session, project: Project, episode: Episode) -> dict:
             lines.append({"speaker": "VO", "text": narr, "emotion": ""})
         for l in (s.dialogue or {}).get(lang, []):
             lines.append({"speaker": "VO" if _vo(l.get("character_id")) else l.get("character_id"),
-                          "text": l.get("line", ""), "emotion": l.get("emotion", "")})
+                          "text": l.get("line", ""), "emotion": l.get("emotion", ""),
+                          **({"off_screen": True} if l.get("off_screen") else {})})
         kf, vid = current(db, s.id, "keyframe"), current(db, s.id, "video")
         return {"id": s.id, "code": s.code, "prompt": s.action, "characters": s.characters or [], "lines": lines,
                 "duration_s": s.duration_s, "extend_to": s.extend_to or 0, "extend_prompt": s.extend_prompt or "",
@@ -175,11 +180,16 @@ def save_board(db: Session, user: User, project: Project, episode: Episode, boar
                                 ("music", "music", 4000)):
             if getattr(bs, field) is not None:
                 setattr(sc, col, getattr(bs, field).strip()[:cap])
+        old_wardrobe = dict(sc.wardrobe or {})
+        if bs.wardrobe is not None:  # keyed by character id as text, like the scene card (pipeline/prompting.outfit_for)
+            sc.wardrobe = {str(k): str(v).strip()[:300] for k, v in bs.wardrobe.items()
+                           if str(k).isdigit() and int(k) in cast_ids and str(v or "").strip()}
         sc.location_id = loc.id if loc else None
         db.flush()
         keep_scenes.add(sc.id)
         scene_lines: list[dict] = []
         scene_chars: list[int] = []
+        scene_shots: list[Shot] = []
 
         for b in bs.shots:
             if b.duration_s not in (4, 6, 8):
@@ -188,6 +198,9 @@ def save_board(db: Session, user: User, project: Project, episode: Episode, boar
             if ext and (ext <= b.duration_s or ext > MAX_EXTEND_S):
                 raise HTTPException(400, f"Extend-to must be more than the shot length and at most {MAX_EXTEND_S}s")
             dialogue, narration, chars = [], [], [c for c in b.characters if c in cast_ids]
+            was = old_shots.get(b.id) if b.id else None
+            was_lines = list((was.dialogue or {}).get(lang) or []) if was else []
+            was_off = {(l.get("character_id"), l.get("line", "")) for l in was_lines if l.get("off_screen")}
             for l in b.lines:
                 if not l.text.strip():
                     continue
@@ -201,9 +214,14 @@ def save_board(db: Session, user: User, project: Project, episode: Episode, boar
                     raise HTTPException(400, f"Unknown speaker {l.speaker!r}: pick a character or Voice-over")
                 if cid not in cast_ids:
                     raise HTTPException(400, f"Speaker #{cid} doesn't exist")
-                if cid not in chars:
+                # not sent: the flag of the same line before (the same words, or the same speaker in its place)
+                at = was_lines[len(dialogue)] if len(dialogue) < len(was_lines) else {}
+                off = l.off_screen if l.off_screen is not None else (
+                    (cid, l.text.strip()) in was_off or (at.get("character_id") == cid and bool(at.get("off_screen"))))
+                if cid not in chars and not off:
                     chars.append(cid)  # whoever speaks on screen is in the shot
-                dialogue.append({"character_id": cid, "line": l.text.strip(), "emotion": l.emotion.strip()})
+                dialogue.append({"character_id": cid, "line": l.text.strip(), "emotion": l.emotion.strip(),
+                                 **({"off_screen": True} if off else {})})
                 scene_lines.append({"character": names.get(cid, ""), "line": l.text.strip(), "emotion": l.emotion})
             for c in chars:
                 if c not in scene_chars:
@@ -254,6 +272,14 @@ def save_board(db: Session, user: User, project: Project, episode: Episode, boar
                 s.order, s.include = order, True
             db.flush()
             keep_shots.add(s.id)
+            scene_shots.append(s)
+        changed_outfits = {c for c in set(old_wardrobe) | set(sc.wardrobe or {})
+                           if old_wardrobe.get(c) != (sc.wardrobe or {}).get(c)}
+        if changed_outfits and bs.id:  # shots that wear the scene's outfits need new keyframes and videos (api/room.py)
+            from . import dependencies
+            for s in scene_shots:
+                if any(c in {str(x) for x in s.characters or []} and not (s.outfits or {}).get(c) for c in changed_outfits):
+                    dependencies.mark_stale(db, s, {"outfits"}, note="scene wardrobe changed")
         sc.characters = scene_chars
         script_scenes.append({"title": sc.title, "location": bs.location.strip(), "time_of_day": sc.time_of_day,
                               "summary": sc.summary, "mood": sc.emotion or "",

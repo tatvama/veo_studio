@@ -3,9 +3,11 @@
 1. `extract_text` reads the file. A .docx is a zip of XML, so it is read directly (no compiled dependency).
 2. `parse_marked` reads scripts written in a recognisable layout: scene headings (SCENE 1, INT./EXT.), shots
    (SHOT 2), visual prompts (VISUAL: / PROMPT:), dialogue (NAME: line, or a NAME line above the words), voice-over
-   (VO: / NARRATOR: / NAME (V.O.):) and optional DURATION / CAMERA / FRAMING lines. Notes are kept where they belong,
-   so they carry through every shot: MOOD / LIGHTING / LOOK / WEATHER / AMBIENCE / MUSIC for the scene (written before
-   the first scene: for every scene), SFX / SOUND for the shot, and a CHARACTERS (CAST) list or a description at a
+   (VO: / NARRATOR: / NAME (V.O.):) and optional DURATION / CAMERA / FRAMING lines. A line marked (O.S.) / (O.C.) is
+   the speaker heard from off-screen ("off_screen": voiced, never lip-synced); (CONT'D) is the same speaker going on.
+   Notes are kept where they belong, so they carry through every shot: MOOD / LIGHTING / LOOK / WEATHER / AMBIENCE /
+   MUSIC for the scene (written before the first scene: for every scene), SFX / SOUND for the shot, WARDROBE /
+   COSTUME / OUTFIT lines for who wears what in the scene, and a CHARACTERS (CAST) list or a description at a
    character's first appearance ("RAVI (35, grey beard)") for the cast. A cast name in a shot's visual puts that
    character in the shot, speaking or not.
 3. Anything else goes to `ai_arrange`, which only splits the text into scenes and shots and tags speakers; it is told
@@ -20,7 +22,7 @@ from __future__ import annotations
 import io
 import re
 import zipfile
-from typing import Any
+from typing import Any, Callable
 from xml.etree import ElementTree
 
 from fastapi import HTTPException
@@ -29,8 +31,10 @@ from sqlalchemy.orm import Session
 from ..agents import prompts
 from ..agents import schemas as S
 from ..models import Project, User
+from ..pipeline.captions import words_per_second
 
 MAX_CHARS = 60_000
+CONTINUES = "The moment continues: "  # a shot made for a line that is only heard, on the picture of the shot before
 VO_NAMES = {"VO", "V.O.", "V.O", "VOICE OVER", "VOICE-OVER", "VOICEOVER", "NARRATOR", "NARRATION"}
 W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
@@ -112,9 +116,15 @@ SLUG_RE = re.compile(r"^(INT\.?/EXT\.?|EXT\.?/INT\.?|INT\.|EXT\.|I/E\.?) (.+)", 
 SHOT_RE = re.compile(r"^(?:#+ ?)?shot\b ?(\d+)? ?([:.\-–—)]*) ?(.*)", re.I)
 FIELD_RE = re.compile(r"^(visual(?: prompt)?|prompt|action|description|camera|framing|shot ?type|duration|length|location|"
                       r"time(?: of day)?|setting) ?[:\-–—](.*)", re.I)
-SPEAK_RE = re.compile(r"^\s*([A-Zऀ-෿][\wऀ-෿ .'’-]{0,38}?)\s*(\((?:v\.?o\.?|o\.?s\.?|voice[ -]?over|off[ -]?screen)\))?\s*(\([^)]{1,60}\))?\s*[:：]\s*(.+)$", re.U)
+SPEAK_RE = re.compile(r"^([A-Zऀ-෿][\wऀ-෿ .'’-]{0,38}?) ?(\((?i:v\.?o\.?|o\.?[sc]\.?|cont['’]?d|voice[ -]?over|off[ -]?screen)\))? ?(\([^)]{1,60}\))? ?[:：] ?(.+)$", re.U)
 # a NAME line on its own (screenplay cue), words separated by single spaces; its length is checked by _cue
-CUE_RE = re.compile(r"^([A-Z][A-Z0-9.'’-]*(?: [A-Z0-9.'’-]+)*)(?: ?(\((?:V\.?O\.?|O\.?S\.?|CONT'?D)\)))?$")
+CUE_RE = re.compile(r"^([A-Z][A-Z0-9.'’-]*(?: [A-Z0-9.'’-]+)*)(?: ?(\((?:V\.?O\.?|O\.?[SC]\.?|CONT['’]?D)\)))?$")
+# what a speaker's tag says: the narrator (V.O.), someone heard but not seen (O.S. / O.C.), or the same speaker going on
+VO_TAG = re.compile(r"^(?:v\.? ?o\.?|voice[ -]?over|narrat(?:or|ion))$", re.I)
+OFF_TAG = re.compile(r"^(?:o\.? ?[sc]\.?|off[ -]?(?:screen|camera))$", re.I)
+CONT_TAG = re.compile(r"^(?:cont['’]?d\.?|cont\.|continued|continuing)$", re.I)
+# who wears what: "WARDROBE: Ravi – white kurta; Meera – red saree" (or COSTUME: / OUTFIT:, the entries maybe below)
+WARDROBE_RE = re.compile(r"^(?:#+ ?)?(?:wardrobe|costumes?|outfits?)(?: ?:| [-–—])(.*)", re.I)
 PAREN_RE = re.compile(r"^\s*\(([^)]{1,80})\)\s*$")
 # "LABEL: text" lines that are notes for the shot, not someone speaking
 NOT_SPEAKERS = {"note", "notes", "music", "bgm", "score", "song", "sfx", "fx", "vfx", "sound", "sounds", "sound effect",
@@ -175,11 +185,52 @@ def _new_shot() -> dict[str, Any]:
     return {"prompt": "", "characters": [], "lines": [], "duration_s": 8, "framing": "", "camera": "", "sfx": ""}
 
 
-def _speaker(name: str, vo_tag: str | None) -> str:
+def _tag(tag: str | None) -> str:
+    """A speaker's tag: "vo" (V.O., voice-over), "off" (O.S., O.C., off-screen: heard, not seen), "cont" (CONT'D: the
+    same speaker going on) or "" (none, or a delivery note such as "(whispering)")."""
+    t = (tag or "").strip().strip("()").strip()
+    if not t:
+        return ""
+    return "vo" if VO_TAG.match(t) else "off" if OFF_TAG.match(t) else "cont" if CONT_TAG.match(t) else ""
+
+
+def _speaker(name: str, tag: str | None) -> str:
+    """VO for the narrator (a narrator's name, or a V.O. tag); anyone else keeps their name, also when they speak from
+    off-screen or carry on after (CONT'D)."""
     n = name.strip().rstrip(".").strip()
-    if n.upper() in VO_NAMES or vo_tag:
+    if n.upper() in VO_NAMES or _tag(tag) == "vo":
         return "VO"
     return n.title() if n.isupper() else n  # screenplay CAPS → the name as the cast spells it
+
+
+def _heard(line: dict) -> bool:
+    """A line that is heard but nobody is seen saying: the narrator, or a speaker off-screen."""
+    return line.get("speaker") == "VO" or bool(line.get("off_screen"))
+
+
+def _wardrobe_items(text: str) -> list[tuple[str, str]]:
+    """'Ravi – white kurta, brown shawl; Meera (red saree)' → [('Ravi', 'white kurta, brown shawl'), ('Meera', 'red
+    saree')]: a new entry starts wherever a name with its outfit does; anything else goes on with the outfit before."""
+    out: list[list[str]] = []
+    for part in _split_top(text):
+        m = CAST_ENTRY_RE.match(part)
+        outfit = m.group(3) if m else ""
+        if not m:
+            m = CAST_PAREN_RE.match(part)
+            outfit = m.group(2) if m else ""
+        name = m.group(1).strip().rstrip(".") if m else ""
+        if (m and len(name.split()) <= 4 and not _is_label(name) and name.lower() not in NOT_SPEAKERS | HEADER_ONLY
+                and not _tag(outfit)):  # "RAVI (O.S.)" is a speaker's cue, not an outfit
+            out.append([_speaker(name, None), outfit.strip()])
+        elif out:
+            out[-1][1] = ", ".join(x for x in (out[-1][1], part.strip()) if x)
+    return [(n, o.rstrip(".").strip()) for n, o in out if n != "VO" and o.strip()]
+
+
+def known_name(name: str, known: list[str]) -> str:
+    """The name the lines use for a character a note names ("Ravi Kumar" in a WARDROBE line is the speaker "Ravi")."""
+    hits = [k for k in known if k.lower() == name.lower()] or [k for k in known if _same_person(k, name)]
+    return hits[0] if len(hits) == 1 else name
 
 
 def _cue(line: str) -> re.Match | None:
@@ -269,18 +320,27 @@ def parse_marked(text: str) -> dict | None:
     cue_line: dict | None = None  # the line being spoken under the cue (its words may wrap over several lines)
     markers = {"scene": 0, "shot": 0, "visual": 0, "line": 0}
     film: dict[str, str] = {"title": "", "mood": "", "look": "", "sound": "", "music": ""}  # notes before scene 1
+    film_wardrobe: dict[str, str] = {}  # who wears what in every scene (a WARDROBE line before scene 1)
     cast: dict[str, str] = {}  # name → description, from a CHARACTERS list
     intros: dict[str, str] = {}  # name → description, from "RAVI (35, grey beard)" in the action
     cast_mode, cast_gap, cast_last = False, False, ""
+    wardrobe_mode = False  # a bare "WARDROBE:" line: its entries follow, one per line
 
     def ensure_scene() -> dict:
         nonlocal scene
         if scene is None:
             # "_explicit": this scene groups its shots with SHOT markers, so lines and visuals stay where they're written
             scene = {"title": f"Scene {len(scenes) + 1}", "location": "", "time_of_day": "", "summary": "", "mood": "",
-                     "look": "", "sound": "", "music": "", "shots": [], "_explicit": False}
+                     "look": "", "sound": "", "music": "", "wardrobe": {}, "shots": [], "_explicit": False}
             scenes.append(scene)
         return scene
+
+    def add_wardrobe(text: str) -> bool:
+        """Who wears what, for this scene (before the first scene: for every scene). False when it names nobody."""
+        items = _wardrobe_items(text)
+        for name, outfit in items:
+            (film_wardrobe if scene is None else scene["wardrobe"])[name] = outfit[:300]
+        return bool(items)
 
     def explicit() -> bool:
         return bool(scene and scene["_explicit"])
@@ -293,19 +353,25 @@ def parse_marked(text: str) -> dict | None:
             sc["shots"].append(shot)
         return shot
 
-    def add_line(who: str, words: str, emotion: str = "") -> dict:
+    def add_line(who: str, words: str, emotion: str = "", off: bool = False) -> dict:
         nonlocal shot
         cur = ensure_shot()
-        # a second on-screen speaker gets their own shot (one speaker per shot lip-syncs best),
-        # unless the shot was written explicitly with SHOT markers
-        speakers = {l["speaker"] for l in cur["lines"] if l["speaker"] != "VO"}
-        if who != "VO" and speakers and who not in speakers and not explicit():
-            prev_prompt = cur["prompt"]
+        heard = who == "VO" or off  # heard, nobody seen saying it: the narrator, or someone off-screen
+        seen = {l["speaker"] for l in cur["lines"] if not _heard(l)}
+        # unless the shot was written explicitly with SHOT markers: a second on-screen speaker gets their own shot (one
+        # speaker per shot lip-syncs best), and a line that is only heard never shares a shot with on-screen dialogue
+        # (its voice would play over a talking face): it gets its own shot of the same picture, the moment carrying on
+        if cur["lines"] and not explicit() and ((heard and seen) or (not heard and who not in seen)):
+            prev = cur
             cur = ensure_shot(new=True)
-            cur["prompt"] = prev_prompt
+            cur["prompt"] = prev["prompt"]
+            if heard or not seen:  # the same picture goes on ("The moment continues: …", added at the end)
+                cur["characters"], cur["_cont"] = list(prev["characters"]), True
         entry = {"speaker": who, "text": words.strip(), "emotion": emotion}
+        if off and who != "VO":
+            entry["off_screen"] = True
         cur["lines"].append(entry)
-        if who != "VO" and who not in cur["characters"]:
+        if not heard and who not in cur["characters"]:
             cur["characters"].append(who)
         markers["line"] += 1
         return entry
@@ -341,10 +407,15 @@ def parse_marked(text: str) -> dict | None:
             add_cast(who, ", ".join(x.strip() for x in m.groups()[1:] if x and x.strip()))
         return True
 
+    def starts_new(line: str) -> bool:
+        """A heading, a shot, a field or a note: a list above it (cast, wardrobe) has ended."""
+        return bool(_slug(line) or SCENE_RE.match(line) or SHOT_RE.match(line) or META_RE.match(line)
+                    or FIELD_RE.match(line) or WARDROBE_RE.match(line))
+
     def read_cast(line: str) -> bool:
         """A line of the CHARACTERS list (True), or the end of the list (False)."""
         nonlocal cast_gap, cast_last
-        if _slug(line) or SCENE_RE.match(line) or SHOT_RE.match(line) or META_RE.match(line) or FIELD_RE.match(line):
+        if starts_new(line):
             return False
         if cast_item(line):
             cast_gap = False
@@ -371,7 +442,7 @@ def parse_marked(text: str) -> dict | None:
                 intros.setdefault(_speaker(name, None), desc)
 
     def is_marker(line: str) -> bool:
-        if _slug(line) or FIELD_RE.match(line) or PAREN_RE.match(line) or META_RE.match(line):
+        if _slug(line) or FIELD_RE.match(line) or PAREN_RE.match(line) or META_RE.match(line) or WARDROBE_RE.match(line):
             return True
         m = SCENE_RE.match(line) or SHOT_RE.match(line)
         if m and (m.group(1) or m.group(2) or not m.group(3)):
@@ -386,21 +457,28 @@ def parse_marked(text: str) -> dict | None:
         line = " ".join(raw.strip().strip("*_").split())  # one space between words (the patterns above rely on it)
         if not line:
             pending_cue, cue_line, pending_emotion = None, None, ""
-            cast_gap = cast_mode
+            cast_gap, wardrobe_mode = cast_mode, False
             continue
         if cast_mode:
             if read_cast(line):
                 continue
             cast_mode = False  # the list ended: read this line as usual
+        if wardrobe_mode:  # until a blank line, a new heading or note, or a line that isn't "Name – outfit" (a NAME cue)
+            if not starts_new(line) and not (_cue(line) and line.upper() == line) and add_wardrobe(line):
+                continue
+            wardrobe_mode = False
         if pending_cue and cue_line is not None and is_marker(line):
             pending_cue, cue_line, pending_emotion = None, None, ""  # the speech ended without a blank line
         if pending_cue:  # words under a NAME cue, until a blank line
             m = PAREN_RE.match(line)
             if m and cue_line is None:
-                pending_emotion = m.group(1)
+                if _tag(m.group(1)) in ("off", "vo"):  # "(O.S.)" on its own line under the name
+                    pending_cue = (pending_cue[0], m.group(0).strip())
+                else:
+                    pending_emotion = m.group(1)
                 continue
             if cue_line is None:
-                cue_line = add_line(_speaker(*pending_cue), line, pending_emotion)
+                cue_line = add_line(_speaker(*pending_cue), line, pending_emotion, off=_tag(pending_cue[1]) == "off")
             else:
                 cue_line["text"] = (cue_line["text"] + " " + line).strip()
             continue
@@ -477,15 +555,24 @@ def parse_marked(text: str) -> dict | None:
         if m:
             add_meta(m.group(1), m.group(2).strip())
             continue
+        m = WARDROBE_RE.match(line)
+        if m:
+            rest = m.group(1).strip()
+            if not rest:
+                wardrobe_mode = True  # the entries follow, one per line
+            elif not add_wardrobe(rest):
+                add_meta("look", f"wardrobe: {rest}")  # names nobody ("everyone soaked"): a note on the look
+            continue
         m = SPEAK_RE.match(line)
         if m and scene is None and m.group(1).strip().rstrip(".").lower() in NOT_SPEAKERS | HEADER_ONLY:
             if m.group(1).strip().lower() == "title":
                 film["title"] = m.group(4).strip()
             continue  # the cover page: title, genre, logline … are not shots
         if m and len(m.group(1).split()) <= 4 and not _is_label(m.group(1)):
-            who = _speaker(m.group(1), m.group(2))
-            emotion = (m.group(3) or "").strip("() ")
-            add_line(who, m.group(4), emotion)
+            tag, emotion = m.group(2), (m.group(3) or "")
+            if not tag and _tag(emotion):  # "RAVI (O.S.): …" written in capitals: the tag, not a delivery note
+                tag, emotion = emotion, ""
+            add_line(_speaker(m.group(1), tag), m.group(4), emotion.strip("() "), off=_tag(tag) == "off")
             continue
         m = _cue(line)
         if (m and line.upper() == line and len(line.split()) <= 4 and not line.endswith((".", "!", "?", ","))
@@ -511,6 +598,8 @@ def parse_marked(text: str) -> dict | None:
         for sh in sc["shots"]:
             if not sh["prompt"]:
                 sh["prompt"] = sc["summary"] or sc["title"]
+            if sh.pop("_cont", False) and sh["prompt"] and not sh["prompt"].startswith(CONTINUES):
+                sh["prompt"] = CONTINUES + sh["prompt"]
         # notes written before the first scene hold for every scene: its look comes first, its mood, sound and music
         # unless the scene has its own
         sc["look"] = "; ".join(x for x in (film["look"], sc["look"]) if x)
@@ -522,7 +611,11 @@ def parse_marked(text: str) -> dict | None:
         return None
     speakers = list(dict.fromkeys(l["speaker"] for sc in scenes for sh in sc["shots"] for l in sh["lines"]
                                   if l["speaker"] != "VO"))
-    return {"title": film["title"], "scenes": scenes, "cast": _cast_list(scenes, speakers, cast, intros)}
+    cast_out = _cast_list(scenes, speakers, cast, intros)
+    known = list(dict.fromkeys([*speakers, *(c["name"] for c in cast_out)]))
+    for sc in scenes:  # a WARDROBE line before scene 1 dresses every scene, the scene's own line wins
+        sc["wardrobe"] = {known_name(n, known): o for n, o in {**film_wardrobe, **sc["wardrobe"]}.items()}
+    return {"title": film["title"], "scenes": scenes, "cast": cast_out}
 
 
 def _cast_list(scenes: list[dict], speakers: list[str], cast: dict[str, str], intros: dict[str, str]) -> list[dict]:
@@ -552,15 +645,18 @@ def _cast_list(scenes: list[dict], speakers: list[str], cast: dict[str, str], in
 ARRANGE_SYSTEM = (
     prompts.DP + "\n\nYou are importing a script the user already wrote. Your only job is to split it into scenes and shots "
     "and to tag who speaks each line. COPY every dialogue line and every visual description character-for-character "
-    "from the script: never translate, paraphrase, shorten, fix grammar, or invent lines or visuals. Voice-over, "
-    "narration and off-screen lines get speaker VO. Keep the script's own order. If the script gives a shot length, "
-    "use it (4, 6 or 8 seconds); otherwise pick 8 for dialogue shots and 6 for silent ones. One on-screen speaker per "
-    "shot: if two people talk, make a shot / reverse-shot pair. List every character visible in a shot, speaking or "
-    "not. Keep the script's notes where they belong, copied the same way: a cast list or a character's description "
-    "(age, looks, clothes; also one given at their first appearance) goes to cast; per scene its look (lighting, "
-    "colour, weather, style), sound (ambience under the whole scene) and music; per shot its sound effects. A note "
-    "written once for the whole film applies to every scene. Never invent these notes; only a scene's mood may be "
-    "read from the scene when the script doesn't name it (a few words).")
+    "from the script: never translate, paraphrase, shorten, fix grammar, or invent lines or visuals. Voice-over and "
+    "narration get speaker VO. A character heard but not seen (O.S., O.C., off-screen) keeps their own name with "
+    "off_screen true; (CONT'D) is the same speaker going on. Keep the script's own order. If the script gives a shot "
+    "length, use it (4, 6 or 8 seconds); otherwise pick 8 for dialogue shots and 6 for silent ones. One on-screen "
+    "speaker per shot: if two people talk, make a shot / reverse-shot pair; a voice-over or off-screen line gets its "
+    "own shot, never one where someone is seen talking. List every character visible in a shot, speaking or not. Keep "
+    "the script's notes where they belong, copied the same way: a cast list or a character's description (age, "
+    "looks, clothes; also one given at their first appearance) goes to cast; per scene its look (lighting, colour, "
+    "weather, style), sound (ambience under the whole scene), music and wardrobe (WARDROBE / COSTUME / OUTFIT lines: "
+    "who wears what); per shot its sound effects. A note written once for the whole film applies to every scene. "
+    "Never invent these notes; only a scene's mood may be read from the scene when the script doesn't name it (a few "
+    "words).")
 
 
 def ai_arrange(db: Session, user: User, project: Project, text: str) -> dict:
@@ -570,16 +666,20 @@ def ai_arrange(db: Session, user: User, project: Project, text: str) -> dict:
               f"SCRIPT:\n<<<\n{text[:MAX_CHARS]}\n>>>")
     out = _llm(db, user, project, "import_script", ARRANGE_SYSTEM, prompt, S.ImportOut, {"text": text[:MAX_CHARS]},
                pro=len(text) > 20_000)
+
+    def line(l: S.ImportLine) -> dict:
+        who = "VO" if l.speaker.strip().upper() in VO_NAMES else l.speaker.strip()
+        return {"speaker": who, "text": l.text, "emotion": l.emotion, **({"off_screen": True} if l.off_screen and who != "VO" else {})}
+
     return {"title": out.title, "cast": [{"name": c.name.strip(), "description": c.description.strip(),
                                           "gender": c.gender.strip().lower()} for c in out.cast
                                          if c.name.strip() and c.name.strip().upper() not in VO_NAMES],
             "scenes": [
         {"title": sc.title, "location": sc.location, "time_of_day": sc.time_of_day, "summary": sc.summary,
          "mood": sc.mood, "look": sc.look, "sound": sc.sound, "music": sc.music,
+         "wardrobe": dict(_wardrobe_items("; ".join(sc.wardrobe))),
          "shots": [{"prompt": sh.prompt, "characters": sh.characters, "duration_s": sh.duration_s if sh.duration_s in (4, 6, 8) else 8,
-                    "framing": sh.framing, "camera": sh.camera, "sfx": sh.sfx,
-                    "lines": [{"speaker": "VO" if l.speaker.strip().upper() in VO_NAMES else l.speaker.strip(),
-                               "text": l.text, "emotion": l.emotion} for l in sh.lines]}
+                    "framing": sh.framing, "camera": sh.camera, "sfx": sh.sfx, "lines": [line(l) for l in sh.lines]}
                    for sh in sc.shots]}
         for sc in out.scenes]}
 
@@ -662,39 +762,72 @@ def guess_age(description: str) -> str:
     return age if not age.isdigit() or 3 <= int(age) <= 99 else ""
 
 
-WORDS_PER_SECOND = 2.5  # unhurried narration (about 150 words a minute)
 EXTEND_STEPS = (15, 22, 29)  # the shot list's "Extend to" lengths (core/board.py: 8 s plus ~7 s per extension)
 
 
-def fit_lengths(draft: dict) -> list[str]:
-    """Give every shot enough time for its words. A shot the script didn't time gets at least the 4/6/8 s its lines
-    need; a voice-over longer than one 8 s clip (no on-screen dialogue) gets extensions ("Extend to"), so the picture
-    keeps moving under the narrator instead of freezing on its last frame. Returns warnings for the review screen."""
-    longer, too_long = 0, []
+def fit_lengths(draft: dict, lang: str = "en") -> list[str]:
+    """Give every shot enough time for its words, at the pace of the project's language (pipeline/captions.py). A shot
+    the script didn't time gets at least the 4/6/8 s its lines need; words that are only heard (voice-over, someone
+    off-screen) longer than one 8 s clip get extensions ("Extend to"), so the picture keeps moving under them instead of
+    freezing on its last frame. A line said on screen can't be extended (it is lip-synced to one clip): when it can't
+    fit 8 s, the warning names the shot. Returns warnings for the review screen."""
+    wps = words_per_second(lang)
+    longer, too_long, crowded = 0, [], []
     for sc in draft["scenes"]:
-        for sh in sc["shots"]:
+        for i, sh in enumerate(sc["shots"], 1):
             timed = sh.pop("_timed", False)
-            vo = sum(len(l["text"].split()) for l in sh["lines"] if l["speaker"] == "VO")
-            said = sum(len(l["text"].split()) for l in sh["lines"] if l["speaker"] != "VO")
-            need = max(vo, said) / WORDS_PER_SECOND + 0.8 if (vo or said) else 0
+            heard = sum(len(l["text"].split()) for l in sh["lines"] if _heard(l))
+            said = sum(len(l["text"].split()) for l in sh["lines"] if not _heard(l))
+            need = (heard + said) / wps + 0.8 if (heard or said) else 0  # (both: the narration follows the dialogue)
             if need and not timed and sh.get("duration_s", 8) < need:
                 sh["duration_s"] = next((d for d in (4, 6, 8) if d >= need), 8)
-            if vo and not said and need > max(sh.get("duration_s", 8), sh.get("extend_to") or 0) + 0.3:
+            if heard and not said and need > max(sh.get("duration_s", 8), sh.get("extend_to") or 0) + 0.3:
                 sh["extend_to"] = next((x for x in EXTEND_STEPS if x >= need), EXTEND_STEPS[-1])
                 longer += 1
                 if need > EXTEND_STEPS[-1]:
                     too_long.append(f"{sc['title'] or 'a scene'} ({int(need)}s)")
+            if said and said / wps + 0.8 > 8.05:
+                crowded.append(f"{sc['title'] or 'a scene'}, shot {i} (about {round(said / wps + 0.8)}s)")
     out = []
     if longer:
         out.append(f"{longer} voice-over line(s) run longer than one 8-second clip: those shots get extensions "
                    "(\"Extend to\"), so the picture keeps moving until the words end.")
     if too_long:
         out.append("Very long voice-over (over 29 s) in " + ", ".join(too_long[:5]) + ": split it over more shots.")
+    if crowded:
+        out.append("Dialogue too long for one 8-second clip in " + "; ".join(crowded[:5])
+                   + (f" and {len(crowded) - 5} more" if len(crowded) > 5 else "") + ": split it or shorten it.")
     return out
 
 
-def build_draft(db: Session, user: User, project: Project, text: str, method: str = "auto") -> dict:
-    """method: auto (markers if the layout is recognisable, else AI) | markers | ai."""
+def starting_look(name: str, age: str = "", gender: str = "") -> str:
+    """A first look for a character the script doesn't describe, from what is known of them: "Ravi: a 35-year-old
+    man", "Ajji: a woman in her 70s". Without one every keyframe makes up a new face. '' when neither the age nor the
+    gender is known."""
+    age, gender = (age or "").strip(), (gender or "").strip().lower()
+    if not age and gender not in ("female", "male"):
+        return ""
+    young = age.isdigit() and int(age) < 13
+    teen = age.isdigit() and 13 <= int(age) < 18
+    noun = {"female": "girl" if young else "teenage girl" if teen else "woman",
+            "male": "boy" if young else "teenage boy" if teen else "man"}.get(gender, "child" if young else "person")
+    if age.isdigit():
+        return f"{name}: {'an' if age.startswith('8') or age in ('11', '18') else 'a'} {age}-year-old {noun}"
+    if age:
+        return f"{name}: a {noun} in {({'female': 'her', 'male': 'his'}).get(gender, 'their')} {age}"
+    return f"{name}: a {noun}"
+
+
+def undescribed_warning(names: list[str]) -> str:
+    who = ", ".join(names[:8]) + (f" and {len(names) - 8} more" if len(names) > 8 else "")
+    return (f"The script doesn't describe {who}: add a photo or a line about them, or every keyframe makes up their face "
+            "(they start from their name, age and gender).")
+
+
+def build_draft(db: Session, user: User, project: Project, text: str, method: str = "auto",
+                has_look: Callable[[str], bool] | None = None) -> dict:
+    """method: auto (markers if the layout is recognisable, else AI) | markers | ai. has_look(name): the character
+    this name will be already has a look (a photo or a description), so the script needn't describe them."""
     text = (text or "").replace("\r\n", "\n").replace("\r", "\n")
     if not text.strip():
         raise HTTPException(400, "The script is empty")
@@ -708,7 +841,7 @@ def build_draft(db: Session, user: User, project: Project, text: str, method: st
             raise HTTPException(400, "No scene headings found (SCENE 1 / INT. / EXT.). Use the template layout, or let the AI arrange it.")
         draft = ai_arrange(db, user, project, text)
         used = "ai"
-    warnings += fit_lengths(draft)
+    warnings += fit_lengths(draft, project.primary_language)
     changed = mark_changed(draft, text)
     if changed:
         warnings.append(f"{changed} dialogue line(s) don't match your script word-for-word — they're highlighted; please check them.")
@@ -729,6 +862,9 @@ def build_draft(db: Session, user: User, project: Project, text: str, method: st
         c["gender"] = c.get("gender") if c.get("gender") in ("female", "male") else guess_gender(c["name"], c.get("description", ""))
         c["age"] = c.get("age") or guess_age(c.get("description", ""))
     draft["cast"] = list(cast.values())
+    bare = [n for n in names if not (cast[n].get("description") or "").strip() and not (has_look and has_look(n))]
+    if bare:
+        warnings.append(undescribed_warning(bare))
     shots = sum(len(sc["shots"]) for sc in draft["scenes"])
     return {"draft": draft, "method": used, "warnings": warnings,
             "characters": [{"name": k, "lines": v, "description": cast[k].get("description", ""), "gender": cast[k]["gender"],
