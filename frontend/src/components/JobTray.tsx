@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
+import { plainLabel } from "../lib/estimates";
 import { ago, secs, usd } from "../lib/format";
 import { tr, useT } from "../lib/i18n";
 import { useAuthStatus, useJobs, useShotAlternatives } from "../lib/queries";
@@ -16,7 +17,7 @@ import { useGenerate } from "./Generate";
 import { Button, IconButton, StatusDot, Tooltip } from "./ui";
 
 const TYPE_LABEL: Record<string, string> = {
-  keyframe: "Keyframes", video: "Videos", lipsync: "Lip-sync", voice: "Voices", qc: "Quality checks", sfx: "Sound design", music: "Music",
+  keyframe: "Pictures", video: "Videos", lipsync: "Mouth sync", voice: "Voices", qc: "Quality checks", sfx: "Sound design", music: "Music",
   export: "Renders", marketing: "Marketing pack", train_identity: "Identity training", character_sheet: "Character sheets", dub: "Dubbing",
   table_read: "Table read", search_index: "Search index", animatic: "Animatic", extend: "Extensions", edit: "Edits", shootout: "Shootout",
   scene_chain: "Scenes in order",
@@ -116,7 +117,12 @@ function Bar({ value, tone, running, indeterminate, className }: {
   );
 }
 
-export default function JobTray({ projectId }: { projectId: number }) {
+/**
+ * What is running for this project, and the job list with cost, retry and cancel. `inline`: the left part of the project's
+ * Next bar (always shown; its panel opens above the whole bar, which must be the positioned parent). Otherwise a bar of its
+ * own that only shows while there is something to follow.
+ */
+export default function JobTray({ projectId, inline }: { projectId: number; inline?: boolean }) {
   const t = useT();
   const qc = useQueryClient();
   const open = useUI((s) => s.trayOpen);
@@ -186,7 +192,7 @@ export default function JobTray({ projectId }: { projectId: number }) {
     return () => window.clearTimeout(id);
   }, [lastFail]);
   const freshFail = lastFail + FRESH_FAIL_MS > Date.now();
-  if (!open && !busy && !waiting.length && !freshFail) return null;
+  if (!inline && !open && !busy && !waiting.length && !freshFail) return null;
 
   const chips: { id: Filter; label: string; n: number; tone?: string }[] = [
     { id: "all", label: t("All"), n: rows.length },
@@ -198,7 +204,7 @@ export default function JobTray({ projectId }: { projectId: number }) {
   ];
 
   return (
-    <div ref={root} className="@container relative z-[45] border-t border-line bg-panel">
+    <div ref={root} className={inline ? "flex min-w-0 flex-1" : "@container relative z-[45] border-t border-line bg-panel"}>
       <AnimatePresence>
         {open && (
           <motion.section
@@ -260,18 +266,19 @@ export default function JobTray({ projectId }: { projectId: number }) {
         )}
       </AnimatePresence>
 
-      <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} aria-controls="job-tray-panel"
-        className="relative flex h-10 w-full items-center gap-3 px-3 text-left text-xs transition-colors hover:bg-hover/50 sm:px-4">
+      <button type="button" onClick={() => setOpen(!open)} aria-expanded={open} aria-controls="job-tray-panel" title={t("What is being made, with its cost")}
+        className={clsx("flex items-center gap-3 px-3 text-left text-xs transition-colors hover:bg-hover/50 sm:px-4",
+          inline ? "@container h-full min-w-0 flex-1" : "relative h-10 w-full")}>
         <span aria-hidden className="jq-line" style={{ width: busy ? `${Math.max(overall, 0.03) * 100}%` : 0, opacity: busy ? 1 : 0 }} />
         <span className={clsx("eq shrink-0", !busy && "is-idle")} aria-hidden><i /><i /><i /><i /></span>
         <span className="mono flex min-w-0 items-center gap-1.5 text-xs font-medium" aria-live="polite">
-          <span className="truncate">{busy ? t("{running} running · {queued} queued", { running: running.length, queued: queued.length }) : t("No jobs running")}</span>
+          <span className="truncate">{busy ? t("{running} running · {queued} queued", { running: running.length, queued: queued.length }) : inline ? t("Nothing being made") : t("No jobs running")}</span>
           {busy > 0 && <span className="shrink-0 rounded-md bg-accent/15 px-1.5 text-2xs font-semibold tabular-nums leading-4 text-accent-ink">{busy}</span>}
         </span>
         {head ? (
           <motion.span key={`head-${head.id}`} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }}
             className="hidden min-w-0 flex-1 items-center gap-2.5 text-mute @min-[520px]:flex">
-            <span className="min-w-0 truncate">{head.label}<span className="text-dim"> — {head.message || head.status}</span></span>
+            <span className="min-w-0 truncate">{plainLabel(head.label)}<span className="text-dim"> — {head.message || head.status}</span></span>
             <Bar value={head.progress} running className="ml-auto w-28 shrink-0" />
             <span className="mono w-9 shrink-0 text-right tabular-nums">{Math.round(head.progress * 100)}%</span>
             {eta != null && <span className="mono hidden shrink-0 tabular-nums text-dim @min-[760px]:inline">{t("~{time} left", { time: secs(eta) })}</span>}
@@ -361,7 +368,7 @@ function JobRow({ j, now, pending, onAct, canAct, canApprove, nested }: {
       </td>
       <td className="cx-mono max-sm:hidden">#{j.id}</td>
       <td className="max-w-[24rem]">
-        <p className="truncate text-sm font-medium" title={j.label}>{j.label}</p>
+        <p className="truncate text-sm font-medium" title={plainLabel(j.label)}>{plainLabel(j.label)}</p>
         {failed ? (
           <p className="line-clamp-2 break-words text-2xs leading-snug text-bad" title={j.error}>{j.error || t("The job failed.")}</p>
         ) : j.message ? (

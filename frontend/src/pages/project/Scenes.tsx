@@ -165,7 +165,7 @@ export default function ScenesPage() {
                         <Fact tone="warn">{t("Script has {n} scenes — re-plan to sync", { n: scriptScenes })}</Fact>
                       )}
                       {shotCount > 0 && <Fact>{t("{n} shots planned", { n: shotCount })}</Fact>}
-                      {canEdit && !allApproved && <span className="text-2xs text-dim">{t("Approve every scene card first")}</span>}
+                      {canEdit && !allApproved && <span className="text-2xs text-warn">{t("To break into shots, approve every scene card first ({n} left)", { n: scenes.length - approved })}</span>}
                     </div>
                   </div>
                 </div>
@@ -179,11 +179,16 @@ export default function ScenesPage() {
                       <Button loading={busy === "approve"} disabled={!!busy || allApproved} icon={<CheckCheck className="size-4" />} onClick={approveAll}>
                         {t("Approve all")}
                       </Button>
-                      <Button variant={allApproved ? "primary" : "secondary"} loading={busy === "shots"} disabled={!!busy || !allApproved}
-                        icon={<LayoutGrid className="size-4" />} iconRight={<ArrowRight className="size-4" />}
-                        onClick={() => (shotCount ? setConfirm("breakdown") : breakdown())}>
-                        {t("Break into shots")}
-                      </Button>
+                      {/* a disabled button says why (the tooltip sits on a wrapper: disabled buttons get no hover) */}
+                      <Tooltip content={allApproved ? t("Turn the approved scene cards into a shot list") : t("Approve every scene card first ({n} left)", { n: scenes.length - approved })}>
+                        <span className="inline-flex" tabIndex={allApproved ? undefined : 0}>
+                          <Button variant={allApproved ? "primary" : "secondary"} loading={busy === "shots"} disabled={!!busy || !allApproved}
+                            icon={<LayoutGrid className="size-4" />} iconRight={<ArrowRight className="size-4" />}
+                            onClick={() => (shotCount ? setConfirm("breakdown") : breakdown())}>
+                            {t("Break into shots")}
+                          </Button>
+                        </span>
+                      </Tooltip>
                     </>
                   )}
                 </div>

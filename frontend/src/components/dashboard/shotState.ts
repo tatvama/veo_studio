@@ -13,12 +13,12 @@ type T = (s: string) => string;
 export function stateLabel(t: T, s: ShotState): string {
   switch (s) {
     case "draft": return t("Draft");
-    case "keyframe": return t("Keyframe ready");
+    case "keyframe": return t("Picture ready");
     case "video": return t("Video ready");
     case "approved": return t("Approved");
-    case "stale": return t("Stale");
+    case "stale": return t("Out of date");
     case "generating": return t("Generating");
-    case "qcfail": return t("QC failed");
+    case "qcfail": return t("Failed quality check");
   }
 }
 

@@ -1,4 +1,4 @@
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import {
   AudioWaveform, Captions, Check, Coins, Ellipsis, Gauge, Music, Pause, Play, Rewind, Scissors, SkipBack, SkipForward, SlidersHorizontal, Snowflake, Sparkles,
@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { formatTC, useClock, type Clock } from "../../../../components/review/utils";
 import { AnimatedNumber, Badge, Button, Field, IconButton, Input, Kbd, Modal, Panel, Segmented, Toggle, Tooltip } from "../../../../components/ui";
 import { api } from "../../../../lib/api";
+import { quote } from "../../../../lib/estimates";
 import { LANG_NAMES, usd } from "../../../../lib/format";
 import { fxFilter, fxTransform, type ShotFx } from "../../../../lib/fx";
 import { useT } from "../../../../lib/i18n";
@@ -438,17 +439,25 @@ export function ClipInspector({ shot, clip, canEdit, trimMode, onClose, onSeek, 
 // ── dialogs ──────────────────────────────────────────────────────────────────
 
 /** Cost confirmation for sound design (one ElevenLabs call per shot). */
-export function AutoSfxDialog({ open, onClose, clips, selected, mode, run }: {
+export function AutoSfxDialog({ open, onClose, clips, selected, mode, run, eid }: {
   open: boolean; onClose: () => void; clips: Clip[]; selected: Shot | null; mode?: string;
   run: (ids: number[] | null) => Promise<SubmitResult | undefined>;
+  /** The episode: the price on the button is the server's quote for exactly this run. */
+  eid: number;
 }) {
   const t = useT();
   const [only, setOnly] = useState(false);
   const [busy, setBusy] = useState(false);
   useEffect(() => { if (open) setOnly(false); }, [open]);
   const n = only && selected ? 1 : clips.length;
+  const ids = only && selected ? [selected.id] : null;
+  const { data: est, isFetching } = useQuery({
+    queryKey: ["estimate", "sfx", eid, ids], enabled: open && !!eid, staleTime: 15_000, retry: false,
+    queryFn: () => quote({ action: "sfx", episode_id: eid, shot_ids: ids }, true),
+  });
   const live = mode === "live" || mode === undefined; // unknown → assume it costs money
-  const cost = live ? SFX_USD_PER_SHOT * n : 0;
+  const cost = est ? est.total_usd : live ? SFX_USD_PER_SHOT * n : 0;
+  const blocked = !!est && !est.budget.ok && !est.budget.needs_role;
   const replacing = clips.filter((c) => c.shot.sfx_track?.path && (!only || c.shot.id === selected?.id)).length;
   const go = async () => {
     setBusy(true);
@@ -463,23 +472,26 @@ export function AutoSfxDialog({ open, onClose, clips, selected, mode, run }: {
     <Modal open={open} onClose={onClose} size="md" title={<span className="flex items-center gap-2"><AudioWaveform className="size-4 text-accent-ink" />{t("Auto SFX")}</span>}
       footer={<>
         <Button variant="ghost" onClick={onClose}>{t("Cancel")}</Button>
-        <Button variant="primary" data-autofocus loading={busy} icon={<Coins className="size-4" />} onClick={go}>{cost ? t("Generate · ~{usd}", { usd: usd(cost) }) : t("Generate")}</Button>
+        <Button variant="primary" data-autofocus loading={busy} disabled={!est || blocked} icon={<Coins className="size-4" />} onClick={go}>
+          {!est ? t("Pricing…") : est.budget.ok ? (cost ? t("Generate · {usd}", { usd: usd(cost) }) : t("Generate (free)")) : t("Request approval")}
+        </Button>
       </>}>
       <div className="space-y-4">
         <p className="text-sm text-mute">{t("The sound designer plans ambience and spot effects for each shot, generates them and places them on the SFX track. They're mixed into renders under dialogue.")}</p>
         {selected && (
           <Toggle checked={only} onChange={setOnly} label={<span className="text-sm">{t("Only the selected shot ({code})", { code: selected.code })}</span>} />
         )}
-        <div className="flex items-end justify-between rounded-xl border border-line bg-raised/40 px-4 py-3">
+        <div className="flex items-end justify-between rounded-xl border border-line bg-raised/40 px-4 py-3" aria-busy={isFetching || undefined}>
           <div>
-            <p className="eyebrow">{t("Estimated cost")}</p>
+            <p className="eyebrow">{t("Price")}</p>
             <p className="mt-0.5 text-sm text-mute">{t("{n} shots", { n })}</p>
           </div>
-          <span className="mono text-3xl font-semibold leading-none tabular-nums text-money">{live ? "~" : ""}<AnimatedNumber value={cost} format={(v) => usd(v)} duration={0.6} /></span>
+          <span className="mono text-3xl font-semibold leading-none tabular-nums text-money"><AnimatedNumber value={cost} format={(v) => usd(v)} duration={0.6} /></span>
         </div>
         {replacing > 0 && <p className="rounded-lg bg-warn/10 px-3 py-2 text-xs text-warn">{t("{n} shots already have effects — they'll be replaced.", { n: replacing })}</p>}
+        {est && !est.budget.ok && <p className={clsx("rounded-lg px-3 py-2 text-xs", blocked ? "bg-bad/10 text-bad" : "bg-warn/10 text-warn")}>{est.budget.reason}</p>}
         {mode === "missing" ? (
-          <p className="rounded-lg bg-bad/10 px-3 py-2 text-xs text-bad">{t("ElevenLabs isn't connected — add its key in Settings first, or the job will fail.")}</p>
+          <p className="rounded-lg bg-info/10 px-3 py-2 text-xs text-info">{t("ElevenLabs isn't connected: the effects come free from the built-in library (recorded effects and synthesized ambience).")}</p>
         ) : (
           <p className="text-xs text-dim">{t("Estimate at list price (ElevenLabs sound effects, ~6 s per shot) plus a small planning call. Team budget rules apply — large batches may need a producer's approval.")}</p>
         )}

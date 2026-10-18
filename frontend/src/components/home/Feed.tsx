@@ -20,7 +20,7 @@ const SHOWN = 14;
 function jobName(type: unknown): string {
   const key = String(type ?? "");
   const map: Record<string, string> = {
-    keyframe: tr("Keyframe"), video: tr("Video"), qc: tr("QC review"), voice: tr("Voice"), lipsync: tr("Lip-sync"), voicelock: tr("Voice lock"),
+    keyframe: tr("Picture"), video: tr("Video"), qc: tr("Quality check"), voice: tr("Voice"), lipsync: tr("Mouth sync"), voicelock: tr("Voice lock"),
     music: tr("Music"), sfx: tr("Sound effects"), character_sheet: tr("Character sheet"), character_outfit: tr("Outfit"),
     character_expressions: tr("Expressions"), location_images: tr("Location images"), voice_design: tr("Voice design"),
     voice_preview: tr("Voice preview"), omni_edit: tr("Omni edit"), animatic: tr("Animatic"), export: tr("Export"), dub: tr("Dub episode"),
@@ -68,7 +68,7 @@ function describe(e: EventRow): Line {
     case "budget.alert":
       return { icon: Coins, tone: "bad", system: true, text: tr("team budget reached {pct}%", { pct: p.threshold ?? "" }) };
     case "bible.updated":
-      return { icon: BookUser, tone: "info", text: tr("updated the bible") };
+      return { icon: BookUser, tone: "info", text: tr("updated the cast") };
     default:
       return { icon: ActivityIcon, tone: "neutral", text: e.type };
   }

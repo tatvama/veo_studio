@@ -8,7 +8,7 @@ import type { Take } from "../../../lib/types";
 import { ratioOf } from "./shotMeta";
 
 export const KIND_LABELS: Record<string, string> = {
-  lipsync: "Lip-sync", voicelock: "Voice lock", video: "Video", keyframe: "Keyframe", endframe: "End frame", voice: "Voice",
+  lipsync: "Mouth sync", voicelock: "Voice lock", video: "Video", keyframe: "Picture", endframe: "End frame", voice: "Voice",
   narration: "Narration",
 };
 const KIND_LETTER: Record<string, string> = { lipsync: "L", voicelock: "VL", video: "V", keyframe: "K", endframe: "E" };

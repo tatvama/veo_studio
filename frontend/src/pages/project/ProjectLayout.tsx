@@ -1,14 +1,14 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { FolderSearch } from "lucide-react";
+import { FolderSearch, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { Link, Navigate, Route, Routes, useLocation, useParams } from "react-router-dom";
+import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 import AgentPanel from "../../components/AgentPanel";
-import JobTray from "../../components/JobTray";
+import { ImportWizard } from "../../components/board/ImportWizard";
 import { openDirector } from "../../components/shell/keys";
 import { areaOf, getProjectTabs } from "../../components/shell/nav";
-import { Button, Empty, PageSkeleton, Skeleton, Spinner, useDocumentTitle } from "../../components/ui";
+import { Button, Empty, IconButton, PageSkeleton, Skeleton, Spinner, useDocumentTitle } from "../../components/ui";
 import { api } from "../../lib/api";
 import { useReportView } from "../../lib/collab";
 import { tr, useT } from "../../lib/i18n";
@@ -16,12 +16,12 @@ import { useAuthStatus, useEpisode, useProject, useSettings } from "../../lib/qu
 import { useUI } from "../../lib/store";
 import { ROLE_RANK, type AutopilotState, type Episode } from "../../lib/types";
 import { ProjectContext, type ProjectCtx } from "./context";
-import { FocusBar } from "./FocusBar";
-import { buildSteps, continueTarget, isOwnMaterial, useFullFlow, useLastTabs } from "./flow";
+import { buildSteps, isOwnMaterial, useFullFlow, useLastTabs } from "./flow";
+import { IMPORT_EVENT } from "./importEvent";
+import { NextBar } from "./NextBar";
 import { nextStep } from "./nextStep";
-import { PipelineRail, PipelineStrip, type RailProps } from "./PipelineRail";
 import { usePipeline } from "./pipeline";
-import { StepBar } from "./StepBar";
+import { ProjectHeader } from "./ProjectHeader";
 import Storyboard from "./Storyboard";
 
 /**
@@ -52,19 +52,20 @@ const StudioPage = lazy(() => import("./studio/Studio"));
 const StoryPage = lazy(() => import("./Story"));
 const TimelinePage = lazy(() => import("./Timeline"));
 
-/** Below this width the Director floats over the page when asked for, instead of taking a column from it. */
-const DOCK_MIN = 1600;
+/** From this width the Director docks as a side panel that makes room for itself; below it, it opens over the page. */
+const DOCK_MIN = 1280;
 
 /**
- * A project's workspace: the rail on the left (the Overview and the five numbered steps), the open step in the middle under
- * its step bar (the step's pages and "Continue to …"), the Director docked on the right on wide screens. The Overview is
- * where a project opens. Projects made from your own material (shot by shot, or an imported script) open on their shots in
- * a focused workspace instead: one header with Shots · Cast · Edit · Export, and the Director only floats in when asked for.
+ * A project's workspace, the same for every project: one header on top (back, title, the steps as a stepper, the open
+ * step's views, spend, the Director), the open page, and the Next bar at the bottom (what is being made, and the next step
+ * with its price). The Director docks on the right on laptops and wider (the page makes room), and opens over the page on
+ * smaller screens. Projects made from your own material leave out the Story step unless you ask for it.
  */
 export default function ProjectLayout() {
   const t = useT();
   const pid = Number(useParams().pid);
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const { data: project, isLoading, error } = useProject(pid);
   const { data: auth } = useAuthStatus();
   const ui = useUI();
@@ -77,11 +78,11 @@ export default function ProjectLayout() {
   const tab = loc.pathname.split("/")[3] || "index";
   const tabs = getProjectTabs(t);
   const { data: settings } = useSettings();
-  const [hiddenTip, setHiddenTip] = useState("");
   const lastTabs = useLastTabs(pid, tab);
-  const [fullFlow, setFullFlow] = useFullFlow(pid);
+  // own-material projects: whether the Story step shows (remembered per project)
+  const [storyShown, setStoryShown] = useFullFlow(pid);
 
-  // Where the Director floats over the page, it only opens when asked (its button or Ctrl/⌘+J), never by default.
+  // Where the Director opens over the page, it only opens when asked (its button or Ctrl/⌘+J), never by default.
   const [floatOpen, setFloatOpen] = useState(false);
   const agentShown = useRef(false);
   const agentSeen = useRef(true);
@@ -96,6 +97,21 @@ export default function ProjectLayout() {
     const h = () => setVw(window.innerWidth);
     window.addEventListener("resize", h);
     return () => window.removeEventListener("resize", h);
+  }, []);
+
+  // The import wizard, for the whole project: a script pasted on Home arrives as navigation state and is read at once;
+  // "Import script" anywhere (the Next bar, empty pages) asks for it with an event.
+  const [importing, setImporting] = useState<{ text: string } | null>(null);
+  useEffect(() => {
+    const st = loc.state as { importScript?: string } | null;
+    if (!st || typeof st.importScript !== "string") return;
+    setImporting({ text: st.importScript });
+    navigate({ pathname: loc.pathname, search: loc.search }, { replace: true, state: null });
+  }, [loc.key]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const h = (e: Event) => setImporting({ text: (e as CustomEvent<{ text?: string }>).detail?.text ?? "" });
+    window.addEventListener(IMPORT_EVENT, h);
+    return () => window.removeEventListener(IMPORT_EVENT, h);
   }, []);
 
   const episodes: Episode[] = project?.episodes ?? [];
@@ -127,12 +143,11 @@ export default function ProjectLayout() {
 
   if (isLoading) {
     return (
-      <div className="flex h-full">
-        <div className="hidden w-[15.5rem] shrink-0 space-y-3 border-r border-line bg-panel/70 p-3 lg:block">
-          <Skeleton className="h-6 w-40" /><Skeleton className="h-8 w-full" /><Skeleton className="h-8 w-full" />
-          {Array.from({ length: 6 }, (_, i) => <Skeleton key={i} className="h-10 w-full" />)}
+      <div className="flex h-full flex-col">
+        <div className="flex h-12 shrink-0 items-center gap-3 border-b border-line bg-panel/85 px-3">
+          <Skeleton className="size-8" /><Skeleton className="h-6 w-44" /><Skeleton className="h-8 w-[28rem] max-w-[40vw]" />
         </div>
-        <div className="grid flex-1 grid-cols-2 gap-4 p-6 md:grid-cols-4">{Array.from({ length: 8 }, (_, i) => <Skeleton key={i} className="aspect-video" />)}</div>
+        <div className="grid flex-1 grid-cols-2 content-start gap-4 p-6 md:grid-cols-4">{Array.from({ length: 8 }, (_, i) => <Skeleton key={i} className="aspect-video" />)}</div>
       </div>
     );
   }
@@ -172,15 +187,16 @@ export default function ProjectLayout() {
   };
 
   const ap = (project.autopilot || {}) as AutopilotState;
-  const apRunning = ap.status === "running";
-  const apPaused = ap.status === "paused";
   const step = nextStep(project, episode, ap, settings?.catalog.autopilot);
-  const stepKey = step ? `${pid}:${eid}:${step.text}` : "";
   const own = isOwnMaterial(project);
-  const focused = own && !fullFlow;
-  // A docked Director takes a column from the page, so it only docks on wide screens; elsewhere, and in the focused
-  // workspace, it floats over the page instead of squeezing the content.
-  const floatAgent = focused || vw < DOCK_MIN;
+  const area = areaOf(tab);
+  const all = buildSteps(t, project, episode, pipeline.stages, { current: tab, last: lastTabs });
+  // own material: the Story step only once it has writing in it, while you are on it, or when you asked for it
+  const storyBusy = all.find((s) => s.id === "story")?.tabs.some((x) => x.to !== "brief");
+  const steps = own && !storyShown && !storyBusy && area !== "story" ? all.filter((s) => s.id !== "story") : all;
+
+  // The Director docks on laptops and wider (the page makes room); on smaller screens it opens over the page, with a close.
+  const floatAgent = vw < DOCK_MIN;
   const showAgent = ui.agentOpen && !(drawerOpen && narrow) && (!floatAgent || floatOpen);
   agentShown.current = showAgent;
   // The buttons show what is on screen. If the panel is "open" in settings but hidden (floating and not asked for yet, or the
@@ -189,31 +205,16 @@ export default function ProjectLayout() {
     if (ui.agentOpen && !showAgent) { openDirector(); return; }
     ui.toggleAgent();
   };
-  const area = areaOf(tab);
-  const steps = buildSteps(t, project, episode, pipeline.stages, { current: tab, last: lastTabs });
-  const current = steps.find((s) => s.id === area);
-  const cont = current ? continueTarget(t, tab, steps, step) : null;
-  // The rail's next-step card: not on the Overview (its hero says the same), not for the open page, not when the step bar's
-  // "Continue" already leads there, and not for a page this project hides.
-  const stepShown = !!step && steps.some((s) => s.tabs.some((x) => x.to === step.tab));
-  const showStep = !!step && stepShown && hiddenTip !== stepKey && area !== "home" && step.tab !== tab && cont?.to !== step.tab;
-
-  const rail: RailProps = {
-    project, episode, pid, episodes, steps, area,
-    step, showStep, onHideStep: () => setHiddenTip(stepKey),
-    title, onTitle: setTitle, onSaveTitle: saveTitle, onAddEpisode: addEpisode,
-    autopilot: { running: apRunning, paused: apPaused, label: tr(settings?.catalog.autopilot?.labels[ap.stage ?? ""] ?? ap.stage ?? "") },
-    directorOpen: showAgent, onToggleDirector: toggleDirector,
-    focus: own ? { on: focused, set: (on) => setFullFlow(!on) } : undefined,
-  };
+  const hasShots = (episode?.shots ?? []).some((s) => s.include);
 
   return (
     <ProjectContext.Provider value={ctx}>
       <div className="relative flex h-full">
-        {!focused && <PipelineRail {...rail} />}
         <div className="flex min-w-0 flex-1 flex-col">
-          {focused ? <FocusBar {...rail} tab={tab} /> : <PipelineStrip {...rail} />}
-          {!focused && current && eid > 0 && <StepBar pid={pid} step={current} tab={tab} cont={cont} total={steps.length} />}
+          <ProjectHeader project={project} episode={episode} pid={pid} episodes={episodes} steps={steps} area={area} tab={tab}
+            title={title} onTitle={setTitle} onSaveTitle={saveTitle} onAddEpisode={addEpisode}
+            directorOpen={showAgent} onToggleDirector={toggleDirector}
+            story={own ? { shown: storyShown || !!storyBusy, set: setStoryShown } : undefined} />
           <div className="relative min-h-0 flex-1 overflow-hidden">
             {eid ? (
               <AnimatePresence mode="wait" initial={false}>
@@ -254,24 +255,33 @@ export default function ProjectLayout() {
             ) : <div className="p-8"><Spinner /></div>}
             <AnimatePresence initial={false}>
               {showAgent && floatAgent && (
-                // Esc inside the floating panel closes it (menus it opens render elsewhere and handle their own Esc)
+                // Over the page: a clear close button, Esc closes it too (menus it opens render elsewhere and handle their own Esc)
                 <div key="agent-float" className="absolute inset-y-0 right-0 z-40 flex min-h-0 max-w-full shadow-modal"
                   onKeyDown={(e) => {
                     if (e.key !== "Escape" || e.defaultPrevented || !e.currentTarget.contains(e.target as Node)) return;
                     e.stopPropagation();
                     ui.setAgentOpen(false);
                   }}>
+                  <IconButton title={t("Close the Director (Esc)")} onClick={() => ui.setAgentOpen(false)}
+                    className="absolute -left-10 top-2 z-10 !size-8 rounded-full border border-line bg-panel shadow-pop max-sm:hidden"><X className="size-4" /></IconButton>
                   <AgentPanel key="agent" />
                 </div>
               )}
             </AnimatePresence>
           </div>
-          <JobTray projectId={pid} />
+          <NextBar step={step} episode={episode} />
         </div>
         <AnimatePresence initial={false}>
           {showAgent && !floatAgent && <AgentPanel key="agent" />}
         </AnimatePresence>
       </div>
+      <ImportWizard open={!!importing} onClose={() => setImporting(null)} eid={eid} projectId={pid} hasShots={hasShots}
+        initialText={importing?.text || undefined}
+        onDone={() => {
+          for (const k of ["board", "episode", "project", "characters"]) qc.invalidateQueries({ queryKey: [k] });
+          // next: the people the script names become the cast (with "Make the cast" and its price on the Cast page)
+          navigate(`/p/${pid}/bible`, { state: { fromImport: true } });
+        }} />
     </ProjectContext.Provider>
   );
 }

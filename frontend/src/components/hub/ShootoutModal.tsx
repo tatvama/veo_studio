@@ -94,7 +94,7 @@ export default function ShootoutModal({ shot, open, onClose, onStarted, purpose:
       </>}>
       <div className="space-y-4">
         <p className="max-w-3xl text-sm text-mute">
-          {t("Each engine makes one take of this shot from the same prompt and keyframe. Takes aren't put in the cut automatically — compare them in Takes and pick the winner. Wins are credited to the engine in the Model Hub.")}
+          {t("Each engine makes one take of this shot from the same prompt and picture. Takes aren't put in the cut automatically — compare them in Takes and pick the winner. Wins are credited to the engine in the Model Hub.")}
         </p>
         <div className="flex flex-wrap items-center gap-3">
           {audioDriven && (
@@ -102,7 +102,7 @@ export default function ShootoutModal({ shot, open, onClose, onStarted, purpose:
               <Segmented value={listPurpose} onChange={setListPurpose} options={[
                 { value: "dialogue", label: t("Talking-clip engines") }, { value: "video", label: t("Visual-only engines") },
               ]} />
-              <span className="min-w-0 flex-1 basis-60 text-2xs text-dim">{t("This shot is audio-driven: talking-clip engines animate the voice track; visual-only engines need lip-sync afterwards.")}</span>
+              <span className="min-w-0 flex-1 basis-60 text-2xs text-dim">{t("This shot is audio-driven: talking-clip engines animate the voice track; visual-only engines need mouth sync afterwards.")}</span>
             </>
           )}
           {engines.length > 8 && <SearchField value={q} onChange={setQ} placeholder={t("Search engines…")} className="ml-auto w-56" aria-label={t("Search engines…")} />}

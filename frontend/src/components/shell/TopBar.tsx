@@ -23,14 +23,14 @@ function useCrumbs(role: UserBrief["role"]): Crumb[] {
   const pid = pm ? Number(pm.params.pid) : 0;
   const { data: project } = useProject(pid);
   return useMemo(() => {
-    const home = { label: t("Command center"), to: "/" };
+    const home = { label: t("Home"), to: "/" };
     if (pm) {
       const tab = getProjectTabs(t).find((x) => x.to === pathname.split("/")[3]);
       const step = tab && getProjectSteps(t).find((s) => s.id === tab.area);
       return [home, { label: project?.title || t("Project"), to: `/p/${pid}` }, ...(step ? [{ label: step.label }] : []), ...(tab ? [{ label: tab.label }] : [])];
     }
     const cur = getNav(t, role).find((n) => n.to !== "/" && pathname.startsWith(n.to));
-    return cur ? [home, { label: cur.label }] : [{ label: t("Command center") }];
+    return cur ? [home, { label: cur.label }] : [{ label: t("Home") }];
   }, [t, pathname, pm, pid, project?.title, role]);
 }
 

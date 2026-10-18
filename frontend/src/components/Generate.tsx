@@ -5,17 +5,38 @@ import { motion } from "motion/react";
 import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { api } from "../lib/api";
+import { plainLabel } from "../lib/estimates";
 import { usd } from "../lib/format";
 import { tr, useT } from "../lib/i18n";
 import type { Estimate, SubmitResult } from "../lib/types";
 import { AnimatedNumber, Alert, Button, Modal } from "./ui";
 
-interface Pending { eid: number; body: Record<string, any>; title: string; est: Estimate }
+interface Pending {
+  title: string; est: Estimate;
+  /** Starts the work once the price is accepted. */
+  go: () => Promise<unknown>;
+  /** Called when the dialog is closed without starting anything. */
+  cancel?: () => void;
+}
+
+export interface PricedAction {
+  /** What it will cost: POST /api/episodes/{eid}/estimate (batches) or POST /api/estimate (one item), see lib/estimates. */
+  quote: () => Promise<Estimate>;
+  /** The paid call itself. */
+  run: () => Promise<SubmitResult>;
+  /** Names the work in the dialog and the toast. */
+  what: string;
+}
 
 interface Ctx {
   /** Estimate → (cost dialog if it costs money) → generate. */
   generate: (eid: number, body: Record<string, any>, title: string) => Promise<void>;
-  /** Fire a single-item endpoint that returns a SubmitResult and toast the outcome. */
+  /**
+   * A single paid action with its price first: quote → (cost dialog when it costs money, has a warning or needs approval)
+   * → run. Resolves with the outcome once it ran, or undefined when there was nothing to do or the dialog was cancelled.
+   */
+  priced: (a: PricedAction) => Promise<SubmitResult | undefined>;
+  /** Fire a single-item endpoint that returns a SubmitResult and toast the outcome. Free work only: paid work goes through `priced`. */
   submit: (fn: () => Promise<SubmitResult>, what: string) => Promise<SubmitResult | undefined>;
 }
 
@@ -57,7 +78,7 @@ export function GenerateProvider({ children }: { children: ReactNode }) {
       await fire(eid, body, title);
       return;
     }
-    setPending({ eid, body, title, est });
+    setPending({ title, est, go: () => fire(eid, body, title) });
   }, [fire]);
 
   const submit = useCallback(async (fn: () => Promise<SubmitResult>, what: string) => {
@@ -71,28 +92,45 @@ export function GenerateProvider({ children }: { children: ReactNode }) {
     }
   }, [qc]);
 
+  const priced = useCallback(async ({ quote, run, what }: PricedAction): Promise<SubmitResult | undefined> => {
+    let est: Estimate;
+    try { est = await quote(); } catch { return undefined; /* api() showed the error */ }
+    if (est.count === 0) {
+      toast.info(tr("{what}: nothing to do", { what }));
+      return undefined;
+    }
+    if (est.total_usd === 0 && est.budget.ok && !est.warnings?.length) return submit(run, what);  // free: no dialog
+    return new Promise<SubmitResult | undefined>((resolve) => {
+      setPending({ title: what, est, go: async () => resolve(await submit(run, what)), cancel: () => resolve(undefined) });
+    });
+  }, [submit]);
+
   const confirm = async () => {
     if (!pending) return;
     setBusy(true);
     try {
-      await fire(pending.eid, pending.body, pending.title);
+      await pending.go();
       setPending(null);
     } finally {
       setBusy(false);
     }
   };
+  const dismiss = () => {
+    pending?.cancel?.();
+    setPending(null);
+  };
 
   const est = pending?.est;
   return (
-    <GenerateCtx.Provider value={{ generate, submit }}>
+    <GenerateCtx.Provider value={{ generate, priced, submit }}>
       {children}
       <Modal
         open={!!pending}
         closable={!busy}
-        onClose={() => setPending(null)}
+        onClose={dismiss}
         title={<span className="flex items-center gap-2"><Coins className="size-4 text-accent-ink" />{pending?.title}</span>}
         footer={<>
-          <Button variant="ghost" disabled={busy} onClick={() => setPending(null)}>{t("Cancel")}<Key>Esc</Key></Button>
+          <Button variant="ghost" disabled={busy} onClick={dismiss}>{t("Cancel")}<Key>Esc</Key></Button>
           {/* focus lands here when the dialog opens, so Enter confirms */}
           <Button variant="primary" data-autofocus loading={busy} onClick={confirm}>
             {est?.budget.ok ? t("Generate · {usd}", { usd: usd(est.total_usd) }) : t("Request approval")}
@@ -140,7 +178,7 @@ function CostBody({ est }: { est: Estimate }) {
             {shown.map((it, i) => (
               <motion.tr key={i} initial={{ opacity: 0, x: -4 }} animate={{ opacity: 1, x: 0 }} transition={{ duration: 0.16, delay: Math.min(i, 12) * 0.015 }}
                 className="border-t border-line/60">
-                <td className="max-w-0 truncate px-3 py-1.5 text-mute" title={it.label}>{it.label}</td>
+                <td className="max-w-0 truncate px-3 py-1.5 text-mute" title={plainLabel(it.label)}>{plainLabel(it.label)}</td>
                 <td className={clsx("w-24 px-3 py-1.5 text-right tabular-nums", it.usd === 0 && "text-dim")}>{usd(it.usd)}</td>
               </motion.tr>
             ))}

@@ -9,9 +9,9 @@ from sqlalchemy.orm import Session
 
 from .. import catalog
 from ..core import autopilot as autopilot_def
-from ..core import budget, collab, generation, jobs
+from ..core import budget, collab, generation, jobs, sheet_engine
 from ..db import get_db
-from ..models import Episode, Project, Shot, Take, User
+from ..models import Character, Episode, Location, Project, Shot, Take, User, VoiceProfile
 from ..pipeline.selection import current, has_fresh
 from ..security import current_user, require
 from .common import get_or_404
@@ -173,6 +173,112 @@ def generate(eid: int, body: BatchIn, user: User = Depends(require("creator")), 
     if not specs:
         return {"status": "nothing_to_do", "jobs": [], "total_usd": 0, "batch_id": ""}
     return jobs.submit(db, user, p, specs)
+
+
+# ── a price for one paid action ──────────────────────────────────────────────
+
+QuoteAction = Literal["extend", "endframe", "edit", "enhance", "sheet", "expressions", "lighting", "outfit", "variations",
+                      "voice_design", "voice_preview", "location_images", "sfx", "table_read"]
+
+
+class QuoteIn(BaseModel):
+    """One single-item paid action, priced before it runs (batches use /episodes/{eid}/estimate). Each action names the
+    item it acts on and takes the options of its own endpoint:
+    shot (`shot_id`): extend · endframe; take (`take_id`): edit · enhance; character (`character_id`): sheet · expressions ·
+    lighting · outfit · variations · voice_design; `voice_id`: voice_preview; `location_id`: location_images;
+    episode (`episode_id`): sfx · table_read."""
+    action: QuoteAction
+    shot_id: int | None = None
+    take_id: int | None = None
+    character_id: int | None = None
+    location_id: int | None = None
+    voice_id: int | None = None
+    episode_id: int | None = None
+    project_id: int | None = None
+    shot_ids: list[int] | None = None
+    prompt: str = ""
+    instruction: str = ""
+    text: str = ""
+    hero: bool = False
+    engine: str | None = None
+    language: str | None = None
+    provider: str = "gemini"
+    description: str = ""
+    name: str = ""
+    kinds: list[str] | None = None
+    views: list[str] | None = None
+    variants: list[str] | None = None
+    time_of_day: str = ""
+    count: int = 6
+
+
+def _need(v: int | None, what: str) -> int:
+    if v is None:
+        raise HTTPException(400, f"{what} is required for this action")
+    return v
+
+
+def _char_engine(db: Session, c: Character, pick: str | None) -> str | None:
+    """The engine a character's images would be made with, without remembering a new pick (the paid call does that)."""
+    if pick is None:
+        return sheet_engine.resolve(db, c, None)
+    return None if pick.strip() in sheet_engine.AUTO else sheet_engine.check(db, pick.strip()).id
+
+
+def _quote_specs(db: Session, body: QuoteIn) -> tuple[Project | None, list[dict]]:
+    a = body.action
+    if a in ("extend", "endframe"):
+        s = get_or_404(db, Shot, _need(body.shot_id, "shot_id"))
+        p = db.get(Project, db.get(Episode, s.episode_id).project_id)
+        if a == "extend":
+            return p, [generation.extend_spec(db, p, s, body.prompt)]
+        return p, [generation.endframe_spec(db, p, s, body.hero, body.engine or None)]
+    if a in ("edit", "enhance"):
+        t = get_or_404(db, Take, _need(body.take_id, "take_id"))
+        s = db.get(Shot, t.shot_id)
+        p = db.get(Project, db.get(Episode, s.episode_id).project_id)
+        return p, [generation.omni_edit_spec(db, p, t, body.instruction) if a == "edit" else generation.enhance_spec(db, p, s, t)]
+    p = db.get(Project, body.project_id) if body.project_id else None
+    if a == "voice_preview":
+        vp = get_or_404(db, VoiceProfile, _need(body.voice_id, "voice_id"))
+        return None, [generation.voice_preview_spec(db, vp, body.text)]
+    if a == "location_images":
+        loc = get_or_404(db, Location, _need(body.location_id, "location_id"))
+        return p, [generation.location_images_spec(db, body.project_id, loc, body.kinds, body.time_of_day)]
+    if a in ("sfx", "table_read"):
+        e = get_or_404(db, Episode, _need(body.episode_id, "episode_id"))
+        p = db.get(Project, e.project_id)
+        if a == "sfx":
+            return p, [generation.sfx_spec(db, p, e, body.shot_ids)]
+        lang = body.language or p.primary_language
+        if lang not in catalog.LANGUAGES:
+            raise HTTPException(400, "unknown language")
+        return p, [generation.table_read_spec(db, p, e, lang)]
+    c = get_or_404(db, Character, _need(body.character_id, "character_id"))
+    if a == "voice_design":
+        return p, [generation.voice_design_spec(db, body.project_id, c, body.language or "en", body.provider, body.description)]
+    if a == "variations":
+        return p, [generation.identity_variations_spec(db, body.project_id, c, max(1, min(body.count, 12)))]
+    engine = _char_engine(db, c, body.engine)
+    if a == "sheet":
+        return p, [generation.character_sheet_spec(db, body.project_id, c, body.kinds, engine)]
+    if a == "expressions":
+        return p, [generation.expressions_spec(db, body.project_id, c, engine)]
+    if a == "lighting":
+        return p, [generation.lighting_spec(db, body.project_id, c, body.variants, engine)]
+    return p, [generation.outfit_spec(db, body.project_id, c, body.name or "Outfit", body.description, None, body.views, engine)]
+
+
+@router.post("/estimate")
+def quote(body: QuoteIn, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """What one paid action costs, in the same shape as the batch estimate: shown before the action runs, so nothing
+    is spent without a price. Nothing is created or remembered."""
+    p, specs = _quote_specs(db, body)
+    s = generation.summary_for(specs)
+    s["budget"] = budget.check(db, user, p, s["total_usd"])
+    s["team"] = budget.team_status(db)
+    s["warnings"] = []
+    return s
 
 
 # ── single-shot actions ──────────────────────────────────────────────────────

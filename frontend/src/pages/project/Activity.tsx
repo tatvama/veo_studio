@@ -81,7 +81,7 @@ function describe(e: EventRow): Described {
     case "budget.alert":
       return { icon: Coins, tone: "bad", system: true, text: <>{tr("team budget reached {pct}%", { pct: p.threshold })}</> };
     case "bible.updated":
-      return { icon: BookUser, tone: "info", text: <>{tr("updated the bible")}</> };
+      return { icon: BookUser, tone: "info", text: <>{tr("updated the cast")}</> };
     default:
       return { icon: TriangleAlert, tone: "neutral", text: <>{e.type}</> };
   }
@@ -98,7 +98,7 @@ function target(e: EventRow, pid: number): { to: string; label: string; shotId?:
       return p.target_type === "shot" ? { to: `/p/${pid}/storyboard`, label: tr("Shot"), shotId: Number(p.target_id) } : { to: `/p/${pid}/review`, label: tr("Review") };
     case "export.updated": return { to: `/p/${pid}/export`, label: tr("Export") };
     case "approval.requested": case "approval.decided": return { to: "/approvals", label: tr("Approvals") };
-    case "bible.updated": return { to: `/p/${pid}/bible`, label: tr("Bible") };
+    case "bible.updated": return { to: `/p/${pid}/bible`, label: tr("Cast") };
     case "budget.alert": return { to: "/costs", label: tr("Costs") };
     case "project.created": return { to: `/p/${pid}/brief`, label: tr("Brief") };
     default: return null;

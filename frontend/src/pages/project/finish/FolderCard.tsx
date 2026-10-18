@@ -82,7 +82,7 @@ export function FolderCard({ pid, eid, lang, className }: { pid: number; eid: nu
 
   return (
     <SectionCard className={className} icon={<HardDrive />} title={t("Local folder")}
-      description={t("Takes, audio, renders and Bible stills mirrored on this computer, named in cut order. Premiere and DaVinci can open it.")}
+      description={t("Takes, audio, renders and Cast stills mirrored on this computer, named in cut order. Premiere and DaVinci can open it.")}
       actions={<Button size="sm" variant="outline" icon={<FolderOpen className="size-3.5" />} onClick={() => void dcall(t("Open folder"), (d) => d.library.open(pid))}>{t("Open")}</Button>}>
       <div className="space-y-4">
         <Sub title={t("Where")}>
@@ -113,7 +113,7 @@ export function FolderCard({ pid, eid, lang, className }: { pid: number; eid: nu
               <Segmented size="sm" value={scope} onChange={(v) => void setScope(v)} aria-label={t("Pull scope")}
                 options={[{ value: "approved", label: t("Approved") }, { value: "cut", label: t("Everything in the cut") }]} />
               <span className="text-2xs text-dim">{scope === "approved"
-                ? t("Approved and hand-picked takes, music, approved renders and Bible stills.")
+                ? t("Approved and hand-picked takes, music, approved renders and Cast stills.")
                 : t("The current take of every shot in the cut, to start before approval.")}</span>
             </div>
             {sync ? (

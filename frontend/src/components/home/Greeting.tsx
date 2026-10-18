@@ -45,7 +45,7 @@ export function Greeting({ user, canCreate, onNew }: { user: UserBrief | null | 
     <header style={r.style} className={clsx("mb-5 flex flex-wrap items-end justify-between gap-x-6 gap-y-4", r.className)}>
       <div className="min-w-0 flex-1 basis-80">
         <p className="eyebrow flex flex-wrap items-center gap-x-2.5 gap-y-1">
-          <span className="flex items-center gap-2 !text-accent-ink"><span aria-hidden className={clsx("live-dot", !busy && "is-idle")} />{t("Command center")}</span>
+          <span className="flex items-center gap-2 !text-accent-ink"><span aria-hidden className={clsx("live-dot", !busy && "is-idle")} />{t("Home")}</span>
           <span aria-hidden className="text-line">/</span>
           <span className="num">{date}</span>
           <span aria-hidden className="text-line">/</span>

@@ -334,6 +334,13 @@ def voice_design_spec(db: Session, project_id: int | None, ch: Character, lang: 
                 label=f"Voice: {ch.name} [{lang}] via {provider}")
 
 
+def voice_preview_spec(db: Session, vp: Any, text: str = "") -> dict:
+    """A short sample of a voice profile (at least 80 characters are billed)."""
+    est = Estimator(db)
+    cost = float(est.prices["tts_per_1k_chars"].get(vp.provider, 0.05)) * max(len(text), 80) / 1000 if est._live(vp.provider) else 0
+    return spec("voice_preview", payload={"voice_profile_id": vp.id, "text": text}, estimate=cost, label="Voice preview")
+
+
 def omni_edit_spec(db: Session, project: Project, take: Take, instruction: str) -> dict:
     return spec("omni_edit", payload={"take_id": take.id, "instruction": instruction}, project_id=project.id,
                 shot_id=take.shot_id, estimate=Estimator(db).omni(take.duration_s or 8), label=f"Edit take #{take.id}")

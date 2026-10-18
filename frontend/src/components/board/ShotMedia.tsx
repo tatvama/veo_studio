@@ -20,15 +20,15 @@ export function UploadKeyframeButton({ shotId, onDone, size = "sm", label }: {
     setBusy(true);
     try {
       await api.upload(`/api/shots/${shotId}/keyframe/upload`, f);
-      toast.success(tr("Your keyframe is set — the video will start from it"));
+      toast.success(tr("Your picture is set — the video will start from it"));
       onDone();
     } catch { /* api toasts */ } finally { setBusy(false); }
   };
   return (
     <>
-      <Tooltip content={t("Use your own image as this shot's keyframe; the video starts from it")}>
+      <Tooltip content={t("Use your own image as this shot's picture; the video starts from it")}>
         <Button size={size} variant="outline" icon={<ImageUp className="size-3.5" />} loading={busy} onClick={() => input.current?.click()}>
-          {label ?? t("Upload keyframe")}
+          {label ?? t("Upload picture")}
         </Button>
       </Tooltip>
       <input ref={input} type="file" hidden accept={ACCEPT} onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; void pick(f); }} />
@@ -56,7 +56,7 @@ export function ShotRefs({ shotId, refs, canEdit, onChanged, compact }: {
         fd.append("label", f.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").slice(0, 60));
         await api.post(`/api/shots/${shotId}/refs`, fd);
       }
-      toast.success(tr("Reference added — used for this shot's keyframe and video"));
+      toast.success(tr("Reference added — used for this shot's picture and video"));
       onChanged();
     } catch { /* api toasts */ } finally { setBusy(false); }
   };

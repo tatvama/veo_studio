@@ -314,7 +314,7 @@ function TimelineEditor({ embedded }: { embedded: boolean }) {
   if (!shots.length) {
     return (
       <div className="p-6">
-        <Empty icon={<Clapperboard className="size-8" />} title={t("Nothing on the timeline yet")} sub={t("Plan shots and generate keyframes or videos first.")}
+        <Empty icon={<Clapperboard className="size-8" />} title={t("Nothing on the timeline yet")} sub={t("Plan shots and generate pictures or videos first.")}
           action={<Button variant="primary" onClick={() => navigate(`/p/${project.id}/storyboard`)}>{t("Go to Storyboard")}</Button>} />
       </div>
     );
@@ -596,7 +596,7 @@ function TimelineEditor({ embedded }: { embedded: boolean }) {
             onSave={async (list) => { await saveOverlays(ovEdit.shot, list); setOvEdit(null); }} />
         )}
       </AnimatePresence>
-      <AutoSfxDialog open={sfxOpen} onClose={() => setSfxOpen(false)} clips={clips} selected={selShot} mode={elevenMode} run={runSfx} />
+      <AutoSfxDialog eid={eid} open={sfxOpen} onClose={() => setSfxOpen(false)} clips={clips} selected={selShot} mode={elevenMode} run={runSfx} />
       <ShortcutsDialog open={keysOpen} onClose={() => setKeysOpen(false)} />
       <ClipMenu state={menu} clip={menuClip} eid={eid} lang={lang} projectId={project.id} canEdit={canEdit} canReview={canReview} embedded={embedded}
         onClose={() => setMenu(null)} onSpeed={(shot, s) => saveFx(shot, { speed: Math.abs(s - 1) < 1e-3 ? undefined : s })}
