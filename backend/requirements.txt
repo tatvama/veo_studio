@@ -1,4 +1,4 @@
-﻿fastapi>=0.115
+fastapi>=0.115
 uvicorn[standard]>=0.30
 sqlalchemy>=2.0.30
 pydantic>=2.8
@@ -18,5 +18,5 @@ opencv-python-headless>=4.10
 numpy>=1.26
 pg8000>=1.31
 pypdf>=5.0
-anthropic>=1.13,<2
+anthropic>=1.13,<3
 mcp>=2.3,<3
