@@ -24,7 +24,7 @@
     "@modelcontextprotocol/sdk": "1.31.0",
     "@types/node": "^24.19.2",
     "@types/ws": "^8.18.2",
-    "electron": "44.7.0",
+    "electron": "44.9.1",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.2",
     "typescript": "^7.0.2",
